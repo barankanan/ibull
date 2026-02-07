@@ -1,0 +1,18 @@
+{
+    "@@locale": "en",
+    "appTitle": "iBul",
+    "home": "Home",
+    "cart": "My Cart",
+    "profile": "Profile",
+    "addToCart": "Add to Cart",
+    "productOptions": "Product Options",
+    "standardProduct": "Standard Product",
+    "change": "Change",
+    "errorOccurred": "An error occurred",
+    "retry": "Retry",
+    "close": "Close",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "search": "Search",
+    "categories": "Categories"
+}

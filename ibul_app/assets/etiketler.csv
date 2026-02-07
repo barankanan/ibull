@@ -1,0 +1,42 @@
+etiket_id,etiket_adi,tip
+1,Ücretsiz Kargo,Kargo
+2,Ücretsiz İade,İade
+3,Hızlı Kargo,Kargo
+4,%9 indirim,İndirim
+5,%10 indirim,İndirim
+6,%13 indirim,İndirim
+7,%14 indirim,İndirim
+8,%15 indirim,İndirim
+9,%17 indirim,İndirim
+10,%18 indirim,İndirim
+11,%19 indirim,İndirim
+12,%20 indirim,İndirim
+13,%25 indirim,İndirim
+14,%31 indirim,İndirim
+15,%32 indirim,İndirim
+16,%33 indirim,İndirim
+17,Yeni Ürün,Özellik
+18,Çok Satan,Popüler
+19,En Çok Satan,Popüler
+20,Best Seller,Popüler
+21,Trend,Özellik
+22,Anne Favorisi,Özellik
+23,Profesyonel,Kalite
+24,İkonik Renk,Özellik
+25,Vegan,Özellik
+26,Akıllı Ev,Teknoloji
+27,Sağlıklı,Özellik
+28,Montaj Kılavuzu,Hizmet
+29,Montaj Dahil,Hizmet
+30,Düğün Hediyesi,Özellik
+31,Aile Boyu,Boyut
+32,Ekonomik,Fiyat
+33,Okul,Kullanım
+34,Pro Gaming,Oyun
+35,2.el,Durum
+36,Orjinal,Kalite
+37,Temiz,Durum
+38,Hasarlı,Durum
+39,Garanti,Hizmet
+40,Yedek Parça,Özellik
+41,CE Onaylı,Sertifika

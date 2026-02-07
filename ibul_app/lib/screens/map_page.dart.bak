@@ -1,0 +1,532 @@
+import 'package:flutter/material.dart';
+import '../core/constants.dart';
+
+class MapPage extends StatelessWidget {
+  const MapPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.all(16),
+              color: Colors.white,
+              child: Row(
+                children: [
+                  Icon(Icons.map, color: AppColors.primary, size: 28),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Harita',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Map Placeholder
+            Expanded(
+              child: Container(
+                color: Colors.grey[200],
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.map_outlined,
+                        size: 80,
+                        color: Colors.grey[400],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Harita Görünümü',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Yakında aktif olacak',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+  
+  // Antakya / Hatay Center
+  static const LatLng _initialPosition = LatLng(36.2025, 36.1605);
+
+  // Mock Data for Businesses with Real Antakya Coordinates
+  final List<Map<String, dynamic>> _businesses = [
+    {
+      'id': 1,
+      'name': 'Arçelik',
+      'logo': 'A',
+      'rating': '8.2',
+      'followers': '9.8B',
+      'icon': Icons.shopping_cart,
+      'distance': '50m',
+      'location': const LatLng(36.2025, 36.1605), // Uzun Carsi
+      'images': [
+        'https://via.placeholder.com/300x200.png?text=Arcelik+Antakya+1',
+        'https://via.placeholder.com/300x200.png?text=Arcelik+Antakya+2',
+      ]
+    },
+    {
+      'id': 2,
+      'name': 'LC Waikiki',
+      'logo': 'LC',
+      'rating': '9.1',
+      'followers': '15.2B',
+      'icon': Icons.checkroom,
+      'distance': '250m',
+      'location': const LatLng(36.2040, 36.1585), // Koprubasi
+      'images': [
+        'https://via.placeholder.com/300x200.png?text=LCW+Antakya+1',
+        'https://via.placeholder.com/300x200.png?text=LCW+Antakya+2',
+      ]
+    },
+    {
+      'id': 3,
+      'name': 'Turk Telekom',
+      'logo': 'T',
+      'rating': '7.5',
+      'followers': '5.1B',
+      'icon': Icons.phone_android,
+      'distance': '300m',
+      'location': const LatLng(36.2010, 36.1620), // Park
+      'images': [
+        'https://via.placeholder.com/300x200.png?text=TurkTelekom+Antakya',
+      ]
+    },
+    {
+      'id': 4,
+      'name': 'Queen İletişim',
+      'logo': 'Q',
+      'rating': '8.9',
+      'followers': '1B',
+      'icon': Icons.mobile_friendly,
+      'distance': '120m',
+      'location': const LatLng(36.2055, 36.1610), // Saray Cad
+      'images': [
+         'https://via.placeholder.com/300x200.png?text=Queen+Antakya',
+      ]
+    }
+  ];
+
+  int _selectedBusinessIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  // Animation Logic
+  void _animatedMapMove(LatLng destLocation, double destZoom) {
+    // Create some parameters for the animation
+    final latTween = Tween<double>(
+        begin: _mapController.camera.center.latitude, end: destLocation.latitude);
+    final lngTween = Tween<double>(
+        begin: _mapController.camera.center.longitude, end: destLocation.longitude);
+    final zoomTween = Tween<double>(
+        begin: _mapController.camera.zoom, end: destZoom);
+
+    final controller = AnimationController(
+        duration: const Duration(milliseconds: 1000), vsync: this);
+    
+    final Animation<double> animation = CurvedAnimation(
+        parent: controller, curve: Curves.fastOutSlowIn);
+
+    controller.addListener(() {
+      _mapController.move(
+          LatLng(latTween.evaluate(animation), lngTween.evaluate(animation)),
+          zoomTween.evaluate(animation));
+    });
+
+    animation.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        controller.dispose();
+      } else if (status == AnimationStatus.dismissed) {
+        controller.dispose();
+      }
+    });
+
+    controller.forward();
+  }
+
+  void _onBusinessSelected(int index) {
+    setState(() {
+      _selectedBusinessIndex = index;
+    });
+    final business = _businesses[index];
+    final location = business['location'] as LatLng;
+    
+    _animatedMapMove(location, 17.0); // Close zoom with animation
+  }
+
+  void _showBusinessDetails(BuildContext context, Map<String, dynamic> business) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          height: 380, // Reduced height
+          decoration: const BoxDecoration(
+            color: Color(0xFFF8F9FC),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+          ),
+          child: Column(
+            children: [
+              // Handle
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+
+              // Close Button (Compact)
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 16.0),
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: AppColors.primary, size: 24),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+              ),
+
+              // Business Info Header (Compact)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Logo Circle (Smaller)
+                    Container(
+                      width: 50,
+                      height: 50,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
+                      ),
+                      child: Center(
+                        child: Text(
+                          business['name'] == 'Arçelik' ? 'Arçelik' : business['logo'],
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: business['name'] == 'Arçelik' ? Colors.red : AppColors.primary,
+                            fontSize: business['name'] == 'Arçelik' ? 10 : 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    // Info Text (Smaller fonts)
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                business['name'],
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  business['rating'],
+                                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.primary),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Text(
+                              '${business['followers']} Takipçi',
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            "Teknolojinin Adresi",
+                            style: TextStyle(fontSize: 11, color: Colors.black87, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Badges (Smaller)
+                    Column(
+                      children: [
+                        const Text('Rozetler', style: TextStyle(fontSize: 11, color: Colors.black87, fontWeight: FontWeight.w500)),
+                        const SizedBox(height: 4),
+                        Icon(Icons.workspace_premium, color: Colors.amber[600], size: 24),
+                      ],
+                    )
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Framed Slider Bars (Middle Area)
+              SizedBox(
+                height: 100,
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: (business['images'] as List).length + 1,
+                  itemBuilder: (context, index) {
+                    final imgUrl = (business['images'] as List)[index % (business['images'] as List).length];
+                    return Container(
+                      width: 140, // Slightly smaller width
+                      margin: const EdgeInsets.only(right: 12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade300, width: 2), // Framed look
+                        color: Colors.white, // Empty background as requested
+                        image: DecorationImage(
+                          image: NetworkImage(imgUrl),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              const Spacer(),
+
+              // Bottom Action Buttons (Smaller)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 30),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 45, // Reduced height
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => BusinessDetailPage(business: business),
+                              ),
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: AppColors.primary,
+                            elevation: 0,
+                            side: const BorderSide(color: Colors.transparent), // Removing border if needed or keeping consistent
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+                          ),
+                          child: const Text(
+                            'DÜKKANI ZİYARET ET',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 0.5),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Container(
+                      width: 45, // Reduced size
+                      height: 45,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3F00B5),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: () {},
+                        icon: const Icon(Icons.map_outlined, color: Colors.white, size: 22),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      resizeToAvoidBottomInset: false, // Prevent map distortion
+      body: Column(
+        children: [
+          // 1. Top Bar
+          Container(
+            padding: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 10,
+              bottom: 16,
+              left: 16,
+              right: 16
+            ),
+            decoration: const BoxDecoration(
+              color: AppColors.primary,
+            ),
+            child: Column(
+              children: [
+                // Search & Filter
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const TextField(
+                          decoration: InputDecoration(
+                            hintText: 'Mağaza incele',
+                            prefixIcon: Icon(Icons.search, color: Colors.grey),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(vertical: 8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Container(
+                      height: 40,
+                      width: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.filter_list, color: Colors.black87),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                // Horizontal List
+                SizedBox(
+                  height: 42,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _businesses.length,
+                    itemBuilder: (context, index) {
+                      final item = _businesses[index];
+                      return GestureDetector(
+                        onTap: () => _onBusinessSelected(index),
+                        child: Container(
+                          margin: const EdgeInsets.only(right: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          decoration: BoxDecoration(
+                            color: _selectedBusinessIndex == index ? Colors.amber : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                               Icon(item['icon'], size: 14, color: Colors.black87),
+                               const SizedBox(width: 6),
+                               Column(
+                                 mainAxisSize: MainAxisSize.min,
+                                 mainAxisAlignment: MainAxisAlignment.center,
+                                 crossAxisAlignment: CrossAxisAlignment.start,
+                                 children: [
+                                   Text(
+                                    item['name'],
+                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Colors.black87),
+                                   ),
+                                   Text(
+                                    item['distance'],
+                                    style: const TextStyle(fontWeight: FontWeight.w400, fontSize: 9, color: Colors.grey),
+                                   ),
+                                 ],
+                               ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // 2. Map Area (FlutterMap)
+          Expanded(
+            child: Container(
+              color: Colors.grey[100], // Background color to check if expanded works
+              child: FlutterMap(
+                mapController: _mapController,
+                options: const MapOptions(
+                  initialCenter: _initialPosition,
+                  initialZoom: 16.0,
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.example.ibul_app',
+                  ),
+                  MarkerLayer(
+                    markers: _businesses.map((business) {
+                    return Marker(
+                      point: business['location'] as LatLng,
+                      width: 50,
+                      height: 50,
+                      child: GestureDetector(
+                        onTap: () {
+                          _showBusinessDetails(context, business);
+                        },
+                        child: const Icon(
+                          Icons.location_on,
+                          color: AppColors.primary,
+                          size: 40,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

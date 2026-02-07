@@ -1,0 +1,28 @@
+alt_kategori_id,kategori_id,alt_kategori_adi
+1,1,Telefon & Aksesuar
+2,1,Bilgisayar & Tablet
+3,1,Kamera & Fotoğraf
+4,1,TV & Ses Sistemleri
+5,1,Beyaz Eşya
+6,2,Spor Ayakkabı
+7,2,Fitness
+8,3,Kadın Giyim
+9,3,Erkek Giyim
+10,4,Bebek Arabaları
+11,4,Oyuncaklar
+12,5,Parfüm & Deodorant
+13,5,Makyaj
+14,5,Cilt Bakımı
+15,5,Saç Bakımı
+16,6,Mobilya
+17,6,Mutfak Gereçleri
+18,6,Ev Tekstili
+19,6,Aydınlatma
+20,6,Beyaz Eşya
+21,7,Gıda & İçecek
+22,7,Pet Ürünleri
+23,7,Temizlik Ürünleri
+24,8,Kitap
+25,8,Kırtasiye
+26,9,2.el Elektronik
+27,9,2.el Aksesuar

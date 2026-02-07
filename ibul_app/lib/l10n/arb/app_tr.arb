@@ -1,0 +1,18 @@
+{
+    "@@locale": "tr",
+    "appTitle": "iBul",
+    "home": "Ana Sayfa",
+    "cart": "Sepetim",
+    "profile": "Profil",
+    "addToCart": "Sepete Ekle",
+    "productOptions": "Ürün Seçenekleri",
+    "standardProduct": "Standart Ürün",
+    "change": "Değiştir",
+    "errorOccurred": "Bir hata oluştu",
+    "retry": "Tekrar Dene",
+    "close": "Kapat",
+    "cancel": "İptal",
+    "confirm": "Onayla",
+    "search": "Ara",
+    "categories": "Kategoriler"
+}

@@ -1,0 +1,932 @@
+[
+  {
+    "isim": "iPhone 15 Pro Max Mavi",
+    "marka": "Apple",
+    "magaza": "Teknosa",
+    "fiyat": 64.999,
+    "eski_fiyat": 74.999,
+    "kategori": "Elektronik",
+    "alt_kategori": "Telefon & Aksesuar",
+    "stok": 45,
+    "puan": 4.9,
+    "degerlendirme": 1234,
+    "aciklama": "Titanium kasa ile daha hafif ve dayanıklı. A17 Pro çip ile efsanevi performans.",
+    "ozellikler": {
+      "İşlemci": "A17 Pro",
+      "RAM": "8GB",
+      "Depolama": "256GB",
+      "Ekran": "6.7 inç Super Retina XDR",
+      "Kamera": "48MP+12MP+12MP",
+      "Pil": "4422 mAh"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "%13 indirim",
+      "Yeni Ürün"
+    ],
+    "anahtar_kelime": [
+      "iphone",
+      "apple",
+      "telefon",
+      "akıllı telefon",
+      "ios"
+    ],
+    "parca_mi": 0,
+    "varyant_grup_id": "IPHONE15-TEKNOSA",
+    "varyant_secenekler": "Renk:Mavi|Depolama:256GB",
+    "gorseller": [
+      "assets/products/iphone15_mavi_256gb.png",
+      "assets/products/iphone15_mavi_yan.webp",
+      "assets/products/iphone15_mavi_512gb.png"
+    ]
+  },
+  {
+    "isim": "iPhone 15 Pro Max Beyaz",
+    "marka": "Apple",
+    "magaza": "Teknosa",
+    "fiyat": 64.999,
+    "eski_fiyat": 74.999,
+    "kategori": "Elektronik",
+    "alt_kategori": "Telefon & Aksesuar",
+    "stok": 20,
+    "puan": 4.9,
+    "degerlendirme": 1234,
+    "aciklama": "Titanium kasa ile daha hafif ve dayanıklı. A17 Pro çip ile efsanevi performans. Titanyum Beyaz renk seçeneği.",
+    "ozellikler": {
+      "İşlemci": "A17 Pro",
+      "RAM": "8GB",
+      "Depolama": "256GB",
+      "Ekran": "6.7 inç Super Retina XDR",
+      "Kamera": "48MP+12MP+12MP",
+      "Pil": "4422 mAh"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "%13 indirim",
+      "Yeni Ürün"
+    ],
+    "anahtar_kelime": [
+      "iphone",
+      "apple",
+      "telefon",
+      "akıllı telefon",
+      "ios"
+    ],
+    "parca_mi": 0,
+    "varyant_grup_id": "IPHONE15-TEKNOSA",
+    "varyant_secenekler": "Renk:Beyaz|Depolama:256GB",
+    "gorseller": [
+      "assets/products/iphone15promax beyaz.webp",
+      "assets/products/iphone15promax1Tb.jpeg"
+    ]
+  },
+  {
+    "isim": "iPhone 15 Pro Max 512GB",
+    "marka": "Apple",
+    "magaza": "Teknosa",
+    "fiyat": 74.999,
+    "eski_fiyat": 84.999,
+    "kategori": "Elektronik",
+    "alt_kategori": "Telefon & Aksesuar",
+    "stok": 15,
+    "puan": 4.9,
+    "degerlendirme": 1234,
+    "aciklama": "Titanium kasa ile daha hafif ve dayanıklı. A17 Pro çip ile efsanevi performans. 512GB Depolama.",
+    "ozellikler": {
+      "İşlemci": "A17 Pro",
+      "RAM": "8GB",
+      "Depolama": "512GB",
+      "Ekran": "6.7 inç Super Retina XDR",
+      "Kamera": "48MP+12MP+12MP",
+      "Pil": "4422 mAh"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "%12 indirim",
+      "Yüksek Kapasite"
+    ],
+    "anahtar_kelime": [
+      "iphone",
+      "apple",
+      "telefon",
+      "akıllı telefon",
+      "ios"
+    ],
+    "parca_mi": 0,
+    "varyant_grup_id": "IPHONE15-TEKNOSA",
+    "varyant_secenekler": "Renk:Mavi|Depolama:512GB",
+    "gorseller": [
+      "assets/products/iphone15_mavi_512gb.png",
+      "assets/products/iphone15_mavi_yan.webp"
+    ]
+  },
+  {
+    "isim": "MacBook Pro M3",
+    "marka": "Apple",
+    "magaza": "Arçelik",
+    "fiyat": 52.999,
+    "eski_fiyat": null,
+    "kategori": "Elektronik",
+    "alt_kategori": "Bilgisayar & Tablet",
+    "stok": 12,
+    "puan": 4.8,
+    "degerlendirme": 892,
+    "aciklama": "14 inç MacBook Pro M3 çip ile profesyonel performans.",
+    "ozellikler": {
+      "İşlemci": "Apple M3",
+      "RAM": "16GB",
+      "Depolama": "512GB SSD",
+      "Ekran": "14.2 inç Liquid Retina XDR"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "Hızlı Kargo"
+    ],
+    "anahtar_kelime": [
+      "macbook",
+      "laptop",
+      "bilgisayar",
+      "apple"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/macbook_pro_m3_space_black.jpg",
+      "assets/products/macbook_pro_m3_back.jpg"
+    ]
+  },
+  {
+    "isim": "Samsung Galaxy S24 Ultra",
+    "marka": "Samsung",
+    "magaza": "Queen İletişim",
+    "fiyat": 49.999,
+    "eski_fiyat": 54.999,
+    "kategori": "Elektronik",
+    "alt_kategori": "Telefon & Aksesuar",
+    "stok": 30,
+    "puan": 4.7,
+    "degerlendirme": 856,
+    "aciklama": "Galaxy AI ile akıllı deneyim.",
+    "ozellikler": {
+      "İşlemci": "Snapdragon 8 Gen 3",
+      "RAM": "12GB",
+      "Depolama": "512GB",
+      "Kamera": "200MP Ana"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "%9 indirim"
+    ],
+    "anahtar_kelime": [
+      "samsung",
+      "galaxy",
+      "android"
+    ],
+    "parca_mi": 0,
+    "varyant_grup_id": "SAMSUNG-S24-QUEEN",
+    "varyant_secenekler": "Renk:Titanyum Siyah|Depolama:512GB",
+    "gorseller": [
+      "assets/products/s24_siyah_512gb.png",
+      "assets/products/s24_siyah_256gb.jpg"
+    ]
+  },
+  {
+    "isim": "Sony WH-1000XM5",
+    "marka": "Sony",
+    "magaza": "Arçelik",
+    "fiyat": 12.999,
+    "eski_fiyat": 14999,
+    "kategori": "Elektronik",
+    "alt_kategori": "TV & Ses Sistemleri",
+    "stok": 25,
+    "puan": 4.8,
+    "degerlendirme": 1567,
+    "aciklama": "Sektörün en iyi gürültü engelleme teknolojisi.",
+    "ozellikler": {
+      "ANC": "Evet",
+      "Pil": "30 saat",
+      "Bağlantı": "Bluetooth 5.2"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "Çok Satan"
+    ],
+    "anahtar_kelime": [
+      "sony",
+      "kulaklık",
+      "anc"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/sony_xm5.jpg"
+    ]
+  },
+  {
+    "isim": "Canon EOS R6 Mark II",
+    "marka": "Canon",
+    "magaza": "Teknosa",
+    "fiyat": 89.999,
+    "eski_fiyat": 99.999,
+    "kategori": "Elektronik",
+    "alt_kategori": "Kamera & Fotoğraf",
+    "stok": 5,
+    "puan": 4.9,
+    "degerlendirme": 234,
+    "aciklama": "24.2MP tam kare sensör ile profesyonel fotoğrafçılık.",
+    "ozellikler": {
+      "Sensör": "24.2MP Full Frame",
+      "Video": "6K RAW",
+      "ISO": "100-102400"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "%10 indirim"
+    ],
+    "anahtar_kelime": [
+      "canon",
+      "kamera",
+      "aynasız"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/canon_r6.jpeg"
+    ]
+  },
+  {
+    "isim": "Nike Air Max 90",
+    "marka": "Nike",
+    "magaza": "Flo",
+    "fiyat": 4.299,
+    "eski_fiyat": null,
+    "kategori": "Spor & Outdoor",
+    "alt_kategori": "Spor Ayakkabı",
+    "stok": 150,
+    "puan": 4.5,
+    "degerlendirme": 678,
+    "aciklama": "Klasik tasarım modern konforla buluşuyor. Max Air yastıklama ile tüm gün konfor.",
+    "ozellikler": {
+      "Malzeme": "Deri + Mesh",
+      "Taban": "Kauçuk",
+      "Renk": "Beyaz/Siyah",
+      "Boyut": "41-45"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "Hızlı Kargo",
+      "Çok Satan"
+    ],
+    "anahtar_kelime": [
+      "nike",
+      "ayakkabı",
+      "spor ayakkabı",
+      "air max"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/nike_airmax90.jpeg"
+    ]
+  },
+  {
+    "isim": "Adidas Ultraboost 23",
+    "marka": "Adidas",
+    "magaza": "Flo",
+    "fiyat": 5.499,
+    "eski_fiyat": 6299,
+    "kategori": "Spor & Outdoor",
+    "alt_kategori": "Spor Ayakkabı",
+    "stok": 90,
+    "puan": 4.7,
+    "degerlendirme": 445,
+    "aciklama": "Boost teknolojisi ile her adımda enerji geri dönüşü.",
+    "ozellikler": {
+      "Malzeme": "Primeknit",
+      "Taban": "Boost",
+      "Renk": "Siyah/Beyaz",
+      "Ağırlık": "310g"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "%13 indirim"
+    ],
+    "anahtar_kelime": [
+      "adidas",
+      "ayakkabı",
+      "ultraboost",
+      "koşu"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/adidas_ultraboost.jpeg"
+    ]
+  },
+  {
+    "isim": "Zara Kadın Blazer Ceket",
+    "marka": "Zara",
+    "magaza": "LC Waikiki",
+    "fiyat": 1.299,
+    "eski_fiyat": 1.899,
+    "kategori": "Giyim & Aksesuar",
+    "alt_kategori": "Kadın Giyim",
+    "stok": 80,
+    "puan": 4.4,
+    "degerlendirme": 345,
+    "aciklama": "Klasik kesim blazer ceket. Ofis ve günlük kullanım için ideal.",
+    "ozellikler": {
+      "Beden": "XS-XXL",
+      "Malzeme": "Polyester %65 Viskon %35",
+      "Renk": "Lacivert"
+    },
+    "etiketler": [
+      "Ücretsiz İade",
+      "%32 indirim",
+      "Trend"
+    ],
+    "anahtar_kelime": [
+      "zara",
+      "blazer",
+      "ceket",
+      "kadın"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/zara_blazer.jpg"
+    ]
+  },
+  {
+    "isim": "Mavi Erkek Kot Pantolon",
+    "marka": "Mavi",
+    "magaza": "Koton",
+    "fiyat": 599.99,
+    "eski_fiyat": 899,
+    "kategori": "Giyim & Aksesuar",
+    "alt_kategori": "Erkek Giyim",
+    "stok": 200,
+    "puan": 4.6,
+    "degerlendirme": 892,
+    "aciklama": "Slim fit kesim. %100 pamuk denim kumaş.",
+    "ozellikler": {
+      "Beden": "28-38",
+      "Kesim": "Slim Fit",
+      "Renk": "Koyu Mavi"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "%33 indirim"
+    ],
+    "anahtar_kelime": [
+      "mavi",
+      "kot",
+      "pantolon",
+      "jean"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Mavi Erkek Kot Pantolon.jpeg"
+    ]
+  },
+  {
+    "isim": "Chicco Bebek Arabası",
+    "marka": "Chicco",
+    "magaza": "Toyzz Shop",
+    "fiyat": 8999,
+    "eski_fiyat": 11999,
+    "kategori": "Anne & Bebek & Oyuncak",
+    "alt_kategori": "Bebek Arabaları",
+    "stok": 15,
+    "puan": 4.7,
+    "degerlendirme": 456,
+    "aciklama": "Üç tekerlekli hafif bebek arabası. Tek elle katlanabilir.",
+    "ozellikler": {
+      "Ağırlık": "9.5kg",
+      "Kapasite": "22kg",
+      "Tekerlek": "3",
+      "Renk": "Antrasit"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "Anne Favorisi"
+    ],
+    "anahtar_kelime": [
+      "chicco",
+      "bebek arabası",
+      "puset"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Chicco Bebek Arabası.jpeg"
+    ]
+  },
+  {
+    "isim": "Dior Sauvage EDT",
+    "marka": "Dior",
+    "magaza": "Arsuz Parfüm Evi",
+    "fiyat": 2899,
+    "eski_fiyat": 3499,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Parfüm & Deodorant",
+    "stok": 60,
+    "puan": 4.8,
+    "degerlendirme": 2341,
+    "aciklama": "100ml erkek parfüm. Odunsu ve baharatlı notalar.",
+    "ozellikler": {
+      "Hacim": "100ml",
+      "Tip": "Eau de Toilette",
+      "Cinsiyet": "Erkek"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "Best Seller"
+    ],
+    "anahtar_kelime": [
+      "dior",
+      "parfüm",
+      "sauvage"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Dior Sauvage EDT.jpeg"
+    ]
+  },
+  {
+    "isim": "Ikea Billy Kitaplık",
+    "marka": "Ikea",
+    "magaza": "A101",
+    "fiyat": 1299,
+    "eski_fiyat": null,
+    "kategori": "Ev & Yaşam",
+    "alt_kategori": "Mobilya",
+    "stok": 30,
+    "puan": 4.6,
+    "degerlendirme": 1234,
+    "aciklama": "80x28x202 cm beyaz kitaplık. 5 ayarlanabilir raf. Montaj kolay.",
+    "ozellikler": {
+      "Boyut": "80x28x202 cm",
+      "Renk": "Beyaz",
+      "Malzeme": "Sunta",
+      "Raf Sayısı": "5"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "Montaj Kılavuzu"
+    ],
+    "anahtar_kelime": [
+      "ikea",
+      "kitaplık",
+      "mobilya",
+      "raf"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Ikea Billy Kitaplık.jpeg"
+    ]
+  },
+  {
+    "isim": "Haruki Murakami 1Q84",
+    "marka": "Doğan Kitap",
+    "magaza": "İŞLER Kitapevi",
+    "fiyat": 189,
+    "eski_fiyat": 229,
+    "kategori": "Kitap & Hobi",
+    "alt_kategori": "Kitap",
+    "stok": 80,
+    "puan": 4.9,
+    "degerlendirme": 2134,
+    "aciklama": "Ciltli özel baskı. 3 kitap tek cilt. 1280 sayfa.",
+    "ozellikler": {
+      "Sayfa": "1280",
+      "Cilt": "Ciltli",
+      "Dil": "Türkçe"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "Best Seller"
+    ],
+    "anahtar_kelime": [
+      "haruki murakami",
+      "1q84",
+      "kitap",
+      "roman"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Haruki Murakami 1Q84.jpeg"
+    ]
+  },
+  {
+    "isim": "Nutella 750g",
+    "marka": "Nutella",
+    "magaza": "A101",
+    "fiyat": 169,
+    "eski_fiyat": 199,
+    "kategori": "Süpermarket & Petshop",
+    "alt_kategori": "Gıda & İçecek",
+    "stok": 500,
+    "puan": 4.8,
+    "degerlendirme": 4532,
+    "aciklama": "750g cam kavanoz. Fındık ve kakao içerikli krem.",
+    "ozellikler": {
+      "Gramaj": "750g",
+      "İçerik": "Fındık %13",
+      "Ambalaj": "Cam Kavanoz"
+    },
+    "etiketler": [
+      "%15 indirim",
+      "Aile Boyu"
+    ],
+    "anahtar_kelime": [
+      "nutella",
+      "çikolata",
+      "kahvaltı"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Nutella 750g.jpeg"
+    ]
+  },
+  {
+    "isim": "iPhone 13 Hasarlı",
+    "marka": "Apple",
+    "magaza": "Teknosa",
+    "fiyat": 15000,
+    "eski_fiyat": 25000,
+    "kategori": "2.el Ürünler",
+    "alt_kategori": "2.el Elektronik",
+    "stok": 1,
+    "puan": 3.5,
+    "degerlendirme": 12,
+    "aciklama": "Ekran çatlak ancak çalışıyor. Batarya değişmeli.",
+    "ozellikler": {
+      "İşlemci": "A15 Bionic",
+      "RAM": "4GB",
+      "Depolama": "128GB"
+    },
+    "etiketler": [
+      "2.el",
+      "Hasarlı"
+    ],
+    "hasarli_parca": "ekran,batarya",
+    "anahtar_kelime": [
+      "iphone 13",
+      "hasarlı",
+      "2.el"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/iphone13_hasarli.webp"
+    ]
+  },
+  {
+    "isim": "iPhone 13 Ekran Parçası",
+    "marka": "OEM",
+    "magaza": "FP PRO Tamir",
+    "fiyat": 1500,
+    "eski_fiyat": null,
+    "kategori": "Elektronik",
+    "alt_kategori": "Telefon & Aksesuar",
+    "stok": 20,
+    "puan": 4.3,
+    "degerlendirme": 89,
+    "aciklama": "iPhone 13 için A+ kalite OLED ekran. Montaj kılavuzu dahil.",
+    "ozellikler": {
+      "Model": "iPhone 13",
+      "Kalite": "A+ OLED"
+    },
+    "etiketler": [
+      "Hızlı Kargo",
+      "Yedek Parça"
+    ],
+    "anahtar_kelime": [
+      "iphone 13",
+      "ekran",
+      "tamir"
+    ],
+    "parca_mi": 1,
+    "gorseller": [
+      "assets/products/iPhone 13 Ekran Parçası.jpeg"
+    ]
+  },
+  {
+    "isim": "Elseve Şampuan Glycolic Gloss",
+    "marka": "L'Oréal",
+    "magaza": "Eve",
+    "fiyat": 260,
+    "eski_fiyat": 521,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 120,
+    "puan": 4.8,
+    "degerlendirme": 1420,
+    "aciklama": "Glikolik asit içeren formülüyle saçı içten onarır ve X2 parlaklık sağlar. 200ml.",
+    "ozellikler": {
+      "İçerik": "Glikolik Asit",
+      "Hacim": "200ml",
+      "Özellik": "Parlaklık Verici",
+      "Tip": "Şampuan"
+    },
+    "etiketler": [
+      "Eve Kart İndirimi",
+      "%50 indirim"
+    ],
+    "anahtar_kelime": [
+      "elseve",
+      "şampuan",
+      "parlaklık",
+      "glycolic"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Elseve Şampuan Glycolic Gloss.jpeg"
+    ]
+  },
+  {
+    "isim": "Urban Care Biotin & Kafein Tonik",
+    "marka": "Urban Care",
+    "magaza": "Gratis",
+    "fiyat": 185,
+    "eski_fiyat": 370,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 90,
+    "puan": 4.7,
+    "degerlendirme": 3100,
+    "aciklama": "Hızlı uzamaya yardımcı, dökülme karşıtı saç kökü güçlendirici tonik. 200ml.",
+    "ozellikler": {
+      "İçerik": "Biotin Kafein",
+      "Hacim": "200ml",
+      "Özellik": "Hızlı Uzama",
+      "Tip": "Tonik"
+    },
+    "etiketler": [
+      "En Sevilen",
+      "Vegan",
+      "%50 indirim"
+    ],
+    "anahtar_kelime": [
+      "urban care",
+      "saç toniği",
+      "biotin",
+      "uzama"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Urban Care Biotin & Kafein Tonik.jpeg"
+    ]
+  },
+  {
+    "isim": "Morfose Milk Therapy Saç Köpüğü",
+    "marka": "Morfose",
+    "magaza": "Eve",
+    "fiyat": 237,
+    "eski_fiyat": 339,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 75,
+    "puan": 4.9,
+    "degerlendirme": 2800,
+    "aciklama": "12 amino asit ve süt proteini içeren saç sabitleyici bakım köpüğü. 200ml.",
+    "ozellikler": {
+      "İçerik": "Süt Proteini",
+      "Hacim": "200ml",
+      "Tip": "Köpük"
+    },
+    "etiketler": [
+      "Eve Kart İndirimi",
+      "%30 indirim"
+    ],
+    "anahtar_kelime": [
+      "morfose",
+      "milk therapy",
+      "saç köpüğü"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Morfose Milk Therapy Saç Köpüğü.jpeg"
+    ]
+  },
+  {
+    "isim": "Finish Bulaşık Tableti",
+    "marka": "Finish",
+    "magaza": "ŞOK",
+    "fiyat": 249,
+    "eski_fiyat": 299,
+    "kategori": "Süpermarket & Temizlik",
+    "alt_kategori": "Temizlik Ürünleri",
+    "stok": 200,
+    "puan": 4.7,
+    "degerlendirme": 2345,
+    "aciklama": "100 tablet quantum ultimate. Güçlü yağ çözücü.",
+    "ozellikler": {
+      "Adet": "100 tablet",
+      "Özellik": "3ü 1 arada",
+      "Koku": "Limon"
+    },
+    "etiketler": [
+      "Ücretsiz Kargo",
+      "Ekonomik"
+    ],
+    "anahtar_kelime": [
+      "finish",
+      "bulaşık tableti",
+      "deterjan"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Finish Bulaşık Tableti.jpeg"
+    ]
+  },
+  {
+    "isim": "Mood Onarıcı Saç Şampuanı",
+    "marka": "Mood",
+    "magaza": "Eve",
+    "fiyat": 180,
+    "eski_fiyat": 600,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 65,
+    "puan": 4.3,
+    "degerlendirme": 240,
+    "aciklama": "Yıpranmış saçlar için profesyonel bakım sağlayan şampuan. 400ml.",
+    "ozellikler": {
+      "İçerik": "Multi-mineral Kompleks",
+      "Hacim": "400ml",
+      "Tip": "Şampuan"
+    },
+    "etiketler": [
+      "Eve Özel",
+      "%70 indirim"
+    ],
+    "anahtar_kelime": [
+      "mood",
+      "şampuan",
+      "onarıcı"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Mood Onarıcı Saç Şampuanı.jpeg"
+    ]
+  },
+  {
+    "isim": "Head & Shoulders Mentol Ferahlığı Şampuan",
+    "marka": "Head & Shoulders",
+    "magaza": "Eve",
+    "fiyat": 89,
+    "eski_fiyat": 178,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 150,
+    "puan": 4.7,
+    "degerlendirme": 2850,
+    "aciklama": "Kepeğe karşı etkili, mentollü ferahlık veren şampuan. 400ml.",
+    "ozellikler": {
+      "İçerik": "Mentol, Zinc",
+      "Hacim": "400ml",
+      "Özellik": "Kepek Karşıtı",
+      "Tip": "Şampuan"
+    },
+    "etiketler": [
+      "Eve Özel",
+      "%50 indirim"
+    ],
+    "anahtar_kelime": [
+      "head shoulders",
+      "şampuan",
+      "kepek",
+      "mentol"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Head & Shoulders Mentol Ferahlığı Şampuan.jpeg"
+    ]
+  },
+  {
+    "isim": "Dove Yoğun Onarım Şampuan",
+    "marka": "Dove",
+    "magaza": "Eve",
+    "fiyat": 95,
+    "eski_fiyat": 190,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 180,
+    "puan": 4.8,
+    "degerlendirme": 3420,
+    "aciklama": "Yıpranmış saçlar için yoğun onarım ve nemlendirme. 450ml.",
+    "ozellikler": {
+      "İçerik": "Keratin, Serum",
+      "Hacim": "450ml",
+      "Özellik": "Onarıcı",
+      "Tip": "Şampuan"
+    },
+    "etiketler": [
+      "En Sevilen",
+      "Eve Kart İndirimi"
+    ],
+    "anahtar_kelime": [
+      "dove",
+      "şampuan",
+      "onarım",
+      "keratin"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Dove Yoğun Onarım Şampuan.jpeg"
+    ]
+  },
+  {
+    "isim": "Clear Men Güçlü & Parlak Şampuan",
+    "marka": "Clear",
+    "magaza": "Eve",
+    "fiyat": 79,
+    "eski_fiyat": 158,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 120,
+    "puan": 4.6,
+    "degerlendirme": 1890,
+    "aciklama": "Erkeklere özel formül, kepek karşıtı ve güçlendirici. 500ml.",
+    "ozellikler": {
+      "İçerik": "Taurin, Vitamin",
+      "Hacim": "500ml",
+      "Özellik": "Kepek Karşıtı",
+      "Tip": "Şampuan"
+    },
+    "etiketler": [
+      "Erkeklere Özel",
+      "%50 indirim"
+    ],
+    "anahtar_kelime": [
+      "clear",
+      "şampuan",
+      "erkek",
+      "kepek"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Clear Men Güçlü & Parlak Şampuan.jpeg"
+    ]
+  },
+  {
+    "isim": "Urban Care Argan Oil Şampuan",
+    "marka": "Urban Care",
+    "magaza": "Eve",
+    "fiyat": 92,
+    "eski_fiyat": 184,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 110,
+    "puan": 4.6,
+    "degerlendirme": 2340,
+    "aciklama": "Argan yağı ile besleyici ve parlaklık veren şampuan. 400ml.",
+    "ozellikler": {
+      "İçerik": "Argan Yağı",
+      "Hacim": "400ml",
+      "Özellik": "Besleyici",
+      "Tip": "Şampuan"
+    },
+    "etiketler": [
+      "Eve Özel",
+      "%50 indirim"
+    ],
+    "anahtar_kelime": [
+      "urban care",
+      "şampuan",
+      "argan",
+      "besleyici"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Urban Care Argan Oil Şampuan.jpeg"
+    ]
+  },
+  {
+    "isim": "Urban Care Hyaluronic Şampuan",
+    "marka": "Urban Care",
+    "magaza": "Eve",
+    "fiyat": 98,
+    "eski_fiyat": 196,
+    "kategori": "Kozmetik & Kişisel Bakım",
+    "alt_kategori": "Saç Bakımı",
+    "stok": 95,
+    "puan": 4.7,
+    "degerlendirme": 2890,
+    "aciklama": "Hyaluronik asit ile nem dengesi sağlayan şampuan. 450ml.",
+    "ozellikler": {
+      "İçerik": "Hyaluronik Asit",
+      "Hacim": "450ml",
+      "Özellik": "Nemlendirici",
+      "Tip": "Şampuan"
+    },
+    "etiketler": [
+      "Eve Kart İndirimi",
+      "Yeni"
+    ],
+    "anahtar_kelime": [
+      "urban care",
+      "şampuan",
+      "hyaluronic",
+      "nemlendirici"
+    ],
+    "parca_mi": 0,
+    "gorseller": [
+      "assets/products/Urban Care Hyaluronic Şampuan.jpg"
+    ]
+  }
+]

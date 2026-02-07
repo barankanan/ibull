@@ -1,0 +1,19 @@
+magaza_id,magaza_adi,kategori_tipi,magaza_logo,banner_gorsel
+1,Teknosa,Elektronik,teknosa_logo.png,teknosa_banner.jpg
+2,Arçelik,Elektronik,arcelik_logo.png,arcelik_banner.jpg
+3,Queen İletişim,Elektronik,queen_logo.png,queen_banner.jpg
+4,Flo,Ayakkabı,flo_logo.png,flo_banner.jpg
+5,LC Waikiki,Giyim,lcwaikiki_logo.png,lcwaikiki_banner.jpg
+6,Koton,Giyim,koton_logo.png,koton_banner.jpg
+7,Defacto,Giyim,defacto_logo.png,defacto_banner.jpg
+8,Bulut Giyim,Giyim,bulut_logo.png,bulut_banner.jpg
+9,Toyzz Shop,Oyuncak,toyzz_logo.png,toyzz_banner.jpg
+10,Atlas Kırtasiye,Kırtasiye,atlas_logo.png,atlas_banner.jpg
+11,Arsuz Parfüm Evi,Parfüm,arsuz_logo.png,arsuz_banner.jpg
+12,Eve,Kozmetik,eve_logo.png,eve_banner.jpg
+13,İŞLER Kitapevi,Kitap,isler_logo.png,isler_banner.jpg
+14,A101,Süpermarket,a101_logo.png,a101_banner.jpg
+15,BIM,Süpermarket,bim_logo.png,bim_banner.jpg
+16,ŞOK,Süpermarket,sok_logo.png,sok_banner.jpg
+17,FP PRO Tamir,Yedek Parça,fppro_logo.png,fppro_banner.jpg
+18,Destina Restorant,Yemek,destina_logo.png,destina_banner.jpg

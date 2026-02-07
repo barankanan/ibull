@@ -1,0 +1,1963 @@
+import 'package:flutter/material.dart';
+import '../core/constants.dart';
+import '../core/app_state.dart';
+import '../models/product_model.dart';
+import '../widgets/add_to_cart_button.dart';
+import 'home_screen.dart';
+import 'try_product_page.dart';
+import 'parts_selection_page.dart';
+import 'reviews_page.dart';
+import 'business_detail_page.dart';
+import 'map_page.dart';
+import 'delivery_options_page.dart';
+import 'chat_page.dart';
+
+class ProductDetailPage extends StatefulWidget {
+  final Product product;
+
+  const ProductDetailPage({super.key, required this.product});
+
+  @override
+  State<ProductDetailPage> createState() => _ProductDetailPageState();
+}
+
+class _ProductDetailPageState extends State<ProductDetailPage> {
+  final AppState _appState = AppState();
+  int _currentImageIndex = 0;
+  int _selectedTabIndex = 0;
+  bool _isFavorite = false;
+  bool _isBookmarked = false;
+  bool _isFollowing = false;
+  
+  // Product variant selections
+  Map<String, List<String>> _variantOptions = {};
+  Map<String, String> _selectedVariants = {};
+
+  final List<String> _tabs = [
+    'Ürün Açıklaması',
+    'Yakın Lokasyon',
+    'Ürün Özellikleri',
+    'Ürün Parçaları',
+  ];
+  
+  @override
+  void initState() {
+    super.initState();
+    _parseVariantOptions();
+  }
+  
+  void _parseVariantOptions() {
+    if (widget.product.variantOptions != null && widget.product.variantOptions!.isNotEmpty) {
+      // Format: "Renk:Titanyum Mavi|Depolama:256GB|..."
+      final parts = widget.product.variantOptions!.split('|');
+      for (var part in parts) {
+        final keyValue = part.split(':');
+        if (keyValue.length == 2) {
+          final key = keyValue[0].trim();
+          final value = keyValue[1].trim();
+          if (_variantOptions.containsKey(key)) {
+            _variantOptions[key]!.add(value);
+          } else {
+            _variantOptions[key] = [value];
+            _selectedVariants[key] = value; // İlk değeri seç
+          }
+        }
+      }
+    }
+  }
+  
+  String _getSelectedVariantsText() {
+    if (_selectedVariants.isEmpty) return '';
+    return _selectedVariants.entries.map((e) => '${e.key}: ${e.value}').join(' / ');
+  }
+
+  List<String> _getImages() {
+    final images = widget.product.images.where((img) => img.trim().isNotEmpty).toList();
+    if (images.isEmpty) {
+      images.add('https://via.placeholder.com/300x300.png?text=%C3%9Cr%C3%BCn');
+    }
+    return images;
+  }
+
+  // Dummy data for other stores
+  final List<Map<String, dynamic>> _otherStores = [
+    {
+      'name': 'Teknosa',
+      'logo': 'T',
+      'rating': '5',
+      'badgeColor': Colors.green,
+      'delivery': 'En geç 28 Ağustos Pazartesi Kargoya verilir',
+      'price': '2.799.00 TL',
+    },
+    {
+      'name': 'İABUL',
+      'logo': 'İ',
+      'rating': '8',
+      'badgeColor': Colors.green,
+      'delivery': 'En geç 31 Ağustos Perşembe',
+      'price': '3.999.00 TL',
+    },
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          CustomScrollView(
+            slivers: [
+              // Main content
+              SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 60),
+                    Stack(
+                      children: [
+                        _buildImageSection(),
+                        // Action icons on right side - scrollable
+                        Positioned(
+                          top: 10,
+                          right: 16,
+                          child: Column(
+                            children: [
+                              _buildIconButton(
+                                icon: Icons.share_outlined,
+                                onPressed: () {},
+                              ),
+                              const SizedBox(height: 12),
+                              _buildIconButton(
+                                icon: _isBookmarked ? Icons.bookmark : Icons.bookmark_border,
+                                onPressed: () {
+                                  setState(() {
+                                    _isBookmarked = !_isBookmarked;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              _buildIconButton(
+                                icon: Icons.compare_arrows,
+                                onPressed: () {},
+                              ),
+                              const SizedBox(height: 12),
+                              _buildIconButton(
+                                icon: _isFavorite ? Icons.favorite : Icons.favorite_border,
+                                onPressed: () {
+                                  setState(() {
+                                    _isFavorite = !_isFavorite;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    _buildImageIndicator(),
+                    const SizedBox(height: 16),
+                    _buildProductInfoCard(),
+                    const SizedBox(height: 16),
+                    _buildBrandAndTabs(),
+                    const SizedBox(height: 12),
+                    _buildTabContent(),
+                    const SizedBox(height: 16),
+                    _buildStoreInfo(),
+                    const SizedBox(height: 16),
+                    _buildProductOptions(),
+                    const SizedBox(height: 16),
+                    _buildOtherStores(),
+                    const SizedBox(height: 16),
+                    _buildAdditionalServices(),
+                    const SizedBox(height: 16),
+                    _buildReviewsSection(),
+                    const SizedBox(height: 100), // Space for fixed bottom bar
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          // Back button top left
+          _buildBackButton(context),
+
+          // Fixed bottom bar
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _buildBottomBar(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImageSection() {
+    return Stack(
+      children: [
+        Container(
+          height: 350,
+          color: Colors.white,
+          child: PageView.builder(
+            physics: const BouncingScrollPhysics(),
+            itemCount: _getImages().length,
+            onPageChanged: (index) {
+              setState(() {
+                _currentImageIndex = index;
+              });
+            },
+            itemBuilder: (context, index) {
+              final images = _getImages();
+              return Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Image.network(
+                  images[index],
+                  fit: BoxFit.contain,
+                  cacheWidth: 400,
+                  cacheHeight: 400,
+                  filterQuality: FilterQuality.medium,
+                  errorBuilder: (context, error, stackTrace) => const Icon(
+                    Icons.image_not_supported,
+                    size: 100,
+                    color: Colors.grey,
+                  ),
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return Center(
+                      child: CircularProgressIndicator(
+                        value: loadingProgress.expectedTotalBytes != null
+                            ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                            : null,
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+        // Ürün Videosu button - bottom left
+        Positioned(
+          bottom: 16,
+          left: 16,
+          child: _buildOverlayButton('Ürün Videosu', Icons.arrow_forward_ios),
+        ),
+        // Tüm Özellikler button - bottom right
+        Positioned(
+          bottom: 16,
+          right: 16,
+          child: _buildOverlayButton('Tüm Özellikler', Icons.arrow_forward_ios),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOverlayButton(String text, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey[300]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Icon(icon, size: 10, color: Colors.grey[600]),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBackButton(BuildContext context) {
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 8,
+      left: 16,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.9),
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: IconButton(
+          padding: EdgeInsets.zero,
+          icon: const Icon(Icons.arrow_back_ios_new, color: AppColors.primary, size: 18),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIconButton({required IconData icon, required VoidCallback onPressed}) {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        icon: Icon(icon, color: AppColors.primary, size: 18),
+        onPressed: onPressed,
+      ),
+    );
+  }
+
+  Widget _buildImageIndicator() {
+    return Center(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: List.generate(
+          _getImages().length,
+          (index) => Container(
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _currentImageIndex == index ? AppColors.primary : Colors.grey[300],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductInfoCard() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Marka kalın - Tıklanabilir
+          InkWell(
+            onTap: () {
+              // Mock business data for the brand
+              final businessData = {
+                'id': widget.product.brand.hashCode,
+                'name': widget.product.brand,
+                'logo': widget.product.brand[0],
+                'rating': widget.product.rating.toString(),
+                'followers': '${(widget.product.reviewCount * 15).toString()}K',
+                'icon': Icons.store,
+                'distance': '500m',
+                'images': widget.product.images,
+              };
+              
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => BusinessDetailPage(business: businessData),
+                ),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.product.brand,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.primary,
+                      letterSpacing: 0.5,
+                      decoration: TextDecoration.underline,
+                      decorationColor: AppColors.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    Icons.store,
+                    size: 14,
+                    color: AppColors.primary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          // Ürün adı
+          Text(
+            widget.product.name,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.black87,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Rating - Tıklanabilir
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ReviewsPage(),
+                ),
+              );
+            },
+            child: Row(
+              children: [
+                Row(
+                  children: List.generate(5, (index) {
+                    if (index < widget.product.rating.floor()) {
+                      return const Icon(Icons.star, color: Colors.amber, size: 14);
+                    } else if (index < widget.product.rating) {
+                      return const Icon(Icons.star_half, color: Colors.amber, size: 14);
+                    }
+                    return Icon(Icons.star_border, color: Colors.grey[300], size: 14);
+                  }),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${widget.product.rating}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 4),
+                const Text(
+                  '/',
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '${widget.product.reviewCount} Değerlendirme',
+                  style: const TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.arrow_forward_ios, size: 10, color: AppColors.primary),
+              ],
+            ),
+          ),
+          // Fast Delivery Indicator
+          if (_appState.hasFastDelivery(widget.product)) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.orange.shade400, Colors.deepOrange.shade500],
+                ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.bolt, color: Colors.white, size: 18),
+                  SizedBox(width: 6),
+                  Text(
+                    'Hızlı Teslimat Seçildi',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          // Ürünü Dene button for digital products
+          if (widget.product.isDigital) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => TryProductPage(product: widget.product),
+                        ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.primary, width: 1.5),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    icon: const Icon(Icons.touch_app, color: AppColors.primary, size: 18),
+                    label: const Text(
+                      'Ürünü Dene',
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          // Parça Seç button for iPhone (2nd hand damaged products)
+          if (widget.product.brand.contains('Apple') && widget.product.name.contains('iPhone')) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => PartsSelectionPage(
+                            productName: widget.product.name,
+                            productImage: _getImages().first,
+                          ),
+                        ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.primary, width: 1.5),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    icon: const Icon(Icons.build_circle_outlined, color: AppColors.primary, size: 18),
+                    label: const Text(
+                      'Parça Seç',
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBrandAndTabs() {
+    return SizedBox(
+      height: 32,
+      child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _tabs.length,
+            itemBuilder: (context, index) {
+              final isSelected = _selectedTabIndex == index;
+              return GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _selectedTabIndex = index;
+                  });
+                },
+                child: Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSelected ? AppColors.primary : Colors.white,
+                    border: Border.all(
+                      color: isSelected ? AppColors.primary : Colors.grey[300]!,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Center(
+                    child: Text(
+                      _tabs[index],
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+  }
+
+  Widget _buildTabContent() {
+    // Special handling for Yakın Lokasyon tab
+    if (_selectedTabIndex == 1) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey[200]!),
+          ),
+          child: Column(
+            children: [
+              const Text(
+                'Yakınınızdaki mağazalarda bu ürünü bulabilirsiniz',
+                style: TextStyle(fontSize: 13, color: Colors.black87, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Harita üzerinden bu ürünü satan en yakın satıcıları görebilir ve mağaza detaylarını inceleyebilirsiniz.',
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => MapPage(product: widget.product),
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                ),
+                child: const Text(
+                  'Haritada Göster',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey[200]!),
+        ),
+        child: Text(
+          _getTabContentText(),
+          style: const TextStyle(fontSize: 12, color: Colors.black87, height: 1.4),
+        ),
+      ),
+    );
+  }
+
+  String _getTabContentText() {
+    switch (_selectedTabIndex) {
+      case 0:
+        return _getProductDescription();
+      case 1:
+        return 'Yakınınızdaki mağazalarda bu ürünü bulabilirsiniz. Harita üzerinden en yakın satış noktalarını görebilirsiniz.';
+      case 2:
+        return _getProductSpecs();
+      case 3:
+        return 'Bu ürünü parçalara ayırarak satın alabilirsiniz. Detaylı bilgi için parçalama seçeneklerini inceleyebilirsiniz.';
+      default:
+        return '';
+    }
+  }
+
+  String _getProductDescription() {
+    // Ürün adına göre farklı açıklamalar
+    if (widget.product.brand.contains('Uf') || widget.product.name.contains('CT-23')) {
+      return 'UFO City CT-23 2300W İnfrared tipi ayaklı ısıtıcı, modern tasarımı ve güçlü ısıtma kapasitesi ile yaşam alanlarınızda konfor sağlar. Enerji tasarruflu teknolojisi sayesinde ekonomik kullanım sunar.';
+    } else if (widget.product.brand.contains('Haylou') || widget.product.name.contains('Solar')) {
+      return 'Haylou Solar Plus RT3 akıllı saati, 1.43 inç AMOLED ekranı, 105+ spor modu ve 14 güne kadar pil ömrü ile sağlıklı yaşamınızı takip edin. Bluetooth arama, müzik kontrolü ve sağlık izleme özellikleri sunar.';
+    } else if (widget.product.brand.contains('Apple') || widget.product.name.contains('iPhone')) {
+      return 'Apple iPhone 12, 5G desteği, A14 Bionic çip, 12MP çift kamera sistemi ve Super Retina XDR ekran ile güçlü performans sunar. 128GB depolama alanı ile tüm dosyalarınızı rahatça saklayabilirsiniz.';
+    } else {
+      return 'Ürün hakkında detaylı bilgi için mağazamızı ziyaret edebilir veya müşteri hizmetlerimizle iletişime geçebilirsiniz.';
+    }
+  }
+
+  String _getProductSpecs() {
+    // Ürün adına göre farklı özellikler
+    if (widget.product.brand.contains('Uf') || widget.product.name.contains('CT-23')) {
+      return 'Güç: 2300W\nRenk: Siyah\nTip: İnfrared Ayaklı Isıtıcı\nBoyutlar: 180cm Yükseklik\nGaranti: 2 Yıl';
+    } else if (widget.product.brand.contains('Haylou') || widget.product.name.contains('Solar')) {
+      return 'Ekran: 1.43" AMOLED\nPil Ömrü: 14 gün\nSu Geçirmezlik: 5ATM\nSpor Modu: 105+\nBluetooth: 5.0\nGaranti: 2 Yıl';
+    } else if (widget.product.brand.contains('Apple') || widget.product.name.contains('iPhone')) {
+      return 'Ekran: 6.1" Super Retina XDR\nDepolama: 128GB\nKamera: 12MP Çift\nÇip: A14 Bionic\n5G: Evet\nGaranti: 1 Yıl';
+    } else {
+      return 'Detaylı özellikler için mağazamızı ziyaret edin.';
+    }
+  }
+
+  Widget _buildStoreInfo() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: InkWell(
+        onTap: () {
+          // Mock business data for the brand
+          final businessData = {
+            'id': widget.product.brand.hashCode,
+            'name': widget.product.brand,
+            'logo': widget.product.brand[0],
+            'rating': widget.product.rating.toString(),
+            'followers': '${(widget.product.reviewCount * 15).toString()}K',
+            'icon': Icons.store,
+            'distance': '500m',
+            'images': widget.product.images,
+          };
+          
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => BusinessDetailPage(business: businessData),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Row(
+            children: [
+              // Store Logo
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Center(
+                  child: Text(
+                    widget.product.brand[0],
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Store Name - Flexible with overflow handling
+              Flexible(
+                child: Text(
+                  widget.product.brand,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 6),
+              // Rating Badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.green,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  widget.product.rating.toStringAsFixed(1),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.verified, color: Colors.blue, size: 14),
+              const SizedBox(width: 4),
+              const Icon(Icons.arrow_forward_ios, size: 10, color: Colors.grey),
+              const Spacer(),
+              const Spacer(),
+              // Takip Et
+              OutlinedButton(
+                onPressed: () {
+                  setState(() {
+                    _isFollowing = !_isFollowing;
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(_isFollowing ? 'Mağaza takip edildi' : 'Takip bırakıldı'),
+                      duration: const Duration(seconds: 2),
+                      backgroundColor: _isFollowing ? Colors.green : Colors.grey[700],
+                    ),
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppColors.primary, width: 1),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  minimumSize: Size.zero,
+                ),
+                child: Text(
+                  _isFollowing ? 'Takiptesin' : 'Takip Et',
+                  style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600, fontSize: 11),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Satıcıya Sor
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ChatPage(
+                        seller: {
+                          'name': 'Arçelik',
+                          'logo': 'A',
+                        },
+                        product: {
+                          'name': widget.product.name,
+                          'image': widget.product.images.isNotEmpty ? widget.product.images[0] : null,
+                          'rating': '4.8',
+                        },
+                      ),
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  elevation: 0,
+                  minimumSize: Size.zero,
+                ),
+                child: const Text(
+                  'Satıcıya Sor',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductOptions() {
+    if (_variantOptions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Ürün Seçenekleri',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+          ),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: () => _showProductVariantsBottomSheet(),
+            child: _buildOptionCard(
+              icon: Icons.check_circle_outline,
+              title: 'Seç',
+              subtitle: _getSelectedVariantsText(),
+              trailing: Icons.arrow_forward_ios,
+              borderColor: AppColors.primary,
+              isLarge: true,
+            ),
+          ),
+          const SizedBox(height: 6),
+          GestureDetector(
+            onTap: () => _showDeliveryOptionsBottomSheet(),
+            child: _buildOptionCard(
+              icon: Icons.local_shipping,
+              title: 'KURYE TESLİMATI',
+              subtitle: _appState.hasFastDelivery(widget.product)
+                  ? 'Hızlı teslimat seçili'
+                  : 'Tahmini 4 Saate adresinde',
+              trailing: Icons.arrow_forward_ios,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _buildOptionCard(
+            icon: Icons.credit_card,
+            title: 'Ayda 325 TL den başlayan taksitle',
+            trailing: Icons.arrow_forward_ios,
+          ),
+          const SizedBox(height: 6),
+          _buildOptionCard(
+            icon: Icons.replay,
+            title: 'İptal ve iade Koşulları',
+            trailing: Icons.arrow_forward_ios,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOptionCard({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    required IconData trailing,
+    Color? borderColor,
+    bool isLarge = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: borderColor ?? Colors.grey[300]!),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: AppColors.primary, size: isLarge ? 22 : 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: isLarge ? 13 : 12,
+                    fontWeight: isLarge ? FontWeight.w700 : FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Icon(trailing, size: 14, color: Colors.grey[400]),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOtherStores() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Diğer Mağazalar',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+              ),
+              TextButton(
+                onPressed: () {},
+                child: const Text(
+                  'Tümünü Gör',
+                  style: TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 150,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _otherStores.length,
+            itemBuilder: (context, index) {
+              final store = _otherStores[index];
+              return Container(
+                width: 260,
+                margin: const EdgeInsets.only(right: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.grey[300]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Colors.orange[100],
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              store['logo'],
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          store['name'],
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: store['badgeColor'],
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            store['rating'],
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        const Spacer(),
+                        const Icon(Icons.verified, color: Colors.blue, size: 14),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      store['delivery'],
+                      style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const Spacer(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          store['price'],
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey[300]!),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: IconButton(
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                icon: const Icon(Icons.shopping_cart_outlined, size: 16),
+                                onPressed: () {},
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton(
+                              onPressed: () {},
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: AppColors.primary),
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                minimumSize: Size.zero,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              child: const Text(
+                                'Ürüne Git',
+                                style: TextStyle(color: AppColors.primary, fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAdditionalServices() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Ek Hizmetler',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.blue,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ÜRÜN MONTAJ',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  'Bizler Ürünün Kurulumunu Sizler Yerine yapıyoruz olası bir zarar verme durumunda ürünü yeniliyoruz.',
+                  style: TextStyle(color: Colors.white, fontSize: 11, height: 1.3),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              OutlinedButton(
+                onPressed: () {},
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.blue),
+                  backgroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                ),
+                child: const Text(
+                  'Ekle',
+                  style: TextStyle(color: Colors.blue, fontWeight: FontWeight.w600, fontSize: 12),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton(
+                onPressed: () {},
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[700],
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  elevation: 0,
+                ),
+                child: const Text(
+                  '100 TL',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12),
+                ),
+              ),
+              const Spacer(),
+              OutlinedButton.icon(
+                onPressed: () {},
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.blue),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                ),
+                icon: const Icon(Icons.search, color: Colors.blue, size: 16),
+                label: const Text(
+                  'İncele',
+                  style: TextStyle(color: Colors.blue, fontWeight: FontWeight.w600, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReviewsSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Değerlendirme ve Yorumlar',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Product Image
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Image.network(
+                  _getImages().first,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.image),
+                ),
+              ),
+              const SizedBox(width: 16),
+              // Rating bars
+              Expanded(
+                child: Column(
+                  children: [
+                    _buildRatingBar('5 Yıldız', 310, 0.7, Colors.amber),
+                    _buildRatingBar('4 Yıldız', 110, 0.4, Colors.amber),
+                    _buildRatingBar('3 Yıldız', 80, 0.25, Colors.amber),
+                    _buildRatingBar('2 Yıldız', 20, 0.1, Colors.amber),
+                    _buildRatingBar('1 Yıldız', 60, 0.2, Colors.amber),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              // Total reviews
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(5, (index) {
+                  final counts = [310, 110, 80, 20, 60];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: Text(
+                      counts[index].toString(),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  );
+                }),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Text(
+                '580 Kişi',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              const Text(
+                '5.0',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 4),
+              Row(
+                children: List.generate(5, (index) => const Icon(Icons.star, color: Colors.amber, size: 16)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ReviewsPage(),
+                  ),
+                );
+              },
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.primary),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              ),
+              child: const Text(
+                '312 Değerlendirme Tümünü Gör',
+                style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600, fontSize: 11),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildReviewCard(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRatingBar(String label, int count, double percentage, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 60,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 11, color: Colors.black87),
+            ),
+          ),
+          Expanded(
+            child: Stack(
+              children: [
+                Container(
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                FractionallySizedBox(
+                  widthFactor: percentage,
+                  child: Container(
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReviewCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Baran K***',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              Text(
+                '30/08/2023',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Muhteşem paketleme çok ilgili davranıldı , Ürün 8 saat sonra elime ulaştı İçerisinde Hediyelerle birlikte geldi . Tüm sorularıma anında yanıt aldım Herkese tavsşye ettiğim bir ürün İHİZ yaptıgı kurye özelliği ile ayrı bir boyut atmış ben çok memnun kaldım',
+            style: TextStyle(fontSize: 12, color: Colors.black87, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              // Sol: Rating ve chat
+              Row(
+                children: [
+                  const Text(
+                    '5.0',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 4),
+                  Row(
+                    children: List.generate(5, (index) => const Icon(Icons.star, color: Colors.amber, size: 13)),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey[300]!),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      icon: const Icon(Icons.chat_bubble_outline, size: 14, color: Colors.grey),
+                      onPressed: () {},
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              // Sağ: Ürün görseli ve sayısı
+              Row(
+                children: [
+                  Container(
+                    height: 50,
+                    width: 50,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey[300]!),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Image.network(
+                      _getImages().first,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) => const Icon(Icons.image, size: 20),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '(+5)',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600], fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.product.price,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'Kargo Bedava',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.green,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: AddToCartButton(
+                borderRadius: 20,
+                fontSize: 15,
+                showIcon: true,
+                iconSize: 20,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                onAddToCart: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Row(
+                        children: [
+                          Icon(Icons.check_circle, color: Colors.white, size: 20),
+                          SizedBox(width: 12),
+                          Text(
+                            'Ürün sepete eklendi',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                      duration: Duration(milliseconds: 500),
+                      backgroundColor: Colors.green,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+                onGoToCart: () {
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const HomeScreen(initialIndex: 3),
+                    ),
+                    (route) => false,
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showProductVariantsBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.75,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              children: [
+                // Handle bar
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                // Header with selected variant
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: Colors.grey[200]!, width: 1),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      // Product mini image
+                      Container(
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppColors.primary, width: 2),
+                        ),
+                        child: _getImages().isNotEmpty
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(
+                                  _getImages()[0],
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Icon(Icons.image, size: 30),
+                                ),
+                              )
+                            : const Icon(Icons.image, size: 30),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Seçili',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '$_selectedColor / $_selectedPower',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Content
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Color selection
+                        const Text(
+                          'Renk',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            _buildColorOption(
+                              'Siyah',
+                              'https://via.placeholder.com/200x300.png?text=Siyah',
+                              Colors.black,
+                              _selectedColor == 'Siyah',
+                              () {
+                                setModalState(() {
+                                  setState(() {
+                                    _selectedColor = 'Siyah';
+                                  });
+                                });
+                              },
+                            ),
+                            const SizedBox(width: 16),
+                            _buildColorOption(
+                              'Gri',
+                              'https://via.placeholder.com/200x300.png?text=Gri',
+                              Colors.grey,
+                              _selectedColor == 'Gri',
+                              () {
+                                setModalState(() {
+                                  setState(() {
+                                    _selectedColor = 'Gri';
+                                  });
+                                });
+                              },
+                            ),
+                            const SizedBox(width: 16),
+                            _buildColorOption(
+                              'Beyaz',
+                              'https://via.placeholder.com/200x300.png?text=Beyaz',
+                              Colors.white,
+                              _selectedColor == 'Beyaz',
+                              () {
+                                setModalState(() {
+                                  setState(() {
+                                    _selectedColor = 'Beyaz';
+                                  });
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 32),
+                        // Power/Watt selection
+                        const Text(
+                          'Güç',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            _buildPowerOption('3000W', _selectedPower == '3000W', () {
+                              setModalState(() {
+                                setState(() {
+                                  _selectedPower = '3000W';
+                                });
+                              });
+                            }),
+                            _buildPowerOption('2800W', _selectedPower == '2800W', () {
+                              setModalState(() {
+                                setState(() {
+                                  _selectedPower = '2800W';
+                                });
+                              });
+                            }),
+                            _buildPowerOption('2300W', _selectedPower == '2300W', () {
+                              setModalState(() {
+                                setState(() {
+                                  _selectedPower = '2300W';
+                                });
+                              });
+                            }),
+                            _buildPowerOption('1800W', _selectedPower == '1800W', () {
+                              setModalState(() {
+                                setState(() {
+                                  _selectedPower = '1800W';
+                                });
+                              });
+                            }),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Bottom action button
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, -3),
+                      ),
+                    ],
+                  ),
+                  child: SafeArea(
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('$_selectedColor / $_selectedPower seçildi'),
+                              duration: const Duration(seconds: 1),
+                              backgroundColor: AppColors.primary,
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          elevation: 0,
+                        ),
+                        child: const Text(
+                          'Seçimi Onayla',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showDeliveryOptionsBottomSheet() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DeliveryOptionsPage(product: widget.product),
+      ),
+    );
+  }
+
+  Widget _buildDeliveryInfoRow(
+    IconData icon,
+    String title,
+    String value, {
+    bool showInfoIcon = false,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            color: AppColors.primary,
+            size: 22,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  if (showInfoIcon) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.info_outline,
+                      size: 16,
+                      color: Colors.grey[500],
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildColorOption(
+    String label,
+    String imageUrl,
+    Color colorIndicator,
+    bool isSelected,
+    VoidCallback onTap,
+  ) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isSelected ? AppColors.primary : Colors.grey[300]!,
+              width: isSelected ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            children: [
+              // Product image
+              Container(
+                height: 100,
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(11)),
+                ),
+                child: Center(
+                  child: Image.network(
+                    imageUrl,
+                    height: 80,
+                    errorBuilder: (context, error, stackTrace) =>
+                        const Icon(Icons.image, size: 40, color: Colors.grey),
+                  ),
+                ),
+              ),
+              // Color indicator and label
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: isSelected ? AppColors.primary : Colors.white,
+                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(11)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: colorIndicator,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: colorIndicator == Colors.white
+                              ? Colors.grey[400]!
+                              : colorIndicator,
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPowerOption(String power, bool isSelected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : Colors.grey[300]!,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Text(
+          power,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: isSelected ? Colors.white : Colors.black87,
+          ),
+        ),
+      ),
+    );
+  }
+}
