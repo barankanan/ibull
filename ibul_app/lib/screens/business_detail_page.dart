@@ -34,6 +34,8 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   final GlobalKey _flashProductsKey = GlobalKey();
   final GlobalKey _campaignsKey = GlobalKey();
   final GlobalKey _allProductsKey = GlobalKey();
+  
+  String _activeWebTab = 'Ana Sayfa'; // Web tab state
 
   late List<String> _categories;
   late List<Product> _allProducts;
@@ -627,21 +629,42 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                   height: 60,
                   child: Row(
                     children: [
-                      _buildWebNavLink('Keşfet', false),
-                      _buildWebNavLink('Ana Sayfa', true, onTap: () {
+                      _buildWebNavLink('Keşfet', _activeWebTab == 'Keşfet'),
+                      _buildWebNavLink('Ana Sayfa', _activeWebTab == 'Ana Sayfa', onTap: () {
+                        setState(() => _activeWebTab = 'Ana Sayfa');
                         _webScrollController.animateTo(0, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
                       }),
-                      _buildWebNavLink('Tüm Ürünler', false, onTap: () {
+                      _buildWebNavLink('Tüm Ürünler', _activeWebTab == 'Tüm Ürünler', onTap: () {
+                        setState(() => _activeWebTab = 'Tüm Ürünler');
                         if (_allProductsKey.currentContext != null) {
-                          Scrollable.ensureVisible(_allProductsKey.currentContext!, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+                          Scrollable.ensureVisible(
+                            _allProductsKey.currentContext!, 
+                            duration: const Duration(milliseconds: 500), 
+                            curve: Curves.easeInOut,
+                            alignment: 0.0, // Scroll to top of the widget
+                          );
+                        } else {
+                           // Fallback: Scroll to a rough estimate if key context is missing (rare)
+                           // Assuming 'Tüm Ürünler' is near the bottom
+                           _webScrollController.animateTo(
+                             _webScrollController.position.maxScrollExtent,
+                             duration: const Duration(milliseconds: 500),
+                             curve: Curves.easeInOut
+                           );
                         }
                       }),
-                      _buildWebNavLink('Fırsat Ürünleri', false, onTap: () {
+                      _buildWebNavLink('Fırsat Ürünleri', _activeWebTab == 'Fırsat Ürünleri', onTap: () {
+                        setState(() => _activeWebTab = 'Fırsat Ürünleri');
                         if (_flashProductsKey.currentContext != null) {
-                          Scrollable.ensureVisible(_flashProductsKey.currentContext!, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+                          Scrollable.ensureVisible(
+                            _flashProductsKey.currentContext!, 
+                            duration: const Duration(milliseconds: 500), 
+                            curve: Curves.easeInOut,
+                            alignment: 0.0,
+                          );
                         }
                       }),
-                      _buildWebNavLink('Satıcı', false),
+                      _buildWebNavLink('Satıcı', _activeWebTab == 'Satıcı'),
                       const Spacer(),
                       // Search Bar
                       Container(
