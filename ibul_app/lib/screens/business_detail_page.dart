@@ -636,33 +636,29 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                       }),
                       _buildWebNavLink('Tüm Ürünler', _activeWebTab == 'Tüm Ürünler', onTap: () {
                         setState(() => _activeWebTab = 'Tüm Ürünler');
-                        if (_allProductsKey.currentContext != null) {
-                          Scrollable.ensureVisible(
-                            _allProductsKey.currentContext!, 
-                            duration: const Duration(milliseconds: 500), 
-                            curve: Curves.easeInOut,
-                            alignment: 0.0, // Scroll to top of the widget
-                          );
-                        } else {
-                           // Fallback: Scroll to a rough estimate if key context is missing (rare)
-                           // Assuming 'Tüm Ürünler' is near the bottom
-                           _webScrollController.animateTo(
-                             _webScrollController.position.maxScrollExtent,
-                             duration: const Duration(milliseconds: 500),
-                             curve: Curves.easeInOut
-                           );
-                        }
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (_allProductsKey.currentContext != null) {
+                            Scrollable.ensureVisible(
+                              _allProductsKey.currentContext!, 
+                              duration: const Duration(milliseconds: 500), 
+                              curve: Curves.easeInOut,
+                              alignment: 0.0,
+                            );
+                          }
+                        });
                       }),
                       _buildWebNavLink('Fırsat Ürünleri', _activeWebTab == 'Fırsat Ürünleri', onTap: () {
                         setState(() => _activeWebTab = 'Fırsat Ürünleri');
-                        if (_flashProductsKey.currentContext != null) {
-                          Scrollable.ensureVisible(
-                            _flashProductsKey.currentContext!, 
-                            duration: const Duration(milliseconds: 500), 
-                            curve: Curves.easeInOut,
-                            alignment: 0.0,
-                          );
-                        }
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (_flashProductsKey.currentContext != null) {
+                            Scrollable.ensureVisible(
+                              _flashProductsKey.currentContext!, 
+                              duration: const Duration(milliseconds: 500), 
+                              curve: Curves.easeInOut,
+                              alignment: 0.0,
+                            );
+                          }
+                        });
                       }),
                       _buildWebNavLink('Satıcı', _activeWebTab == 'Satıcı'),
                       const Spacer(),
@@ -906,20 +902,24 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   }
 
   Widget _buildWebNavLink(String title, bool isActive, {VoidCallback? onTap}) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 32),
-        padding: const EdgeInsets.symmetric(vertical: 18),
-        decoration: BoxDecoration(
-          border: isActive ? const Border(bottom: BorderSide(color: Color(0xFFF27A1A), width: 3)) : null,
-        ),
-        child: Text(
-          title,
-          style: TextStyle(
-            color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
-            fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-            fontSize: 15,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          margin: const EdgeInsets.only(right: 32),
+          padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
+          decoration: BoxDecoration(
+            border: isActive ? const Border(bottom: BorderSide(color: Color(0xFFF27A1A), width: 3)) : null,
+          ),
+          child: Text(
+            title,
+            style: TextStyle(
+              color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
+              fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+              fontSize: 15,
+            ),
           ),
         ),
       ),
