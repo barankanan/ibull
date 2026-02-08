@@ -8,6 +8,7 @@ import 'package:ibul_app/l10n/arb/app_localizations.dart';
 import 'core/app_state.dart';
 import 'core/constants.dart';
 import 'screens/home_screen.dart';
+import 'screens/map_page.dart';
 import 'screens/product_image_test_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
@@ -84,6 +85,9 @@ class MyApp extends StatelessWidget {
       ),
       // Wrap HomeScreen so we can detect hot reload and show status
       home: const HomeWrapper(),
+      routes: {
+        '/map': (context) => const MapPage(),
+      },
     );
   }
 }

@@ -161,7 +161,7 @@ class _ProductCardState extends State<ProductCard> {
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: AspectRatio(
-            aspectRatio: 1.0,
+            aspectRatio: 1.25, // Görsel yüksekliği azaltıldı (1.0 -> 1.25)
             child: Container(
               color: Colors.grey[100],
               child: widget.product.images.isNotEmpty && widget.product.images.first.isNotEmpty

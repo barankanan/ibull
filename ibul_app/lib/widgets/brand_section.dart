@@ -13,7 +13,12 @@ class BrandSection extends StatelessWidget {
     required this.brandData,
     required this.selectedBrand,
     required this.onBrandSelected,
+    required this.brands,
+    required this.title,
   });
+
+  final List<String> brands;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
@@ -27,15 +32,15 @@ class BrandSection extends StatelessWidget {
         _buildBrandSelector(),
         const SizedBox(height: 16),
         if (selectedData != null)
-           _buildBrandBannerSlider(selectedData['adUrl']),
+           _buildBrandBannerSlider(selectedData['adUrls']),
         const SizedBox(height: 16),
         _buildProductList(selectedData),
       ],
     );
   }
 
-  Widget _buildBrandBannerSlider(String? adUrl) {
-    if (adUrl == null) return const SizedBox.shrink();
+  Widget _buildBrandBannerSlider(List<dynamic>? adUrls) {
+    if (adUrls == null || adUrls.isEmpty) return const SizedBox.shrink();
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -71,7 +76,7 @@ class BrandSection extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Text(
-        'Bakımlı Saçlar',
+        title,
         style: TextStyle(
           fontSize: 18,
           fontWeight: FontWeight.bold,
@@ -82,7 +87,6 @@ class BrandSection extends StatelessWidget {
   }
 
   Widget _buildBrandSelector() {
-    final brands = brandData.keys.toList();
     return SizedBox(
       height: 90,
       child: ListView.builder(
