@@ -690,8 +690,11 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
               ),
             ),
             
-            // 3. Main Content with Sidebar
-            Center(
+            // 3. Main Content
+            if (_activeWebTab == 'Satıcı')
+              _buildWebSellerTab()
+            else
+              Center(
               child: Container(
                 constraints: const BoxConstraints(maxWidth: 1200),
                 padding: const EdgeInsets.all(24),
@@ -976,6 +979,332 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
     return List.generate(count, (index) {
       return 'assets/images/banners/$prefix-duyuru-${index + 1}.png';
     });
+  }
+
+  // WEB SELLER TAB
+  Widget _buildWebSellerTab() {
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 1200),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top Stats Row
+            Row(
+              children: [
+                Expanded(
+                  child: _buildSellerStatCard(
+                    icon: Icons.calendar_today,
+                    title: "Trendyol'daki Süresi",
+                    value: "1 Yıl",
+                    color: const Color(0xFFFFF1E6),
+                    iconColor: const Color(0xFFF27A1A),
+                  ),
+                ),
+                const SizedBox(width: 24),
+                Expanded(
+                  child: _buildSellerStatCard(
+                    icon: Icons.location_on,
+                    title: "Konum",
+                    value: "İstanbul",
+                    color: Colors.white,
+                    borderColor: Colors.grey.shade200,
+                    iconColor: const Color(0xFFF27A1A),
+                  ),
+                ),
+                const SizedBox(width: 24),
+                Expanded(
+                  child: _buildSellerStatCard(
+                    icon: Icons.receipt_long,
+                    title: "Kurumsal Fatura",
+                    value: "Uygun",
+                    color: Colors.white,
+                    borderColor: Colors.grey.shade200,
+                    iconColor: const Color(0xFFF27A1A),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            
+            // Middle Stats Row
+            Row(
+              children: [
+                Expanded(
+                  child: _buildSellerStatCard(
+                    icon: Icons.local_shipping_outlined,
+                    title: "Ortalama Kargolama Süresi",
+                    value: "17 Saat",
+                    color: Colors.white,
+                    borderColor: Colors.grey.shade200,
+                    iconColor: Colors.grey.shade700,
+                    showInfoIcon: true,
+                  ),
+                ),
+                const SizedBox(width: 24),
+                Expanded(
+                  child: _buildSellerStatCard(
+                    icon: Icons.chat_bubble_outline,
+                    title: "Soru Cevaplama Süresi",
+                    value: "1-2 Saat",
+                    color: Colors.white,
+                    borderColor: Colors.grey.shade200,
+                    iconColor: Colors.grey.shade700,
+                    showInfoIcon: true,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 40),
+
+            // Review Tabs
+            Container(
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: Row(
+                children: [
+                  _buildReviewTabItem("Ürün Değerlendirmeleri", true),
+                  const SizedBox(width: 32),
+                  _buildReviewTabItem("Satıcı Değerlendirmeleri", false),
+                ],
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // Rating Summary
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      "4.4",
+                      style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Row(
+                      children: List.generate(5, (index) {
+                        if (index < 4) {
+                          return const Icon(Icons.star, color: Color(0xFFFFC107), size: 28);
+                        } else {
+                          return const Icon(Icons.star_half, color: Color(0xFFFFC107), size: 28);
+                        }
+                      }),
+                    ),
+                    const SizedBox(width: 16),
+                    const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.info_outline, color: Colors.grey, size: 20),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Text("1062767 Değerlendirme", style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Text("•", style: TextStyle(color: Colors.grey.shade400)),
+                    ),
+                    Text("295101 Yorum", style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                    const SizedBox(width: 16),
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: Colors.grey.shade500),
+                        const SizedBox(width: 4),
+                        Text("Yorum Yayınlama Kriterleri", style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+                      ],
+                    )
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+
+            // Rating Filters
+            const Text(
+              "Puana Göre Filtrele",
+              style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 40,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  _buildRatingFilterChip(5, "203.5B"),
+                  _buildRatingFilterChip(4, "37B"),
+                  _buildRatingFilterChip(3, "22.1B"),
+                  _buildRatingFilterChip(2, "9749"),
+                  _buildRatingFilterChip(1, "22.9B"),
+                ],
+              ),
+            ),
+            const SizedBox(height: 40),
+
+            // Photo Reviews
+            const Text(
+              "Fotoğraflı Değerlendirmeler",
+              style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 100,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: 8,
+                itemBuilder: (context, index) {
+                  return Container(
+                    width: 100,
+                    margin: const EdgeInsets.only(right: 12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      color: Colors.grey.shade200,
+                      image: const DecorationImage(
+                        image: NetworkImage("https://picsum.photos/200"), // Placeholder
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 40),
+            
+            // Review List
+            _buildReviewsList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSellerStatCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    required Color color,
+    Color? borderColor,
+    required Color iconColor,
+    bool showInfoIcon = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(8),
+        border: borderColor != null ? Border.all(color: borderColor) : null,
+        boxShadow: [
+          if (borderColor == null)
+            BoxShadow(
+              color: Colors.black.withOpacity(0.02),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: iconColor, size: 28),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    if (showInfoIcon) ...[
+                      const SizedBox(width: 4),
+                      Icon(Icons.info_outline, size: 14, color: Colors.grey.shade400),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReviewTabItem(String title, bool isActive) {
+    return Container(
+      padding: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: isActive ? const Color(0xFFF27A1A) : Colors.transparent,
+            width: 3,
+          ),
+        ),
+      ),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: isActive ? FontWeight.bold : FontWeight.w600,
+          color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRatingFilterChip(int stars, String count) {
+    return Container(
+      margin: const EdgeInsets.only(right: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(4),
+        color: Colors.white,
+      ),
+      child: Row(
+        children: [
+          Row(
+            children: List.generate(5, (index) {
+              return Icon(
+                Icons.star,
+                size: 14,
+                color: index < stars ? const Color(0xFFFFC107) : Colors.grey.shade300,
+              );
+            }),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            "($count)",
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
+        ],
+      ),
+    );
   }
 
   // ANA SAYFA TAB
