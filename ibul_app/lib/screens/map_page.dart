@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui'; // ScrollBehavior için gerekli
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -1126,16 +1127,24 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                     Expanded(
                       child: SizedBox(
                         height: 48,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: _filteredBusinessIndices.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 10),
-                          itemBuilder: (context, i) {
-                            final index = _filteredBusinessIndices[i];
-                            final business = _businesses[index];
-                            final isSelected = index == _selectedBusinessIndex;
-                            return _buildCompactBusinessCard(business, index, isSelected);
-                          },
+                        child: ScrollConfiguration(
+                          behavior: ScrollConfiguration.of(context).copyWith(
+                            dragDevices: {
+                              PointerDeviceKind.touch,
+                              PointerDeviceKind.mouse,
+                            },
+                          ),
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _filteredBusinessIndices.length,
+                            separatorBuilder: (_, __) => const SizedBox(width: 10),
+                            itemBuilder: (context, i) {
+                              final index = _filteredBusinessIndices[i];
+                              final business = _businesses[index];
+                              final isSelected = index == _selectedBusinessIndex;
+                              return _buildCompactBusinessCard(business, index, isSelected);
+                            },
+                          ),
                         ),
                       ),
                     ),

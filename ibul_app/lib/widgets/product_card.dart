@@ -164,11 +164,13 @@ class _ProductCardState extends State<ProductCard> {
             aspectRatio: 1.25, // Görsel yüksekliği azaltıldı (1.0 -> 1.25)
             child: Container(
               color: Colors.grey[100],
+              alignment: Alignment.center,
               child: widget.product.images.isNotEmpty && widget.product.images.first.isNotEmpty
                   ? (widget.product.images.first.startsWith('http')
                       ? Image.network(
                           widget.product.images.first,
                           fit: BoxFit.contain,
+                          width: double.infinity,
                           cacheWidth: 200,
                           cacheHeight: 200,
                           filterQuality: FilterQuality.medium,
@@ -181,6 +183,7 @@ class _ProductCardState extends State<ProductCard> {
                       : Image.asset(
                           widget.product.images.first,
                           fit: BoxFit.contain,
+                          width: double.infinity,
                           cacheWidth: 200,
                           cacheHeight: 200,
                           filterQuality: FilterQuality.medium,
@@ -250,11 +253,13 @@ class _ProductCardState extends State<ProductCard> {
             aspectRatio: 1.0,
             child: Container(
               color: Colors.grey[100],
+              alignment: Alignment.center,
               child: widget.product.images.isNotEmpty && widget.product.images.first.isNotEmpty
                   ? (widget.product.images.first.startsWith('http')
                       ? Image.network(
                           widget.product.images.first,
                           fit: BoxFit.contain,
+                          width: double.infinity,
                           cacheWidth: 200,
                           cacheHeight: 200,
                           filterQuality: FilterQuality.medium,
@@ -266,6 +271,7 @@ class _ProductCardState extends State<ProductCard> {
                       : Image.asset(
                           widget.product.images.first,
                           fit: BoxFit.contain,
+                          width: double.infinity,
                           cacheWidth: 200,
                           cacheHeight: 200,
                           filterQuality: FilterQuality.medium,

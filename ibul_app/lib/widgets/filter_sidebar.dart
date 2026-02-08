@@ -2,13 +2,23 @@ import 'package:flutter/material.dart';
 import '../core/constants.dart';
 
 class FilterSidebar extends StatefulWidget {
-  final Map<String, List<String>> filters;
-  final Function(String category, String option, bool isSelected) onFilterChanged;
+  final Map<String, List<String>>? filters; // Opsiyonel yapıldı
+  final List<String>? categories; // Kategoriler eklendi
+  final int selectedCategoryIndex; // Seçili kategori indexi
+  final Function(int index)? onCategorySelected; // Kategori seçimi callback
+  final RangeValues? priceRange; // Fiyat aralığı
+  final Function(RangeValues range)? onPriceRangeChanged; // Fiyat değişimi callback
+  final Function(String category, String option, bool isSelected)? onFilterChanged; // Filtre değişimi callback
 
   const FilterSidebar({
     super.key,
-    required this.filters,
-    required this.onFilterChanged,
+    this.filters,
+    this.categories,
+    this.selectedCategoryIndex = 0,
+    this.onCategorySelected,
+    this.priceRange,
+    this.onPriceRangeChanged,
+    this.onFilterChanged,
   });
 
   @override
@@ -29,9 +39,14 @@ class _FilterSidebarState extends State<FilterSidebar> {
   void initState() {
     super.initState();
     // Initialize all sections as expanded by default
-    for (var key in widget.filters.keys) {
-      _expandedSections[key] = true;
+    if (widget.filters != null) {
+      for (var key in widget.filters!.keys) {
+        _expandedSections[key] = true;
+      }
     }
+    // Kategori ve Fiyat bölümleri de açık olsun
+    _expandedSections['İlgili Kategoriler'] = true;
+    _expandedSections['Fiyat Aralığı'] = true;
   }
   
   @override
@@ -60,7 +75,9 @@ class _FilterSidebarState extends State<FilterSidebar> {
       }
     });
     
-    widget.onFilterChanged(category, option, value ?? false);
+    if (widget.onFilterChanged != null) {
+      widget.onFilterChanged!(category, option, value ?? false);
+    }
   }
 
   @override
@@ -118,62 +135,98 @@ class _FilterSidebarState extends State<FilterSidebar> {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(), // Let parent scroll
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            children: widget.filters.entries.map((entry) {
-              return _buildFilterSection(entry.key, entry.value);
-            }).toList(),
+            children: [
+              if (widget.categories != null) _buildCategorySection(),
+              if (widget.priceRange != null) _buildPriceSection(),
+              if (widget.filters != null) 
+                ...widget.filters!.entries.map((entry) {
+                  return _buildFilterSection(entry.key, entry.value);
+                }),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildFilterSection(String title, List<String> options) {
+  Widget _buildCategorySection() {
+    final title = 'İlgili Kategoriler';
     final isExpanded = _expandedSections[title] ?? true;
-    
-    // Special handling for Switch options
-    if (title == 'Fotoğraflı Yorumlar' || title == 'Videolu Ürünler' || title == 'Kampanyalı Ürünler' || title == 'Kuponlu Ürünler') {
-      final option = options.isNotEmpty ? options.first : title; 
-      final isSelected = _selectedOptions[title]?.contains(option) ?? false;
-      
-      return Column(
-        children: [
-          InkWell(
-            onTap: () => _toggleOption(title, option, !isSelected),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 4),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    title, 
-                    style: const TextStyle(
-                      fontSize: 13, 
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF333333),
-                    ),
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => _toggleSection(title),
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  title, 
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold, 
+                    fontSize: 14,
+                    color: Color(0xFF333333),
                   ),
-                  Transform.scale(
-                    scale: 0.8,
-                    child: Switch(
-                      value: isSelected,
-                      onChanged: (v) => _toggleOption(title, option, v),
-                      activeColor: AppColors.primary,
-                      activeTrackColor: AppColors.primary.withOpacity(0.3),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+                Icon(
+                  isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, 
+                  size: 20, 
+                  color: Colors.grey[600],
+                ),
+              ],
             ),
           ),
-          const Divider(height: 1, color: Color(0xFFEEEEEE)),
-        ],
-      );
-    }
+        ),
+        if (isExpanded && widget.categories != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: List.generate(widget.categories!.length, (index) {
+                final category = widget.categories![index];
+                final isSelected = widget.selectedCategoryIndex == index;
+                
+                return InkWell(
+                  onTap: () {
+                    if (widget.onCategorySelected != null) {
+                      widget.onCategorySelected!(index);
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: isSelected ? AppColors.primary.withOpacity(0.1) : null,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      category,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isSelected ? AppColors.primary : Colors.grey[800],
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+        const Divider(height: 1, color: Color(0xFFEEEEEE)),
+      ],
+    );
+  }
 
-    // Special handling for Price
-    if (title.contains('Fiyat')) {
-      return Column(
+  Widget _buildPriceSection() {
+    final title = 'Fiyat Aralığı';
+    final isExpanded = _expandedSections[title] ?? true;
+    
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
@@ -271,6 +324,9 @@ class _FilterSidebarState extends State<FilterSidebar> {
                       icon: const Icon(Icons.search, size: 20, color: Colors.white),
                       onPressed: () {
                         // Apply price filter
+                        if (widget.onPriceRangeChanged != null) {
+                           // Logic to parse and call callback
+                        }
                       },
                       padding: EdgeInsets.zero,
                     ),
@@ -278,6 +334,50 @@ class _FilterSidebarState extends State<FilterSidebar> {
                 ],
               ),
             ),
+          const Divider(height: 1, color: Color(0xFFEEEEEE)),
+        ],
+      );
+  }
+
+  Widget _buildFilterSection(String title, List<String> options) {
+    final isExpanded = _expandedSections[title] ?? true;
+    
+    // Special handling for Switch options
+    if (title == 'Fotoğraflı Yorumlar' || title == 'Videolu Ürünler' || title == 'Kampanyalı Ürünler' || title == 'Kuponlu Ürünler') {
+      final option = options.isNotEmpty ? options.first : title; 
+      final isSelected = _selectedOptions[title]?.contains(option) ?? false;
+      
+      return Column(
+        children: [
+          InkWell(
+            onTap: () => _toggleOption(title, option, !isSelected),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    title, 
+                    style: const TextStyle(
+                      fontSize: 13, 
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF333333),
+                    ),
+                  ),
+                  Transform.scale(
+                    scale: 0.8,
+                    child: Switch(
+                      value: isSelected,
+                      onChanged: (v) => _toggleOption(title, option, v),
+                      activeColor: AppColors.primary,
+                      activeTrackColor: AppColors.primary.withOpacity(0.3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           const Divider(height: 1, color: Color(0xFFEEEEEE)),
         ],
       );
@@ -294,20 +394,20 @@ class _FilterSidebarState extends State<FilterSidebar> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                  Text(
-                    title, 
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold, 
-                      fontSize: 14,
-                      color: Color(0xFF333333),
-                    ),
+                Text(
+                  title, 
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold, 
+                    fontSize: 14,
+                    color: Color(0xFF333333),
                   ),
-                  Icon(
-                    isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, 
-                    size: 20, 
-                    color: Colors.grey[600],
-                  ),
-                ],
+                ),
+                Icon(
+                  isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, 
+                  size: 20, 
+                  color: Colors.grey[600],
+                ),
+              ],
             ),
           ),
         ),
