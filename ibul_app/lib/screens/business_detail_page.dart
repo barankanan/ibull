@@ -697,6 +697,8 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
             // 3. Main Content
             if (_activeWebTab == 'Satıcı')
               _buildWebSellerTab()
+            else if (_activeWebTab == 'Tüm Ürünler')
+              _buildWebAllProductsTab()
             else
               Center(
               child: Container(
@@ -985,6 +987,391 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
     return List.generate(count, (index) {
       return 'assets/images/banners/$prefix-duyuru-${index + 1}.png';
     });
+  }
+
+  // WEB ALL PRODUCTS TAB (NEW)
+  Widget _buildWebAllProductsTab() {
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 1200),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Left Sidebar (Detailed Filters)
+            SizedBox(
+              width: 240,
+              child: _buildDetailedFilterSidebar(),
+            ),
+            const SizedBox(width: 24),
+            
+            // Main Content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header Row: Store Name & Count
+                  Row(
+                    children: [
+                      Text(
+                        widget.business['name']?.toString().toUpperCase() ?? 'MAĞAZA',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        "${_allProducts.length}+ Ürün",
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Quick Filter Chips Row
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildQuickFilterChip("Flaş Ürünler", icon: Icons.flash_on, color: const Color(0xFFFFE0E0), textColor: const Color(0xFFD32F2F)),
+                        _buildQuickFilterChip("Yüksek Puanlı Ürünler", icon: Icons.star, color: const Color(0xFFFFF8E1), textColor: const Color(0xFFFFA000)),
+                        _buildQuickFilterChip("Hızlı Teslimat", icon: Icons.local_shipping, color: const Color(0xFFE8F5E9), textColor: const Color(0xFF388E3C)),
+                        _buildQuickFilterChip("Kuponlu Ürünler", icon: Icons.confirmation_number, color: const Color(0xFFFCE4EC), textColor: const Color(0xFFC2185B)),
+                        _buildQuickFilterChip("Çok Al Az Öde", icon: Icons.discount, color: const Color(0xFFFFF3E0), textColor: const Color(0xFFF57C00)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Sort Dropdown Row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(4),
+                          color: Colors.white,
+                        ),
+                        child: const Row(
+                          children: [
+                            Text(
+                              "Önerilen Sıralama",
+                              style: TextStyle(fontSize: 13, color: Colors.black87),
+                            ),
+                            SizedBox(width: 8),
+                            Icon(Icons.swap_vert, size: 18, color: Colors.grey),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Product Grid
+                  _buildDetailedProductGrid(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailedFilterSidebar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildFilterExpansionTile("Kategori", ["Elbise", "Tişört", "Pantolon", "Gömlek"]),
+          _buildFilterExpansionTile("Marka", ["TrendyolMilla", "Zara", "Mango", "H&M"]),
+          _buildFilterExpansionTile("Beden", ["XS", "S", "M", "L", "XL"]),
+          _buildFilterExpansionTile("Avantajlı Ürünler", ["Flaş İndirim", "Kuponlu"]),
+          _buildFilterExpansionTile("Renk", ["Siyah", "Beyaz", "Kırmızı", "Mavi"]),
+          _buildFilterExpansionTile("Cinsiyet", ["Kadın", "Erkek"]),
+          _buildFilterExpansionTile("Fiyat", ["0-100 TL", "100-250 TL", "250-500 TL"]),
+          _buildFilterExpansionTile("Fiyat Geçmişi", ["Son 30 Gün En Düşük"]),
+          // Toggle Switch Item
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("9 Puan Üzeri Satıcılar", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                SizedBox(
+                  height: 24,
+                  child: Switch(value: false, onChanged: (val) {}, activeColor: const Color(0xFFF27A1A)),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          _buildFilterExpansionTile("Sürdürülebilirlik Detayı", []),
+          _buildFilterExpansionTile("Materyal", ["Pamuk", "Polyester"]),
+          _buildFilterExpansionTile("Desen", ["Düz", "Çiçekli", "Çizgili"]),
+          _buildFilterExpansionTile("Ortam", ["Günlük", "Ofis", "Parti"]),
+          _buildFilterExpansionTile("Kumaş Tipi", ["Örme", "Dokuma"]),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterExpansionTile(String title, List<String> children) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        title: Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black87)),
+        children: children.map((c) => Padding(
+          padding: const EdgeInsets.only(bottom: 8.0, left: 8.0),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: Checkbox(value: false, onChanged: (v) {}, activeColor: const Color(0xFFF27A1A)),
+              ),
+              const SizedBox(width: 8),
+              Text(c, style: const TextStyle(fontSize: 13)),
+            ],
+          ),
+        )).toList(),
+      ),
+    );
+  }
+
+  Widget _buildQuickFilterChip(String label, {required IconData icon, required Color color, required Color textColor}) {
+    return Container(
+      margin: const EdgeInsets.only(right: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color, // Light background
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: textColor),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: textColor),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailedProductGrid() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        childAspectRatio: 0.52, // Taller cards
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+      ),
+      itemCount: _allProducts.isEmpty ? 8 : _allProducts.length, // Dummy count if empty
+      itemBuilder: (context, index) {
+        if (_allProducts.isEmpty) return _buildDummyDetailedCard(index);
+        return _buildDetailedProductCard(_allProducts[index], index);
+      },
+    );
+  }
+
+  Widget _buildDetailedProductCard(Product product, int index) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Image Area with Badges
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                child: AspectRatio(
+                  aspectRatio: 0.8,
+                  child: Container(
+                    color: Colors.grey.shade50,
+                    child: product.images.isNotEmpty 
+                      ? Image.asset(product.images.first, fit: BoxFit.cover)
+                      : const Icon(Icons.image, size: 40, color: Colors.grey),
+                  ),
+                ),
+              ),
+              // Top Badges
+              if (index % 3 == 0)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF8E44AD), // Purple badge
+                      borderRadius: BorderRadius.only(topLeft: Radius.circular(8), bottomRight: Radius.circular(8)),
+                    ),
+                    child: const Text("AVANTAJLI\nÜRÜN", style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                  ),
+                ),
+              if (index % 3 == 1)
+                 Positioned(
+                  top: 10,
+                  left: 10,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF27A1A), // Orange circle badge
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Text("EN ÇOK\nSATAN", style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                  ),
+                ),
+              // Heart Icon
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                  ),
+                  child: const Icon(Icons.favorite_border, size: 18, color: Colors.black54),
+                ),
+              ),
+              // Bottom Yellow Bar
+              if (index < 3)
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    color: const Color(0xFFFFC107), // Amber
+                    alignment: Alignment.center,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.emoji_events, size: 12, color: Colors.white),
+                        const SizedBox(width: 4),
+                        Text(
+                          index == 0 ? "En Çok Ziyaret Edilen 1. Ürün" : "En Çok Satan ${index+1}. Ürün",
+                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          
+          // Info Area
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                RichText(
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  text: TextSpan(
+                    style: const TextStyle(fontSize: 13, color: Colors.black87),
+                    children: [
+                      TextSpan(text: "${product.brand} ", style: const TextStyle(fontWeight: FontWeight.bold)),
+                      TextSpan(text: product.name),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Delivery Info
+                Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(color: Color(0xFFF27A1A), shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        "24 saatte ${(index + 1) * 120} kişi inceledi!",
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Rating
+                Row(
+                  children: [
+                    Text("${product.rating}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 4),
+                    Row(
+                      children: List.generate(5, (i) => Icon(
+                        Icons.star, 
+                        size: 10, 
+                        color: i < product.rating.floor() ? Colors.amber : Colors.grey.shade300
+                      )),
+                    ),
+                    const SizedBox(width: 4),
+                    Text("(${product.reviewCount})", style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                    const Spacer(),
+                    const Icon(Icons.camera_alt, size: 14, color: Colors.grey),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // Price
+                Text(
+                  product.price,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFF27A1A)),
+                ),
+                if (index % 2 == 0) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(color: const Color(0xFFFFF3E0), borderRadius: BorderRadius.circular(2)),
+                    child: const Text("Çok Al Az Öde", style: TextStyle(fontSize: 9, color: Color(0xFFF57C00), fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Dummy Card Builder for empty states or loading
+  Widget _buildDummyDetailedCard(int index) {
+    return Container(
+       decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      // ... similar structure with placeholders
+    );
   }
 
   // WEB SELLER TAB
