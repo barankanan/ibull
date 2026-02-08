@@ -636,7 +636,8 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                       }),
                       _buildWebNavLink('Tüm Ürünler', _activeWebTab == 'Tüm Ürünler', onTap: () {
                         setState(() => _activeWebTab = 'Tüm Ürünler');
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                        // Wait for layout to settle if switching tabs
+                        Future.delayed(const Duration(milliseconds: 100), () {
                           if (_allProductsKey.currentContext != null) {
                             Scrollable.ensureVisible(
                               _allProductsKey.currentContext!, 
@@ -649,7 +650,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                       }),
                       _buildWebNavLink('Fırsat Ürünleri', _activeWebTab == 'Fırsat Ürünleri', onTap: () {
                         setState(() => _activeWebTab = 'Fırsat Ürünleri');
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                        Future.delayed(const Duration(milliseconds: 100), () {
                           if (_flashProductsKey.currentContext != null) {
                             Scrollable.ensureVisible(
                               _flashProductsKey.currentContext!, 
@@ -660,7 +661,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                           }
                         });
                       }),
-                      _buildWebNavLink('Satıcı', _activeWebTab == 'Satıcı'),
+                      _buildWebNavLink('Satıcı', _activeWebTab == 'Satıcı', onTap: () {
+                         setState(() => _activeWebTab = 'Satıcı');
+                         _webScrollController.animateTo(0, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+                      }),
                       const Spacer(),
                       // Search Bar
                       Container(
@@ -905,23 +909,25 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   }
 
   Widget _buildWebNavLink(String title, bool isActive, {VoidCallback? onTap}) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          margin: const EdgeInsets.only(right: 32),
-          padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
-          decoration: BoxDecoration(
-            border: isActive ? const Border(bottom: BorderSide(color: Color(0xFFF27A1A), width: 3)) : null,
-          ),
-          child: Text(
-            title,
-            style: TextStyle(
-              color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-              fontSize: 15,
+    return Padding(
+      padding: const EdgeInsets.only(right: 32),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
+            decoration: BoxDecoration(
+              border: isActive ? const Border(bottom: BorderSide(color: Color(0xFFF27A1A), width: 3)) : null,
+            ),
+            child: Text(
+              title,
+              style: TextStyle(
+                color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+                fontSize: 15,
+              ),
             ),
           ),
         ),
