@@ -609,180 +609,191 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFFAFAFA),
       body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Alışveriş Sepetim ($totalItems Ürün)',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ),
-                  if (_appState.cart.isNotEmpty)
-                    TextButton(
-                      onPressed: _clearCart,
-                      child: const Text(
-                        'Sepeti Boşalt',
-                        style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            // Tabs
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: TabBar(
-                controller: _tabController,
-                labelColor: Colors.white,
-                unselectedLabelColor: AppColors.primary,
-                indicator: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                indicatorSize: TabBarIndicatorSize.tab,
-                dividerColor: Colors.transparent,
-                labelStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-                padding: EdgeInsets.zero,
-                labelPadding: EdgeInsets.zero,
-                tabs: [
-                  Container(
-                    height: 32,
-                    alignment: Alignment.center,
-                    margin: const EdgeInsets.only(right: 6),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: AppColors.primary, width: 0.6),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Tab(text: 'Alışveriş'),
-                  ),
-                  Container(
-                    height: 32,
-                    alignment: Alignment.center,
-                    margin: const EdgeInsets.symmetric(horizontal: 6),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: AppColors.primary, width: 0.6),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Tab(text: 'Market'),
-                  ),
-                  Container(
-                    height: 32,
-                    alignment: Alignment.center,
-                    margin: const EdgeInsets.only(left: 6),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: AppColors.primary, width: 0.6),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Tab(text: 'Yemek'),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Content
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildShoppingCart(),
-                  _buildMarketCart(),
-                  _buildFoodCart(),
-                ],
-              ),
-            ),
-            // Bottom Summary
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.2),
-                    blurRadius: 10,
-                    offset: const Offset(0, -3),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          'Toplam',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey,
-                          ),
-                        ),
-                        Text(
-                          _formatPrice(totalPrice),
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green,
-                          ),
-                        ),
-                        const Text(
-                          'Kargo Bedava',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.green,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  ElevatedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (context) => CheckoutPage(
-                          totalPrice: totalPrice,
-                          selectedProducts: selectedProducts,
-                        )),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text(
-                      'Sepeti Onayla',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth > 900) {
+              return _buildWebLayout();
+            }
+            return _buildMobileLayout();
+          },
         ),
       ),
+    );
+  }
+
+  Widget _buildMobileLayout() {
+    return Column(
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Alışveriş Sepetim ($totalItems Ürün)',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ),
+              if (_appState.cart.isNotEmpty)
+                TextButton(
+                  onPressed: _clearCart,
+                  child: const Text(
+                    'Sepeti Boşalt',
+                    style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        // Tabs
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: TabBar(
+            controller: _tabController,
+            labelColor: Colors.white,
+            unselectedLabelColor: AppColors.primary,
+            indicator: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            indicatorSize: TabBarIndicatorSize.tab,
+            dividerColor: Colors.transparent,
+            labelStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+            padding: EdgeInsets.zero,
+            labelPadding: EdgeInsets.zero,
+            tabs: [
+              Container(
+                height: 32,
+                alignment: Alignment.center,
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.primary, width: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Tab(text: 'Alışveriş'),
+              ),
+              Container(
+                height: 32,
+                alignment: Alignment.center,
+                margin: const EdgeInsets.symmetric(horizontal: 6),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.primary, width: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Tab(text: 'Market'),
+              ),
+              Container(
+                height: 32,
+                alignment: Alignment.center,
+                margin: const EdgeInsets.only(left: 6),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.primary, width: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Tab(text: 'Yemek'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Content
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildShoppingCart(),
+              _buildMarketCart(),
+              _buildFoodCart(),
+            ],
+          ),
+        ),
+        // Bottom Summary
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withOpacity(0.2),
+                blurRadius: 10,
+                offset: const Offset(0, -3),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Toplam',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    Text(
+                      _formatPrice(totalPrice),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
+                    ),
+                    const Text(
+                      'Kargo Bedava',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => CheckoutPage(
+                      totalPrice: totalPrice,
+                      selectedProducts: selectedProducts,
+                    )),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text(
+                  'Sepeti Onayla',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1366,6 +1377,518 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
                   ],
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // WEB LAYOUT METHODS
+  Widget _buildWebLayout() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1200),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Sepetim ($totalItems Ürün)',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // LEFT COLUMN (Products)
+                  Expanded(
+                    flex: 7,
+                    child: Column(
+                      children: [
+                        _buildWebCouponSection(),
+                        const SizedBox(height: 24),
+                        // Combine all items for display or keep them separated by tabs?
+                        // The design shows all items in one list usually, but let's respect the tabs or just show all.
+                        // For simplicity and matching the "Sepetim" view, let's show all or just Shopping cart.
+                        // The user said "Sepetim", which usually implies the main shopping cart.
+                        ...cartItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, cartItems, entry.key, 'shopping')).toList(),
+                        // Also include market and food items if any?
+                        if (marketItems.isNotEmpty) ...marketItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, marketItems, entry.key, 'market')).toList(),
+                        if (foodItems.isNotEmpty) ...foodItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, foodItems, entry.key, 'food')).toList(),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  // RIGHT COLUMN (Summary)
+                  Expanded(
+                    flex: 3,
+                    child: Column(
+                      children: [
+                        _buildWebBanner(),
+                        const SizedBox(height: 16),
+                        _buildWebSummaryCard(),
+                        const SizedBox(height: 16),
+                        _buildWebInfoCard(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebCouponSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'İndirim Kuponlarım',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Horizontal list of coupons
+          SizedBox(
+            height: 80,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _availableCoupons.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final coupon = _availableCoupons[index];
+                return Container(
+                  width: 250,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: coupon['color'],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(Icons.local_offer, color: coupon['iconColor'], size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              coupon['title'],
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                            Text(
+                              coupon['description'],
+                              style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebStoreCard(Map<String, dynamic> store, List<Map<String, dynamic>> items, int storeIndex, String category) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Store Header
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                // Store Checkbox (Simplified for now, assumes all selected)
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(Icons.check, size: 14, color: Colors.white),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Satıcı: ',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+                ),
+                Text(
+                  store['storeName'],
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.green,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    store['storeRating'],
+                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+              ],
+            ),
+          ),
+          // Free Shipping Banner
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+            color: const Color(0xFFE8F5E9), // Light green
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle, size: 14, color: Colors.green),
+                const SizedBox(width: 8),
+                const Text(
+                  'Kargo Bedava!',
+                  style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          // Products
+          ...store['products'].asMap().entries.map((entry) {
+            return _buildWebProductRow(entry.value, items, storeIndex, entry.key);
+          }).toList(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebProductRow(Map<String, dynamic> product, List<Map<String, dynamic>> items, int storeIndex, int productIndex) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Product Checkbox
+          Padding(
+            padding: const EdgeInsets.only(top: 30),
+            child: GestureDetector(
+              onTap: () => _toggleProductSelection(items, storeIndex, productIndex),
+              child: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: product['isSelected'] ? AppColors.primary : Colors.grey.shade400,
+                  ),
+                  color: product['isSelected'] ? AppColors.primary : Colors.transparent,
+                ),
+                child: product['isSelected'] ? const Icon(Icons.check, size: 14, color: Colors.white) : null,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          // Image
+          Container(
+            width: 80,
+            height: 100,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade200),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: product['image'] != null && product['image'].toString().isNotEmpty
+                  ? (product['image'].toString().startsWith('http')
+                      ? Image.network(product['image'], fit: BoxFit.contain)
+                      : Image.asset(product['image'], fit: BoxFit.contain))
+                  : const Icon(Icons.image_not_supported),
+            ),
+          ),
+          const SizedBox(width: 16),
+          // Details
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  product['name'],
+                  style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                if (product['shippingInfo'] != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.local_shipping, size: 12, color: Colors.green),
+                        const SizedBox(width: 4),
+                        Text(
+                          product['shippingInfo'],
+                          style: const TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          // Quantity & Price
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Row(
+                children: [
+                  // Delete
+                  IconButton(
+                    onPressed: () => _deleteProduct(items, storeIndex, productIndex),
+                    icon: const Icon(Icons.delete_outline, color: Colors.grey),
+                  ),
+                  // Quantity
+                  Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.remove, size: 16),
+                          onPressed: () => _updateQuantity(items, storeIndex, productIndex, -1),
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          padding: EdgeInsets.zero,
+                        ),
+                        Text('${product['quantity']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        IconButton(
+                          icon: const Icon(Icons.add, size: 16, color: AppColors.primary),
+                          onPressed: () => _updateQuantity(items, storeIndex, productIndex, 1),
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          padding: EdgeInsets.zero,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Builder(
+                builder: (context) {
+                   double price = product['price'];
+                   double originalPrice = price;
+                   final coupon = product['appliedCoupon'];
+                   if (coupon != null) {
+                      if (coupon['isPercentage'] == true) {
+                        price -= price * (coupon['discountAmount'] / 100);
+                      } else {
+                        price -= coupon['discountAmount'];
+                      }
+                   }
+                   
+                   return Column(
+                     crossAxisAlignment: CrossAxisAlignment.end,
+                     children: [
+                       if (coupon != null)
+                         Text(
+                          _formatPrice(originalPrice),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                            decoration: TextDecoration.lineThrough,
+                          ),
+                        ),
+                       Text(
+                        _formatPrice(price),
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primary),
+                      ),
+                       if (coupon != null)
+                         Text(
+                          'Kazancın: ${_formatPrice(originalPrice - price)}',
+                          style: const TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                     ],
+                   );
+                }
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebBanner() {
+    return Container(
+      height: 80,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        gradient: const LinearGradient(colors: [Colors.orange, Colors.deepOrange]),
+      ),
+      child: Stack(
+        children: [
+          // Placeholder for banner content
+          const Center(
+            child: Text('1 TL ile yapabileceğin en iyi şey!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+              child: const Text('Sepete Ekle', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12)),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebSummaryCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Sepet Özeti', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Ara Toplam', style: TextStyle(color: Colors.grey)),
+              Text(_formatPrice(totalPrice), style: const TextStyle(fontWeight: FontWeight.w500)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Kargo Tutarı', style: TextStyle(color: Colors.grey)),
+              Row(
+                children: [
+                  Text('59,99 TL', style: TextStyle(color: Colors.grey.shade400, decoration: TextDecoration.lineThrough, fontSize: 12)),
+                  const SizedBox(width: 4),
+                  const Text('Bedava', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Toplam', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text(_formatPrice(totalPrice), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: AppColors.primary)),
+            ],
+          ),
+          const SizedBox(height: 24),
+          OutlinedButton(
+            onPressed: () {},
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              side: const BorderSide(color: AppColors.primary),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.add, size: 16, color: AppColors.primary),
+                SizedBox(width: 8),
+                Text('İndirim Kodu Gir', style: TextStyle(color: AppColors.primary)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => CheckoutPage(
+                  totalPrice: totalPrice,
+                  selectedProducts: selectedProducts,
+                )),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 56),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Sepeti Onayla', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebInfoCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange.shade100),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.location_on_outlined, color: Colors.orange.shade800),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'En yakın gel al noktasını seç, siparişini sana uygun zamanda güvenle teslim al',
+              style: TextStyle(color: Colors.orange.shade900, fontSize: 12),
             ),
           ),
         ],

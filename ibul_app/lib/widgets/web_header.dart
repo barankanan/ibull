@@ -2,6 +2,9 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
+import '../screens/cart_page.dart';
+import '../screens/account_page.dart';
+import '../core/app_state.dart';
 
 class WebHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
@@ -231,13 +234,39 @@ class _WebHeaderState extends State<WebHeader> {
   }
 
   Widget _buildMenuItems(BuildContext context) {
+    final appState = AppState();
+    
     return Row(
       children: [
-        _MenuItem(icon: Icons.person_outline, label: 'Hesabım', onTap: () {}),
+        _MenuItem(
+          icon: Icons.person_outline, 
+          label: 'Hesabım', 
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const AccountPage()),
+            );
+          }
+        ),
         const SizedBox(width: 24),
         _MenuItem(icon: Icons.favorite_border, label: 'Favorilerim', onTap: () {}),
         const SizedBox(width: 24),
-        _MenuItem(icon: Icons.shopping_cart_outlined, label: 'Sepetim', badgeCount: 3, onTap: () {}),
+        ValueListenableBuilder<int>(
+          valueListenable: appState.cartCountNotifier,
+          builder: (context, count, child) {
+            return _MenuItem(
+              icon: Icons.shopping_cart_outlined, 
+              label: 'Sepetim', 
+              badgeCount: count > 0 ? count : null, 
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const CartPage()),
+                );
+              }
+            );
+          },
+        ),
       ],
     );
   }
