@@ -28,6 +28,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   bool _isNotificationsEnabled = false;
   String _searchQuery = '';
   bool _isLoadingProducts = false;
+  
+  // Web Scroll Controller and Keys
+  final ScrollController _webScrollController = ScrollController();
+  final GlobalKey _flashProductsKey = GlobalKey();
+  final GlobalKey _campaignsKey = GlobalKey();
+  final GlobalKey _allProductsKey = GlobalKey();
 
   late List<String> _categories;
   late List<Product> _allProducts;
@@ -162,6 +168,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   @override
   void dispose() {
     _tabController.dispose();
+    _webScrollController.dispose();
     super.dispose();
   }
 
@@ -470,6 +477,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       body: SingleChildScrollView(
+        controller: _webScrollController,
         child: Column(
           children: [
             // 1. Üst Turuncu Header
@@ -620,9 +628,19 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                   child: Row(
                     children: [
                       _buildWebNavLink('Keşfet', false),
-                      _buildWebNavLink('Ana Sayfa', true),
-                      _buildWebNavLink('Tüm Ürünler', false),
-                      _buildWebNavLink('Fırsat Ürünleri', false),
+                      _buildWebNavLink('Ana Sayfa', true, onTap: () {
+                        _webScrollController.animateTo(0, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+                      }),
+                      _buildWebNavLink('Tüm Ürünler', false, onTap: () {
+                        if (_allProductsKey.currentContext != null) {
+                          Scrollable.ensureVisible(_allProductsKey.currentContext!, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+                        }
+                      }),
+                      _buildWebNavLink('Fırsat Ürünleri', false, onTap: () {
+                        if (_flashProductsKey.currentContext != null) {
+                          Scrollable.ensureVisible(_flashProductsKey.currentContext!, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+                        }
+                      }),
                       _buildWebNavLink('Satıcı', false),
                       const Spacer(),
                       // Search Bar
@@ -685,6 +703,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                         children: [
                           // Flaş Ürünler Section
                           Container(
+                            key: _flashProductsKey,
                             height: 380, // Yükseklik artırıldı
                             width: double.infinity,
                             decoration: BoxDecoration(
@@ -824,9 +843,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                           const SizedBox(height: 40),
                           
                           // Kampanyalar
-                          const Text(
+                          Text(
                             'Kampanyalar',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                            key: _campaignsKey,
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 16),
                           Row(
@@ -840,9 +860,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                           const SizedBox(height: 40),
                           
                           // Tüm Ürünler Grid
-                           const Text(
+                           Text(
                             'Tüm Ürünler',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                            key: _allProductsKey,
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 16),
                           _buildCategoryList(),
@@ -861,19 +882,22 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
     );
   }
 
-  Widget _buildWebNavLink(String title, bool isActive) {
-    return Container(
-      margin: const EdgeInsets.only(right: 32),
-      padding: const EdgeInsets.symmetric(vertical: 18),
-      decoration: BoxDecoration(
-        border: isActive ? const Border(bottom: BorderSide(color: Color(0xFFF27A1A), width: 3)) : null,
-      ),
-      child: Text(
-        title,
-        style: TextStyle(
-          color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
-          fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-          fontSize: 15,
+  Widget _buildWebNavLink(String title, bool isActive, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 32),
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        decoration: BoxDecoration(
+          border: isActive ? const Border(bottom: BorderSide(color: Color(0xFFF27A1A), width: 3)) : null,
+        ),
+        child: Text(
+          title,
+          style: TextStyle(
+            color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
+            fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+            fontSize: 15,
+          ),
         ),
       ),
     );
