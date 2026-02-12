@@ -85,6 +85,191 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+
+    if (isWeb) {
+      return _buildWebView(context);
+    }
+
+    return _buildMobileView(context);
+  }
+
+  Widget _buildWebView(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black54, // Dimmed background
+      body: Center(
+        child: Container(
+          width: 900,
+          height: 650,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              // Web Header
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.compare_arrows, color: AppColors.primary, size: 28),
+                    ),
+                    const SizedBox(width: 16),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Ürün Karşılaştırma',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                        Text(
+                          'Seçtiğin ürünleri detaylıca kıyasla',
+                          style: TextStyle(fontSize: 13, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, color: Colors.grey),
+                      splashRadius: 24,
+                    ),
+                  ],
+                ),
+              ),
+              // Content
+              Expanded(
+                child: Row(
+                  children: [
+                    // Left: Categories and Products
+                    Expanded(
+                      flex: 3,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: _categories.entries.map((entry) {
+                            return _buildCategorySection(entry.key, entry.value);
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                    // Right: Actions and Summary
+                    Container(
+                      width: 320,
+                      decoration: BoxDecoration(
+                        border: Border(left: BorderSide(color: Colors.grey.shade100)),
+                        color: Colors.grey.shade50,
+                      ),
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Seçilen Ürünler (${_selectedProducts.length})',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade800),
+                          ),
+                          const SizedBox(height: 16),
+                          Expanded(
+                            child: _selectedProducts.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      'Karşılaştırmak için soldan ürün seçin',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                                    ),
+                                  )
+                                : ListView.separated(
+                                    itemCount: _selectedProducts.length,
+                                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                    itemBuilder: (context, index) {
+                                      final product = _selectedProducts[index];
+                                      return Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: Colors.grey.shade200),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 40,
+                                              height: 40,
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey.shade100,
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                              child: product['image'] != null
+                                                  ? Image.network(product['image'], fit: BoxFit.cover)
+                                                  : const Icon(Icons.image, size: 20, color: Colors.grey),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                product['name'],
+                                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            const Icon(Icons.check_circle, color: AppColors.primary, size: 18),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                          ),
+                          const SizedBox(height: 24),
+                          // Actions
+                          if (_selectedProducts.length >= 2) ...[
+                            const Divider(),
+                            const SizedBox(height: 16),
+                            _buildActionButton('Özellikleri Karşılaştır', onTap: () {
+                              Navigator.push(context, MaterialPageRoute(builder: (context) => CompareFeaturesPage(products: _selectedProducts)));
+                            }),
+                            const SizedBox(height: 12),
+                            _buildActionButton('Yorumları Karşılaştır', onTap: () {
+                              Navigator.push(context, MaterialPageRoute(builder: (context) => CompareReviewsPage(products: _selectedProducts)));
+                            }),
+                            const SizedBox(height: 12),
+                            _buildActionButton('Görselleri Karşılaştır', onTap: () {
+                              Navigator.push(context, MaterialPageRoute(builder: (context) => CompareImagesPage(products: _selectedProducts)));
+                            }),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileView(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(

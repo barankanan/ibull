@@ -77,6 +77,197 @@ class _AIDiscoverPageState extends State<AIDiscoverPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+
+    if (isWeb) {
+      return _buildWebView(context);
+    }
+
+    return _buildMobileView(context);
+  }
+
+  Widget _buildWebView(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black54, // Dimmed background to simulate dialog overlay
+      body: Center(
+        child: Container(
+          width: 800,
+          height: 600,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              // Web Header
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.explore, color: AppColors.primary, size: 28),
+                    ),
+                    const SizedBox(width: 16),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Kendini Keşfet',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                        Text(
+                          'Sana en uygun ürünleri bulalım',
+                          style: TextStyle(fontSize: 13, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, color: Colors.grey),
+                      splashRadius: 24,
+                    ),
+                  ],
+                ),
+              ),
+              // Content
+              Expanded(
+                child: Row(
+                  children: [
+                    // Chat Area
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.all(24),
+                              itemCount: _messages.length, // Removed header from list
+                              itemBuilder: (context, index) {
+                                final message = _messages[index];
+                                return _buildMessageBubble(message);
+                              },
+                            ),
+                          ),
+                          // Input Area
+                          Container(
+                            padding: const EdgeInsets.all(24),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              border: Border(top: BorderSide(color: Colors.grey.shade100)),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.grey.shade200),
+                                    ),
+                                    child: TextField(
+                                      controller: _messageController,
+                                      onSubmitted: (_) => _sendMessage(),
+                                      decoration: const InputDecoration(
+                                        hintText: 'Cevabını yaz...',
+                                        border: InputBorder.none,
+                                        contentPadding: EdgeInsets.symmetric(vertical: 16),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Container(
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: IconButton(
+                                    onPressed: _sendMessage,
+                                    icon: const Icon(Icons.send, color: Colors.white),
+                                    tooltip: 'Gönder',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Right Side: Info / Tips
+                    Container(
+                      width: 280,
+                      decoration: BoxDecoration(
+                        border: Border(left: BorderSide(color: Colors.grey.shade100)),
+                        color: Colors.grey.shade50,
+                      ),
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Nasıl Çalışır?',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade800),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildInfoItem(Icons.question_answer_outlined, 'Soruları Cevapla', 'Sana yöneltilen soruları samimiyetle cevapla.'),
+                          const SizedBox(height: 16),
+                          _buildInfoItem(Icons.analytics_outlined, 'Analiz Edelim', 'Yapay zeka cevaplarını analiz ederek tarzını belirlesin.'),
+                          const SizedBox(height: 16),
+                          _buildInfoItem(Icons.shopping_bag_outlined, 'Ürünleri Keşfet', 'Sana özel seçilmiş ürün listelerine ulaş.'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoItem(IconData icon, String title, String desc) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: AppColors.primary),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Text(desc, style: TextStyle(fontSize: 12, color: Colors.grey.shade600, height: 1.4)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMobileView(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       resizeToAvoidBottomInset: true,

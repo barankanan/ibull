@@ -133,11 +133,29 @@ class _AIChatPageState extends State<AIChatPage> {
                           ),
                           const SizedBox(height: 16),
                           _buildWebActionButton('Kendini Keşfet', Icons.explore, () {
-                            Navigator.push(context, MaterialPageRoute(builder: (context) => const AIDiscoverPage()));
+                            Navigator.push(
+                              context,
+                              PageRouteBuilder(
+                                opaque: false,
+                                pageBuilder: (context, _, __) => const AIDiscoverPage(),
+                                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                                  return FadeTransition(opacity: animation, child: child);
+                                },
+                              ),
+                            );
                           }),
                           const SizedBox(height: 12),
                           _buildWebActionButton('Ürün Karşılaştır', Icons.compare_arrows, () {
-                            Navigator.push(context, MaterialPageRoute(builder: (context) => const CompareProductsPage()));
+                            Navigator.push(
+                              context,
+                              PageRouteBuilder(
+                                opaque: false,
+                                pageBuilder: (context, _, __) => const CompareProductsPage(),
+                                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                                  return FadeTransition(opacity: animation, child: child);
+                                },
+                              ),
+                            );
                           }),
                           const SizedBox(height: 12),
                           _buildWebActionButton('İndirim Takibi', Icons.notifications_active, () {}),
