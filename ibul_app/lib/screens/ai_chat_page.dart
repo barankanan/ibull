@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_generative_ai/google_generative_ai.dart';
 import '../core/constants.dart';
 import 'ai_discover_page.dart';
 import 'compare_products_page.dart';
@@ -16,22 +15,6 @@ class _AIChatPageState extends State<AIChatPage> {
   final ScrollController _scrollController = ScrollController();
   final List<Map<String, dynamic>> _messages = [];
   bool _isTyping = false;
-  late final GenerativeModel _model;
-  late final ChatSession _chat;
-
-  // WARNING: Never commit API keys to version control in production apps.
-  // This is for demo purposes only as requested.
-  final String _apiKey = 'AlzaSyAFOmRe7lt97vRMT8CC2ZweQqqg-zPfLBc';
-
-  @override
-  void initState() {
-    super.initState();
-    _model = GenerativeModel(
-      model: 'gemini-pro',
-      apiKey: _apiKey,
-    );
-    _chat = _model.startChat();
-  }
 
   @override
   void dispose() {
@@ -52,27 +35,31 @@ class _AIChatPageState extends State<AIChatPage> {
 
     _scrollToBottom();
 
-    try {
-      final response = await _chat.sendMessage(Content.text(text));
-      final responseText = response.text;
+    // Simulate AI thinking delay
+    await Future.delayed(const Duration(seconds: 1));
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      setState(() {
-        if (responseText != null) {
-          _messages.add({'text': responseText, 'isUser': false});
-        } else {
-           _messages.add({'text': "Üzgünüm, bir cevap oluşturamadım.", 'isUser': false});
-        }
-        _isTyping = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _messages.add({'text': "Hata oluştu: $e", 'isUser': false});
-        _isTyping = false;
-      });
+    String response;
+    final lowerText = text.toLowerCase();
+    
+    // Demo Logic
+    if (lowerText.contains('merhaba') || lowerText.contains('selam')) {
+      response = "Merhaba! Size nasıl yardımcı olabilirim?";
+    } else if (lowerText.contains('telefon')) {
+      response = "Telefon modellerimiz için 'Ürün Karşılaştır' menüsünü kullanabilir veya ana sayfadaki Elektronik kategorisine göz atabilirsiniz.";
+    } else if (lowerText.contains('indirim')) {
+      response = "Şu anda 'Yaz Fırsatları' kapsamında %20'ye varan indirimlerimiz mevcut. Kuponlarım sayfasından detayları görebilirsiniz.";
+    } else if (lowerText.contains('saç') || lowerText.contains('şampuan')) {
+      response = "Saç bakım ürünleri için Kozmetik kategorisine bakmanızı öneririm. Sizin için popüler ürünleri listeleyebilirim.";
+    } else {
+      response = "Bu bir demo modudur. Gerçek yapay zeka entegrasyonu için geçerli bir API anahtarı gerekmektedir. Şu an sadece belirli konularda (telefon, indirim, vb.) yardımcı olabiliyorum.";
     }
+
+    setState(() {
+      _messages.add({'text': response, 'isUser': false});
+      _isTyping = false;
+    });
 
     _scrollToBottom();
   }
