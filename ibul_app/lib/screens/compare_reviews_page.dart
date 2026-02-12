@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
+import '../models/product_model.dart';
 
 class CompareReviewsPage extends StatelessWidget {
   final List<Map<String, dynamic>> products;
@@ -65,6 +66,8 @@ class CompareReviewsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayProducts = products.take(2).toList();
+    
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -108,10 +111,10 @@ class CompareReviewsPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Seçtiğin ısıtıcı ürünlerin Yorum karşılaştırması',
-                      style: TextStyle(
+                      'Seçtiğin ${displayProducts.isNotEmpty ? (displayProducts[0]['product'] as Product?)?.category ?? 'ürün' : 'ürün'}lerin Yorum karşılaştırması',
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,
                       ),
@@ -125,19 +128,22 @@ class CompareReviewsPage extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
-                children: products.take(2).map((product) {
+                children: displayProducts.map((productMap) {
+                  final imagePath = productMap['image'];
                   return Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       child: Column(
                         children: [
-                          const Text(
-                            'UFO S / 2400',
-                            style: TextStyle(
+                          Text(
+                            productMap['name'],
+                            style: const TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
                             ),
                             textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
                           const SizedBox(height: 12),
                           Container(
@@ -147,8 +153,15 @@ class CompareReviewsPage extends StatelessWidget {
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(color: Colors.grey.shade300),
                             ),
-                            child: const Center(
-                              child: Icon(Icons.image, size: 35, color: Colors.grey),
+                            child: Center(
+                              child: imagePath != null
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: imagePath.startsWith('http')
+                                          ? Image.network(imagePath, fit: BoxFit.cover)
+                                          : Image.asset(imagePath, fit: BoxFit.cover),
+                                    )
+                                  : const Icon(Icons.image, size: 35, color: Colors.grey),
                             ),
                           ),
                         ],
