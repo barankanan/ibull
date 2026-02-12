@@ -79,7 +79,14 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Hesap Özeti',
             onTap: () {
               if (activePage != 'Hesap Özeti') {
-                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AccountPage()));
+                 Navigator.pushReplacement(
+                   context, 
+                   PageRouteBuilder(
+                     pageBuilder: (context, animation1, animation2) => const AccountPage(),
+                     transitionDuration: Duration.zero,
+                     reverseTransitionDuration: Duration.zero,
+                   ),
+                 );
               }
             }
           ),
@@ -90,7 +97,14 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Siparişlerim',
             onTap: () {
               if (activePage != 'Siparişlerim') {
-                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const OrdersPage()));
+                 Navigator.pushReplacement(
+                   context, 
+                   PageRouteBuilder(
+                     pageBuilder: (context, animation1, animation2) => const OrdersPage(),
+                     transitionDuration: Duration.zero,
+                     reverseTransitionDuration: Duration.zero,
+                   ),
+                 );
               }
             }
           ),
@@ -102,7 +116,14 @@ class AccountSidebar extends StatelessWidget {
             onTap: () {
                // Navigation logic here
                if (activePage != 'Favorilerim') {
-                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const FavoritesPage()));
+                 Navigator.pushReplacement(
+                   context, 
+                   PageRouteBuilder(
+                     pageBuilder: (context, animation1, animation2) => const FavoritesPage(),
+                     transitionDuration: Duration.zero,
+                     reverseTransitionDuration: Duration.zero,
+                   ),
+                 );
                }
             }
           ),
@@ -113,7 +134,14 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Kuponlarım',
             onTap: () {
                if (activePage != 'Kuponlarım') {
-                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const CouponsPage()));
+                 Navigator.pushReplacement(
+                   context, 
+                   PageRouteBuilder(
+                     pageBuilder: (context, animation1, animation2) => const CouponsPage(),
+                     transitionDuration: Duration.zero,
+                     reverseTransitionDuration: Duration.zero,
+                   ),
+                 );
                }
             }
           ),
@@ -124,7 +152,14 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Adreslerim',
             onTap: () {
                if (activePage != 'Adreslerim') {
-                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AddressesPage()));
+                 Navigator.pushReplacement(
+                   context, 
+                   PageRouteBuilder(
+                     pageBuilder: (context, animation1, animation2) => const AddressesPage(),
+                     transitionDuration: Duration.zero,
+                     reverseTransitionDuration: Duration.zero,
+                   ),
+                 );
                }
             }
           ),
@@ -141,7 +176,14 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Değerlendirmelerim',
             onTap: () {
                if (activePage != 'Değerlendirmelerim') {
-                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const ReviewsPage()));
+                 Navigator.pushReplacement(
+                   context, 
+                   PageRouteBuilder(
+                     pageBuilder: (context, animation1, animation2) => const ReviewsPage(),
+                     transitionDuration: Duration.zero,
+                     reverseTransitionDuration: Duration.zero,
+                   ),
+                 );
                }
             }
           ),
@@ -152,7 +194,14 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Ayarlar',
             onTap: () {
                if (activePage != 'Ayarlar') {
-                 Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SettingsPage()));
+                 Navigator.pushReplacement(
+                   context, 
+                   PageRouteBuilder(
+                     pageBuilder: (context, animation1, animation2) => const SettingsPage(),
+                     transitionDuration: Duration.zero,
+                     reverseTransitionDuration: Duration.zero,
+                   ),
+                 );
                }
             }
           ),

@@ -28,6 +28,7 @@ import 'cart_page.dart';
 import 'account_page.dart';
 import 'search_results_page.dart';
 import 'product_detail_page.dart';
+import 'ai_chat_page.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
@@ -652,36 +653,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return Scaffold(
       backgroundColor: AppColors.background,
       body: _buildCurrentPage(),
-      // Web'de FloatingActionButton'ı gizle
-      floatingActionButton: (_selectedIndex == 0 && !_hasSpunWheel && MediaQuery.of(context).size.width < 800)
-        ? AnimatedBuilder(
-            animation: _spinController,
-            builder: (context, child) {
-              return Transform.rotate(
-                angle: _spinController.value * 2 * math.pi,
-                child: child,
-              );
-            },
-            child: FloatingActionButton(
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  barrierColor: Colors.black54,
-                  builder: (context) => FortuneWheelDialog(
-                    onSpinComplete: () {
-                      setState(() {
-                        _hasSpunWheel = true;
-                      });
-                    },
-                  ),
-                );
-              },
-              backgroundColor: Colors.white,
-              shape: const CircleBorder(side: BorderSide(color: AppColors.primary, width: 2)),
-              child: const Icon(Icons.casino, color: AppColors.primary, size: 28),
-            ),
-          )
-        : null,
+      // Web'de FloatingActionButton Yapay Zeka, Mobil'de Çark
+      floatingActionButton: _buildFab(context),
       // Web'de BottomNavigationBar'ı gizle
       bottomNavigationBar: MediaQuery.of(context).size.width >= 800 
           ? null 
@@ -728,6 +701,64 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ),
       ),
     );
+  }
+
+  Widget? _buildFab(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+    
+    // Web için Yapay Zeka Butonu
+    if (isWeb) {
+      return SizedBox(
+        width: 60,
+        height: 60,
+        child: FloatingActionButton(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const AIChatPage()),
+            );
+          },
+          backgroundColor: AppColors.primary,
+          tooltip: 'Yapay Zekaya Danış',
+          elevation: 4,
+          shape: const CircleBorder(), // Tam yuvarlak
+          child: const Icon(Icons.psychology, color: Colors.white, size: 32),
+        ),
+      );
+    }
+
+    // Mobil için Çark (Sadece Ana Sayfada ve henüz çevrilmediyse)
+    if (_selectedIndex == 0 && !_hasSpunWheel) {
+       return AnimatedBuilder(
+            animation: _spinController,
+            builder: (context, child) {
+              return Transform.rotate(
+                angle: _spinController.value * 2 * math.pi,
+                child: child,
+              );
+            },
+            child: FloatingActionButton(
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  barrierColor: Colors.black54,
+                  builder: (context) => FortuneWheelDialog(
+                    onSpinComplete: () {
+                      setState(() {
+                        _hasSpunWheel = true;
+                      });
+                    },
+                  ),
+                );
+              },
+              backgroundColor: Colors.white,
+              shape: const CircleBorder(side: BorderSide(color: AppColors.primary, width: 2)),
+              child: const Icon(Icons.casino, color: AppColors.primary, size: 28),
+            ),
+          );
+    }
+    
+    return null;
   }
 
   Widget _buildCurrentPage() {
