@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
+import '../widgets/web_header.dart';
+import '../widgets/web_footer.dart';
+import '../widgets/account_sidebar.dart';
 import 'settings_page.dart';
 import 'orders_page.dart';
 import 'favorites_page.dart';
@@ -8,12 +11,437 @@ import 'ai_chat_page.dart';
 import 'followed_stores_page.dart';
 import 'my_chats_page.dart';
 import 'coupons_page.dart';
+import 'addresses_page.dart';
 
-class AccountPage extends StatelessWidget {
+class AccountPage extends StatefulWidget {
   const AccountPage({super.key});
 
   @override
+  State<AccountPage> createState() => _AccountPageState();
+}
+
+class _AccountPageState extends State<AccountPage> {
+  @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+
+    if (isWeb) {
+      return _buildWebView();
+    }
+
+    return _buildMobileView();
+  }
+
+  Widget _buildWebView() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9FAFB), // Softer background for web
+      body: Column(
+        children: [
+          WebHeader(
+            onSearch: (q) {}, 
+            // Mock callbacks as AccountPage doesn't manage full state like Home
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1200),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Left Sidebar (Navigation)
+                            const SizedBox(
+                              width: 280,
+                              child: AccountSidebar(activePage: 'Hesap Özeti'),
+                            ),
+                            const SizedBox(width: 32),
+                            // Right Content (Dashboard)
+                            Expanded(
+                              child: _buildWebDashboard(),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const WebFooter(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebDashboard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Welcome Banner
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(32),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(0.3),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Hoş Geldin, Baran! 👋',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'İbul Premium üyesisin. Bu ay 450 TL kazanç sağladın.',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withOpacity(0.3)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.star, color: Colors.amber, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Premium Üye',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        const SizedBox(height: 32),
+        
+        // Quick Stats
+        Row(
+          children: [
+            _buildStatCard('Toplam Sipariş', '124', Icons.shopping_bag, Colors.blue),
+            const SizedBox(width: 24),
+            _buildStatCard('Bekleyen', '2', Icons.local_shipping, Colors.orange),
+            const SizedBox(width: 24),
+            _buildStatCard('İndirim Kuponu', '4', Icons.local_offer, Colors.purple),
+            const SizedBox(width: 24),
+            _buildStatCard('Cüzdan', '1.250 TL', Icons.account_balance_wallet, Colors.green),
+          ],
+        ),
+
+        const SizedBox(height: 32),
+
+        // Recent Orders Section
+        const Text(
+          'Son Siparişler',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1F2937),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(
+            children: [
+              _buildOrderRow(
+                orderId: '#TR-2024-8592',
+                date: 'Bugün, 14:30',
+                status: 'Yolda',
+                price: '450.00 TL',
+                items: 'Apple iPhone 15 Kılıf, Ekran Koruyucu...',
+                statusColor: Colors.orange,
+              ),
+              const Divider(height: 1),
+              _buildOrderRow(
+                orderId: '#TR-2024-8591',
+                date: 'Dün, 18:15',
+                status: 'Teslim Edildi',
+                price: '1.250.00 TL',
+                items: 'Nike Air Force 1 Spor Ayakkabı',
+                statusColor: Colors.green,
+              ),
+              const Divider(height: 1),
+              _buildOrderRow(
+                orderId: '#TR-2024-8588',
+                date: '10 Ekim 2024',
+                status: 'Teslim Edildi',
+                price: '89.90 TL',
+                items: 'Logitech Mouse Pad',
+                statusColor: Colors.green,
+              ),
+            ],
+          ),
+        ),
+        
+        const SizedBox(height: 32),
+        
+        // Recommended / Favorites Preview
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Favori Ürünlerin',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      TextButton(onPressed: () {}, child: const Text('Tümünü Gör')),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Placeholder for horizontal product list
+                  Container(
+                    height: 180,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: const Center(
+                      child: Text('Favori ürünler listesi buraya gelecek'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Kayıtlı Adresim',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    height: 180,
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.home, color: AppColors.primary),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Ev Adresi',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              onPressed: () {
+                                Navigator.push(context, MaterialPageRoute(builder: (context) => const AddressesPage()));
+                              }, 
+                              icon: const Icon(Icons.edit_outlined, size: 20),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Baran Kananoğulları',
+                          style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey.shade800),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Gökmeydan Mah. Nazım Hikmet Kültür Merkezi Karşısı\nPrefabrik Ev No: 5',
+                          style: TextStyle(color: Colors.grey.shade600, height: 1.5),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Eskişehir / Odunpazarı',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.02),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1F2937),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey.shade500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderRow({
+    required String orderId,
+    required String date,
+    required String status,
+    required String price,
+    required String items,
+    required Color statusColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.shopping_bag_outlined, color: Colors.grey),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            flex: 2,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  orderId,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+                Text(
+                  items,
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Text(
+              date,
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              price,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              status,
+              style: TextStyle(
+                color: statusColor,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          const Icon(Icons.chevron_right, color: Colors.grey),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileView() {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -102,13 +530,9 @@ class AccountPage extends StatelessWidget {
                           const SizedBox(width: 8),
                           GestureDetector(
                             onTap: () {
-                              showModalBottomSheet(
-                                context: context,
-                                isScrollControlled: true,
-                                shape: const RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                                ),
-                                builder: (context) => const _AddressSelectionSheet(),
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const AddressesPage()),
                               );
                             },
                             child: Container(
@@ -148,7 +572,7 @@ class AccountPage extends StatelessWidget {
                     color: Colors.blue.shade900,
                     borderRadius: BorderRadius.circular(12),
                     image: const DecorationImage(
-                      image: AssetImage('assets/images/features/yapay-zeka-banner.png'),
+                      image: AssetImage('assets/images/features/yapay-zeka.png'),
                       fit: BoxFit.cover,
                     ),
                   ),
@@ -348,269 +772,3 @@ class AccountPage extends StatelessWidget {
   }
 }
 
-// Copy the _AddressSelectionSheet classes from address_bar.dart
-class _AddressSelectionSheet extends StatefulWidget {
-  const _AddressSelectionSheet();
-
-  @override
-  State<_AddressSelectionSheet> createState() => _AddressSelectionSheetState();
-}
-
-class _AddressSelectionSheetState extends State<_AddressSelectionSheet> {
-  int _selectedTab = 0;
-  
-  final List<Map<String, String>> _deliveryAddresses = [
-    {'title': 'Ev', 'detail': 'Prefabrik ev - Gökmeydan Mah..'},
-    {'title': 'İş', 'detail': 'Teknopark - Organize Sanayi Bölgesi'},
-  ];
-
-  final List<Map<String, String>> _billingInfos = [
-    {'title': 'Kişisel Fatura', 'detail': 'Baran Kananogullari - 1234567890'},
-  ];
-
-  void _openEditScreen({Map<String, String>? address}) {
-    Navigator.pop(context);
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => _AddressEditSheet(
-        initialData: address,
-        type: _selectedTab == 0 ? 'Adres' : 'Fatura',
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.only(top: 20, left: 16, right: 16, bottom: 40),
-      height: MediaQuery.of(context).size.height * 0.6,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Adreslerim',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.pop(context),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _buildTabs(),
-          const SizedBox(height: 16),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _selectedTab == 0 ? _deliveryAddresses.length : _billingInfos.length,
-              itemBuilder: (context, index) {
-                final item = _selectedTab == 0 ? _deliveryAddresses[index] : _billingInfos[index];
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    backgroundColor: AppColors.primary.withOpacity(0.1),
-                    child: Icon(
-                      _selectedTab == 0 ? Icons.place : Icons.receipt,
-                      color: AppColors.primary,
-                      size: 20,
-                    ),
-                  ),
-                  title: Text(item['title']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  subtitle: Text(item['detail']!, style: const TextStyle(fontSize: 12)),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.edit_outlined, size: 20, color: Colors.grey),
-                    onPressed: () => _openEditScreen(address: item),
-                  ),
-                  onTap: () {
-                     _openEditScreen(address: item);
-                  },
-                );
-              },
-            ),
-          ),
-          SizedBox(
-            width: double.infinity,
-            height: 45,
-            child: ElevatedButton.icon(
-              onPressed: () => _openEditScreen(),
-              icon: const Icon(Icons.add),
-              label: Text(_selectedTab == 0 ? 'Yeni Adres Ekle' : 'Yeni Fatura Ekle'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTabs() {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildTabButton(
-            label: 'Teslimat Adreslerim',
-            isActive: _selectedTab == 0,
-            onTap: () => setState(() => _selectedTab = 0),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildTabButton(
-            label: 'Fatura Bilgilerim',
-            isActive: _selectedTab == 1,
-            onTap: () => setState(() => _selectedTab = 1),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTabButton({required String label, required bool isActive, required VoidCallback onTap}) {
-    return SizedBox(
-      height: 36,
-      child: isActive
-          ? ElevatedButton(
-              onPressed: onTap,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                padding: EdgeInsets.zero,
-              ),
-              child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-            )
-          : OutlinedButton(
-              onPressed: onTap,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                side: const BorderSide(color: AppColors.primary),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                padding: EdgeInsets.zero,
-              ),
-              child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-            ),
-    );
-  }
-}
-
-class _AddressEditSheet extends StatefulWidget {
-  final Map<String, String>? initialData;
-  final String type;
-
-  const _AddressEditSheet({this.initialData, required this.type});
-
-  @override
-  State<_AddressEditSheet> createState() => _AddressEditSheetState();
-}
-
-class _AddressEditSheetState extends State<_AddressEditSheet> {
-  late TextEditingController _titleController;
-  late TextEditingController _detailController;
-
-  @override
-  void initState() {
-    super.initState();
-    _titleController = TextEditingController(text: widget.initialData?['title'] ?? '');
-    _detailController = TextEditingController(text: widget.initialData?['detail'] ?? '');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    bool isEditing = widget.initialData != null;
-    
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 20, right: 20, top: 20
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                isEditing ? '${widget.type} Düzenle' : 'Yeni ${widget.type} Ekle',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.pop(context),
-              )
-            ],
-          ),
-          const SizedBox(height: 20),
-          TextField(
-            controller: _titleController,
-            decoration: InputDecoration(
-              labelText: 'Başlık (Örn: Ev, İş)',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _detailController,
-            maxLines: 3,
-            decoration: InputDecoration(
-              labelText: 'Detaylı Adres',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              if (isEditing) 
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.delete, size: 18),
-                    label: const Text('Sil'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
-                ),
-              if (isEditing) const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                  },
-                  icon: const Icon(Icons.save, size: 18),
-                  label: Text(isEditing ? 'Güncelle' : 'Kaydet'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 40),
-        ],
-      ),
-    );
-  }
-}

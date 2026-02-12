@@ -91,18 +91,18 @@ class _ProductCardState extends State<ProductCard> {
           _buildNormalImageSection(),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.all(12.0),
+              padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildCampaignBadge(),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 3),
                   _buildTitle(),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 3),
                   _buildRating(),
                   const Spacer(),
                   _buildPrice(),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 4),
                   _buildButton(context),
                 ],
               ),
@@ -155,49 +155,49 @@ class _ProductCardState extends State<ProductCard> {
   // Normal image section with AspectRatio (for home page)
   Widget _buildNormalImageSection() {
     return Stack(
-      alignment: Alignment.bottomCenter,
       children: [
         // Product Image
         ClipRRect(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
           child: AspectRatio(
-            aspectRatio: 1.25, // Görsel yüksekliği azaltıldı (1.0 -> 1.25)
+            aspectRatio: 1.3,
             child: Container(
               color: Colors.grey[100],
+              width: double.infinity,
               alignment: Alignment.center,
               child: widget.product.images.isNotEmpty && widget.product.images.first.isNotEmpty
-                  ? (widget.product.images.first.startsWith('http')
-                      ? Image.network(
-                          widget.product.images.first,
-                          fit: BoxFit.contain,
-                          width: double.infinity,
-                          cacheWidth: 200,
-                          cacheHeight: 200,
-                          filterQuality: FilterQuality.medium,
-                          errorBuilder: (context, error, stackTrace) => Icon(
-                            Icons.image_not_supported,
-                            color: Colors.grey[400],
-                            size: 40,
-                          ),
-                        )
-                      : Image.asset(
-                          widget.product.images.first,
-                          fit: BoxFit.contain,
-                          width: double.infinity,
-                          cacheWidth: 200,
-                          cacheHeight: 200,
-                          filterQuality: FilterQuality.medium,
-                          errorBuilder: (context, error, stackTrace) => Icon(
-                            Icons.image_not_supported,
-                            color: Colors.grey[400],
-                            size: 40,
-                          ),
-                        ))
-                  : Icon(
-                      Icons.image_not_supported,
-                      color: Colors.grey[400],
-                      size: 40,
-                    ),
+                    ? (widget.product.images.first.startsWith('http')
+                        ? Image.network(
+                            widget.product.images.first,
+                            fit: BoxFit.contain,
+                            width: double.infinity,
+                            height: double.infinity,
+                            alignment: Alignment.center,
+                            filterQuality: FilterQuality.medium,
+                            errorBuilder: (context, error, stackTrace) => Icon(
+                              Icons.image_not_supported,
+                              color: Colors.grey[400],
+                              size: 40,
+                            ),
+                          )
+                        : Image.asset(
+                            widget.product.images.first,
+                            fit: BoxFit.contain,
+                            width: double.infinity,
+                            height: double.infinity,
+                            alignment: Alignment.center,
+                            filterQuality: FilterQuality.medium,
+                            errorBuilder: (context, error, stackTrace) => Icon(
+                              Icons.image_not_supported,
+                              color: Colors.grey[400],
+                              size: 40,
+                            ),
+                          ))
+                    : Icon(
+                        Icons.image_not_supported,
+                        color: Colors.grey[400],
+                        size: 40,
+                      ),
             ),
           ),
         ),
@@ -484,7 +484,7 @@ class _ProductCardState extends State<ProductCard> {
             return Icon(Icons.star_border, color: Colors.grey[300], size: 12);
           }),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 2),
         Text(
           '${widget.product.rating}',
           style: const TextStyle(
@@ -493,9 +493,9 @@ class _ProductCardState extends State<ProductCard> {
             color: Colors.black87,
           ),
         ),
-        const SizedBox(width: 3),
+        const SizedBox(width: 1),
         Icon(Icons.photo_library, size: 12, color: Colors.grey[600]),
-        const SizedBox(width: 2),
+        const SizedBox(width: 1),
         Text(
           '(${widget.product.reviewCount})',
           style: TextStyle(

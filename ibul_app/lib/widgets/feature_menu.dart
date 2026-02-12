@@ -23,7 +23,7 @@ class FeatureMenu extends StatelessWidget {
         shrinkWrap: true,
         children: const [
           _FeatureTile(
-            imagePath: 'assets/images/features/yakın lokasyon.png',
+            imagePath: 'assets/images/features/yakin-lokasyon.png',
             label: 'Yakın Lokasyon',
           ),
           _FeatureTile(
@@ -31,27 +31,27 @@ class FeatureMenu extends StatelessWidget {
             label: 'Ürün Listele',
           ),
           _FeatureTile(
-            imagePath: 'assets/images/features/görsel zeka.png',
+            imagePath: 'assets/images/features/gorsel-zeka.png',
             label: 'Görsel Zeka',
           ),
           _FeatureTile(
-            imagePath: 'assets/images/features/ürün parçala.png',
+            imagePath: 'assets/images/features/urun-parcala.png',
             label: 'Ürün Parçala',
           ),
           _FeatureTile(
-            imagePath: 'assets/images/features/ibul premium.png',
+            imagePath: 'assets/images/features/ibul-premium.png',
             label: 'İBUL Premium',
           ),
           _FeatureTile(
-            imagePath: 'assets/images/features/sana özel.png',
+            imagePath: 'assets/images/features/sana-ozel.png',
             label: 'Bana Özel',
           ),
           _FeatureTile(
-            imagePath: 'assets/images/features/hızlı yemek.png',
+            imagePath: 'assets/images/features/hizli-yemek.png',
             label: 'Hızlı Yemek',
           ),
           _FeatureTile(
-            imagePath: 'assets/images/features/yapay zeka.png',
+            imagePath: 'assets/images/features/yapay-zeka.png',
             label: 'Yapay Zeka',
           ),
         ],
@@ -101,6 +101,12 @@ class _FeatureTile extends StatelessWidget {
                 child: Image.asset(
                   imagePath,
                   fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    color: Colors.grey.shade200,
+                    child: const Center(
+                      child: Icon(Icons.image_not_supported, color: Colors.grey, size: 30),
+                    ),
+                  ),
                 ),
               ),
             ),

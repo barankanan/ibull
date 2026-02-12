@@ -732,7 +732,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                           // Flaş Ürünler Section
                           Container(
                             key: _flashProductsKey,
-                            height: 380, // Yükseklik artırıldı
+                            height: 320, // Reduced height for better single row appearance
                             width: double.infinity,
                             decoration: BoxDecoration(
                               gradient: const LinearGradient(
@@ -897,6 +897,11 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                           _buildCategoryList(),
                           const SizedBox(height: 24),
                           _buildProductGrid(), // Reusing existing grid, responsive logic inside handles sizing
+                          const SizedBox(height: 40),
+                          
+                          // Footer Features Banner
+                          _buildWebFeaturesBanner(),
+                          const SizedBox(height: 40),
                         ],
                       ),
                     ),
@@ -907,6 +912,69 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildWebFeaturesBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 32),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE5D9F2), // Light purple background
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _buildFeatureItem(Icons.local_shipping_outlined, 'Ücretsiz Kargo', '150 TL üzeri'),
+          _buildDivider(),
+          _buildFeatureItem(Icons.verified_user_outlined, 'Güvenli Ödeme', '256-bit SSL'),
+          _buildDivider(),
+          _buildFeatureItem(Icons.refresh, '14 Gün İade', 'Koşulsuz iade'),
+          _buildDivider(),
+          _buildFeatureItem(Icons.headset_mic_outlined, '7/24 Destek', 'Canlı yardım'),
+          _buildDivider(),
+          _buildFeatureItem(Icons.verified_outlined, 'Orijinal Ürün', 'Garantili'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDivider() {
+    return Container(
+      height: 40,
+      width: 1,
+      color: Colors.white.withOpacity(0.5),
+    );
+  }
+
+  Widget _buildFeatureItem(IconData icon, String title, String subtitle) {
+    return Row(
+      children: [
+        Icon(icon, color: const Color(0xFF6200EE), size: 32),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+                color: Colors.black87,
+              ),
+            ),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -994,199 +1062,70 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
     return Center(
       child: Container(
         constraints: const BoxConstraints(maxWidth: 1200),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        child: Row(
+        padding: const EdgeInsets.all(24),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Left Sidebar (Detailed Filters)
-            SizedBox(
-              width: 240,
-              child: _buildDetailedFilterSidebar(),
+            // Header Row: Store Name & Count
+            Row(
+              children: [
+                Text(
+                  widget.business['name']?.toString().toUpperCase() ?? 'MAĞAZA',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  "${_allProducts.length}+ Ürün",
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 24),
+            const SizedBox(height: 16),
             
-            // Main Content
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header Row: Store Name & Count
-                  Row(
-                    children: [
-                      Text(
-                        widget.business['name']?.toString().toUpperCase() ?? 'MAĞAZA',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        "${_allProducts.length}+ Ürün",
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[600],
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  
-                  // Quick Filter Chips Row
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _buildQuickFilterChip("Flaş Ürünler", icon: Icons.flash_on, color: const Color(0xFFFFE0E0), textColor: const Color(0xFFD32F2F)),
-                        _buildQuickFilterChip("Yüksek Puanlı Ürünler", icon: Icons.star, color: const Color(0xFFFFF8E1), textColor: const Color(0xFFFFA000)),
-                        _buildQuickFilterChip("Hızlı Teslimat", icon: Icons.local_shipping, color: const Color(0xFFE8F5E9), textColor: const Color(0xFF388E3C)),
-                        _buildQuickFilterChip("Kuponlu Ürünler", icon: Icons.confirmation_number, color: const Color(0xFFFCE4EC), textColor: const Color(0xFFC2185B)),
-                        _buildQuickFilterChip("Çok Al Az Öde", icon: Icons.discount, color: const Color(0xFFFFF3E0), textColor: const Color(0xFFF57C00)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  
-                  // Sort Dropdown Row
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(4),
-                          color: Colors.white,
-                        ),
-                        child: const Row(
-                          children: [
-                            Text(
-                              "Önerilen Sıralama",
-                              style: TextStyle(fontSize: 13, color: Colors.black87),
-                            ),
-                            SizedBox(width: 8),
-                            Icon(Icons.swap_vert, size: 18, color: Colors.grey),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  
-                  // Product Grid
-                  _buildDetailedProductGrid(),
-                ],
-              ),
-            ),
+            // Product Grid - Full Width
+            _buildDetailedProductGrid(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildDetailedFilterSidebar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildFilterExpansionTile("Kategori", ["Elbise", "Tişört", "Pantolon", "Gömlek"]),
-          _buildFilterExpansionTile("Marka", ["TrendyolMilla", "Zara", "Mango", "H&M"]),
-          _buildFilterExpansionTile("Beden", ["XS", "S", "M", "L", "XL"]),
-          _buildFilterExpansionTile("Avantajlı Ürünler", ["Flaş İndirim", "Kuponlu"]),
-          _buildFilterExpansionTile("Renk", ["Siyah", "Beyaz", "Kırmızı", "Mavi"]),
-          _buildFilterExpansionTile("Cinsiyet", ["Kadın", "Erkek"]),
-          _buildFilterExpansionTile("Fiyat", ["0-100 TL", "100-250 TL", "250-500 TL"]),
-          _buildFilterExpansionTile("Fiyat Geçmişi", ["Son 30 Gün En Düşük"]),
-          // Toggle Switch Item
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("9 Puan Üzeri Satıcılar", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                SizedBox(
-                  height: 24,
-                  child: Switch(value: false, onChanged: (val) {}, activeColor: const Color(0xFFF27A1A)),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          _buildFilterExpansionTile("Sürdürülebilirlik Detayı", []),
-          _buildFilterExpansionTile("Materyal", ["Pamuk", "Polyester"]),
-          _buildFilterExpansionTile("Desen", ["Düz", "Çiçekli", "Çizgili"]),
-          _buildFilterExpansionTile("Ortam", ["Günlük", "Ofis", "Parti"]),
-          _buildFilterExpansionTile("Kumaş Tipi", ["Örme", "Dokuma"]),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilterExpansionTile(String title, List<String> children) {
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        tilePadding: EdgeInsets.zero,
-        title: Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black87)),
-        children: children.map((c) => Padding(
-          padding: const EdgeInsets.only(bottom: 8.0, left: 8.0),
-          child: Row(
+  Widget _buildDetailedProductGrid() {
+    if (_allProducts.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: Checkbox(value: false, onChanged: (v) {}, activeColor: const Color(0xFFF27A1A)),
-              ),
-              const SizedBox(width: 8),
-              Text(c, style: const TextStyle(fontSize: 13)),
+              const Icon(Icons.shopping_bag_outlined, size: 48, color: Colors.grey),
+              const SizedBox(height: 16),
+              const Text('Ürün bulunamadı', style: TextStyle(fontSize: 16, color: Colors.grey)),
             ],
           ),
-        )).toList(),
-      ),
-    );
-  }
+        ),
+      );
+    }
 
-  Widget _buildQuickFilterChip(String label, {required IconData icon, required Color color, required Color textColor}) {
-    return Container(
-      margin: const EdgeInsets.only(right: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color, // Light background
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.5)),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: textColor),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: textColor),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDetailedProductGrid() {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 4,
-        childAspectRatio: 0.52, // Taller cards
+        childAspectRatio: 0.52,
         crossAxisSpacing: 16,
         mainAxisSpacing: 16,
       ),
-      itemCount: _allProducts.isEmpty ? 8 : _allProducts.length, // Dummy count if empty
+      itemCount: _allProducts.length,
       itemBuilder: (context, index) {
-        if (_allProducts.isEmpty) return _buildDummyDetailedCard(index);
         return _buildDetailedProductCard(_allProducts[index], index);
       },
     );
@@ -1211,9 +1150,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                   aspectRatio: 0.8,
                   child: Container(
                     color: Colors.grey.shade50,
-                    child: product.images.isNotEmpty 
-                      ? Image.asset(product.images.first, fit: BoxFit.cover)
-                      : const Icon(Icons.image, size: 40, color: Colors.grey),
+                    width: double.infinity,
+                    child: Center(
+                      child: product.images.isNotEmpty 
+                        ? Image.asset(product.images.first, fit: BoxFit.contain)
+                        : const Icon(Icons.image, size: 40, color: Colors.grey),
+                    ),
                   ),
                 ),
               ),
@@ -1359,18 +1301,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
           ),
         ],
       ),
-    );
-  }
-  
-  // Dummy Card Builder for empty states or loading
-  Widget _buildDummyDetailedCard(int index) {
-    return Container(
-       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      // ... similar structure with placeholders
     );
   }
 
@@ -1784,7 +1714,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   // Kategori Listesi Widget'ı
   Widget _buildCategoryList({EdgeInsetsGeometry? padding}) {
     return SizedBox(
-      height: 110,
+      height: 140,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: padding ?? const EdgeInsets.symmetric(horizontal: 2),
@@ -2173,7 +2103,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
       crossAxisCount = 3;
       // Kart yüksekliğini artırmak için oranı düşürüyoruz (eski oran 0.55 idi, overflow yapıyordu)
       // 0.48 oranı ile dikeyde daha fazla yer açıyoruz
-      childAspectRatio = 0.48; 
+      childAspectRatio = 0.4; 
     }
     
     // Kategori filtresi uygula

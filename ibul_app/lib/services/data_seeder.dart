@@ -102,7 +102,7 @@ class DataSeeder {
   Future<void> seedBanners() async {
     final banners = [
       DBBanner(
-        imageUrl: 'assets/images/banners/winter_sale.jpg',
+        imageUrl: 'assets/images/banners/teknosa-duyuru-1.png',
         link: null,
         orderIndex: 1,
         type: 'main',
@@ -110,7 +110,7 @@ class DataSeeder {
         description: 'Tüm ürünlerde %50\'ye varan indirim',
       ),
       DBBanner(
-        imageUrl: 'assets/images/banners/free_shipping.jpg',
+        imageUrl: 'assets/images/banners/arcelik-duyuru-1.png',
         link: null,
         orderIndex: 2,
         type: 'main',

@@ -38,6 +38,8 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   intl: ^0.20.2
+  ibul_app:
+    path: ./ibul_app
 
 dev_dependencies:
   flutter_test:

@@ -5,6 +5,9 @@ import '../models/product_model.dart';
 import 'home_screen.dart';
 import 'list_detail_page.dart';
 import 'product_detail_page.dart';
+import '../widgets/web_header.dart';
+import '../widgets/web_footer.dart';
+import '../widgets/product_card.dart';
 
 class FavoritesPage extends StatefulWidget {
   const FavoritesPage({super.key});
@@ -162,6 +165,434 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+
+    if (isWeb) {
+      return _buildWebView();
+    }
+    
+    return _buildMobileView();
+  }
+
+  Widget _buildWebView() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9FAFB),
+      body: Column(
+        children: [
+          WebHeader(onSearch: (q) {}),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1200),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Title & Tabs Row
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Favorilerim',
+                                  style: TextStyle(
+                                    fontSize: 32,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF1F2937),
+                                  ),
+                                ),
+                                // Web Tabs
+                                Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.grey.shade200),
+                                  ),
+                                  child: Row(
+                                    children: _tabs.map((tab) {
+                                      final isSelected = _selectedTab == tab;
+                                      return InkWell(
+                                        onTap: () => setState(() => _selectedTab = tab),
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                                          decoration: BoxDecoration(
+                                            color: isSelected ? AppColors.primary : Colors.transparent,
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: Text(
+                                            tab,
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: isSelected ? Colors.white : Colors.grey.shade600,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            
+                            const SizedBox(height: 32),
+                            
+                            // Content
+                            if (_selectedTab == 'Beğeniler')
+                              _buildWebFavoritesGrid()
+                            else if (_selectedTab == 'Listelerim')
+                              _buildWebListsView()
+                            else
+                              _buildWebRecommendationsGrid(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const WebFooter(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebFavoritesGrid() {
+    final favorites = _appState.favorites;
+    
+    if (favorites.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(60),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Column(
+          children: [
+            Icon(Icons.favorite_border, size: 80, color: Colors.grey[300]),
+            const SizedBox(height: 24),
+            Text(
+              'Henüz favori ürünün yok',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey[800]),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Beğendiğin ürünleri kalp ikonuna tıklayarak buraya ekleyebilirsin.',
+              style: TextStyle(fontSize: 16, color: Colors.grey[500]),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              onPressed: () {
+                // Go to home
+                Navigator.pushAndRemoveUntil(
+                  context, 
+                  MaterialPageRoute(builder: (context) => const HomeScreen()), 
+                  (route) => false
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text('Alışverişe Başla', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 240,
+        childAspectRatio: 0.52, // Adjusted for ProductCard
+        crossAxisSpacing: 20,
+        mainAxisSpacing: 24,
+      ),
+      itemCount: favorites.length,
+      itemBuilder: (context, index) {
+        final product = favorites[index];
+        return ProductCard(product: product);
+      },
+    );
+  }
+
+  Widget _buildWebListsView() {
+    // "Yeni Liste Oluştur" kartını veri listesine sanal olarak eklemek yerine
+    // GridView.builder'da index yönetimi ile halledeceğiz.
+    // Index 0 -> Yeni Liste Kartı
+    // Index > 0 -> userLists[index - 1]
+    
+    final userLists = _appState.userLists;
+    
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 350,
+        childAspectRatio: 0.85, // Kart oranı
+        crossAxisSpacing: 24,
+        mainAxisSpacing: 24,
+      ),
+      itemCount: userLists.length + 1, // +1 for "Add New List" card
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return _buildAddListCard();
+        }
+        final list = userLists[index - 1];
+        return _buildWebListCard(list);
+      },
+    );
+  }
+
+  Widget _buildAddListCard() {
+    return GestureDetector(
+      onTap: _showCreateListDialog,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 2, style: BorderStyle.solid), // Dashed border is complex in Flutter without extra package, solid is fine or custom painter
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.add, size: 32, color: AppColors.primary),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Yeni Liste Oluştur',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Ürünlerini kategorize et',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey.shade500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebListCard(Map<String, dynamic> list) {
+    final products = list['products'] as List<Product>? ?? [];
+    // İlk 3 ürün görselini al (varsa)
+    final previewImages = products.take(3).map((p) => p.images.isNotEmpty ? p.images.first : '').where((img) => img.isNotEmpty).toList();
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ListDetailPage(listData: list),
+          ),
+        );
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Cover Image Area
+            Expanded(
+              flex: 3,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Main Cover
+                  list['coverImage'].toString().startsWith('assets/')
+                      ? Image.asset(
+                          list['coverImage'],
+                          fit: BoxFit.cover,
+                        )
+                      : Image.network(
+                          list['coverImage'],
+                          fit: BoxFit.cover,
+                        ),
+                  // Gradient Overlay
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withOpacity(0.6),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Content over image (Bottom left)
+                  Positioned(
+                    bottom: 16,
+                    left: 16,
+                    right: 16,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          list['name'],
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            shadows: [Shadow(color: Colors.black45, blurRadius: 4, offset: Offset(0, 2))],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(Icons.person, color: Colors.white70, size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${list['memberCount']} Takipçi',
+                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            ),
+                            const SizedBox(width: 12),
+                            const Icon(Icons.bookmark, color: Colors.white70, size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${list['itemCount']} Ürün',
+                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Bottom Info Area (Product Previews)
+            Expanded(
+              flex: 1,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                color: Colors.white,
+                child: Row(
+                  children: [
+                    // Product Thumbnails
+                    if (previewImages.isNotEmpty)
+                      Expanded(
+                        child: SizedBox(
+                          height: 40,
+                          child: Stack(
+                            children: List.generate(previewImages.length, (index) {
+                              return Positioned(
+                                left: index * 28.0,
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white, width: 2),
+                                    boxShadow: [
+                                      BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4),
+                                    ],
+                                  ),
+                                  child: ClipOval(
+                                    child: previewImages[index].startsWith('http')
+                                        ? Image.network(previewImages[index], fit: BoxFit.cover)
+                                        : Image.asset(previewImages[index], fit: BoxFit.cover),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ),
+                        ),
+                      )
+                    else
+                      Expanded(
+                        child: Text(
+                          list['description'],
+                          style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    
+                    // Go Button
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebRecommendationsGrid() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 240,
+        childAspectRatio: 0.52,
+        crossAxisSpacing: 20,
+        mainAxisSpacing: 24,
+      ),
+      itemCount: _recommendedProducts.length,
+      itemBuilder: (context, index) {
+        final product = _recommendedProducts[index];
+        return ProductCard(product: product);
+      },
+    );
+  }
+
+  Widget _buildMobileView() {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(

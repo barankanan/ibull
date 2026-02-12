@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../core/constants.dart';
 import '../screens/cart_page.dart';
 import '../screens/account_page.dart';
+import '../screens/favorites_page.dart';
 import '../core/app_state.dart';
 
 class WebHeader extends StatefulWidget {
@@ -249,7 +250,16 @@ class _WebHeaderState extends State<WebHeader> {
           }
         ),
         const SizedBox(width: 24),
-        _MenuItem(icon: Icons.favorite_border, label: 'Favorilerim', onTap: () {}),
+        _MenuItem(
+          icon: Icons.favorite_border, 
+          label: 'Favorilerim', 
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const FavoritesPage()),
+            );
+          }
+        ),
         const SizedBox(width: 24),
         ValueListenableBuilder<int>(
           valueListenable: appState.cartCountNotifier,

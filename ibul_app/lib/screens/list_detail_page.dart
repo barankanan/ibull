@@ -3,6 +3,9 @@ import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
 import 'map_page.dart';
+import '../widgets/web_header.dart';
+import '../widgets/web_footer.dart';
+import '../widgets/product_card.dart';
 
 /// Liste detay sayfası - ürünler, değerlendirmeler, yakın lokasyon ve videolar
 class ListDetailPage extends StatefulWidget {
@@ -83,6 +86,443 @@ class _ListDetailPageState extends State<ListDetailPage> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+    
+    if (isWeb) {
+      return _buildWebView();
+    }
+    
+    return _buildMobileView();
+  }
+  
+  Widget _buildWebView() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9FAFB),
+      body: Column(
+        children: [
+          WebHeader(onSearch: (q) {}),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1200),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Breadcrumb
+                            Row(
+                              children: [
+                                InkWell(
+                                  onTap: () => Navigator.pop(context),
+                                  child: const Text('Listelerim', style: TextStyle(color: Colors.grey)),
+                                ),
+                                const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+                                Text(widget.listData['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                            
+                            // Web List Header
+                            _buildWebListHeader(),
+                            
+                            const SizedBox(height: 32),
+                            
+                            // Tabs
+                            Container(
+                              width: double.infinity,
+                              decoration: const BoxDecoration(
+                                border: Border(bottom: BorderSide(color: Colors.grey, width: 0.5)),
+                              ),
+                              child: Row(
+                                children: [
+                                  _buildWebTabButton(0, 'Ürünler'),
+                                  const SizedBox(width: 32),
+                                  _buildWebTabButton(1, 'Değerlendirmeler'),
+                                  const SizedBox(width: 32),
+                                  _buildWebTabButton(2, 'Yakın Lokasyon'),
+                                  const SizedBox(width: 32),
+                                  _buildWebTabButton(3, 'Videolar'),
+                                ],
+                              ),
+                            ),
+                            
+                            const SizedBox(height: 32),
+                            
+                            // Content based on tab
+                            if (_selectedTabIndex == 0)
+                              _buildWebProductsTab()
+                            else if (_selectedTabIndex == 1)
+                              _buildWebReviewsTab()
+                            else if (_selectedTabIndex == 2)
+                              _buildWebLocationTab()
+                            else
+                              _buildWebVideosTab(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const WebFooter(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebListHeader() {
+    final coverImage = widget.listData['coverImage'] as String;
+    final logo = widget.listData['logo'] as String;
+    
+    return Container(
+      height: 200,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          // Cover Image
+          Positioned.fill(
+            child: coverImage.startsWith('http')
+                ? Image.network(coverImage, fit: BoxFit.cover)
+                : Image.asset(coverImage, fit: BoxFit.cover),
+          ),
+          // Overlay
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.7),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Content
+          Positioned(
+            left: 32,
+            bottom: 32,
+            right: 32,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // Logo
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 4),
+                  ),
+                  child: ClipOval(
+                    child: logo.startsWith('http')
+                        ? Image.network(logo, fit: BoxFit.cover)
+                        : Image.asset(logo, fit: BoxFit.cover),
+                  ),
+                ),
+                const SizedBox(width: 20),
+                // Info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.listData['name'],
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        widget.listData['description'],
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          const Icon(Icons.people, color: Colors.white70, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${widget.listData['memberCount']} Takipçi',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                          ),
+                          const SizedBox(width: 16),
+                          const Icon(Icons.inventory_2, color: Colors.white70, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${widget.listData['itemCount']} Ürün',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                // Buttons
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () {},
+                      icon: const Icon(Icons.add),
+                      label: const Text('Takip Et'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    IconButton(
+                      onPressed: () {},
+                      icon: const Icon(Icons.share),
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.white.withOpacity(0.2),
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebTabButton(int index, String label) {
+    final isSelected = _selectedTabIndex == index;
+    return InkWell(
+      onTap: () {
+        setState(() => _selectedTabIndex = index);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          border: isSelected 
+            ? const Border(bottom: BorderSide(color: AppColors.primary, width: 3))
+            : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? AppColors.primary : Colors.grey.shade600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebProductsTab() {
+    final products = _getListProducts();
+    
+    if (products.isEmpty) {
+      return const Center(child: Text('Bu listede henüz ürün yok.'));
+    }
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 240,
+        childAspectRatio: 0.52,
+        crossAxisSpacing: 20,
+        mainAxisSpacing: 24,
+      ),
+      itemCount: products.length,
+      itemBuilder: (context, index) {
+        return ProductCard(product: products[index]);
+      },
+    );
+  }
+
+  Widget _buildWebReviewsTab() {
+    // Örnek verilerle web için grid yapısı
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Fotoğraflı Değerlendirmeler',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 120,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: 8,
+            itemBuilder: (context, index) {
+              return Container(
+                width: 120,
+                margin: const EdgeInsets.only(right: 16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  image: const DecorationImage(
+                    image: NetworkImage('https://via.placeholder.com/150'),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 32),
+        const Text(
+          'Tüm Değerlendirmeler',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        ListView.separated(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: 3,
+          separatorBuilder: (context, index) => const SizedBox(height: 16),
+          itemBuilder: (context, index) => _buildWebReviewCard(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWebReviewCard() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const CircleAvatar(
+                backgroundColor: Colors.grey,
+                child: Text('BK', style: TextStyle(color: Colors.white)),
+              ),
+              const SizedBox(width: 12),
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Baran K.', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text('16 Ocak 2024', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                ],
+              ),
+              const Spacer(),
+              Row(
+                children: List.generate(5, (index) => const Icon(Icons.star, color: Colors.amber, size: 18)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Harika bir ürün listesi! Aradığım her şeyi burada buldum. Paketleme çok özenliydi ve kargo hızlı geldi. Kesinlikle tavsiye ederim.',
+            style: TextStyle(fontSize: 14, height: 1.5),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebLocationTab() {
+    return Container(
+      height: 400,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.map_outlined, size: 64, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            Text(
+              'Harita Görünümü',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 8),
+            const Text('Bu özellik web sürümünde yakında aktif olacak.'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebVideosTab() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 300,
+        childAspectRatio: 0.6,
+        crossAxisSpacing: 20,
+        mainAxisSpacing: 24,
+      ),
+      itemCount: 6,
+      itemBuilder: (context, index) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.black,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                'https://via.placeholder.com/300x500',
+                fit: BoxFit.cover,
+                errorBuilder: (c, e, s) => Container(color: Colors.grey.shade900),
+              ),
+              const Center(
+                child: Icon(Icons.play_circle_fill, color: Colors.white, size: 48),
+              ),
+              Positioned(
+                bottom: 12,
+                left: 12,
+                child: Text(
+                  'Video Başlığı ${index + 1}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMobileView() {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(

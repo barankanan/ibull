@@ -1,5 +1,6 @@
 
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
@@ -26,6 +27,7 @@ import 'map_page.dart';
 import 'cart_page.dart';
 import 'account_page.dart';
 import 'search_results_page.dart';
+import 'product_detail_page.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
@@ -51,6 +53,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _hasSpunWheel = false; // Çark çevrildi mi kontrolü
   final ScrollController _popularProductsScrollController = ScrollController();
   final ScrollController _subCategoryScrollController = ScrollController();
+  final ScrollController _flashProductsScrollController = ScrollController();
+  final ScrollController _todayProductsScrollController = ScrollController();
 
   final Map<String, List<String>> _standardFilters = {
     'Kategori': [
@@ -126,6 +130,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void dispose() {
     _spinController.dispose();
     _popularProductsScrollController.dispose();
+    _flashProductsScrollController.dispose();
+    _todayProductsScrollController.dispose();
     super.dispose();
   }
 
@@ -156,21 +162,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             name: 'Apple iPhone 13 128 GB',
             price: '35.999 TL',
             oldPrice: '38.999 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/iphone15_beyaz_on.png',
             category: 'Elektronik',
             brand: 'Apple',
-            description: 'A15 Bionic çip, Süper Retina XDR ekran.',
+            description: 'Apple iPhone 12, 5G desteği, A14 Bionic çip, 12MP çift kamera sistemi ve Super Retina XDR ekran ile güçlü performans sunar. 128GB depolama alanı ile tüm dosyalarınızı rahatça saklayın. Ceramic Shield ön kapak, IP68 su ve toz dayanıklılığı, MagSafe kablosuz şarj desteği. iOS ekosistemiyle sorunsuz entegrasyon.',
             rating: 4.8,
             reviewCount: 1250,
             tags: '["Hızlı Kargo", "Ücretsiz Kargo"]',
             subCategory: 'Telefon',
             store: 'Apple Store',
+            variantOptions: 'Renk:Siyah|Depolama:128 GB',
+            variantGroupId: 'iphone13',
           ),
           DBProduct(
             id: 2,
             name: 'Samsung Galaxy S23 Ultra',
             price: '45.999 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/s24_mor.jpeg',
             category: 'Elektronik',
             brand: 'Samsung',
             description: '200 MP Kamera, S Pen dahil.',
@@ -178,13 +186,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 850,
             tags: '["Yeni", "Fırsat"]',
             subCategory: 'Telefon',
+            variantOptions: 'Renk:Siyah|Depolama:256 GB',
+            variantGroupId: 'galaxys23',
             store: 'Samsung TR',
           ),
           DBProduct(
             id: 3,
             name: 'Dyson V15 Detect',
             price: '24.999 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/dyson_v15.jpeg',
             category: 'Ev & Yaşam',
             brand: 'Dyson',
             description: 'Lazerli toz tespiti, güçlü emiş.',
@@ -199,7 +209,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             name: 'Sony WH-1000XM5',
             price: '12.499 TL',
             oldPrice: '14.999 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/sony_xm5.jpg',
             category: 'Elektronik',
             brand: 'Sony',
             description: 'Gürültü engelleme, 30 saat pil.',
@@ -211,17 +221,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
           DBProduct(
             id: 5,
-            name: 'Philips Airfryer XXL',
-            price: '8.999 TL',
-            imageUrl: '',
-            category: 'Mutfak',
-            brand: 'Philips',
-            description: 'Yağsız pişirme, geniş kapasite.',
+            name: 'MacBook Pro M3',
+            price: '58.999 TL',
+            imageUrl: 'assets/products/macbook_pro_m3.jpeg',
+            category: 'Elektronik',
+            brand: 'Apple',
+            description: 'M3 çip, 18 saat pil ömrü.',
             rating: 4.8,
             reviewCount: 5600,
             tags: '["Popüler"]',
-            subCategory: 'Küçük Ev Aletleri',
-            store: 'Philips',
+            subCategory: 'Bilgisayar',
+            store: 'Apple Store',
           ),
 
           // --- SAÇ BAKIM ÜRÜNLERİ (DUMMY) ---
@@ -232,7 +242,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             name: 'Urban Care Hyaluronic Acid & Collagen Şampuan',
             price: '199.90 TL',
             oldPrice: '250.00 TL',
-            imageUrl: 'assets/haircare/urban_shampoo.png', // Placeholder path
+            imageUrl: 'assets/products/Urban Care Hyaluronic Şampuan.jpg',
             category: 'Kişisel Bakım',
             brand: 'Urban',
             description: 'Ekstra dolgunlaştırıcı ve nemlendirici bakım şampuanı.',
@@ -246,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 102,
             name: 'Urban Care Argan Oil Saç Bakım Serumu',
             price: '220.00 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Urban Care Argan Oil Şampuan.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Urban',
             description: 'Kırılma karşıtı besleyici argan yağı.',
@@ -260,7 +270,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 103,
             name: 'Urban Care Twisted Curls Hibiscus Maske',
             price: '185.50 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Urban Care Biotin & Kafein Tonik.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Urban',
             description: 'Belirgin bukleler için yoğun bakım maskesi.',
@@ -277,7 +287,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             name: 'Head & Shoulders Menthol Ferahlığı',
             price: '145.50 TL',
             oldPrice: '180.00 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Head & Shoulders Mentol Ferahlığı Şampuan.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Head & Shoulders',
             description: 'Kepeğe karşı etkili, ferahlatıcı şampuan.',
@@ -291,7 +301,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 105,
             name: 'Head & Shoulders Derinlemesine Temiz',
             price: '139.90 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Head & Shoulders Mentol Ferahlığı Şampuan.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Head & Shoulders',
             description: 'Yağlı saçlar için limon ferahlığı.',
@@ -307,7 +317,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 106,
             name: 'L\'Oreal Paris Elseve Mucizevi Yağ',
             price: '275.00 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Elseve Şampuan Glycolic Gloss.jpeg',
             category: 'Kişisel Bakım',
             brand: 'L\'Oreal',
             description: '6 değerli çiçek özü yağı ile besleyici bakım.',
@@ -321,7 +331,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 107,
             name: 'L\'Oreal Paris Excellence Creme Boya',
             price: '160.00 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Elseve Şampuan Glycolic Gloss.jpeg',
             category: 'Kişisel Bakım',
             brand: 'L\'Oreal',
             description: 'Zengin renkler, %100 beyaz kapama.',
@@ -337,7 +347,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 108,
             name: 'Elidor Güçlü ve Parlak Şampuan',
             price: '89.90 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Mood Onarıcı Saç Şampuanı.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Elidor',
             description: 'Nutri-Shine teknolojisi ile güçlü saçlar.',
@@ -351,7 +361,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 109,
             name: 'Elidor 7/24 Belirgin Bukleler Krem',
             price: '115.00 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Morfose Milk Therapy Saç Köpüğü.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Elidor',
             description: 'Durulanmayan bakım kremi.',
@@ -367,7 +377,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 110,
             name: 'Dove Yoğun Onarıcı Bakım Maskesi',
             price: '155.00 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Dove Yoğun Onarım Şampuan.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Dove',
             description: 'Yıpranmış saçlar için anında onarım.',
@@ -381,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 111,
             name: 'Dove Avokado Özlü Şampuan',
             price: '95.50 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Dove Yoğun Onarım Şampuan.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Dove',
             description: 'Kırılma karşıtı güçlendirici bakım.',
@@ -397,7 +407,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 112,
             name: 'Clear Women Komple Bakım',
             price: '125.00 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Clear Men Güçlü & Parlak Şampuan.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Clear',
             description: 'Saç derisi bakımı ve kepek önleyici.',
@@ -411,7 +421,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             id: 113,
             name: 'Clear Men Cool Sport Menthol',
             price: '130.00 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/Clear Men Güçlü & Parlak Şampuan.jpeg',
             category: 'Kişisel Bakım',
             brand: 'Clear',
             description: 'Erkekler için ferahlatıcı etki.',
@@ -439,15 +449,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             name: 'Apple iPhone 13 128 GB',
             price: '35.999 TL',
             oldPrice: '38.999 TL',
-            imageUrl: '',
+            imageUrl: 'assets/products/iphone15_beyaz_on.png',
             category: 'Elektronik',
             brand: 'Apple',
-            description: 'A15 Bionic çip, Süper Retina XDR ekran.',
+            description: 'Apple iPhone 12, 5G desteği, A14 Bionic çip, 12MP çift kamera sistemi ve Super Retina XDR ekran ile güçlü performans sunar. 128GB depolama alanı ile tüm dosyalarınızı rahatça saklayın.',
             rating: 4.8,
             reviewCount: 1250,
             tags: '["Hızlı Kargo", "Ücretsiz Kargo"]',
             subCategory: 'Telefon',
             store: 'Apple Store',
+            variantOptions: 'Renk:Siyah|Depolama:128 GB',
+            variantGroupId: 'iphone13',
           ),
        ];
       setState(() {
@@ -598,39 +610,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   // Dummy Data for Tech Brand Section
   final Map<String, dynamic> _techBrandData = {
     'Apple': {
-      'logo': 'assets/brands/apple_logo.png', // Placeholder path
-      'adUrls': [
-        'assets/brands/apple_ad1.png', // Placeholder
-        'assets/brands/apple_ad2.png',
-      ],
+      'logo': '',
+      'adUrls': <String>[],
       'products': [] // Veritabanından çekilecek
     },
     'Samsung': {
-      'logo': 'assets/brands/samsung_logo.png',
-      'adUrls': [
-        'assets/brands/samsung_ad1.png',
-      ],
+      'logo': '',
+      'adUrls': <String>[],
       'products': []
     },
     'Dyson': {
-      'logo': 'assets/brands/dyson_logo.png',
-      'adUrls': [
-        'assets/brands/dyson_ad1.png',
-      ],
+      'logo': '',
+      'adUrls': <String>[],
       'products': []
     },
     'Sony': {
-      'logo': 'assets/brands/sony_logo.png',
-      'adUrls': [
-        'assets/brands/sony_ad1.png',
-      ],
+      'logo': '',
+      'adUrls': <String>[],
       'products': []
     },
     'Philips': {
-      'logo': 'assets/brands/philips_logo.png',
-      'adUrls': [
-        'assets/brands/philips_ad1.png',
-      ],
+      'logo': '',
+      'adUrls': <String>[],
       'products': []
     },
   };
@@ -805,10 +806,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             aspectRatio: 3.25,
           ),
           items: [
-            'assets/images/banners/Yakın lokasyon banner.png',
-            'assets/images/banners/ürünleri listele banner.png',
-            'assets/images/banners/Görsel zeka banner.png',
-            'assets/images/banners/ibul premium banner.png',
+            'assets/images/banners/yakin-lokasyon-banner.png',
+            'assets/images/banners/urunleri-listele-banner.png',
+            'assets/images/banners/gorsel-zeka-banner.png',
+            'assets/images/banners/ibul-premium-banner.png',
           ].map((imagePath) {
             return Builder(
               builder: (BuildContext context) {
@@ -830,6 +831,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     child: Image.asset(
                       imagePath,
                       fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        color: Colors.grey.shade200,
+                        child: const Center(
+                          child: Icon(Icons.image_not_supported, color: Colors.grey, size: 40),
+                        ),
+                      ),
                     ),
                   ),
                 );
@@ -855,7 +862,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               const SizedBox(height: 10),
               _isLoadingProducts
                   ? SizedBox(
-                      height: 400,
+                      height: 340,
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         physics: const NeverScrollableScrollPhysics(),
@@ -879,7 +886,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           ),
                         )
                       : SizedBox(
-                          height: 400,
+                          height: 340,
                           child: Builder(
                             builder: (context) {
                               // Görseli olan ilk 10 ürünü filtrele
@@ -935,7 +942,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               const SizedBox(height: 10),
               _isLoadingProducts
                   ? SizedBox(
-                      height: 400,
+                      height: 340,
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         physics: const NeverScrollableScrollPhysics(),
@@ -959,7 +966,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           ),
                         )
                       : SizedBox(
-                          height: 400,
+                          height: 340,
                           child: Builder(
                             builder: (context) {
                               // Görseli olan 11-20 arası ürünleri filtrele
@@ -1123,7 +1130,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final bannerImages = [
       'assets/images/banners/teknosa-duyuru-1.png',
       'assets/images/banners/arcelik-duyuru-1.png',
-      'assets/images/banners/ibul premium banner.png',
+      'assets/images/banners/ibul-premium-banner.png',
     ];
 
     return Center(
@@ -1283,7 +1290,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
               // 2. İkili Büyük Banner Alanı
               SizedBox(
-                height: 300,
+                height: 380,
                 child: Row(
                   children: [
                     // Sol: Kampanya Slider
@@ -1295,7 +1302,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           children: [
                             CarouselSlider(
                               options: CarouselOptions(
-                                height: 300,
+                                height: 380,
                                 viewportFraction: 1.0,
                                 autoPlay: true,
                                 autoPlayInterval: const Duration(seconds: 6),
@@ -1342,72 +1349,72 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       child: Column(
                         children: [
                           Expanded(
+                            flex: 3,
                             child: Container(
                               decoration: BoxDecoration(
                                 gradient: LinearGradient(
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
-                                  colors: [Colors.orange.shade50, Colors.white],
+                                  colors: [AppColors.primary.withOpacity(0.06), Colors.white],
                                 ),
                                 borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.orange.shade100),
-                                boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.1), blurRadius: 10)],
+                                border: Border.all(color: AppColors.primary.withOpacity(0.15)),
+                                boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.08), blurRadius: 10)],
                               ),
+                              clipBehavior: Clip.antiAlias,
                               child: Stack(
                                 children: [
+                                  Center(
+                                    child: popularProducts.isNotEmpty 
+                                      ? DealOfTheDaySlider(products: popularProducts)
+                                      : const CircularProgressIndicator(),
+                                  ),
                                   Positioned(
                                     top: 16,
                                     left: 16,
                                     child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                      decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(20)),
-                                      child: const Text('Günün Fırsatı', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                                    ),
-                                  ),
-                                  Center(
-                                    child: popularProducts.isNotEmpty 
-                                      ? Transform.scale(
-                                          scale: 0.8,
-                                          child: ProductCard(
-                                            product: _convertToProduct(popularProducts.first),
-                                            width: 180,
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        gradient: const LinearGradient(
+                                          colors: [Color(0xFFFF9800), AppColors.primary],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        ),
+                                        borderRadius: BorderRadius.circular(20),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: AppColors.primary.withOpacity(0.3),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 4),
                                           ),
-                                        )
-                                      : const CircularProgressIndicator(),
+                                        ],
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.flash_on, color: Colors.white, size: 16),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            'Günün Fırsatı',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              letterSpacing: 0.5,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                 ],
                               ),
                             ),
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 12),
                           Expanded(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE3F2FD),
-                                borderRadius: BorderRadius.circular(16),
-                                image: const DecorationImage(
-                                  image: AssetImage('assets/images/banners/Görsel zeka banner.png'),
-                                  fit: BoxFit.cover,
-                                  opacity: 0.9,
-                                ),
-                              ),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(16),
-                                  gradient: LinearGradient(
-                                    begin: Alignment.bottomCenter,
-                                    end: Alignment.topCenter,
-                                    colors: [Colors.black.withOpacity(0.6), Colors.transparent],
-                                  ),
-                                ),
-                                padding: const EdgeInsets.all(16),
-                                alignment: Alignment.bottomLeft,
-                                child: const Text(
-                                  'Yapay Zeka ile\nAradığını Bul',
-                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-                                ),
-                              ),
-                            ),
+                            flex: 2,
+                            child: const CouponSlider(),
                           ),
                         ],
                       ),
@@ -1416,6 +1423,175 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ),
               ),
               
+              const SizedBox(height: 32),
+
+              // 2.5 Bugün Kapında (Yeni Alan)
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      const Color(0xFFE3F2FD), // Light Blue
+                      Colors.white,
+                      const Color(0xFFBBDEFB), // Blue 100
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.blue.withOpacity(0.1)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.local_shipping_outlined, color: Colors.blue, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Bugün Kapında',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF333333)),
+                            ),
+                            Text(
+                              'Yakın Lokasyon ile çevrendeki mağazalardan alışveriş yapabilirsin',
+                              style: TextStyle(fontSize: 13, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.blue,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.location_on_outlined, color: Colors.white, size: 16),
+                              SizedBox(width: 6),
+                              Text('Hızlı Teslimat', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    // Yatay Liste
+                    popularProducts.isNotEmpty
+                      ? SizedBox(
+                          height: 340,
+                          child: Stack(
+                            children: [
+                              ScrollConfiguration(
+                                behavior: ScrollConfiguration.of(context).copyWith(
+                                  dragDevices: {
+                                    PointerDeviceKind.touch,
+                                    PointerDeviceKind.mouse,
+                                  },
+                                ),
+                                child: ListView.separated(
+                                  controller: _todayProductsScrollController,
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: popularProducts.length > 10 ? 10 : popularProducts.length,
+                                  separatorBuilder: (context, index) => const SizedBox(width: 20),
+                                  itemBuilder: (context, index) {
+                                    final dbProduct = popularProducts[index];
+                                    return SizedBox(
+                                      width: 220,
+                                      child: ProductCard(
+                                        product: _convertToProduct(dbProduct),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                              // Sol Ok
+                              Positioned(
+                                left: 0,
+                                top: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.1),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: IconButton(
+                                      icon: const Icon(Icons.arrow_back_ios_new, size: 20, color: Colors.blue),
+                                      onPressed: () {
+                                        _todayProductsScrollController.animateTo(
+                                          _todayProductsScrollController.offset - 300,
+                                          duration: const Duration(milliseconds: 300),
+                                          curve: Curves.easeInOut,
+                                        );
+                                      },
+                                      tooltip: 'Sola Kaydır',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // Sağ Ok
+                              Positioned(
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.1),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: IconButton(
+                                      icon: const Icon(Icons.arrow_forward_ios, size: 20, color: Colors.blue),
+                                      onPressed: () {
+                                        _todayProductsScrollController.animateTo(
+                                          _todayProductsScrollController.offset + 300,
+                                          duration: const Duration(milliseconds: 300),
+                                          curve: Curves.easeInOut,
+                                        );
+                                      },
+                                      tooltip: 'Sağa Kaydır',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                  ],
+                ),
+              ),
+
               const SizedBox(height: 32),
 
               // 3. Popüler Ürünler Başlığı
@@ -1453,7 +1629,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     )
                   )
                 : SizedBox(
-                    height: 380,
+                    height: 340,
                     child: Stack(
                       children: [
                         ScrollConfiguration(
@@ -1473,21 +1649,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               final dbProduct = popularProducts[index];
                               return SizedBox(
                                 width: 220,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.grey.withOpacity(0.1),
-                                        blurRadius: 10,
-                                        offset: const Offset(0, 5),
-                                      ),
-                                    ],
-                                  ),
-                                  child: ProductCard(
-                                    product: _convertToProduct(dbProduct),
-                                  ),
+                                child: ProductCard(
+                                  product: _convertToProduct(dbProduct),
                                 ),
                               );
                             },
@@ -1567,15 +1730,192 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   
               const SizedBox(height: 40),
 
+              // 4.5 Flaş Ürünler - Grid Bölümü
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.red.withOpacity(0.04),
+                      Colors.white,
+                      Colors.red.withOpacity(0.02),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.red.withOpacity(0.15)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.flash_on, color: Colors.red, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Flaş Ürünler',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF333333)),
+                            ),
+                            Text(
+                              'Kaçırılmayacak fırsatlar',
+                              style: TextStyle(fontSize: 13, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.red.withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.timer_outlined, color: Colors.white, size: 16),
+                              SizedBox(width: 6),
+                              Text('Sınırlı Süre', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    // Grid yerine Yatay Liste
+                    popularProducts.length > 1
+                      ? SizedBox(
+                          height: 340,
+                          child: Stack(
+                            children: [
+                              ScrollConfiguration(
+                                behavior: ScrollConfiguration.of(context).copyWith(
+                                  dragDevices: {
+                                    PointerDeviceKind.touch,
+                                    PointerDeviceKind.mouse,
+                                  },
+                                ),
+                                child: ListView.separated(
+                                  controller: _flashProductsScrollController,
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: popularProducts.length > 10 ? 10 : popularProducts.length,
+                                  separatorBuilder: (context, index) => const SizedBox(width: 20),
+                                  itemBuilder: (context, index) {
+                                    final dbProduct = popularProducts[index];
+                                    return SizedBox(
+                                      width: 220,
+                                      child: ProductCard(
+                                        product: _convertToProduct(dbProduct),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                              // Sol Ok
+                              Positioned(
+                                left: 0,
+                                top: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.1),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: IconButton(
+                                      icon: const Icon(Icons.arrow_back_ios_new, size: 20, color: AppColors.primary),
+                                      onPressed: () {
+                                        _flashProductsScrollController.animateTo(
+                                          _flashProductsScrollController.offset - 300,
+                                          duration: const Duration(milliseconds: 300),
+                                          curve: Curves.easeInOut,
+                                        );
+                                      },
+                                      tooltip: 'Sola Kaydır',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // Sağ Ok
+                              Positioned(
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.1),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: IconButton(
+                                      icon: const Icon(Icons.arrow_forward_ios, size: 20, color: AppColors.primary),
+                                      onPressed: () {
+                                        _flashProductsScrollController.animateTo(
+                                          _flashProductsScrollController.offset + 300,
+                                          duration: const Duration(milliseconds: 300),
+                                          curve: Curves.easeInOut,
+                                        );
+                                      },
+                                      tooltip: 'Sağa Kaydır',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 40),
+
               // 5. Markalar ve Bakım Bölümü
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade100),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.02),
-                      blurRadius: 10,
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 16,
                       offset: const Offset(0, 4),
                     ),
                   ],
@@ -1585,15 +1925,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
               const SizedBox(height: 40),
 
+              // 5.5 Neden iBul? Bölümü
+              _buildWhyIbulSection(),
+              const SizedBox(height: 40),
+
               // 6. Teknoloji Dünyası Bölümü
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade100),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.02),
-                      blurRadius: 10,
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 16,
                       offset: const Offset(0, 4),
                     ),
                   ],
@@ -1603,6 +1948,34 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
               
               const SizedBox(height: 80),
+
+              // Avantaj Çubuğu (En Alta Taşındı)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 40),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.primary.withOpacity(0.05), Colors.white, AppColors.primary.withOpacity(0.05)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.1)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildTrustItem(Icons.local_shipping_outlined, 'Ücretsiz Kargo', '150 TL üzeri'),
+                    _buildTrustDivider(),
+                    _buildTrustItem(Icons.verified_user_outlined, 'Güvenli Ödeme', '256-bit SSL'),
+                    _buildTrustDivider(),
+                    _buildTrustItem(Icons.replay_outlined, '14 Gün İade', 'Koşulsuz iade'),
+                    _buildTrustDivider(),
+                    _buildTrustItem(Icons.support_agent_outlined, '7/24 Destek', 'Canlı yardım'),
+                    _buildTrustDivider(),
+                    _buildTrustItem(Icons.workspace_premium_outlined, 'Orijinal Ürün', 'Garantili'),
+                  ],
+                ),
+              ),
               
               // 7. Footer
               const WebFooter(),
@@ -1949,6 +2322,607 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTrustItem(IconData icon, String title, String subtitle) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: AppColors.primary, size: 22),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF333333))),
+            Text(subtitle, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTrustDivider() {
+    return Container(
+      width: 1,
+      height: 28,
+      color: Colors.grey[200],
+    );
+  }
+
+  Widget _buildWhyIbulSection() {
+    final items = [
+      {
+        'icon': Icons.location_on_outlined,
+        'color': const Color(0xFF4CAF50),
+        'title': 'Yakın Lokasyon',
+        'desc': 'En yakın mağazaları haritada bul, hızlı teslimat al.',
+      },
+      {
+        'icon': Icons.compare_arrows,
+        'color': const Color(0xFF2196F3),
+        'title': 'Fiyat Karşılaştırma',
+        'desc': 'Aynı ürünü farklı satıcılarda karşılaştır, en uygun fiyatı yakala.',
+      },
+      {
+        'icon': Icons.auto_awesome,
+        'color': AppColors.primary,
+        'title': 'Yapay Zeka Asistanı',
+        'desc': 'Fotoğraf çek, aradığın ürünü anında bul.',
+      },
+      {
+        'icon': Icons.verified,
+        'color': const Color(0xFFFF9800),
+        'title': 'Güvenilir Satıcılar',
+        'desc': 'Onaylı mağazalar ve gerçek kullanıcı yorumları.',
+      },
+    ];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 32),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary.withOpacity(0.03),
+            Colors.white,
+            AppColors.primary.withOpacity(0.05),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primary.withOpacity(0.1)),
+      ),
+      child: Column(
+        children: [
+          const Text(
+            'Neden iBul?',
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF333333)),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Alışverişin en akıllı yolu',
+            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+          ),
+          const SizedBox(height: 28),
+          Row(
+            children: items.map((item) {
+              return Expanded(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (item['color'] as Color).withOpacity(0.1),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: (item['color'] as Color).withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(item['icon'] as IconData, color: item['color'] as Color, size: 28),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        item['title'] as String,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF333333)),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        item['desc'] as String,
+                        style: TextStyle(fontSize: 12, color: Colors.grey[500], height: 1.4),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class CouponSlider extends StatefulWidget {
+  const CouponSlider({super.key});
+
+  @override
+  State<CouponSlider> createState() => _CouponSliderState();
+}
+
+class _CouponSliderState extends State<CouponSlider> {
+  late PageController _pageController;
+  Timer? _timer;
+  int _currentPage = 0;
+  final Set<int> _usedCoupons = {};
+
+  final List<Map<String, dynamic>> _coupons = [
+    {
+      'title': '200 TL İndirim',
+      'subtitle': 'İlk Siparişe Özel',
+      'color': [const Color(0xFF6A11CB), const Color(0xFF2575FC)], // Purple-Blue
+      'icon': Icons.card_giftcard,
+    },
+    {
+      'title': '%15 İndirim',
+      'subtitle': 'Teknoloji Ürünlerinde',
+      'color': [const Color(0xFFFF512F), const Color(0xFFDD2476)], // Orange-Red
+      'icon': Icons.devices,
+    },
+    {
+      'title': 'Kargo Bedava',
+      'subtitle': '150 TL Üzeri',
+      'color': [const Color(0xFF00B09B), const Color(0xFF96C93D)], // Green
+      'icon': Icons.local_shipping,
+    },
+    {
+      'title': '3 Al 2 Öde',
+      'subtitle': 'Kişisel Bakım',
+      'color': [const Color(0xFFDA22FF), const Color(0xFF9733EE)], // Purple
+      'icon': Icons.shopping_basket,
+    },
+    {
+      'title': '50 TL Puan',
+      'subtitle': 'Cüzdan ile Ödemede',
+      'color': [const Color(0xFFFF8008), const Color(0xFFFFC837)], // Orange-Yellow
+      'icon': Icons.account_balance_wallet,
+    },
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(viewportFraction: 0.7);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startTimer();
+    });
+  }
+
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!mounted) return;
+      
+      if (_currentPage < _coupons.length - 1) {
+        _currentPage++;
+      } else {
+        _currentPage = 0;
+      }
+      
+      if (_pageController.hasClients) {
+        _pageController.animateToPage(
+          _currentPage,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 12, top: 12, bottom: 8),
+            child: Row(
+              children: [
+                Icon(Icons.confirmation_number_outlined, size: 16, color: Colors.grey.shade700),
+                const SizedBox(width: 6),
+                Text('Kuponlar', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey.shade800)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: PageView.builder(
+              controller: _pageController,
+              scrollDirection: Axis.vertical,
+              itemCount: _coupons.length,
+              itemBuilder: (context, index) {
+                final coupon = _coupons[index];
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Stack(
+                    children: [
+                      // Arka Plan
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.white, Colors.grey.shade50],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade200),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Sol Taraf (Renk Çubuğu)
+                      Container(
+                        width: 4,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: coupon['color'] as List<Color>,
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                          ),
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(12),
+                            bottomLeft: Radius.circular(12),
+                          ),
+                        ),
+                      ),
+                      // İçerik
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: (coupon['color'][0] as Color).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(coupon['icon'] as IconData, color: coupon['color'][0] as Color, size: 20),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    coupon['title'],
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                      color: Colors.black87,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    coupon['subtitle'],
+                                    style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      fontSize: 11,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () {
+                                if (_usedCoupons.contains(index)) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Bu kupon zaten tanımlandı!'),
+                                      duration: Duration(seconds: 1),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                
+                                setState(() {
+                                  _usedCoupons.add(index);
+                                });
+                                
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('${coupon['title']} kuponu hesabınıza tanımlandı!'),
+                                    backgroundColor: Colors.green,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: _usedCoupons.contains(index) ? Colors.grey : (coupon['color'][0] as Color),
+                                  borderRadius: BorderRadius.circular(16),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: (_usedCoupons.contains(index) ? Colors.grey : coupon['color'][0] as Color).withOpacity(0.3),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: Text(
+                                  _usedCoupons.contains(index) ? 'KULLANILDI' : 'KULLAN',
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Kesik Çizgiler (Bilet Efekti - Opsiyonel, şimdilik sade tutalım)
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class DealOfTheDaySlider extends StatefulWidget {
+  final List<DBProduct> products;
+
+  const DealOfTheDaySlider({super.key, required this.products});
+
+  @override
+  State<DealOfTheDaySlider> createState() => _DealOfTheDaySliderState();
+}
+
+class _DealOfTheDaySliderState extends State<DealOfTheDaySlider> {
+  late PageController _pageController;
+  Timer? _timer;
+  int _currentPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startTimer();
+    });
+  }
+
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 4), (timer) {
+      if (!mounted) return;
+      if (widget.products.isEmpty) return;
+      
+      if (_currentPage < widget.products.length - 1) {
+        _currentPage++;
+      } else {
+        _currentPage = 0;
+      }
+      
+      if (_pageController.hasClients) {
+        _pageController.animateToPage(
+          _currentPage,
+          duration: const Duration(milliseconds: 800),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.products.isEmpty) return const SizedBox.shrink();
+
+    return PageView.builder(
+      controller: _pageController,
+      itemCount: widget.products.length,
+      itemBuilder: (context, index) {
+        final product = widget.products[index];
+        
+        // İndirim oranını hesapla
+        String? discountRate;
+        if (product.oldPrice != null && product.oldPrice!.isNotEmpty) {
+          try {
+            double price = double.parse(product.price.replaceAll(RegExp(r'[^0-9.]'), ''));
+            double oldPrice = double.parse(product.oldPrice!.replaceAll(RegExp(r'[^0-9.]'), ''));
+            if (oldPrice > price) {
+              int rate = ((oldPrice - price) / oldPrice * 100).round();
+              discountRate = '%$rate';
+            }
+          } catch (e) {
+            // Fiyat formatı hatası olursa yoksay
+          }
+        }
+
+        return GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ProductDetailPage(product: Product.fromDBProduct(product)),
+              ),
+            );
+          },
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Görsel Alanı
+                Expanded(
+                  flex: 3,
+                  child: Stack(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Center(
+                          child: Image.asset(
+                            product.imageUrl,
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) {
+                              return const Icon(Icons.image, size: 50, color: Colors.grey);
+                            },
+                          ),
+                        ),
+                      ),
+                      if (discountRate != null)
+                        Positioned(
+                          top: 12,
+                          right: 12,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              discountRate,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                // Bilgi Alanı
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        product.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (product.oldPrice != null)
+                                Text(
+                                  product.oldPrice!,
+                                  style: TextStyle(
+                                    decoration: TextDecoration.lineThrough,
+                                    fontSize: 11,
+                                    color: Colors.grey.shade500,
+                                  ),
+                                ),
+                              Text(
+                                product.price,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.arrow_forward,
+                              size: 16,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

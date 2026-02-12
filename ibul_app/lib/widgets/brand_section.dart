@@ -127,7 +127,8 @@ class BrandSection extends StatelessWidget {
                   CircleAvatar(
                     radius: 20,
                     backgroundColor: Colors.grey[100],
-                    backgroundImage: logoUrl.isNotEmpty ? NetworkImage(logoUrl) : null,
+                    backgroundImage: logoUrl.isNotEmpty ? AssetImage(logoUrl) : null,
+                    onBackgroundImageError: logoUrl.isNotEmpty ? (_, __) {} : null,
                     child: logoUrl.isEmpty
                         ? Text(brand[0],
                             style: TextStyle(
@@ -168,7 +169,7 @@ class BrandSection extends StatelessWidget {
     }
 
     return SizedBox(
-      height: 400,
+      height: 340,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),

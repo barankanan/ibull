@@ -327,8 +327,8 @@ class FirestoreHelper {
         oldPrice: '4.862 TL',
         rating: 4.8,
         reviewCount: 62,
-        imageUrl: 'assets/images/products/product_placeholder.png',
-        imageUrls: '["assets/images/products/product_placeholder.png"]',
+        imageUrl: 'assets/products/dyson_v15.jpeg',
+        imageUrls: '["assets/products/dyson_v15.jpeg"]',
         category: 'Elektronik',
         tags: '["Ücretsiz Kargo", "%25 indirim"]',
         description: 'Güçlü motor teknolojisi ile derin temizlik',
@@ -343,8 +343,8 @@ class FirestoreHelper {
         oldPrice: null,
         rating: 3.0,
         reviewCount: 2,
-        imageUrl: 'assets/images/products/product_placeholder.png',
-        imageUrls: '["assets/images/products/product_placeholder.png"]',
+        imageUrl: 'assets/products/sony_xm5.jpg',
+        imageUrls: '["assets/products/sony_xm5.jpg"]',
         category: 'Elektronik',
         tags: '["Hızlı Kargo"]',
         description: 'Solar şarj teknolojisi ile akıllı saat',
@@ -360,7 +360,7 @@ class FirestoreHelper {
     // 2. Bannerları Ekle
     final banners = [
       DBBanner(
-        imageUrl: 'assets/images/banners/banner_placeholder.png',
+        imageUrl: 'assets/images/banners/gorsel-zeka-banner.png',
         link: null,
         orderIndex: 1,
         type: 'main',
@@ -369,7 +369,7 @@ class FirestoreHelper {
         isActive: true,
       ),
       DBBanner(
-        imageUrl: 'assets/images/banners/banner_placeholder.png',
+        imageUrl: 'assets/images/banners/yakin-lokasyon-banner.png',
         link: null,
         orderIndex: 2,
         type: 'main',

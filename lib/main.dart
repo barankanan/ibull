@@ -1,15 +1,22 @@
 import 'dart:async';
-import 'dart:io' as io;
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import '../ibul_app/lib/core/constants.dart';
-import '../ibul_app/lib/screens/home_screen.dart';
+import 'package:provider/provider.dart';
+import 'package:ibul_app/core/app_state.dart';
+import 'package:ibul_app/core/constants.dart';
+import 'package:ibul_app/firebase_options.dart';
+import 'package:ibul_app/screens/home_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  debugPrint('Starting IBUL App. PID: ${io.pid}, OS: ${io.Platform.operatingSystem}');
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  debugPrint('Starting IBUL App. Platform: ${kIsWeb ? "web" : "native"}');
 
   // Global Flutter error handler (shows errors in terminal)
   FlutterError.onError = (FlutterErrorDetails details) {
@@ -25,7 +32,12 @@ void main() {
     return true;
   }());
 
-  runApp(const MyApp());
+  runApp(
+    ChangeNotifierProvider.value(
+      value: AppState(),
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {

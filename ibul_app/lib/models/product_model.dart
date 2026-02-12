@@ -131,8 +131,10 @@ class Product {
       return 'UFO City CT-23 2300W İnfrared tipi ayaklı ısıtıcı, modern tasarımı ve güçlü ısıtma kapasitesi ile yaşam alanlarınızda konfor sağlar. Enerji tasarruflu teknolojisi sayesinde ekonomik kullanım sunar.';
     } else if (brand.contains('Haylou') || name.contains('Solar')) {
       return 'Haylou Solar Plus RT3 akıllı saati, 1.43 inç AMOLED ekranı, 105+ spor modu ve 14 güne kadar pil ömrü ile sağlıklı yaşamınızı takip edin. Bluetooth arama, müzik kontrolü ve sağlık izleme özellikleri sunar.';
+    } else if (name.toLowerCase().contains('iphone 15 pro max')) {
+      return 'Apple iPhone 15 Pro Max, A17 Pro çip, 5G desteği, 48MP üçlü kamera sistemi ve Super Retina XDR OLED ekran ile güçlü performans sunar. 128GB depolama alanı ile tüm dosyalarınızı rahatça saklayabilirsiniz.\n\n• 3500 mAh aralığında güçlü batarya kapasitesi ile uzun süreli kullanım imkanı sunar\n\n• 6,1 inç geniş ekranı sayesinde geniş ve net görüntüler elde edilir\n\n• Parmak izi okuyucu özelliği ile cihaz güvenliğini artırır ve hızlı erişim sağlar\n\n• 2 yıl Apple Türkiye garantisi ile güvenilir servis ve destek hizmetlerinden faydalanabilirsiniz\n\n• NFC desteği ile temasız işlemleri kolayca gerçekleştirebilirsiniz\n\n• iOS işletim sistemi, stabil ve kullanıcı dostu bir deneyim sunar\n\n• Çift hat özelliğiyle iki farklı numarayı aynı anda kullanma olanağı sağlar\n\n• Ultra HD 8K video kaydı yapabilme kapasitesine sahip kamera ile yüksek kaliteli görüntüler yakalayabilirsiniz\n\n• Dokunmatik ekran teknolojisi, akıcı ve hassas bir dokunma deneyimi sunar\n\n• 20 MP ve üstü kamera çözünürlüğüyle profesyonel kalitede fotoğraflar çekebilirsiniz\n\n• Yüz tanıma sistemi sayesinde cihaz kilidini hızlıca açabilirsiniz\n\n• Suya ve toza karşı dayanıklılık özellikleri';
     } else if (brand.contains('Apple') || name.contains('iPhone')) {
-      return 'Apple iPhone 12, 5G desteği, A14 Bionic çip, 12MP çift kamera sistemi ve Super Retina XDR ekran ile güçlü performans sunar. 128GB depolama alanı ile tüm dosyalarınızı rahatça saklayabilirsiniz.';
+      return 'Apple iPhone 13, 5G desteği, A15 Bionic çip, 12MP çift kamera sistemi ve Super Retina XDR ekran ile güçlü performans sunar. 128GB depolama alanı ile tüm dosyalarınızı rahatça saklayabilirsiniz.\n\n• 3500 mAh aralığında güçlü batarya kapasitesi ile uzun süreli kullanım imkanı sunar\n\n• 6,1 inç geniş ekranı sayesinde geniş ve net görüntüler elde edilir\n\n• Parmak izi okuyucu özelliği ile cihaz güvenliğini artırır ve hızlı erişim sağlar\n\n• 2 yıl Apple Türkiye garantisi ile güvenilir servis ve destek hizmetlerinden faydalanabilirsiniz\n\n• NFC desteği ile temasız işlemleri kolayca gerçekleştirebilirsiniz\n\n• iOS işletim sistemi, stabil ve kullanıcı dostu bir deneyim sunar\n\n• Çift hat özelliğiyle iki farklı numarayı aynı anda kullanma olanağı sağlar\n\n• Ultra HD 8K video kaydı yapabilme kapasitesine sahip kamera ile yüksek kaliteli görüntüler yakalayabilirsiniz\n\n• Dokunmatik ekran teknolojisi, akıcı ve hassas bir dokunma deneyimi sunar\n\n• 20 MP ve üstü kamera çözünürlüğüyle profesyonel kalitede fotoğraflar çekebilirsiniz\n\n• Yüz tanıma sistemi sayesinde cihaz kilidini hızlıca açabilirsiniz\n\n• Suya ve toza karşı dayanıklılık özellikleri';
     } else {
       return description ?? 'Ürün hakkında detaylı bilgi için mağazamızı ziyaret edebilir veya müşteri hizmetlerimizle iletişime geçebilirsiniz.';
     }
@@ -145,7 +147,24 @@ class Product {
     } else if (brand.contains('Haylou') || name.contains('Solar')) {
       return 'Ekran: 1.43" AMOLED\nPil Ömrü: 14 gün\nSu Geçirmezlik: 5ATM\nSpor Modu: 105+\nBluetooth: 5.0\nGaranti: 2 Yıl';
     } else if (brand.contains('Apple') || name.contains('iPhone')) {
-      return 'Ekran: 6.1" Super Retina XDR\nDepolama: 128GB\nKamera: 12MP Çift\nÇip: A14 Bionic\n5G: Evet\nGaranti: 1 Yıl';
+      return 'Ekran: 6.1" Super Retina XDR\n'
+          'Çözünürlük: 2532 x 1170 piksel, 460 ppi\n'
+          'Çip: A15 Bionic, 6 çekirdekli CPU\n'
+          'Depolama: 128GB\n'
+          'Arka Kamera: 12MP Çift (Geniş + Ultra Geniş)\n'
+          'Ön Kamera: 12MP TrueDepth\n'
+          'Video: 4K Dolby Vision HDR, 60fps\n'
+          'Biyometrik: Face ID yüz tanıma\n'
+          'Bağlantı: 5G, Wi-Fi 6, Bluetooth 5.0, NFC\n'
+          'SIM: Nano-SIM + eSIM (Çift SIM desteği)\n'
+          'Su/Toz Dayanıklılık: IP68 (6m, 30dk)\n'
+          'Batarya: 3240 mAh, 20W hızlı şarj\n'
+          'Kablosuz Şarj: MagSafe 15W, Qi 7.5W\n'
+          'İşletim Sistemi: iOS 17\n'
+          'Boyutlar: 146.7 x 71.5 x 7.65 mm\n'
+          'Ağırlık: 174 g\n'
+          'Renk Seçenekleri: Siyah, Beyaz, Mavi, Kırmızı\n'
+          'Garanti: 2 Yıl Apple Türkiye Garantisi';
     } else {
       return specifications ?? 'Detaylı özellikler için mağazamızı ziyaret edin.';
     }

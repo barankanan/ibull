@@ -3,6 +3,8 @@ import '../core/constants.dart';
 import '../core/app_state.dart';
 import 'checkout_page.dart';
 import 'product_detail_page.dart';
+import '../widgets/web_header.dart';
+import '../widgets/web_footer.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -608,17 +610,16 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 900;
+    
+    if (isWeb) {
+      return _buildWebView();
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            if (constraints.maxWidth > 900) {
-              return _buildWebLayout();
-            }
-            return _buildMobileLayout();
-          },
-        ),
+        child: _buildMobileLayout(),
       ),
     );
   }
@@ -1385,9 +1386,30 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
   }
 
   // WEB LAYOUT METHODS
-  Widget _buildWebLayout() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+  Widget _buildWebView() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9FAFB),
+      body: Column(
+        children: [
+          WebHeader(onSearch: (q) {}),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  _buildWebContent(),
+                  const WebFooter(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebContent() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1200),
@@ -1413,14 +1435,12 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
                       children: [
                         _buildWebCouponSection(),
                         const SizedBox(height: 24),
-                        // Combine all items for display or keep them separated by tabs?
-                        // The design shows all items in one list usually, but let's respect the tabs or just show all.
-                        // For simplicity and matching the "Sepetim" view, let's show all or just Shopping cart.
-                        // The user said "Sepetim", which usually implies the main shopping cart.
-                        ...cartItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, cartItems, entry.key, 'shopping')).toList(),
-                        // Also include market and food items if any?
-                        if (marketItems.isNotEmpty) ...marketItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, marketItems, entry.key, 'market')).toList(),
-                        if (foodItems.isNotEmpty) ...foodItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, foodItems, entry.key, 'food')).toList(),
+                        if (cartItems.isEmpty && marketItems.isEmpty && foodItems.isEmpty)
+                          _buildEmptyCartMessage(),
+                          
+                        ...cartItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, cartItems, entry.key, 'shopping')),
+                        if (marketItems.isNotEmpty) ...marketItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, marketItems, entry.key, 'market')),
+                        if (foodItems.isNotEmpty) ...foodItems.asMap().entries.map((entry) => _buildWebStoreCard(entry.value, foodItems, entry.key, 'food')),
                       ],
                     ),
                   ),
@@ -1442,6 +1462,34 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildEmptyCartMessage() {
+    return Container(
+      padding: const EdgeInsets.all(40),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.shopping_cart_outlined, size: 64, color: Colors.grey.shade300),
+            const SizedBox(height: 16),
+            const Text(
+              'Sepetin şu an boş',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Alışverişe başlamak için ana sayfaya gidebilirsin.',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ],
         ),
       ),
     );
@@ -1851,7 +1899,7 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
           ),
           const SizedBox(height: 12),
           ElevatedButton(
-            onPressed: () {
+            onPressed: totalPrice > 0 ? () {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => CheckoutPage(
@@ -1859,14 +1907,16 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
                   selectedProducts: selectedProducts,
                 )),
               );
-            },
+            } : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
+              disabledBackgroundColor: Colors.grey.shade300,
+              disabledForegroundColor: Colors.grey.shade600,
               minimumSize: const Size(double.infinity, 56),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            child: const Text('Sepeti Onayla', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            child: Text(totalPrice > 0 ? 'Sepeti Onayla' : 'Ürün Seçiniz', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ),
         ],
       ),

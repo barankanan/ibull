@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../core/constants.dart';
 import '../services/coupon_service.dart';
+import '../widgets/web_header.dart';
+import '../widgets/web_footer.dart';
+import '../widgets/account_sidebar.dart';
 
 class CouponsPage extends StatefulWidget {
   const CouponsPage({super.key});
@@ -129,6 +132,145 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+
+    if (isWeb) {
+      return _buildWebView();
+    }
+
+    return _buildMobileView();
+  }
+
+  Widget _buildWebView() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9FAFB),
+      body: Column(
+        children: [
+          WebHeader(onSearch: (q) {}),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1200),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Left Sidebar
+                            const SizedBox(
+                              width: 280,
+                              child: AccountSidebar(activePage: 'Kuponlarım'),
+                            ),
+                            const SizedBox(width: 32),
+                            // Right Content
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Kuponlarım',
+                                    style: TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 24),
+                                  
+                                  // Web Tabs
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.grey.shade200),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                                          ),
+                                          child: TabBar(
+                                            controller: _tabController,
+                                            labelColor: AppColors.primary,
+                                            unselectedLabelColor: Colors.grey,
+                                            indicatorColor: AppColors.primary,
+                                            indicatorWeight: 3,
+                                            labelStyle: const TextStyle(fontWeight: FontWeight.bold),
+                                            tabs: const [
+                                              Tab(text: 'Aktif Kuponlar'),
+                                              Tab(text: 'Pasif Kuponlar'),
+                                            ],
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          height: 500, // Fixed height for tab view content or use minHeight
+                                          child: TabBarView(
+                                            controller: _tabController,
+                                            children: [
+                                              _buildWebCouponGrid(_allActiveCoupons, isActive: true),
+                                              _buildWebCouponGrid(_expiredCoupons, isActive: false),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const WebFooter(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebCouponGrid(List<Map<String, dynamic>> coupons, {required bool isActive}) {
+    if (coupons.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.local_offer_outlined, size: 64, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text(
+              isActive ? 'Aktif kuponunuz bulunmuyor' : 'Geçmiş kuponunuz bulunmuyor',
+              style: TextStyle(color: Colors.grey[600], fontSize: 16),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(24),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 2.5, // Wider aspect ratio for web cards
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+      ),
+      itemCount: coupons.length,
+      itemBuilder: (context, index) {
+        final coupon = coupons[index];
+        return _buildCouponCard(coupon, isActive: isActive, isWeb: true);
+      },
+    );
+  }
+
+  Widget _buildMobileView() {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
@@ -192,12 +334,13 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildCouponCard(Map<String, dynamic> coupon, {required bool isActive}) {
+  Widget _buildCouponCard(Map<String, dynamic> coupon, {required bool isActive, bool isWeb = false}) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12), // Boşluk azaltıldı (16 -> 12)
+      margin: isWeb ? null : const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
+        border: isWeb ? Border.all(color: Colors.grey.shade200) : null,
         boxShadow: [
           BoxShadow(
             color: Colors.grey.withOpacity(0.1),
@@ -219,7 +362,7 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
               children: [
                 // Sol taraf - İkon ve Tutar
                 Container(
-                  width: 90, // Genişlik azaltıldı (100 -> 90)
+                  width: isWeb ? 110 : 90,
                   decoration: BoxDecoration(
                     color: coupon['color'],
                     borderRadius: const BorderRadius.only(
@@ -230,21 +373,21 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.local_offer, color: coupon['iconColor'], size: 28), // İkon küçültüldü (32 -> 28)
-                      const SizedBox(height: 4), // Boşluk azaltıldı
+                      Icon(Icons.local_offer, color: coupon['iconColor'], size: isWeb ? 32 : 28),
+                      const SizedBox(height: 4),
                       Text(
                         coupon['isPercentage'] ? '%${coupon['discountAmount'].toInt()}' : '₺${coupon['discountAmount'].toInt()}',
                         style: TextStyle(
                           color: coupon['iconColor'],
                           fontWeight: FontWeight.bold,
-                          fontSize: 18, // Font küçültüldü (20 -> 18)
+                          fontSize: isWeb ? 22 : 18,
                         ),
                       ),
                       Text(
                         'İndirim',
                         style: TextStyle(
                           color: coupon['iconColor'],
-                          fontSize: 11, // Font küçültüldü (12 -> 11)
+                          fontSize: isWeb ? 13 : 11,
                         ),
                       ),
                     ],
@@ -260,7 +403,7 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
                 // Sağ Taraf - Detaylar
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.all(12), // Padding azaltıldı (16 -> 12)
+                    padding: EdgeInsets.all(isWeb ? 20 : 12),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -271,9 +414,9 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
                             Expanded(
                               child: Text(
                                 coupon['title'],
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 15, // Font küçültüldü (16 -> 15)
+                                  fontSize: isWeb ? 16 : 15,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -281,32 +424,32 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
                             ),
                             if (!isActive)
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), // Padding azaltıldı
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
                                   color: Colors.grey[200],
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
                                   coupon['status'] ?? 'Pasif',
-                                  style: TextStyle(fontSize: 9, color: Colors.grey[600]), // Font küçültüldü
+                                  style: TextStyle(fontSize: 9, color: Colors.grey[600]),
                                 ),
                               ),
                           ],
                         ),
-                        const SizedBox(height: 2), // Boşluk azaltıldı (4 -> 2)
+                        SizedBox(height: isWeb ? 8 : 2),
                         Text(
                           coupon['detail'],
-                          style: TextStyle(color: Colors.grey[600], fontSize: 11), // Font küçültüldü (12 -> 11)
+                          style: TextStyle(color: Colors.grey[600], fontSize: isWeb ? 13 : 11),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(height: 6), // Boşluk azaltıldı (8 -> 6)
+                        SizedBox(height: isWeb ? 12 : 6),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
                               'Son: ${coupon['expiryDate']}',
-                              style: TextStyle(color: Colors.grey[400], fontSize: 10), // Font küçültüldü (11 -> 10)
+                              style: TextStyle(color: Colors.grey[400], fontSize: 10),
                             ),
                             if (isActive)
                               InkWell(
@@ -321,7 +464,7 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
                                   );
                                 },
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), // Padding azaltıldı
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                   decoration: BoxDecoration(
                                     color: AppColors.primary.withOpacity(0.1),
                                     borderRadius: BorderRadius.circular(20),
@@ -331,14 +474,14 @@ class _CouponsPageState extends State<CouponsPage> with SingleTickerProviderStat
                                     children: [
                                       Text(
                                         coupon['code'],
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           color: AppColors.primary,
                                           fontWeight: FontWeight.bold,
-                                          fontSize: 11, // Font küçültüldü (12 -> 11)
+                                          fontSize: isWeb ? 13 : 11,
                                         ),
                                       ),
                                       const SizedBox(width: 4),
-                                      const Icon(Icons.copy, size: 11, color: AppColors.primary), // İkon küçültüldü
+                                      Icon(Icons.copy, size: isWeb ? 14 : 11, color: AppColors.primary),
                                     ],
                                   ),
                                 ),

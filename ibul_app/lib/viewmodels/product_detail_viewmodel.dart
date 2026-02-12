@@ -98,11 +98,16 @@ class ProductDetailViewModel extends ChangeNotifier {
         final pName = p.name.toLowerCase();
         if (pName == currentName) return false;
 
-        final pCategory = (p.category ?? '').toLowerCase();
+        final pCategory = p.category.toLowerCase();
         final pSubCategory = (p.subCategory ?? '').toLowerCase();
 
         return pCategory == currentCategory || pSubCategory == currentSubCategory;
       }).map((dbP) => _convertToProduct(dbP)).take(10).toList();
+
+      // Fallback: if DB is empty, generate similar products from test data
+      if (similarProducts.isEmpty) {
+        similarProducts = _generateFallbackSimilarProducts();
+      }
 
     } catch (e) {
       debugPrint('Error loading similar products: $e');
@@ -182,7 +187,14 @@ class ProductDetailViewModel extends ChangeNotifier {
       }
     }
 
-    if (groupId == null || groupId.isEmpty) return;
+    if (groupId == null || groupId.isEmpty) {
+      // If product has variantOptions but no groupId, use fallback variants
+      if (allAvailableOptions.isEmpty) {
+        _addFallbackVariantOptions();
+      }
+      notifyListeners();
+      return;
+    }
 
     loadingVariants = true;
     notifyListeners();
@@ -210,11 +222,65 @@ class ProductDetailViewModel extends ChangeNotifier {
           }
         }
       }
+
+      // If DB returned no variants, add fallback options
+      if (groupVariants.isEmpty && allAvailableOptions.isNotEmpty) {
+        _addFallbackVariantOptions();
+      }
     } catch (e) {
       debugPrint('Error loading variants: $e');
+      // On error, still show fallback options
+      if (allAvailableOptions.isEmpty) {
+        _addFallbackVariantOptions();
+      }
     } finally {
       loadingVariants = false;
       notifyListeners();
+    }
+  }
+
+  void _addFallbackVariantOptions() {
+    // Add common variant options based on product category
+    final category = (initialProduct.category ?? '').toLowerCase();
+    final subCategory = (initialProduct.subCategory ?? '').toLowerCase();
+
+    if (subCategory.contains('telefon') || subCategory.contains('phone')) {
+      allAvailableOptions['Renk'] = {'Siyah', 'Beyaz', 'Mavi', 'Kırmızı'};
+      allAvailableOptions['Depolama'] = {'128 GB', '256 GB', '512 GB', '1 TB'};
+      // Set current selection from product's variantOptions if available
+      _setCurrentSelectionFromProduct();
+    } else if (subCategory.contains('bilgisayar') || subCategory.contains('laptop')) {
+      allAvailableOptions['Renk'] = {'Gümüş', 'Uzay Grisi', 'Gece Yarısı'};
+      allAvailableOptions['RAM'] = {'8 GB', '16 GB', '24 GB'};
+      allAvailableOptions['Depolama'] = {'256 GB', '512 GB', '1 TB'};
+      _setCurrentSelectionFromProduct();
+    } else if (category.contains('elektronik')) {
+      allAvailableOptions['Renk'] = {'Siyah', 'Beyaz', 'Gri'};
+      _setCurrentSelectionFromProduct();
+    } else if (subCategory.contains('saç bakım') || subCategory.contains('şampuan')) {
+      allAvailableOptions['Boyut'] = {'250 ml', '400 ml', '700 ml'};
+      _setCurrentSelectionFromProduct();
+    }
+  }
+
+  void _setCurrentSelectionFromProduct() {
+    if (initialProduct.variantOptions != null && initialProduct.variantOptions!.isNotEmpty) {
+      final parts = initialProduct.variantOptions!.split('|');
+      for (var part in parts) {
+        final keyValue = part.split(':');
+        if (keyValue.length == 2) {
+          final key = keyValue[0].trim();
+          final value = keyValue[1].trim();
+          selectedVariants[key] = value;
+        }
+      }
+    } else {
+      // Default to first option for each key
+      for (var entry in allAvailableOptions.entries) {
+        if (!selectedVariants.containsKey(entry.key)) {
+          selectedVariants[entry.key] = entry.value.first;
+        }
+      }
     }
   }
 
@@ -493,6 +559,41 @@ class ProductDetailViewModel extends ChangeNotifier {
       debugPrint('Error loading store products: $e');
       return [];
     }
+  }
+
+  List<Product> _generateFallbackSimilarProducts() {
+    final currentCategory = (initialProduct.category ?? '').toLowerCase();
+    final currentBrand = initialProduct.brand.toLowerCase();
+
+    // Fallback test products for similar products section
+    final fallbackProducts = <Product>[
+      Product(name: 'Hyaluronic Acid & Collagen Şampuan', brand: 'Urban Care', price: '199.90 TL', rating: 4.5, reviewCount: 150, tags: ['Hızlı Kargo'], images: [], store: 'Gratis', category: 'Kişisel Bakım', subCategory: 'Saç Bakımı', oldPrice: '250.00 TL'),
+      Product(name: 'Argan Oil Saç Bakım Serumu', brand: 'Urban Care', price: '220.00 TL', rating: 4.6, reviewCount: 200, tags: ['Popüler'], images: [], store: 'Watsons', category: 'Kişisel Bakım', subCategory: 'Saç Bakımı'),
+      Product(name: 'Menthol Ferahlığı Şampuan', brand: 'Head & Shoulders', price: '89.90 TL', rating: 4.4, reviewCount: 320, tags: ['En Çok Satan'], images: [], store: 'Migros', category: 'Kişisel Bakım', subCategory: 'Saç Bakımı', oldPrice: '120.00 TL'),
+      Product(name: 'Elseve Mucizevi Yağ', brand: "L'Oreal Paris", price: '159.90 TL', rating: 4.7, reviewCount: 480, tags: ['Kampanyalı'], images: [], store: "L'Oreal Official", category: 'Kişisel Bakım', subCategory: 'Saç Bakımı'),
+      Product(name: 'Güçlü ve Parlak Şampuan', brand: 'Elidor', price: '74.90 TL', rating: 4.2, reviewCount: 560, tags: ['Hızlı Kargo'], images: [], store: 'Şok Market', category: 'Kişisel Bakım', subCategory: 'Saç Bakımı', oldPrice: '95.00 TL'),
+      Product(name: 'iPhone 15 Pro Max', brand: 'Apple', price: '84.999 TL', rating: 4.9, reviewCount: 1200, tags: ['Hızlı Kargo'], images: [], store: 'Apple Store', category: 'Elektronik', subCategory: 'Telefon'),
+      Product(name: 'Galaxy S24 Ultra', brand: 'Samsung', price: '69.999 TL', rating: 4.8, reviewCount: 1500, tags: ['En Çok Satan'], images: [], store: 'Samsung Store', category: 'Elektronik', subCategory: 'Telefon', oldPrice: '79.999 TL'),
+      Product(name: 'MacBook Air M3', brand: 'Apple', price: '49.999 TL', rating: 4.9, reviewCount: 800, tags: ['Popüler'], images: [], store: 'Apple Store', category: 'Elektronik', subCategory: 'Bilgisayar'),
+      Product(name: 'Airpods Pro 2', brand: 'Apple', price: '9.999 TL', rating: 4.7, reviewCount: 2300, tags: ['Kampanyalı'], images: [], store: 'Apple Store', category: 'Elektronik', subCategory: 'Kulaklık', oldPrice: '12.999 TL'),
+      Product(name: 'Yoğun Onarıcı Bakım Maskesi', brand: 'Dove', price: '109.90 TL', rating: 4.3, reviewCount: 340, tags: ['Hızlı Kargo'], images: [], store: 'Gratis', category: 'Kişisel Bakım', subCategory: 'Saç Bakımı'),
+    ];
+
+    // Filter: same category or brand, exclude current product
+    final filtered = fallbackProducts.where((p) {
+      if (p.name.toLowerCase() == initialProduct.name.toLowerCase() && p.brand.toLowerCase() == currentBrand) return false;
+      final pCategory = (p.category ?? '').toLowerCase();
+      return pCategory == currentCategory || p.brand.toLowerCase() == currentBrand;
+    }).take(8).toList();
+
+    // If no match, return first 6 products (excluding current)
+    if (filtered.isEmpty) {
+      return fallbackProducts.where((p) =>
+        !(p.name.toLowerCase() == initialProduct.name.toLowerCase() && p.brand.toLowerCase() == currentBrand)
+      ).take(6).toList();
+    }
+
+    return filtered;
   }
 
   Product _convertToProduct(DBProduct dbProduct) {

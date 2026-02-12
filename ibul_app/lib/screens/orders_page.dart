@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
+import '../widgets/web_header.dart';
+import '../widgets/web_footer.dart';
+import '../widgets/account_sidebar.dart';
+import 'order_detail_page.dart';
 
 class OrdersPage extends StatefulWidget {
   const OrdersPage({super.key});
@@ -31,6 +35,7 @@ class _OrdersPageState extends State<OrdersPage> {
       'statusType': 'devam',
       'totalPrice': '929.00 TL',
       'dateGroup': 'Bu Ay',
+      'sellerName': 'UFO Türkiye',
     },
     {
       'date': '13 Ocak 2024 / 23:31',
@@ -43,6 +48,7 @@ class _OrdersPageState extends State<OrdersPage> {
       'totalPrice': '5.299.00 TL',
       'multipleImages': 4,
       'dateGroup': 'Bu Ay',
+      'sellerName': 'Teknoloji Dünyası',
     },
     {
       'date': '1 Ocak 2024 / 12:00',
@@ -54,6 +60,7 @@ class _OrdersPageState extends State<OrdersPage> {
       'statusType': 'devam',
       'totalPrice': '11.999.00 TL',
       'dateGroup': 'Bu Ay',
+      'sellerName': 'Huawei Türkiye',
     },
     {
       'date': '31 Aralık 2023 / 20:41',
@@ -66,6 +73,7 @@ class _OrdersPageState extends State<OrdersPage> {
       'totalPrice': '999.00 TL',
       'hasReviewButton': true,
       'dateGroup': 'Aralık 2023',
+      'sellerName': 'Akıllı Saat Mağazası',
     },
     {
       'date': '10 Aralık 2023 / 12:24',
@@ -77,6 +85,7 @@ class _OrdersPageState extends State<OrdersPage> {
       'statusType': 'iptal',
       'totalPrice': '529.90 TL',
       'dateGroup': 'Aralık 2023',
+      'sellerName': 'Black Sokak',
     },
   ];
 
@@ -99,6 +108,153 @@ class _OrdersPageState extends State<OrdersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+
+    if (isWeb) {
+      return _buildWebView();
+    }
+
+    return _buildMobileView();
+  }
+
+  Widget _buildWebView() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9FAFB),
+      body: Column(
+        children: [
+          WebHeader(onSearch: (q) {}),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1200),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Left Sidebar
+                            const SizedBox(
+                              width: 280,
+                              child: AccountSidebar(activePage: 'Siparişlerim'),
+                            ),
+                            const SizedBox(width: 32),
+                            // Right Content
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Siparişlerim',
+                                    style: TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 24),
+                                  // Search and Filter Row
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Container(
+                                          height: 48,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            border: Border.all(color: Colors.grey.shade200),
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: TextField(
+                                            decoration: InputDecoration(
+                                              hintText: 'Siparişlerimde ara...',
+                                              hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade400),
+                                              prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                                              border: InputBorder.none,
+                                              contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Container(
+                                        height: 48,
+                                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          border: Border.all(color: Colors.grey.shade200),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.tune, color: AppColors.primary, size: 20),
+                                            const SizedBox(width: 8),
+                                            const Text(
+                                              'Filtrele',
+                                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 24),
+                                  // Tabs
+                                  SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: Row(
+                                      children: _tabs.map((tab) {
+                                        final isSelected = _selectedTab == tab;
+                                        return Padding(
+                                          padding: const EdgeInsets.only(right: 12),
+                                          child: InkWell(
+                                            onTap: () => setState(() => _selectedTab = tab),
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: isSelected ? AppColors.primary : Colors.white,
+                                                borderRadius: BorderRadius.circular(20),
+                                                border: Border.all(
+                                                  color: isSelected ? AppColors.primary : Colors.grey.shade200,
+                                                ),
+                                              ),
+                                              child: Text(
+                                                tab,
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w500,
+                                                  color: isSelected ? Colors.white : Colors.grey.shade700,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 24),
+                                  // Orders List
+                                  ..._buildOrdersList(isWeb: true),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const WebFooter(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileView() {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -219,7 +375,7 @@ class _OrdersPageState extends State<OrdersPage> {
     );
   }
 
-  List<Widget> _buildOrdersList() {
+  List<Widget> _buildOrdersList({bool isWeb = false}) {
     final filteredOrders = _filteredOrders;
     if (filteredOrders.isEmpty) {
       return [
@@ -243,6 +399,7 @@ class _OrdersPageState extends State<OrdersPage> {
       }
 
       widgets.add(_buildOrderCard(
+        orderData: order,
         date: order['date'],
         itemCount: order['itemCount'],
         productImage: null,
@@ -253,6 +410,7 @@ class _OrdersPageState extends State<OrdersPage> {
         totalPrice: order['totalPrice'],
         multipleImages: order['multipleImages'],
         hasReviewButton: order['hasReviewButton'] ?? false,
+        isWeb: isWeb,
       ));
       widgets.add(const SizedBox(height: 16));
     }
@@ -276,6 +434,7 @@ class _OrdersPageState extends State<OrdersPage> {
   }
 
   Widget _buildOrderCard({
+    required Map<String, dynamic> orderData,
     required String date,
     required int itemCount,
     required String? productImage,
@@ -286,12 +445,21 @@ class _OrdersPageState extends State<OrdersPage> {
     required String totalPrice,
     int? multipleImages,
     bool hasReviewButton = false,
+    bool isWeb = false,
   }) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.all(isWeb ? 24 : 12),
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(8),
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: isWeb ? [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          )
+        ] : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -302,26 +470,36 @@ class _OrdersPageState extends State<OrdersPage> {
             children: [
               Text(
                 date,
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                style: TextStyle(fontSize: isWeb ? 13 : 11, color: Colors.grey.shade600),
               ),
-              Row(
-                children: [
-                  const Text(
-                    'Sipariş Bilgi',
-                    style: TextStyle(fontSize: 11, color: AppColors.primary),
-                  ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.chevron_right, size: 16, color: AppColors.primary),
-                ],
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => OrderDetailPage(orderData: orderData),
+                    ),
+                  );
+                },
+                child: Row(
+                  children: [
+                    Text(
+                      'Sipariş Bilgi',
+                      style: TextStyle(fontSize: isWeb ? 13 : 11, color: AppColors.primary),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.chevron_right, size: isWeb ? 18 : 16, color: AppColors.primary),
+                  ],
+                ),
               ),
             ],
           ),
           const SizedBox(height: 6),
           Text(
             '$itemCount ürün siparişi alındı',
-            style: const TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500),
+            style: TextStyle(fontSize: isWeb ? 14 : 12, color: AppColors.primary, fontWeight: FontWeight.w500),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: isWeb ? 16 : 12),
           
           // Product Info
           Row(
@@ -330,8 +508,8 @@ class _OrdersPageState extends State<OrdersPage> {
               Stack(
                 children: [
                   Container(
-                    width: 70,
-                    height: 70,
+                    width: isWeb ? 90 : 70,
+                    height: isWeb ? 90 : 70,
                     decoration: BoxDecoration(
                       color: Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(8),
@@ -345,7 +523,7 @@ class _OrdersPageState extends State<OrdersPage> {
                               fit: BoxFit.cover,
                             ),
                           )
-                        : const Icon(Icons.image, color: Colors.grey, size: 30),
+                        : Icon(Icons.image, color: Colors.grey, size: isWeb ? 40 : 30),
                   ),
                   if (multipleImages != null)
                     Positioned(
@@ -376,7 +554,7 @@ class _OrdersPageState extends State<OrdersPage> {
                     ),
                 ],
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 16),
               
               // Product Details
               Expanded(
@@ -385,19 +563,19 @@ class _OrdersPageState extends State<OrdersPage> {
                   children: [
                     Text(
                       productName,
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                      style: TextStyle(fontSize: isWeb ? 15 : 12, fontWeight: FontWeight.w500),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
-                        Icon(statusIcon, size: 16, color: statusColor),
-                        const SizedBox(width: 4),
+                        Icon(statusIcon, size: isWeb ? 18 : 16, color: statusColor),
+                        const SizedBox(width: 6),
                         Expanded(
                           child: Text(
                             statusText,
-                            style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w500),
+                            style: TextStyle(fontSize: isWeb ? 13 : 11, color: statusColor, fontWeight: FontWeight.w500),
                           ),
                         ),
                       ],
@@ -405,46 +583,78 @@ class _OrdersPageState extends State<OrdersPage> {
                   ],
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          
-          // Total and Review Button
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              RichText(
-                text: TextSpan(
+              
+              // Price and Action for Web (Right Aligned)
+              if (isWeb) ...[
+                const SizedBox(width: 32),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    TextSpan(
-                      text: 'Toplam Tutar : ',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                    ),
-                    TextSpan(
-                      text: totalPrice,
+                    Text(
+                      totalPrice,
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: AppColors.primary,
                       ),
                     ),
+                    if (hasReviewButton) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: () {},
+                        icon: const Icon(Icons.star, size: 16),
+                        label: const Text('Değerlendir'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          side: const BorderSide(color: AppColors.primary),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-              ),
-              if (hasReviewButton)
-                OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.star, size: 14),
-                  label: const Text('Değerlendir', style: TextStyle(fontSize: 11)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    side: const BorderSide(color: AppColors.primary),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    minimumSize: const Size(0, 28),
-                  ),
-                ),
+              ],
             ],
           ),
+          SizedBox(height: isWeb ? 16 : 12),
+          
+          // Total and Review Button (Mobile Only)
+          if (!isWeb)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                RichText(
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: 'Toplam Tutar : ',
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                      ),
+                      TextSpan(
+                        text: totalPrice,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (hasReviewButton)
+                  OutlinedButton.icon(
+                    onPressed: () {},
+                    icon: const Icon(Icons.star, size: 14),
+                    label: const Text('Değerlendir', style: TextStyle(fontSize: 11)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      side: const BorderSide(color: AppColors.primary),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      minimumSize: const Size(0, 28),
+                    ),
+                  ),
+              ],
+            ),
         ],
       ),
     );
