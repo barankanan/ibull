@@ -12,11 +12,70 @@ class AIChatPage extends StatefulWidget {
 
 class _AIChatPageState extends State<AIChatPage> {
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final List<Map<String, dynamic>> _messages = [];
+  bool _isTyping = false;
 
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _sendMessage() async {
+    final text = _searchController.text.trim();
+    if (text.isEmpty) return;
+
+    setState(() {
+      _messages.add({'text': text, 'isUser': true});
+      _isTyping = true;
+      _searchController.clear();
+    });
+
+    // Scroll to bottom
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
+    // Simulate AI thinking delay
+    await Future.delayed(const Duration(seconds: 1));
+
+    if (!mounted) return;
+
+    String response;
+    // Simple mock logic
+    if (text.toLowerCase().contains('merhaba') || text.toLowerCase().contains('selam')) {
+      response = "Merhaba! Size nasıl yardımcı olabilirim?";
+    } else if (text.toLowerCase().contains('telefon')) {
+      response = "Telefon modellerimiz için 'Ürün Karşılaştır' menüsünü kullanabilir veya ana sayfadaki Elektronik kategorisine göz atabilirsiniz.";
+    } else if (text.toLowerCase().contains('indirim')) {
+      response = "Şu anda 'Yaz Fırsatları' kapsamında %20'ye varan indirimlerimiz mevcut. Kuponlarım sayfasından detayları görebilirsiniz.";
+    } else {
+      response = "Bu bir demo simülasyonudur. Gerçek bir yapay zeka deneyimi için API entegrasyonu (OpenAI, Gemini vb.) gerekmektedir. Şu an sadece önceden tanımlı cevaplar verebiliyorum.";
+    }
+
+    setState(() {
+      _messages.add({'text': response, 'isUser': false});
+      _isTyping = false;
+    });
+
+    // Scroll to bottom again
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   @override
@@ -96,24 +155,81 @@ class _AIChatPageState extends State<AIChatPage> {
               Expanded(
                 child: Row(
                   children: [
-                    // Left Side: Chat Area (Placeholder)
+                    // Left Side: Chat Area
                     Expanded(
                       flex: 3,
                       child: Container(
                         color: Colors.grey.shade50,
                         padding: const EdgeInsets.all(24),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey.shade300),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Sohbet başlatmak için bir soru sorun\nveya sağdaki seçeneklerden birini seçin.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
-                            ),
-                          ],
-                        ),
+                        child: _messages.isEmpty
+                            ? Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey.shade300),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Sohbet başlatmak için bir soru sorun\nveya sağdaki seçeneklerden birini seçin.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+                                  ),
+                                ],
+                              )
+                            : ListView.builder(
+                                controller: _scrollController,
+                                itemCount: _messages.length + (_isTyping ? 1 : 0),
+                                itemBuilder: (context, index) {
+                                  if (index == _messages.length) {
+                                    return Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: Container(
+                                        margin: const EdgeInsets.symmetric(vertical: 8),
+                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(16),
+                                          boxShadow: [
+                                            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4),
+                                          ],
+                                        ),
+                                        child: const SizedBox(
+                                          width: 40,
+                                          child: LinearProgressIndicator(minHeight: 2),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  
+                                  final message = _messages[index];
+                                  final isUser = message['isUser'] as bool;
+                                  return Align(
+                                    alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                                    child: Container(
+                                      margin: const EdgeInsets.symmetric(vertical: 8),
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                      constraints: const BoxConstraints(maxWidth: 400),
+                                      decoration: BoxDecoration(
+                                        color: isUser ? AppColors.primary : Colors.white,
+                                        borderRadius: BorderRadius.only(
+                                          topLeft: const Radius.circular(16),
+                                          topRight: const Radius.circular(16),
+                                          bottomLeft: Radius.circular(isUser ? 16 : 4),
+                                          bottomRight: Radius.circular(isUser ? 4 : 16),
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4),
+                                        ],
+                                      ),
+                                      child: Text(
+                                        message['text'] as String,
+                                        style: TextStyle(
+                                          color: isUser ? Colors.white : Colors.black87,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
                       ),
                     ),
                     
@@ -187,6 +303,7 @@ class _AIChatPageState extends State<AIChatPage> {
                         ),
                         child: TextField(
                           controller: _searchController,
+                          onSubmitted: (_) => _sendMessage(),
                           decoration: const InputDecoration(
                             hintText: 'Yapay zekaya bir soru sorun...',
                             border: InputBorder.none,
@@ -203,7 +320,7 @@ class _AIChatPageState extends State<AIChatPage> {
                         shape: BoxShape.circle,
                       ),
                       child: IconButton(
-                        onPressed: () {},
+                        onPressed: _sendMessage,
                         icon: const Icon(Icons.send, color: Colors.white),
                         tooltip: 'Gönder',
                       ),
