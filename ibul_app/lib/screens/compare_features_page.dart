@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
+import '../models/product_model.dart';
 
 class CompareFeaturesPage extends StatelessWidget {
   final List<Map<String, dynamic>> products;
@@ -8,6 +9,9 @@ class CompareFeaturesPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Ensure we have at least 2 products to compare, or handle gracefully
+    final displayProducts = products.take(2).toList();
+    
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -51,10 +55,10 @@ class CompareFeaturesPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Seçtiğin ısıtıcı ürünlerin özellik karşılaştırması',
-                      style: TextStyle(
+                      'Seçtiğin ${displayProducts.isNotEmpty ? (displayProducts[0]['product'] as Product?)?.category ?? 'ürün' : 'ürün'}lerin özellik karşılaştırması',
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,
                       ),
@@ -68,7 +72,8 @@ class CompareFeaturesPage extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
-                children: products.take(2).map((product) {
+                children: displayProducts.map((productMap) {
+                  final imagePath = productMap['image'];
                   return Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -81,13 +86,20 @@ class CompareFeaturesPage extends StatelessWidget {
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(color: Colors.grey.shade300),
                             ),
-                            child: const Center(
-                              child: Icon(Icons.image, size: 30, color: Colors.grey),
+                            child: Center(
+                              child: imagePath != null
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: imagePath.startsWith('http')
+                                          ? Image.network(imagePath, fit: BoxFit.cover)
+                                          : Image.asset(imagePath, fit: BoxFit.cover),
+                                    )
+                                  : const Icon(Icons.image, size: 30, color: Colors.grey),
                             ),
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            product['name'],
+                            productMap['name'],
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
@@ -104,49 +116,10 @@ class CompareFeaturesPage extends StatelessWidget {
               ),
             ),
 
-            // Price Section
-            _buildRow('', ['UFO', 'Kumtel'], isHeader: false),
-            _buildRow('', ['Ufo S/2400 Duvar tipi Isıtıcı', 'kumtel Ex-25 Ecoray 2500W'], isHeader: false),
-            _buildRow('', ['2.604.00 TL', '1.198,77 TL'], isPriceRow: true),
-            _buildRow('', ['Gür Isı', ''], isHeader: false),
-            _buildRow('', ['Ufo S/2400 Duvar tipi Isıtıcı', ''], isHeader: false),
-            _buildRow('', ['2.684.46 TL', ''], isPriceRow: true),
-
-            const SizedBox(height: 16),
-
-            // GENEL ÖZELLİKLER
-            _buildSectionHeader('GENEL ÖZELLİKLER'),
-            _buildRow('Isıtıcı Tipi', ['infared ısıtıcı', 'infared ısıtıcı']),
-            _buildRow('Kontrol şekli', ['Isı Ayar Düğmesi', 'ısı Ayar Düğmesi']),
-            _buildRow('Etki Alanı', ['24m2', '24m2']),
-            _buildRow('Kullanım pozisyonu', ['Yatay', 'Yatay']),
-            _buildRow('Isıtıcı Konumu', ['Zemin duvar', 'zemin duvar']),
-
-            const SizedBox(height: 16),
-
-            // TASARIM
-            _buildSectionHeader('TASARIM'),
-            _buildRow('Yükseklik', ['88 Cm', '20 Cm']),
-            _buildRow('Genişlik', ['19 Cm', '84 Cm']),
-            _buildRow('Derinlik Çap', ['9 Cm', '10 Cm']),
-            _buildRow('Renk Seçeneği', ['Gri', 'Siyah']),
-
-            const SizedBox(height: 16),
-
-            // TEKNİK ÖZELLİKLER
-            _buildSectionHeader('TEKNİK ÖZELLİKLER'),
-            _buildRow('Max. Isıtma Gücü', ['2400 W', '2500 W']),
-            _buildRow('Flament Sayısı', ['1 Adet', '1 Adet']),
-            _buildRow('Buhar Özelliği', ['yok', 'yok']),
-
-            const SizedBox(height: 16),
-
-            // DEĞERLENDİRİLMESİ
-            _buildSectionHeader('DEĞERLENDİRİLMESİ'),
-            _buildRow('Puanı', ['⭐ 4.2', '⭐ 3.2'], isStarRow: true),
-            _buildRow('Görsel sayısı', ['📷 111', '📷 56'], isIconRow: true),
-            _buildRow('Ortalama Kargo Hızı', ['🚚 3 Gün', '🚚 8 Saat'], isIconRow: true),
-            _buildRow('Mesaja Dönme Hızı', ['🕐 1 saat', '🕐 2 Saat'], isIconRow: true),
+            if (displayProducts.isNotEmpty) ...[
+              // Extract Product objects
+              _buildDynamicComparisonTable(displayProducts),
+            ],
 
             const SizedBox(height: 32),
           ],
@@ -154,6 +127,69 @@ class CompareFeaturesPage extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildDynamicComparisonTable(List<Map<String, dynamic>> productMaps) {
+    // Helper to get Product object safely
+    Product? getProduct(int index) {
+      if (index >= productMaps.length) return null;
+      return productMaps[index]['product'] as Product?;
+    }
+
+    final p1 = getProduct(0);
+    final p2 = getProduct(1);
+
+    if (p1 == null) return const SizedBox();
+
+    return Column(
+      children: [
+        // Price Section
+        _buildRow('', [p1.brand, p2?.brand ?? '-'], isHeader: false),
+        _buildRow('', [p1.name, p2?.name ?? '-'], isHeader: false),
+        _buildRow('', [p1.price, p2?.price ?? '-'], isPriceRow: true),
+        
+        const SizedBox(height: 16),
+
+        // GENEL ÖZELLİKLER
+        _buildSectionHeader('GENEL BİLGİLER'),
+        _buildRow('Marka', [p1.brand, p2?.brand ?? '-']),
+        _buildRow('Kategori', [p1.category ?? '-', p2?.category ?? '-']),
+        _buildRow('Alt Kategori', [p1.subCategory ?? '-', p2?.subCategory ?? '-']),
+        _buildRow('Mağaza', [p1.store ?? '-', p2?.store ?? '-']),
+
+        const SizedBox(height: 16),
+
+        // DETAYLAR
+        _buildSectionHeader('DETAYLAR'),
+        _buildRow('Açıklama', [
+          _truncate(p1.description ?? '-', 50), 
+          _truncate(p2?.description ?? '-', 50)
+        ]),
+        _buildRow('Özellikler', [
+          _truncate(p1.specifications ?? '-', 50), 
+          _truncate(p2?.specifications ?? '-', 50)
+        ]),
+
+        const SizedBox(height: 16),
+
+        // DEĞERLENDİRME
+        _buildSectionHeader('DEĞERLENDİRME'),
+        _buildRow('Puanı', ['⭐ ${p1.rating}', p2 != null ? '⭐ ${p2.rating}' : '-'], isStarRow: true),
+        _buildRow('Yorum Sayısı', ['💬 ${p1.reviewCount}', p2 != null ? '💬 ${p2.reviewCount}' : '-'], isIconRow: true),
+        
+        // Tags can be shown as a comma separated list
+        _buildRow('Etiketler', [
+          p1.tags.take(2).join(', '), 
+          p2?.tags.take(2).join(', ') ?? '-'
+        ]),
+      ],
+    );
+  }
+
+  String _truncate(String text, int length) {
+    if (text.length <= length) return text;
+    return '${text.substring(0, length)}...';
+  }
+
 
   Widget _buildSectionHeader(String title) {
     return Container(
