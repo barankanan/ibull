@@ -713,9 +713,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         height: 60,
         child: FloatingActionButton(
           onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const AIChatPage()),
+            showDialog(
+              context: context,
+              barrierColor: Colors.black54, // Yarı saydam arka plan
+              builder: (context) => const AIChatPage(),
             );
           },
           backgroundColor: AppColors.primary,
