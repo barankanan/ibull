@@ -17,7 +17,6 @@ class CompareProductsPage extends StatefulWidget {
 class _CompareProductsPageState extends State<CompareProductsPage> {
   // Category -> List of products (mapped to UI structure)
   Map<String, List<Map<String, dynamic>>> _categories = {};
-  bool _isLoading = true;
 
   @override
   void initState() {
@@ -32,22 +31,16 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
     final appState = Provider.of<AppState>(context, listen: false);
     final favorites = appState.favorites;
     
-    // If favorites are empty, we can load some demo products or recommended ones 
-    // to ensure the user sees "Real Products" instead of empty screen for this task.
-    // However, the user asked to compare "liked" products.
-    // Let's combine favorites + some recommended products if favorites count is low,
-    // or just show favorites if they exist.
+    // User requested: "beğendiğim 2 ürünün özelliklerini karşılaştırabiliyim"
+    // We strictly use favorites. 
+    // However, for testing purposes if favorites are empty, we might want to keep fallback 
+    // BUT the user also asked for a specific message if products are not liked ("2 ürün beğenin yazsın").
+    // So we should prioritize showing that message when favorites are insufficient.
     
-    List<Product> productsToLoad = [];
-    if (favorites.isNotEmpty) {
-      productsToLoad = favorites;
-    } else {
-      // Fallback to recommended products for demo purposes if no favorites
-      // We can get them from a static list or similar. 
-      // For now, let's try to get some from AppState if available (userLists)
-      // or define a few real dummy products here to replace the old dummy ones.
-      productsToLoad = _getFallbackProducts();
-    }
+    List<Product> productsToLoad = favorites;
+    
+    // Demo fallback (only if strictly needed, but let's stick to user request)
+    // if (favorites.isEmpty) productsToLoad = _getFallbackProducts();
 
     final Map<String, List<Map<String, dynamic>>> newCategories = {};
 
@@ -62,60 +55,13 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
         'name': product.name,
         'image': product.images.isNotEmpty ? product.images.first : null,
         'selected': false,
-        'product': product, // Keep reference to real product object
+        'product': product,
       });
     }
 
     setState(() {
       _categories = newCategories;
-      _isLoading = false;
     });
-  }
-
-  List<Product> _getFallbackProducts() {
-    // Return real-looking products for demo if favorites are empty
-    return [
-      Product(
-        name: 'UFO S/2400 W Duvar Tipi',
-        brand: 'UFO',
-        price: '2.604 TL',
-        rating: 4.2,
-        reviewCount: 111,
-        tags: [],
-        images: ['https://cdn.dsmcdn.com/ty985/product/media/images/20230815/17/406085573/1000632594/1/1_org_zoom.jpg'],
-        category: 'Isıtıcılar',
-      ),
-      Product(
-        name: 'Kumtel Ex-25 Ecoray',
-        brand: 'Kumtel',
-        price: '1.198 TL',
-        rating: 3.2,
-        reviewCount: 56,
-        tags: [],
-        images: ['https://cdn.dsmcdn.com/ty105/product/media/images/20210419/12/81186718/16524679/1/1_org_zoom.jpg'],
-        category: 'Isıtıcılar',
-      ),
-      Product(
-        name: 'MacBook Pro M3',
-        brand: 'Apple',
-        price: '84.999 TL',
-        rating: 4.9,
-        reviewCount: 856,
-        tags: [],
-        images: ['assets/products/macbook_pro_m3_space_black.jpg'],
-        category: 'Bilgisayar',
-      ),
-       Product(
-        name: 'Dyson V15 Detect',
-        brand: 'Dyson',
-        price: '24.999 TL',
-        rating: 4.8,
-        reviewCount: 1240,
-        tags: [],
-        images: [],
-        category: 'Süpürge',
-      ),
-    ];
   }
 
   List<Map<String, dynamic>> get _selectedProducts {
@@ -284,19 +230,41 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                           ),
                           const SizedBox(height: 24),
                           // Actions
-                          if (_selectedProducts.length >= 2) ...[
-                            const Divider(),
-                            const SizedBox(height: 16),
+                          const Divider(),
+                          const SizedBox(height: 16),
+                          if (_categories.isEmpty)
+                             const Center(
+                               child: Padding(
+                                 padding: EdgeInsets.all(16.0),
+                                 child: Text(
+                                   'Karşılaştırma yapabilmek için lütfen en az 2 ürün beğenin.',
+                                   textAlign: TextAlign.center,
+                                   style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500),
+                                 ),
+                               ),
+                             )
+                          else if (_selectedProducts.length < 2)
+                            const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(16.0),
+                                child: Text(
+                                  'Lütfen karşılaştırmak için listeden 2 ürün seçin.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            )
+                          else ...[
                             _buildActionButton('Özellikleri Karşılaştır', onTap: () {
-                              Navigator.push(context, MaterialPageRoute(builder: (context) => CompareFeaturesPage(products: _selectedProducts)));
+                              _navigateTo(context, CompareFeaturesPage(products: _selectedProducts));
                             }),
                             const SizedBox(height: 12),
                             _buildActionButton('Yorumları Karşılaştır', onTap: () {
-                              Navigator.push(context, MaterialPageRoute(builder: (context) => CompareReviewsPage(products: _selectedProducts)));
+                              _navigateTo(context, CompareReviewsPage(products: _selectedProducts));
                             }),
                             const SizedBox(height: 12),
                             _buildActionButton('Görselleri Karşılaştır', onTap: () {
-                              Navigator.push(context, MaterialPageRoute(builder: (context) => CompareImagesPage(products: _selectedProducts)));
+                              _navigateTo(context, CompareImagesPage(products: _selectedProducts));
                             }),
                           ],
                         ],
@@ -310,6 +278,24 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
         ),
       ),
     );
+  }
+
+  void _navigateTo(BuildContext context, Widget page) {
+     final isWeb = MediaQuery.of(context).size.width >= 800;
+     if (isWeb) {
+       Navigator.push(
+        context,
+        PageRouteBuilder(
+          opaque: false,
+          pageBuilder: (context, _, __) => page,
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+      );
+     } else {
+       Navigator.push(context, MaterialPageRoute(builder: (context) => page));
+     }
   }
 
   Widget _buildMobileView(BuildContext context) {
@@ -414,22 +400,40 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
           ),
 
           // Bottom Action Buttons
-          if (_selectedProducts.length >= 2)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, -3),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, -3),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_categories.isEmpty)
+                   const Padding(
+                     padding: EdgeInsets.only(bottom: 8.0),
+                     child: Text(
+                       'Karşılaştırma yapabilmek için lütfen en az 2 ürün beğenin.',
+                       textAlign: TextAlign.center,
+                       style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500),
+                     ),
+                   )
+                else if (_selectedProducts.length < 2)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8.0),
+                    child: Text(
+                      'Lütfen karşılaştırmak için listeden 2 ürün seçin.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w500),
+                    ),
+                  )
+                else ...[
                   _buildActionButton(
                     'Ürün özellikleri karşılaştır',
                     onTap: () {
@@ -472,8 +476,9 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                     },
                   ),
                 ],
-              ),
+              ],
             ),
+          ),
         ],
       ),
     );
