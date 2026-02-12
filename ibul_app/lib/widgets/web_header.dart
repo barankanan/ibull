@@ -82,7 +82,13 @@ class _WebHeaderState extends State<WebHeader> {
 
   Widget _buildLogo() {
     return InkWell(
-      onTap: () => widget.onCategorySelected?.call('Ana Sayfa'),
+      onTap: () {
+        if (widget.onCategorySelected != null) {
+          widget.onCategorySelected!('Ana Sayfa');
+        } else {
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+        }
+      },
       hoverColor: Colors.transparent,
       child: Row(
         mainAxisSize: MainAxisSize.min,
