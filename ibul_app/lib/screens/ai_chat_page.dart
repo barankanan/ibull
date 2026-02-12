@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
 import '../core/constants.dart';
 import 'ai_discover_page.dart';
 import 'compare_products_page.dart';
@@ -15,6 +16,22 @@ class _AIChatPageState extends State<AIChatPage> {
   final ScrollController _scrollController = ScrollController();
   final List<Map<String, dynamic>> _messages = [];
   bool _isTyping = false;
+  late final GenerativeModel _model;
+  late final ChatSession _chat;
+
+  // WARNING: Never commit API keys to version control in production apps.
+  // This is for demo purposes only as requested.
+  final String _apiKey = 'AlzaSyAFOmRe7lt97vRMT8CC2ZweQqqg-zPfLBc';
+
+  @override
+  void initState() {
+    super.initState();
+    _model = GenerativeModel(
+      model: 'gemini-pro',
+      apiKey: _apiKey,
+    );
+    _chat = _model.startChat();
+  }
 
   @override
   void dispose() {
@@ -33,40 +50,34 @@ class _AIChatPageState extends State<AIChatPage> {
       _searchController.clear();
     });
 
-    // Scroll to bottom
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    _scrollToBottom();
 
-    // Simulate AI thinking delay
-    await Future.delayed(const Duration(seconds: 1));
+    try {
+      final response = await _chat.sendMessage(Content.text(text));
+      final responseText = response.text;
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    String response;
-    // Simple mock logic
-    if (text.toLowerCase().contains('merhaba') || text.toLowerCase().contains('selam')) {
-      response = "Merhaba! Size nasıl yardımcı olabilirim?";
-    } else if (text.toLowerCase().contains('telefon')) {
-      response = "Telefon modellerimiz için 'Ürün Karşılaştır' menüsünü kullanabilir veya ana sayfadaki Elektronik kategorisine göz atabilirsiniz.";
-    } else if (text.toLowerCase().contains('indirim')) {
-      response = "Şu anda 'Yaz Fırsatları' kapsamında %20'ye varan indirimlerimiz mevcut. Kuponlarım sayfasından detayları görebilirsiniz.";
-    } else {
-      response = "Bu bir demo simülasyonudur. Gerçek bir yapay zeka deneyimi için API entegrasyonu (OpenAI, Gemini vb.) gerekmektedir. Şu an sadece önceden tanımlı cevaplar verebiliyorum.";
+      setState(() {
+        if (responseText != null) {
+          _messages.add({'text': responseText, 'isUser': false});
+        } else {
+           _messages.add({'text': "Üzgünüm, bir cevap oluşturamadım.", 'isUser': false});
+        }
+        _isTyping = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _messages.add({'text': "Hata oluştu: $e", 'isUser': false});
+        _isTyping = false;
+      });
     }
 
-    setState(() {
-      _messages.add({'text': response, 'isUser': false});
-      _isTyping = false;
-    });
+    _scrollToBottom();
+  }
 
-    // Scroll to bottom again
+  void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -386,117 +397,174 @@ class _AIChatPageState extends State<AIChatPage> {
       body: Column(
         children: [
           Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 8),
-                  // Header Section
-                  Container(
-                    width: double.infinity,
-                    color: Colors.white,
-                    padding: const EdgeInsets.all(16),
+            child: _messages.isEmpty
+                ? SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Yapay Zeka Sohbet;',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 50,
-                              height: 50,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.1),
-                                shape: BoxShape.circle,
+                        const SizedBox(height: 8),
+                        // Header Section
+                        Container(
+                          width: double.infinity,
+                          color: Colors.white,
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Yapay Zeka Sohbet',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black,
+                                ),
                               ),
-                              child: const Icon(
-                                Icons.psychology,
-                                color: AppColors.primary,
-                                size: 28,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
+                              const SizedBox(height: 16),
+                              Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text(
-                                    'Yapay Zeka',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
+                                  Container(
+                                    width: 50,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primary.withOpacity(0.1),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.psychology,
                                       color: AppColors.primary,
+                                      size: 28,
                                     ),
                                   ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Merhaba baran, ben yapay zeka robotunum, sorularına Hızlı bir şekilde cevap bulabilmek için buradayım .',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade700,
-                                      height: 1.4,
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Yapay Zeka',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.primary,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          'Merhaba, ben yapay zeka asistanınım. Sorularına hızlı bir şekilde cevap bulabilmek için buradayım.',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey.shade700,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
+                        const SizedBox(height: 16),
 
-                  // Quick Action Buttons
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Column(
-                      children: [
-                        _buildActionButton(
-                          'Kendini keşfet',
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => const AIDiscoverPage()),
-                            );
-                          },
+                        // Quick Action Buttons
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            children: [
+                              _buildActionButton(
+                                'Kendini keşfet',
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (context) => const AIDiscoverPage()),
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              _buildActionButton(
+                                'Beğendiğim Ürünleri Karşılaştır',
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (context) => const CompareProductsPage()),
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              _buildActionButton(
+                                'İndirim Takibi',
+                                onTap: () {},
+                              ),
+                              const SizedBox(height: 12),
+                              _buildActionButton(
+                                'Uygulama Hakkında Sorular',
+                                onTap: () {},
+                              ),
+                            ],
+                          ),
                         ),
-                        const SizedBox(height: 12),
-                        _buildActionButton(
-                          'Beğendiğim Ürünleri Karşılaştır',
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => const CompareProductsPage()),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        _buildActionButton(
-                          'İndirim Takibi',
-                          onTap: () {},
-                        ),
-                        const SizedBox(height: 12),
-                        _buildActionButton(
-                          'Uygulama Hakkında Sorular',
-                          onTap: () {},
-                        ),
+                        const SizedBox(height: 24),
                       ],
                     ),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _messages.length + (_isTyping ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index == _messages.length) {
+                        return Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4),
+                              ],
+                            ),
+                            child: const SizedBox(
+                              width: 40,
+                              child: LinearProgressIndicator(minHeight: 2),
+                            ),
+                          ),
+                        );
+                      }
+                      final message = _messages[index];
+                      final isUser = message['isUser'] as bool;
+                      return Align(
+                        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                          decoration: BoxDecoration(
+                            color: isUser ? AppColors.primary : Colors.white,
+                            borderRadius: BorderRadius.only(
+                              topLeft: const Radius.circular(16),
+                              topRight: const Radius.circular(16),
+                              bottomLeft: Radius.circular(isUser ? 16 : 4),
+                              bottomRight: Radius.circular(isUser ? 4 : 16),
+                            ),
+                            boxShadow: [
+                              BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4),
+                            ],
+                          ),
+                          child: Text(
+                            message['text'] as String,
+                            style: TextStyle(
+                              color: isUser ? Colors.white : Colors.black87,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
           ),
 
           // Bottom Ask Section
@@ -511,55 +579,68 @@ class _AIChatPageState extends State<AIChatPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.psychology,
-                        color: AppColors.primary,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        'Yapay Zekaya Sor',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                if (_messages.isEmpty) ...[
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.psychology,
                           color: AppColors.primary,
+                          size: 24,
                         ),
                       ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close, color: AppColors.primary),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Yapay Zekaya Sor',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close, color: AppColors.primary),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 Container(
                   decoration: BoxDecoration(
                     border: Border.all(color: Colors.grey.shade300),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'soru sor',
-                      hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                      prefixIcon: Icon(Icons.search, color: AppColors.primary, size: 20),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          onSubmitted: (_) => _sendMessage(),
+                          decoration: InputDecoration(
+                            hintText: 'Soru sor...',
+                            hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                            prefixIcon: const Icon(Icons.search, color: AppColors.primary, size: 20),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _sendMessage,
+                        icon: const Icon(Icons.send, color: AppColors.primary),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -569,6 +650,7 @@ class _AIChatPageState extends State<AIChatPage> {
       ),
     );
   }
+
 
   Widget _buildActionButton(String text, {required VoidCallback onTap}) {
     return GestureDetector(
