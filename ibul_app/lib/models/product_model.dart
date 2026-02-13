@@ -8,6 +8,7 @@ class Product {
   final List<String> images;
   final bool isDigital;
   final List<String>? accessories;
+  final List<String>? threeSixtyImages;
   final String? store;
   final String? category;
   final String? subCategory;
@@ -28,6 +29,7 @@ class Product {
     required this.images,
     this.isDigital = false,
     this.accessories,
+    this.threeSixtyImages,
     this.store,
     this.category,
     this.subCategory,
@@ -49,6 +51,7 @@ class Product {
     List<String>? images,
     bool? isDigital,
     List<String>? accessories,
+    List<String>? threeSixtyImages,
     String? store,
     String? category,
     String? subCategory,
@@ -69,6 +72,7 @@ class Product {
       images: images ?? this.images,
       isDigital: isDigital ?? this.isDigital,
       accessories: accessories ?? this.accessories,
+      threeSixtyImages: threeSixtyImages ?? this.threeSixtyImages,
       store: store ?? this.store,
       category: category ?? this.category,
       subCategory: subCategory ?? this.subCategory,
@@ -104,7 +108,11 @@ class Product {
     if (dbProduct.tags != null && dbProduct.tags.isNotEmpty) {
       tags = dbProduct.tags.split('|').map<String>((e) => e.toString().trim()).toList();
     }
-    
+
+    // 360 images (mock logic or from future DB field)
+    List<String>? threeSixtyImages;
+    // if (dbProduct.threeSixtyUrls != null) ...
+
     return Product(
       name: dbProduct.name ?? 'Ürün',
       brand: dbProduct.brand ?? '',
@@ -113,6 +121,7 @@ class Product {
       reviewCount: dbProduct.reviewCount ?? 0,
       tags: tags,
       images: images,
+      threeSixtyImages: threeSixtyImages,
       store: dbProduct.store,
       category: dbProduct.category,
       subCategory: dbProduct.subCategory,

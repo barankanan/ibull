@@ -196,9 +196,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text(
-                                  'Favorilerim',
-                                  style: TextStyle(
+                                Text(
+                                  _selectedTab == 'Beğeniler' ? 'Favorilerim' : _selectedTab,
+                                  style: const TextStyle(
                                     fontSize: 32,
                                     fontWeight: FontWeight.bold,
                                     color: Color(0xFF1F2937),
@@ -602,9 +602,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Beğendiklerim',
-          style: TextStyle(
+        title: Text(
+          _selectedTab == 'Beğeniler' ? 'Beğendiklerim' : _selectedTab,
+          style: const TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
             color: Colors.black,

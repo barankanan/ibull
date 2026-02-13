@@ -107,7 +107,7 @@ class _ListDetailPageState extends State<ListDetailPage> with SingleTickerProvid
                 children: [
                   Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1200),
+                      constraints: const BoxConstraints(maxWidth: 1400),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
                         child: Column(
@@ -352,15 +352,18 @@ class _ListDetailPageState extends State<ListDetailPage> with SingleTickerProvid
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 240,
-        childAspectRatio: 0.52,
-        crossAxisSpacing: 20,
-        mainAxisSpacing: 24,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 5,
+        childAspectRatio: 0.75,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
       ),
       itemCount: products.length,
       itemBuilder: (context, index) {
-        return ProductCard(product: products[index]);
+        return ProductCard(
+          product: products[index],
+          margin: EdgeInsets.zero,
+        );
       },
     );
   }
@@ -797,148 +800,18 @@ class _ListDetailPageState extends State<ListDetailPage> with SingleTickerProvid
     return GridView.builder(
       padding: const EdgeInsets.all(12),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
+        crossAxisCount: 2,
         childAspectRatio: 0.75,
-        crossAxisSpacing: 6,
-        mainAxisSpacing: 10,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 16,
       ),
       itemCount: products.length,
       itemBuilder: (context, index) {
-        return _buildProductCardNew(products[index]);
+        return ProductCard(
+          product: products[index],
+          margin: EdgeInsets.zero,
+        );
       },
-    );
-  }
-
-  Widget _buildProductCardNew(Product product) {
-    final image = product.images.isNotEmpty ? product.images.first : '';
-    final badge = product.tags.isNotEmpty ? product.tags.first : '';
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Image
-          Stack(
-            children: [
-              Container(
-                height: 75,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                ),
-                child: Center(
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                    child: image.isNotEmpty
-                        ? (image.startsWith('http')
-                            ? Image.network(
-                                image,
-                                fit: BoxFit.cover,
-                                width: double.infinity,
-                                height: 75,
-                                errorBuilder: (context, error, stackTrace) => 
-                                    const Icon(Icons.image, size: 25, color: Colors.grey),
-                              )
-                            : Image.asset(
-                                image,
-                                fit: BoxFit.cover,
-                                width: double.infinity,
-                                height: 75,
-                                errorBuilder: (context, error, stackTrace) => 
-                                    const Icon(Icons.image, size: 25, color: Colors.grey),
-                              ))
-                        : const Icon(Icons.image, size: 25, color: Colors.grey),
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 3,
-                right: 3,
-                child: _buildFavoriteBadge(product),
-              ),
-            ],
-          ),
-
-          // Content
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 5, 4, 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Badges
-                if (badge.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                    child: Text(
-                      badge,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 6,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                if (badge.isNotEmpty) const SizedBox(height: 3),
-
-                // Title
-                Text(
-                  product.name,
-                  style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w500, color: Colors.black87),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-
-                // Rating
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ...List.generate(
-                      4,
-                      (index) => Icon(
-                        index < product.rating.floor() ? Icons.star : Icons.star_border,
-                        color: Colors.orange,
-                        size: 7,
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Flexible(
-                      child: Text(
-                        '(${product.reviewCount})',
-                        style: const TextStyle(fontSize: 6, color: Colors.grey),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-
-                // Price
-                Text(
-                  product.price,
-                  style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1102,10 +975,10 @@ class _ListDetailPageState extends State<ListDetailPage> with SingleTickerProvid
     return GridView.builder(
       padding: const EdgeInsets.all(12),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 0.75,
-        crossAxisSpacing: 6,
-        mainAxisSpacing: 10,
+        crossAxisCount: 2,
+        childAspectRatio: 0.65,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 16,
       ),
       itemCount: products.length,
       itemBuilder: (context, index) {
@@ -1142,7 +1015,7 @@ class _ListDetailPageState extends State<ListDetailPage> with SingleTickerProvid
           Stack(
             children: [
               Container(
-                height: 75,
+                height: 100,
                 decoration: BoxDecoration(
                   color: Colors.grey.shade200,
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
@@ -1156,7 +1029,7 @@ class _ListDetailPageState extends State<ListDetailPage> with SingleTickerProvid
                                 image,
                                 fit: BoxFit.cover,
                                 width: double.infinity,
-                                height: 75,
+                                height: 100,
                                 errorBuilder: (context, error, stackTrace) => 
                                     const Icon(Icons.image, size: 25, color: Colors.grey),
                               )
@@ -1164,7 +1037,7 @@ class _ListDetailPageState extends State<ListDetailPage> with SingleTickerProvid
                                 image,
                                 fit: BoxFit.cover,
                                 width: double.infinity,
-                                height: 75,
+                                height: 100,
                                 errorBuilder: (context, error, stackTrace) => 
                                     const Icon(Icons.image, size: 25, color: Colors.grey),
                               ))

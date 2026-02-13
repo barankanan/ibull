@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
 import '../../screens/product_detail_page.dart';
+import '../../screens/reviews_page.dart';
 
 class ProductInfoSection extends StatelessWidget {
   const ProductInfoSection({super.key});
@@ -15,162 +16,101 @@ class ProductInfoSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Category badge
-        if (product.subCategory != null)
-          Row(
-            children: [
-              Text(
-                '${product.subCategory} kategorisinde',
-                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E0),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: const Text(
-                  'En Çok Satan #1',
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange),
-                ),
-              ),
-            ],
-          ),
-        const SizedBox(height: 6),
-        
-        // Product name
-        RichText(
-          text: TextSpan(
-            children: [
-              TextSpan(
-                text: '${product.brand} ',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-              TextSpan(
-                text: product.name,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-
-        // Rating row
+        // Brand Name (Purple, Underlined-like clickable look) & Bell Icon
         Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              product.rating.toString(),
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(width: 4),
-            Row(
-              children: List.generate(5, (index) {
-                return Icon(
-                  index < product.rating.round() ? Icons.star : Icons.star_border,
-                  size: 14,
-                  color: Colors.amber,
-                );
-              }),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              '${product.reviewCount} Değerlendirme',
-              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-            ),
-            const SizedBox(width: 4),
-            const Text('·', style: TextStyle(color: Colors.grey)),
-            const SizedBox(width: 4),
-            Text(
-              '${(product.reviewCount * 0.5).round()} Soru-Cevap',
-              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-
-        // "Kullanıcılar Beğeniyor" row
-        Row(
-          children: [
-            const Icon(Icons.star_rate, size: 14, color: Colors.amber),
-            const SizedBox(width: 4),
-            Text(
-              'Kullanıcılar Beğeniyor!',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green[700]),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              'Yorumları İncele',
-              style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500),
-            ),
-            Icon(Icons.chevron_right, size: 14, color: AppColors.primary),
-          ],
-        ),
-        const SizedBox(height: 6),
-
-        // Urgency row
-        Row(
-          children: [
-            Icon(Icons.local_shipping_outlined, size: 14, color: Colors.orange[700]),
-            const SizedBox(width: 4),
-            RichText(
-              text: TextSpan(
-                style: const TextStyle(fontSize: 11),
-                children: [
-                  TextSpan(
-                    text: '13B kişinin ',
-                    style: TextStyle(color: Colors.orange[700], fontWeight: FontWeight.bold),
-                  ),
-                  const TextSpan(
-                    text: 'sepetinde, tükenmeden al!',
-                    style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w500),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 10),
-        // Divider
-        Divider(color: Colors.grey[200], height: 1),
-        const SizedBox(height: 10),
-
-        // Quick variant selector ("Seç" area)
-        _buildQuickVariantSelector(viewModel),
-
-        // Price
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              viewModel.totalPrice,
+              product.brand,
               style: const TextStyle(
-                fontSize: 22,
+                fontSize: 13,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2E7D32),
+                color: Color(0xFF673AB7), // Deep Purple
+                decoration: TextDecoration.underline,
+                decorationColor: Color(0xFF673AB7),
               ),
             ),
-            if (product.oldPrice != null && product.oldPrice!.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              Text(
-                product.oldPrice!,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[500],
-                  decoration: TextDecoration.lineThrough,
+            const Icon(Icons.notifications_none, color: Colors.grey, size: 20),
+          ],
+        ),
+        const SizedBox(height: 4),
+        
+        // Product Name
+        Text(
+          product.name,
+          style: const TextStyle(
+            fontSize: 13, // Reduced from 16
+            fontWeight: FontWeight.w400,
+            color: Colors.black87,
+            height: 1.2, // Tighter line height
+          ),
+        ),
+        const SizedBox(height: 6), // Reduced spacing
+
+        // Rating Row
+        GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ReviewsPage(
+                  product: product,
                 ),
               ),
+            );
+          },
+          child: Row(
+            children: [
+              Row(
+                children: List.generate(5, (index) {
+                  return Icon(
+                    index < product.rating.round() ? Icons.star : Icons.star_border,
+                    size: 14, // Reduced from 16
+                    color: Colors.amber,
+                  );
+                }),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                product.rating.toString(),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold), // Reduced from 13
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '/ ${product.reviewCount} Değerlendirme',
+                style: const TextStyle(
+                  fontSize: 11, // Reduced from 13
+                  color: Color(0xFF673AB7),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 14, color: Color(0xFF673AB7)), // Reduced size
             ],
-          ],
+          ),
+        ),
+
+        // Coupons / Campaigns
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF8E1), // Amber 50
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFFFE082)), // Amber 200
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.percent, size: 16, color: Colors.orange),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Sepette %15 İndirim Fırsatı',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+              ),
+              Icon(Icons.chevron_right, size: 16, color: Colors.orange.shade700),
+            ],
+          ),
         ),
       ],
     );

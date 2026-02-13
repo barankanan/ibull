@@ -109,10 +109,10 @@ class ProductReviewsSection extends StatelessWidget {
                 MaterialPageRoute(
                   builder: (context) => AllReviewsPage(
                     productName: product.name,
-                    brand: product.brand ?? '',
+                    brand: product.brand,
                     rating: product.rating,
                     reviewCount: product.reviewCount,
-                    images: product.images,
+                    images: List<String>.from(product.images),
                   ),
                 ),
               );

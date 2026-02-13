@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import 'checkout_page.dart';
@@ -18,6 +19,7 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
   final AppState _appState = AppState();
   final Map<int, bool> _dynamicSelections = {};
   final Map<int, int> _dynamicQuantities = {};
+  final ScrollController _couponScrollController = ScrollController();
   
   // Kupon değişkenleri
   final Map<int, Map<String, dynamic>> _appliedCoupons = {};
@@ -55,6 +57,28 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
       'minPrice': 250.0,
       'color': Colors.purple.shade100,
       'iconColor': Colors.purple,
+    },
+    {
+      'id': 'c4',
+      'code': 'KARGO',
+      'title': 'Bedava Kargo',
+      'description': 'Kargo Bedava',
+      'discountAmount': 20.0, // Assuming kargo is approx 20
+      'isPercentage': false,
+      'minPrice': 50.0,
+      'color': Colors.green.shade100,
+      'iconColor': Colors.green,
+    },
+    {
+      'id': 'c5',
+      'code': 'BAHAR',
+      'title': 'Bahar İndirimi',
+      'description': '%5 İndirim',
+      'discountAmount': 5.0,
+      'isPercentage': true,
+      'minPrice': 150.0,
+      'color': Colors.pink.shade100,
+      'iconColor': Colors.pink,
     },
   ];
 
@@ -353,6 +377,7 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
   @override
   void dispose() {
     _tabController.dispose();
+    _couponScrollController.dispose();
     super.dispose();
   }
 
@@ -1495,6 +1520,50 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
     );
   }
 
+  void _applyCouponToCart(Map<String, dynamic> coupon) {
+    int appliedCount = 0;
+    setState(() {
+      for (var product in _appState.cart) {
+        double productPrice = 0.0;
+        try {
+          String priceStr = product.price
+              .replaceAll('₺', '')
+              .replaceAll('TL', '')
+              .replaceAll('.', '')
+              .replaceAll(',', '.')
+              .replaceAll(' ', '')
+              .trim();
+          productPrice = double.parse(priceStr);
+        } catch (e) {
+          productPrice = 0.0;
+        }
+
+        if (productPrice >= (coupon['minPrice'] as double)) {
+           _appliedCoupons[product.hashCode] = coupon;
+           appliedCount++;
+        }
+      }
+    });
+
+    if (appliedCount > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${coupon['title']} kuponu $appliedCount ürüne uygulandı!'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sepetinizde bu kupon için uygun ürün bulunamadı.'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   Widget _buildWebCouponSection() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1517,53 +1586,80 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
           const SizedBox(height: 16),
           // Horizontal list of coupons
           SizedBox(
-            height: 80,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: _availableCoupons.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 12),
-              itemBuilder: (context, index) {
-                final coupon = _availableCoupons[index];
-                return Container(
-                  width: 250,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: coupon['color'],
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Icon(Icons.local_offer, color: coupon['iconColor'], size: 20),
+            height: 100,
+            child: ScrollConfiguration(
+              behavior: ScrollConfiguration.of(context).copyWith(
+                dragDevices: {
+                  PointerDeviceKind.touch,
+                  PointerDeviceKind.mouse,
+                },
+              ),
+              child: Scrollbar(
+                controller: _couponScrollController,
+                thumbVisibility: true,
+                trackVisibility: true,
+                child: ListView.separated(
+                  controller: _couponScrollController,
+                  padding: const EdgeInsets.only(bottom: 12),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _availableCoupons.length,
+                  separatorBuilder: (context, index) => const SizedBox(width: 12),
+                  itemBuilder: (context, index) {
+                    final coupon = _availableCoupons[index];
+                    return Container(
+                      width: 300,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              coupon['title'],
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: coupon['color'],
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                            Text(
-                              coupon['description'],
-                              style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                            child: Icon(Icons.local_offer, color: coupon['iconColor'], size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  coupon['title'],
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                ),
+                                Text(
+                                  coupon['description'],
+                                  style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () => _applyCouponToCart(coupon),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                            ),
+                            child: const Text('Kullan'),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
+                    );
+                  },
+                ),
+              ),
             ),
           ),
         ],
@@ -1812,27 +1908,77 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
 
   Widget _buildWebBanner() {
     return Container(
-      height: 80,
       width: double.infinity,
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        gradient: const LinearGradient(colors: [Colors.orange, Colors.deepOrange]),
-      ),
-      child: Stack(
-        children: [
-          // Placeholder for banner content
-          const Center(
-            child: Text('1 TL ile yapabileceğin en iyi şey!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        gradient: LinearGradient(
+          colors: [Colors.purple.shade400, Colors.deepPurple.shade600],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.purple.withOpacity(0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
           ),
-          Positioned(
-            right: 16,
-            bottom: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
-              child: const Text('Sepete Ekle', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.diamond_outlined, color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'İBul Premium',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Premium ayrıcalıkları ile tasarruf et',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.95),
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
             ),
-          )
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 36,
+            child: ElevatedButton(
+              onPressed: () {},
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.deepPurple.shade700,
+                elevation: 0,
+                padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'Premium\'a Geç',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ),
+          ),
         ],
       ),
     );

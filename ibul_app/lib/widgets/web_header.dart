@@ -6,6 +6,8 @@ import '../screens/cart_page.dart';
 import '../screens/account_page.dart';
 import '../screens/favorites_page.dart';
 import '../core/app_state.dart';
+import 'search_overlay.dart';
+import 'advanced_filter_drawer.dart';
 
 class WebHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
@@ -25,12 +27,79 @@ class WebHeader extends StatefulWidget {
 
 class _WebHeaderState extends State<WebHeader> {
   final ScrollController _categoryScrollController = ScrollController();
+  final LayerLink _layerLink = LayerLink();
+  final FocusNode _searchFocusNode = FocusNode();
+  OverlayEntry? _overlayEntry;
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _searchFocusNode.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() {
+    if (_searchFocusNode.hasFocus) {
+      _showOverlay();
+    } else {
+      // Delay to allow tap on overlay items
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (!_searchFocusNode.hasFocus) {
+          _hideOverlay();
+        }
+      });
+    }
+  }
+
+  final GlobalKey _searchKey = GlobalKey();
+
+  void _showOverlay() {
+    if (_overlayEntry != null) return;
+
+    final RenderBox renderBox = _searchKey.currentContext!.findRenderObject() as RenderBox;
+    final size = renderBox.size;
+
+    _overlayEntry = OverlayEntry(
+      builder: (context) => Positioned(
+        width: size.width,
+        child: CompositedTransformFollower(
+          link: _layerLink,
+          showWhenUnlinked: false,
+          offset: const Offset(0, 50), // Height of bar (48) + spacing (2)
+          child: Material(
+            elevation: 8,
+            borderRadius: BorderRadius.circular(12),
+            child: SearchOverlay(
+              onClose: _hideOverlay,
+              onSearch: (query) {
+                _searchController.text = query;
+                widget.onSearch(query);
+                _searchFocusNode.unfocus();
+                _hideOverlay();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    Overlay.of(context).insert(_overlayEntry!);
+  }
+
+  void _hideOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
 
   @override
   void dispose() {
     _categoryScrollController.dispose();
+    _searchFocusNode.dispose();
+    _searchController.dispose();
+    _hideOverlay();
     super.dispose();
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -117,6 +186,53 @@ class _WebHeaderState extends State<WebHeader> {
     );
   }
 
+  void _showSearchOverlay() {
+    showDialog(
+      context: context,
+      barrierColor: Colors.transparent, // Handled by overlay itself
+      builder: (context) => SearchOverlay(
+        onClose: () => Navigator.pop(context),
+        onSearch: (query) {
+          Navigator.pop(context);
+          widget.onSearch(query);
+        },
+      ),
+    );
+  }
+
+  void _showFilterDrawer() {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Filter',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 300),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return Align(
+          alignment: Alignment.centerRight,
+          child: Material(
+            child: AdvancedFilterDrawer(
+              onClose: () => Navigator.pop(context),
+              onApply: () {
+                Navigator.pop(context);
+                // Apply filter logic here
+              },
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(animation),
+          child: child,
+        );
+      },
+    );
+  }
+
   Widget _buildSearchBar() {
     return Row(
       children: [
@@ -138,50 +254,97 @@ class _WebHeaderState extends State<WebHeader> {
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Container(
-            height: 48,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3F3F3),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade300),
-            ),
-            child: Row(
-              children: [
-                const SizedBox(width: 16),
-                const Icon(Icons.search, color: Colors.grey, size: 22),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    onSubmitted: widget.onSearch,
-                    decoration: const InputDecoration(
-                      hintText: 'Ürün, kategori veya marka ara...',
-                      hintStyle: TextStyle(color: Colors.grey, fontSize: 14),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.only(bottom: 8), 
+          child: CompositedTransformTarget(
+            link: _layerLink,
+            child: Container(
+              key: _searchKey,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 16),
+                  const Icon(Icons.search, color: Colors.grey, size: 22),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      onSubmitted: (value) {
+                        widget.onSearch(value);
+                        _hideOverlay();
+                      },
+                      decoration: const InputDecoration(
+                        hintText: 'Ürün, kategori veya marka ara...',
+                        hintStyle: TextStyle(color: Colors.grey, fontSize: 14),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.only(bottom: 8), 
+                      ),
+                      style: const TextStyle(fontSize: 14),
+                      textAlignVertical: TextAlignVertical.center,
                     ),
-                    style: const TextStyle(fontSize: 14),
-                    textAlignVertical: TextAlignVertical.center,
                   ),
-                ),
-                Container(
-                  margin: const EdgeInsets.all(4),
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Center(
-                    child: Text(
-                      'ARA',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
+                  
+                  // Filter Button (Inside Search Bar, left of Search Button)
+                  InkWell(
+                    onTap: _showFilterDrawer,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Row(
+                        children: const [
+                          Icon(Icons.tune, color: Colors.black54, size: 18),
+                          SizedBox(width: 6),
+                          Text(
+                            'Filtrele',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black54,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ),
-              ],
+                  
+                  // Vertical Divider
+                  Container(
+                    width: 1, 
+                    height: 24, 
+                    color: Colors.grey.shade300,
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+
+                  InkWell(
+                    onTap: () {
+                       widget.onSearch(_searchController.text);
+                       _hideOverlay();
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.all(4),
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Center(
+                        child: Text(
+                          'ARA',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

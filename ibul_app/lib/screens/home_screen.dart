@@ -656,7 +656,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       // Web'de FloatingActionButton Yapay Zeka, Mobil'de Çark
       floatingActionButton: _buildFab(context),
       // Web'de BottomNavigationBar'ı gizle
-      bottomNavigationBar: MediaQuery.of(context).size.width >= 800 
+      bottomNavigationBar: MediaQuery.of(context).size.width >= 1100 
           ? null 
           : Theme(
         data: Theme.of(context).copyWith(
@@ -704,7 +704,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget? _buildFab(BuildContext context) {
-    final isWeb = MediaQuery.of(context).size.width >= 800;
+    final isWeb = MediaQuery.of(context).size.width >= 1100;
     
     // Web için Yapay Zeka Butonu
     if (isWeb) {
@@ -787,7 +787,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       );
     }
 
-    final isWeb = MediaQuery.of(context).size.width >= 800;
+    // Breakpoint increased to 1100 to prevent WebHeader overflow on smaller screens (tablets, small laptops)
+    final isWeb = MediaQuery.of(context).size.width >= 1100;
 
     return SafeArea(
       child: Column(
@@ -1116,28 +1117,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 4,
-                  childAspectRatio: 0.6,
+                  childAspectRatio: 0.75,
                   crossAxisSpacing: 16,
                   mainAxisSpacing: 16,
                 ),
                 itemCount: displayProducts.length > 8 ? 8 : displayProducts.length, // Limit for demo
                 itemBuilder: (context, index) {
-                   return Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.withValues(alpha: 0.1),
-                            blurRadius: 10,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
-                      ),
-                      child: ProductCard(
-                        product: _convertToProduct(displayProducts[index]),
-                      ),
-                    );
+                   return ProductCard(
+                     product: _convertToProduct(displayProducts[index]),
+                     margin: EdgeInsets.zero,
+                   );
                 },
               ),
             ],
@@ -1236,28 +1225,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       physics: const NeverScrollableScrollPhysics(),
                       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 5, // 5 sütunlu grid
-                        childAspectRatio: 0.6, // Kart oranı
+                        childAspectRatio: 0.75, // Kart oranı
                         crossAxisSpacing: 16,
                         mainAxisSpacing: 16,
                       ),
                       itemCount: popularProducts.length,
                       itemBuilder: (context, index) {
                         final dbProduct = popularProducts[index];
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.grey.withOpacity(0.1),
-                                blurRadius: 10,
-                                offset: const Offset(0, 5),
-                              ),
-                            ],
-                          ),
-                          child: ProductCard(
-                            product: _convertToProduct(dbProduct),
-                          ),
+                        return ProductCard(
+                          product: _convertToProduct(dbProduct),
+                          margin: EdgeInsets.zero,
                         );
                       },
                     ),

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../models/product_model.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
-import 'home_screen.dart';
 import 'reviews_page.dart';
 
 class ProductFeaturesPage extends StatefulWidget {
@@ -106,20 +105,23 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
   }
 
   Widget _buildProductSummary() {
-    return Padding(
+    return Container(
       padding: const EdgeInsets.all(16.0),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Product Image
           Container(
-            width: 60,
-            height: 80,
+            width: 70,
+            height: 70,
             decoration: BoxDecoration(
               border: Border.all(color: Colors.grey.shade200),
               borderRadius: BorderRadius.circular(8),
             ),
-            padding: const EdgeInsets.all(4),
+            padding: const EdgeInsets.all(8),
             child: widget.product.images.isNotEmpty
                 ? Image.network(
                     widget.product.images.first,
@@ -129,7 +131,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
                   )
                 : const Icon(Icons.image, color: Colors.grey),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 16),
           // Product Details
           Expanded(
             child: Column(
@@ -138,8 +140,8 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
                 Text(
                   widget.product.brand,
                   style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
                     color: Colors.black,
                   ),
                 ),
@@ -149,23 +151,25 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
                   style: const TextStyle(
                     fontSize: 14,
                     color: Colors.black87,
+                    fontWeight: FontWeight.w400,
                   ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Row(
                   children: [
-                    const Icon(Icons.star, size: 16, color: Colors.amber),
+                    const Icon(Icons.star, size: 14, color: Colors.amber),
                     const SizedBox(width: 4),
                     Text(
                       '${widget.product.rating}',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
+                        color: Colors.black,
                       ),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 6),
                     Text(
                       '${widget.product.reviewCount * 100} puan & ${widget.product.reviewCount} yorum >',
                       style: TextStyle(
@@ -185,7 +189,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
 
   Widget _buildFeaturesTab() {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       children: [
         const Text(
           'Genel Bilgiler',
@@ -201,31 +205,24 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
         _buildBulletPoint('İncelemiş olduğunuz ürünün satış fiyatını satıcı belirlemektedir.'),
         _buildBulletPoint('Ürüne ait garanti belgesi ile tanıtma ve kullanım kılavuzları; kağıt ortamında paylaşılabileceği gibi elektronik ortamda erişim sağlayabileceğiniz, link ve karekod biçiminde de sunulabilecektir. Ürün teslimi sonrası ambalajın, paketin, kutunun dikkatle açılması tavsiye edilir.'),
         _buildBulletPoint(widget.product.name),
-        if (widget.product.brand.contains('Apple') || widget.product.name.contains('iPhone')) ...[
-           _buildBulletPoint('6.1 inç Super Retina XDR ekranıyla yüksek kontrast oranı, parlaklık seviyesi ve genel görüntü kalitesi sunar.'),
-           _buildBulletPoint('48 MP\'lik ve 12 MP ultra geniş kamerasıyla akıllı telefonlar içinde dikkat çeker.'),
-           _buildBulletPoint('Yan tarafa monte edilmiş parmak izi okuyucu tasarımlı iPhone telefonları kolaylığı sunar.'),
-           _buildBulletPoint('Büyük dosyaları ve uygulamaları saklama kapasitesiyle 128 GB telefonlar arasındadır.'),
-           _buildBulletPoint('Zarif ve şık bir görünüm arayanlara siyah telefonlar ideal bir seçenektir.'),
-           _buildBulletPoint('6.1 inç Apple iPhone 15, ergonomik kullanım sağlar.'),
-           _buildBulletPoint('Hızlı ve kesintisiz internet bağlantısı sağlayan 5G telefonlar bu teknolojiyi destekler.'),
-           _buildBulletPoint('Çoklu görevlerde 6 GB RAM telefonlar gibi sorunsuz bir deneyim sunar.'),
-        ] else ...[
-           _buildBulletPoint('Bu ürünün teknik özellikleri ve detayları hakkında daha fazla bilgi için satıcı ile iletişime geçebilirsiniz.'),
-           _buildBulletPoint('Ürün orijinal kutusunda ve garantili olarak gönderilmektedir.'),
-        ],
+        _buildBulletPoint('6.1 inç Super Retina XDR ekranıyla yüksek kontrast oranı, parlaklık seviyesi ve genel görüntü kalitesi sunar.'),
+        _buildBulletPoint('48 MP\'lik ve 12 MP ultra geniş kamerasıyla akıllı telefonlar içinde dikkat çeker.'),
+        _buildBulletPoint('Yan tarafa monte edilmiş parmak izi okuyucu tasarımlı iPhone telefonları kolaylığı sunar.'),
+        _buildBulletPoint('Büyük dosyaları ve uygulamaları saklama kapasitesiyle 128 GB telefonlar arasındadır.'),
+        _buildBulletPoint('Zarif ve şık bir görünüm arayanlara siyah telefonlar ideal bir seçenektir.'),
+        _buildBulletPoint('6.1 inç Apple iPhone 15, ergonomik kullanım sağlar.'),
       ],
     );
   }
 
   Widget _buildBulletPoint(String text) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12.0),
+      padding: const EdgeInsets.only(bottom: 16.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 6.0),
+          Padding(
+            padding: const EdgeInsets.only(top: 6.0),
             child: Icon(Icons.circle, size: 6, color: AppColors.primary),
           ),
           const SizedBox(width: 12),
@@ -328,7 +325,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
                   });
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _isAddedToCart ? Colors.green : AppColors.primary,
+                  backgroundColor: AppColors.primary, // Always purple
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   elevation: 0,

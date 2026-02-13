@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
-import '../../core/constants.dart';
-import '../../screens/product_detail_page.dart';
 import '../../models/product_model.dart';
 
 class ProductOtherStoresCard extends StatelessWidget {
@@ -12,105 +10,184 @@ class ProductOtherStoresCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewModel = Provider.of<ProductDetailViewModel>(context);
 
-    if (viewModel.otherStoresWithProducts.isEmpty && !viewModel.loadingOtherStores) {
-      return const SizedBox.shrink();
-    }
+    // Mock data for UI development if empty
+    final stores = viewModel.otherStoresWithProducts.isNotEmpty 
+        ? viewModel.otherStoresWithProducts 
+        : [
+            {
+              'store': {'name': 'Teknosa', 'rating': '9.0'},
+              'product': {'name': 'iPhone 15 Pro Max Mavi', 'price': '64999.00 TL'},
+            },
+            {
+              'store': {'name': 'Arçelik', 'rating': '8.7'},
+              'product': {'name': 'MacBook Pro M3 Pro', 'price': '72999.00 TL'},
+            },
+          ];
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Diğer Satıcılar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
-                Text('${viewModel.otherStoresWithProducts.length} satıcı', style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-              ],
-            ),
+    return Column(
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Diğer Mağazalar',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+              ),
+              TextButton(
+                onPressed: () {},
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF673AB7),
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('Tümünü Gör', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              ),
+            ],
           ),
-          const Divider(height: 1),
+        ),
+        const SizedBox(height: 12),
 
-          if (viewModel.loadingOtherStores)
-            const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-          else
-            ...viewModel.otherStoresWithProducts.take(3).map((item) {
-              final store = item['store'] as Map<String, dynamic>;
-              final product = item['product'] as Product;
-              final price = store['price'] as String;
-              final rating = store['rating'] as String;
+        // Horizontal List
+        SizedBox(
+          height: 140, // Height for the cards
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: stores.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, index) {
+              final item = stores[index];
+              // Safe access for mock vs real data structure
+              final store = item['store'] is Map ? item['store'] as Map : {};
+              // Assuming Product model does not have toJson yet or we don't want to rely on it.
+              // Just use mock data if item['product'] is Product object for now or extract fields manually.
+              
+              String productName = '';
+              String price = '';
+              
+              if (item['product'] is Product) {
+                 final p = item['product'] as Product;
+                 productName = p.name;
+                 price = p.price;
+              } else if (item['product'] is Map) {
+                 final pMap = item['product'] as Map;
+                 productName = pMap['name'] ?? '';
+                 price = pMap['price'] ?? '';
+              }
 
-              return InkWell(
-                onTap: () {
-                  Navigator.push(context, MaterialPageRoute(builder: (context) => ProductDetailPage(product: product)));
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade100))),
-                  child: Row(
-                    children: [
-                      // Store info
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(store['name'] ?? '', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
-                                ),
-                                const SizedBox(width: 4),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                  decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(3)),
-                                  child: Text(rating, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                Icon(Icons.local_shipping_outlined, size: 10, color: Colors.grey[500]),
-                                const SizedBox(width: 3),
-                                Text('Kargo Bedava', style: TextStyle(fontSize: 9, color: Colors.green[700])),
-                              ],
-                            ),
-                          ],
+              return Container(
+                width: 280,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Store Header
+                    Row(
+                      children: [
+                        Container(
+                          width: 24,
+                          height: 24,
+                          decoration: const BoxDecoration(
+                            color: Colors.orange,
+                            shape: BoxShape.circle,
+                          ),
+                          alignment: Alignment.center,
+                          child: const Text('T', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                         ),
+                        const SizedBox(width: 8),
+                        Text(store['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(store['rating']?.toString() ?? '9.0', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.verified, size: 14, color: Colors.blue),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Product Row
+                    Expanded(
+                      child: Row(
+                        children: [
+                          // Image
+                          Container(
+                            width: 48,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Icon(Icons.phone_iphone, color: Colors.grey),
+                          ),
+                          const SizedBox(width: 12),
+                          
+                          // Details
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  productName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12, color: Colors.black87),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  price,
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      // Price
-                      Text(price, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
-                    ],
-                  ),
+                    ),
+                    
+                    // Button
+                    SizedBox(
+                      height: 28,
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () {},
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF673AB7),
+                          side: const BorderSide(color: Color(0xFF673AB7)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: EdgeInsets.zero,
+                        ),
+                        child: const Text('Ürüne Git', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
                 ),
               );
-            }),
-
-          // See all button
-          if (viewModel.otherStoresWithProducts.length > 3)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: SizedBox(
-                width: double.infinity,
-                child: TextButton(
-                  onPressed: () {},
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                  ),
-                  child: Text('TÜMÜNÜ GÖR (${viewModel.otherStoresWithProducts.length})', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ),
-        ],
-      ),
+            },
+          ),
+        ),
+      ],
     );
   }
 }

@@ -5,6 +5,7 @@ import '../core/constants.dart';
 import '../models/product_model.dart';
 import '../viewmodels/product_detail_viewmodel.dart';
 import '../widgets/web_header.dart';
+import '../widgets/product_detail/product_delivery_info.dart';
 import '../widgets/product_detail/product_image_slider.dart';
 import '../widgets/product_detail/product_info_section.dart';
 import '../widgets/product_detail/product_variant_selector.dart';
@@ -23,6 +24,7 @@ import '../widgets/product_detail/product_other_sellers_full.dart';
 import '../widgets/product_detail/product_qa_card.dart';
 import '../widgets/product_detail/product_reviews_full_section.dart';
 import '../widgets/product_detail/product_qa_full_section.dart';
+import '../widgets/product_detail/product_complementary_set.dart';
 import 'home_screen.dart';
 import 'search_results_page.dart';
 
@@ -79,76 +81,118 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final isWide = screenWidth > 900;
+    final isWide = screenWidth > 1100;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
-      body: Column(
+      backgroundColor: Colors.white,
+      body: Stack(
+        fit: StackFit.expand,
         children: [
-          // Header - same as home page
-          WebHeader(
-            onSearch: (query) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => SearchResultsPage(query: query, results: const []),
+          Column(
+            children: [
+              // Header - Only for Web
+              if (isWide)
+                WebHeader(
+                  onSearch: (query) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => SearchResultsPage(query: query, results: const []),
+                      ),
+                    );
+                  },
+                  onCategorySelected: (category) {
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (context) => const HomeScreen()),
+                      (route) => false,
+                    );
+                  },
                 ),
-              );
-            },
-            onCategorySelected: (category) {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const HomeScreen()),
-                (route) => false,
-              );
-            },
-          ),
-          // Content
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  // Breadcrumb
-                  _buildBreadcrumb(context),
-                  // Main content
-                  if (isWide)
-                    _buildWideLayout(context)
-                  else
-                    _buildNarrowLayout(context),
-                  const SizedBox(height: 12),
-                  // Similar Products (full width)
-                  Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1200),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Column(
-                          children: [
-                            const SimilarProductsSection(),
-                            const SizedBox(height: 24),
-                            ProductFullDescription(key: _descriptionKey),
-                            const SizedBox(height: 24),
-                            ProductFullSpecs(key: _specsKey),
-                            const SizedBox(height: 24),
-                            const ProductComparisonSection(),
-                            const SizedBox(height: 24),
-                            const ProductReviewsFullSection(),
-                            const SizedBox(height: 24),
-                            const ProductQaFullSection(),
-                            const SizedBox(height: 24),
-                            const ProductFaqSection(),
-                            const SizedBox(height: 24),
-                            const ProductOtherSellersFull(),
-                            const SizedBox(height: 32),
-                          ],
+              
+              // Content
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      // Breadcrumb
+                      if (isWide) _buildBreadcrumb(context),
+                      // Main content
+                      if (isWide)
+                        _buildWideLayout(context)
+                      else
+                        _buildNarrowLayout(context),
+                      if (isWide)
+                      // Similar Products (full width)
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1200),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Column(
+                              children: [
+                                const ProductComplementarySet(),
+                                const SizedBox(height: 24),
+                                const SimilarProductsSection(),
+                                const SizedBox(height: 24),
+                                ProductFullDescription(key: _descriptionKey),
+                                const SizedBox(height: 24),
+                                ProductFullSpecs(key: _specsKey),
+                                const SizedBox(height: 24),
+                                const ProductComparisonSection(),
+                                const SizedBox(height: 24),
+                                const ProductReviewsFullSection(),
+                                const SizedBox(height: 24),
+                                const ProductQaFullSection(),
+                                const SizedBox(height: 24),
+                                const ProductFaqSection(),
+                                const SizedBox(height: 24),
+                                const ProductOtherSellersFull(),
+                                const SizedBox(height: 32),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
+              ),
+            ],
+          ),
+          
+          // Mobile Floating Header (Back Button)
+          if (!isWide)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 10,
+              left: 16,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Color(0xFF673AB7)),
+                  onPressed: () => Navigator.pop(context),
+                ),
               ),
             ),
-          ),
+          
+          // Sticky Bottom Bar for Mobile
+          if (!isWide)
+            const Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: ProductBottomBar(),
+            ),
         ],
       ),
     );
@@ -225,7 +269,17 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                       Expanded(
                         child: ProductTabsSection(
                           onScrollToDescription: _scrollToDescription,
-                          onScrollToSpecs: _scrollToSpecs,
+                          onScrollToSpecs: () {
+                            // Find ProductFullSpecs widget position and scroll to it
+                            final ctx = _specsKey.currentContext;
+                            if (ctx != null) {
+                              Scrollable.ensureVisible(
+                                ctx,
+                                duration: const Duration(milliseconds: 500),
+                                curve: Curves.easeInOut,
+                              );
+                            }
+                          },
                         ),
                       ),
                     ],
@@ -246,30 +300,40 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   }
 
   Widget _buildNarrowLayout(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.all(12),
-      child: Column(
-        children: [
-          ProductImageSlider(),
-          SizedBox(height: 12),
-          ProductTabsSection(),
-          SizedBox(height: 12),
-          ProductInfoSection(),
-          SizedBox(height: 12),
-          ProductVariantSelector(),
-          SizedBox(height: 12),
-          ProductBottomBar(),
-          SizedBox(height: 12),
-          ProductStoreInfo(),
-          SizedBox(height: 12),
-          ProductOtherStoresCard(),
-          SizedBox(height: 12),
-          ProductReviewsSection(),
-          SizedBox(height: 12),
-          ProductQaCard(),
-          SizedBox(height: 12),
-          ProductAdditionalServices(),
-        ],
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 600),
+        child: Column(
+          children: [
+            const ProductImageSlider(isMobile: true),
+            Padding(
+              padding: const EdgeInsets.all(16), // Increased padding
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+                  const ProductInfoSection(),
+                  const SizedBox(height: 16),
+                  const ProductStoreInfo(),
+                  const SizedBox(height: 16),
+                  const ProductVariantSelector(),
+                  const SizedBox(height: 16),
+                  const ProductDeliveryInfoSection(), // Delivery Info
+                  const SizedBox(height: 16),
+                  const ProductOtherStoresCard(),
+                  const SizedBox(height: 16),
+                  const ProductAdditionalServices(),
+                  const SizedBox(height: 16),
+                  const ProductReviewsSection(),
+                  const SizedBox(height: 16),
+                  const ProductComplementarySet(),
+                  const SizedBox(height: 16),
+                  const SimilarProductsSection(), // Added Similar Products
+                  const SizedBox(height: 80), // Space for bottom bar
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -291,8 +355,6 @@ class _CenterColumn extends StatelessWidget {
         children: [
           ProductInfoSection(),
           SizedBox(height: 14),
-          ProductBottomBar(),
-          SizedBox(height: 14),
           ProductVariantSelector(),
           SizedBox(height: 12),
           ProductAdditionalServices(),
@@ -311,11 +373,51 @@ class _RightColumn extends StatelessWidget {
       children: [
         ProductStoreInfo(),
         SizedBox(height: 10),
-        ProductOtherStoresCard(),
-        SizedBox(height: 10),
+        // ProductOtherStoresCard removed as requested
         ProductReviewsSection(),
         SizedBox(height: 10),
         ProductQaCard(),
+      ],
+    );
+  }
+}
+
+class _StickyBuyBox extends StatelessWidget {
+  const _StickyBuyBox();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const ProductInfoSection(), // Price & Rating
+              const SizedBox(height: 20),
+              const ProductVariantSelector(), // Color/Storage
+              const SizedBox(height: 20),
+              const ProductBottomBar(), // Add to Cart Button
+              const SizedBox(height: 16),
+              const ProductAdditionalServices(), // Cargo info etc.
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        const ProductStoreInfo(),
       ],
     );
   }

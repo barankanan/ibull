@@ -28,7 +28,7 @@ class ProductCard extends StatefulWidget {
 class _ProductCardState extends State<ProductCard> {
   bool _isAddedToCart = false;
   final AppState _appState = AppState();
-
+  
   // Purple color from the screenshot
   static const Color _brandPurple = Color(0xFF7C3AED);
 
@@ -41,32 +41,35 @@ class _ProductCardState extends State<ProductCard> {
     // Check if product is in cart to update state
     _isAddedToCart = _appState.isInCart(widget.product);
 
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => ProductDetailPage(product: widget.product),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              const begin = Offset(1.0, 0.0);
-              const end = Offset.zero;
-              const curve = Curves.easeOut;
-              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-              return SlideTransition(position: animation.drive(tween), child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 250),
-          ),
-        ).then((_) {
-          // Refresh state when returning from detail page
-          if (mounted) {
-             setState(() {
-               _isAddedToCart = _appState.isInCart(widget.product);
-             });
-          }
-        });
-      },
-      child: widget.compact ? _buildCompactCard() : _buildNormalCard(),
-    );
+    return widget.compact ? _buildCompactCard() : _buildNormalCard();
+  }
+
+  void _onCardTap() {
+    // Wrap navigation in Future.delayed to avoid MouseTracker crash on Web
+    Future.delayed(Duration.zero, () {
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => ProductDetailPage(product: widget.product),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            const begin = Offset(1.0, 0.0);
+            const end = Offset.zero;
+            const curve = Curves.easeOut;
+            var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+            return SlideTransition(position: animation.drive(tween), child: child);
+          },
+          transitionDuration: const Duration(milliseconds: 250),
+        ),
+      ).then((_) {
+        // Refresh state when returning from detail page
+        if (mounted) {
+           setState(() {
+             _isAddedToCart = _appState.isInCart(widget.product);
+           });
+        }
+      });
+    });
   }
 
   // Normal card for home page (new design like screenshot)
@@ -75,7 +78,6 @@ class _ProductCardState extends State<ProductCard> {
       width: widget.width,
       margin: widget.margin ?? const EdgeInsets.only(right: 12, bottom: 8, top: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
@@ -85,30 +87,39 @@ class _ProductCardState extends State<ProductCard> {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildNormalImageSection(),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildCampaignBadge(),
-                  const SizedBox(height: 3),
-                  _buildTitle(),
-                  const SizedBox(height: 3),
-                  _buildRating(),
-                  const Spacer(),
-                  _buildPrice(),
-                  const SizedBox(height: 4),
-                  _buildButton(context),
-                ],
-              ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Material(
+          color: Colors.white,
+          child: InkWell(
+            onTap: _onCardTap,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildNormalImageSection(),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildCampaignBadge(),
+                        const SizedBox(height: 3),
+                        _buildTitle(),
+                        const SizedBox(height: 3),
+                        _buildRating(),
+                        const Spacer(),
+                        _buildPrice(),
+                        const SizedBox(height: 4),
+                        _buildButton(context),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -120,34 +131,43 @@ class _ProductCardState extends State<ProductCard> {
     
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.grey.shade200, width: 1),
+        // Shadow is optional for compact card, adding minimal if needed or keep flat
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildImageSection(),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(6, 6, 6, 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildCampaignBadge(),
-                  const SizedBox(height: 2),
-                  _buildTitle(),
-                  const SizedBox(height: 2),
-                  _buildRating(),
-                  const SizedBox(height: 8), // Spacer yerine sabit boşluk
-                  _buildPrice(),
-                  const Spacer(), // Butonu en alta itmek için
-                  _buildButton(context),
-                ],
-              ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Material(
+          color: Colors.white,
+          child: InkWell(
+            onTap: _onCardTap,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildImageSection(),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(6, 6, 6, 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildCampaignBadge(),
+                        const SizedBox(height: 2),
+                        _buildTitle(),
+                        const SizedBox(height: 2),
+                        _buildRating(),
+                        const SizedBox(height: 8), // Spacer yerine sabit boşluk
+                        _buildPrice(),
+                        const Spacer(), // Butonu en alta itmek için
+                        _buildButton(context),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -156,48 +176,52 @@ class _ProductCardState extends State<ProductCard> {
   Widget _buildNormalImageSection() {
     return Stack(
       children: [
-        // Product Image
-        ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          child: AspectRatio(
-            aspectRatio: 1.3,
-            child: Container(
-              color: Colors.grey[100],
-              width: double.infinity,
-              alignment: Alignment.center,
-              child: widget.product.images.isNotEmpty && widget.product.images.first.isNotEmpty
-                    ? (widget.product.images.first.startsWith('http')
-                        ? Image.network(
-                            widget.product.images.first,
-                            fit: BoxFit.contain,
-                            width: double.infinity,
-                            height: double.infinity,
-                            alignment: Alignment.center,
-                            filterQuality: FilterQuality.medium,
-                            errorBuilder: (context, error, stackTrace) => Icon(
-                              Icons.image_not_supported,
-                              color: Colors.grey[400],
-                              size: 40,
-                            ),
-                          )
-                        : Image.asset(
-                            widget.product.images.first,
-                            fit: BoxFit.contain,
-                            width: double.infinity,
-                            height: double.infinity,
-                            alignment: Alignment.center,
-                            filterQuality: FilterQuality.medium,
-                            errorBuilder: (context, error, stackTrace) => Icon(
-                              Icons.image_not_supported,
-                              color: Colors.grey[400],
-                              size: 40,
-                            ),
-                          ))
-                    : Icon(
-                        Icons.image_not_supported,
-                        color: Colors.grey[400],
-                        size: 40,
-                      ),
+        // Product Image - Wrapped in GestureDetector to ensure tap is caught
+        GestureDetector(
+          onTap: _onCardTap,
+          behavior: HitTestBehavior.opaque,
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            child: AspectRatio(
+              aspectRatio: 1.3,
+              child: Container(
+                color: Colors.grey[100],
+                width: double.infinity,
+                alignment: Alignment.center,
+                child: widget.product.images.isNotEmpty && widget.product.images.first.isNotEmpty
+                      ? (widget.product.images.first.startsWith('http')
+                          ? Image.network(
+                              widget.product.images.first,
+                              fit: BoxFit.contain,
+                              width: double.infinity,
+                              height: double.infinity,
+                              alignment: Alignment.center,
+                              filterQuality: FilterQuality.medium,
+                              errorBuilder: (context, error, stackTrace) => Icon(
+                                Icons.image_not_supported,
+                                color: Colors.grey[400],
+                                size: 40,
+                              ),
+                            )
+                          : Image.asset(
+                              widget.product.images.first,
+                              fit: BoxFit.contain,
+                              width: double.infinity,
+                              height: double.infinity,
+                              alignment: Alignment.center,
+                              filterQuality: FilterQuality.medium,
+                              errorBuilder: (context, error, stackTrace) => Icon(
+                                Icons.image_not_supported,
+                                color: Colors.grey[400],
+                                size: 40,
+                              ),
+                            ))
+                      : Icon(
+                          Icons.image_not_supported,
+                          color: Colors.grey[400],
+                          size: 40,
+                        ),
+              ),
             ),
           ),
         ),
@@ -246,45 +270,49 @@ class _ProductCardState extends State<ProductCard> {
     
     return Stack(
       children: [
-        // Product Image
-        ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-          child: AspectRatio(
-            aspectRatio: 1.0,
-            child: Container(
-              color: Colors.grey[100],
-              alignment: Alignment.center,
-              child: widget.product.images.isNotEmpty && widget.product.images.first.isNotEmpty
-                  ? (widget.product.images.first.startsWith('http')
-                      ? Image.network(
-                          widget.product.images.first,
-                          fit: BoxFit.contain,
-                          width: double.infinity,
-                          cacheWidth: 200,
-                          cacheHeight: 200,
-                          filterQuality: FilterQuality.medium,
-                          errorBuilder: (context, error, stackTrace) => Icon(
-                            Icons.image_not_supported,
-                            color: Colors.grey[400],
-                          ),
-                        )
-                      : Image.asset(
-                          widget.product.images.first,
-                          fit: BoxFit.contain,
-                          width: double.infinity,
-                          cacheWidth: 200,
-                          cacheHeight: 200,
-                          filterQuality: FilterQuality.medium,
-                          errorBuilder: (context, error, stackTrace) => Icon(
-                            Icons.image_not_supported,
-                            color: Colors.grey[400],
-                          ),
-                        ))
-                  : Icon(
-                      Icons.image_not_supported,
-                      color: Colors.grey[400],
-                      size: isSmallScreen ? 25 : 30,
-                    ),
+        // Product Image - Wrapped in GestureDetector
+        GestureDetector(
+          onTap: _onCardTap,
+          behavior: HitTestBehavior.opaque,
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            child: AspectRatio(
+              aspectRatio: 1.0,
+              child: Container(
+                color: Colors.grey[100],
+                alignment: Alignment.center,
+                child: widget.product.images.isNotEmpty && widget.product.images.first.isNotEmpty
+                    ? (widget.product.images.first.startsWith('http')
+                        ? Image.network(
+                            widget.product.images.first,
+                            fit: BoxFit.contain,
+                            width: double.infinity,
+                            cacheWidth: 200,
+                            cacheHeight: 200,
+                            filterQuality: FilterQuality.medium,
+                            errorBuilder: (context, error, stackTrace) => Icon(
+                              Icons.image_not_supported,
+                              color: Colors.grey[400],
+                            ),
+                          )
+                        : Image.asset(
+                            widget.product.images.first,
+                            fit: BoxFit.contain,
+                            width: double.infinity,
+                            cacheWidth: 200,
+                            cacheHeight: 200,
+                            filterQuality: FilterQuality.medium,
+                            errorBuilder: (context, error, stackTrace) => Icon(
+                              Icons.image_not_supported,
+                              color: Colors.grey[400],
+                            ),
+                          ))
+                    : Icon(
+                        Icons.image_not_supported,
+                        color: Colors.grey[400],
+                        size: isSmallScreen ? 25 : 30,
+                      ),
+              ),
             ),
           ),
         ),

@@ -45,8 +45,9 @@ class _FilterSidebarState extends State<FilterSidebar> {
       }
     }
     // Kategori ve Fiyat bölümleri de açık olsun
-    _expandedSections['İlgili Kategoriler'] = true;
+    _expandedSections['Kategoriler'] = true;
     _expandedSections['Fiyat Aralığı'] = true;
+    //_expandedSections['İlgili Kategoriler'] = true; // Ensure categories are expanded
   }
   
   @override
@@ -150,7 +151,7 @@ class _FilterSidebarState extends State<FilterSidebar> {
   }
 
   Widget _buildCategorySection() {
-    final title = 'İlgili Kategoriler';
+    final title = 'Kategoriler';
     final isExpanded = _expandedSections[title] ?? true;
 
     return Column(
