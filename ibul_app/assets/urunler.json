@@ -123,7 +123,7 @@
   {
     "isim": "MacBook Pro M3",
     "marka": "Apple",
-    "magaza": "Arçelik",
+    "magaza": "Teknosa",
     "fiyat": 52.999,
     "eski_fiyat": null,
     "kategori": "Elektronik",
@@ -640,7 +640,7 @@
   {
     "isim": "Urban Care Biotin & Kafein Tonik",
     "marka": "Urban Care",
-    "magaza": "Gratis",
+    "magaza": "Eve",
     "fiyat": 185,
     "eski_fiyat": 370,
     "kategori": "Kozmetik & Kişisel Bakım",

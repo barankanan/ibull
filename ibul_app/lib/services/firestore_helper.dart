@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/db_product.dart';
 import '../models/db_banner.dart';
@@ -311,13 +313,91 @@ class FirestoreHelper {
   
   // İlk verileri yükleme (Seeding)
   Future<void> seedInitialData() async {
-    final snapshot = await _productsRef.limit(1).get();
-    if (snapshot.docs.isNotEmpty) {
-      return;
+    // Mevcut ürünleri kontrol et
+    final snapshot = await _productsRef.get();
+    
+    // Eğer veritabanı boşsa veya sadece 2 tane dummy ürün varsa (DataSeeder'dan gelen)
+    // JSON'dan yükleme yap
+    // if (snapshot.docs.length > 5) {
+    //   return;
+    // }
+    
+    print('🌱 Veri kontrolü yapılıyor, eksik veriler assets/urunler.json dosyasından tamamlanacak...');
+    
+    try {
+      // JSON dosyasını oku
+      String jsonString;
+      try {
+        // Önce paket yolu ile dene (ibul_app paketi içindeyse)
+        jsonString = await rootBundle.loadString('packages/ibul_app/assets/urunler.json');
+      } catch (e) {
+        print('Paket yolundan yüklenemedi, düz yol deneniyor: $e');
+        // Başarısız olursa düz yol ile dene (Root app ise)
+        jsonString = await rootBundle.loadString('assets/urunler.json');
+      }
+      
+      final List<dynamic> jsonList = json.decode(jsonString);
+      
+      // Mevcut ürün isimlerini al (tekrar eklememek için)
+      final existingNames = snapshot.docs
+          .map((doc) => (doc.data() as Map<String, dynamic>)['name'] as String)
+          .toSet();
+      
+      final List<DBProduct> productsToAdd = [];
+      
+      for (var item in jsonList) {
+        final name = item['isim'];
+        if (existingNames.contains(name)) continue;
+
+        // Fiyat formatlama: 64.999 (double) -> "64.999 TL"
+        // Eğer tam sayı ise: 2500 -> "2.500 TL" formatı gerekebilir ama şimdilik basit toString
+        String price = item['fiyat'].toString();
+        // Eğer nokta yoksa ve 3 haneden büyükse binlik ayracı ekle (basitçe)
+        // Ama JSON'da zaten 64.999 gibi nokta ile geliyor.
+        
+        productsToAdd.add(DBProduct(
+          name: name,
+          brand: item['marka'] ?? '',
+          store: item['magaza'],
+          price: "$price TL",
+          oldPrice: item['eski_fiyat'] != null ? "${item['eski_fiyat']} TL" : null,
+          rating: (item['puan'] as num).toDouble(),
+          reviewCount: item['degerlendirme'] ?? 0,
+          imageUrl: (item['gorseller'] as List).isNotEmpty ? item['gorseller'][0] : '',
+          imageUrls: json.encode(item['gorseller']),
+          category: item['kategori'] ?? 'Diğer',
+          subCategory: item['alt_kategori'],
+          tags: json.encode(item['etiketler'] ?? []),
+          description: item['aciklama'],
+          specifications: json.encode(item['ozellikler'] ?? {}),
+          stock: item['stok'],
+          variantGroupId: item['varyant_grup_id'],
+          variantOptions: item['varyant_secenekler'],
+          isActive: true,
+        ));
+      }
+      
+      if (productsToAdd.isNotEmpty) {
+        await insertProducts(productsToAdd);
+        print('✅ ${productsToAdd.length} ürün JSON\'dan eklendi');
+      } else {
+        print('ℹ️ Eklenecek yeni ürün bulunamadı.');
+      }
+
+    } catch (e) {
+      print('Error seeding from JSON: $e');
+      // JSON yüklenemezse fallback olarak manuel ekle
+      if (snapshot.docs.isEmpty) {
+        await _seedFallbackProducts();
+      }
     }
-    
-    print('🌱 Firestore boş, örnek veriler yükleniyor...');
-    
+
+    // Banner ve Kategorileri de kontrol et
+    await _seedBanners();
+    await _seedCategories();
+  }
+
+  Future<void> _seedFallbackProducts() async {
     // 1. Ürünleri Ekle
     final products = [
       DBProduct(
@@ -355,7 +435,12 @@ class FirestoreHelper {
     ];
     
     await insertProducts(products);
-    print('✅ ${products.length} ürün eklendi');
+    print('✅ ${products.length} ürün (fallback) eklendi');
+  }
+
+  Future<void> _seedBanners() async {
+    final snapshot = await _bannersRef.limit(1).get();
+    if (snapshot.docs.isNotEmpty) return;
 
     // 2. Bannerları Ekle
     final banners = [
@@ -383,6 +468,11 @@ class FirestoreHelper {
       await _bannersRef.add(banner.toMap());
     }
     print('✅ ${banners.length} banner eklendi');
+  }
+
+  Future<void> _seedCategories() async {
+    final snapshot = await _categoriesRef.limit(1).get();
+    if (snapshot.docs.isNotEmpty) return;
 
     // 3. Kategorileri Ekle
     final categories = [

@@ -7,8 +7,11 @@ import '../viewmodels/product_detail_viewmodel.dart';
 import '../widgets/web_header.dart';
 import '../widgets/product_detail/product_delivery_info.dart';
 import '../widgets/product_detail/product_image_slider.dart';
-import '../widgets/product_detail/product_info_section.dart';
-import '../widgets/product_detail/product_variant_selector.dart';
+import '../widgets/product_detail/product_info_section_web.dart';
+import '../widgets/product_detail/product_info_section_mobile.dart';
+import '../widgets/product_detail/product_variant_selector_web.dart';
+import '../widgets/product_detail/product_variant_selector_mobile.dart';
+import '../widgets/product_detail/product_service_buttons.dart';
 import '../widgets/product_detail/product_tabs_section.dart';
 import '../widgets/product_detail/product_store_info.dart';
 import '../widgets/product_detail/product_other_stores_card.dart';
@@ -276,11 +279,11 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                // CENTER: Product Info
+                // CENTER: Product Info & Actions
                 Expanded(child: _CenterColumn()),
                 const SizedBox(width: 16),
-                // RIGHT: Buy Box + Store Info
-                SizedBox(width: 280, child: const _StickyBuyBox()),
+                // RIGHT: Seller & Summaries
+                SizedBox(width: 280, child: const _RightSidebar()),
               ],
             ),
           ),
@@ -301,11 +304,11 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
               child: Column(
                 children: [
                   const SizedBox(height: 12),
-                  const ProductInfoSection(),
+                  const ProductInfoSectionMobile(),
                   const SizedBox(height: 16),
                   const ProductStoreInfo(),
                   const SizedBox(height: 16),
-                  const ProductVariantSelector(),
+                  const ProductVariantSelectorMobile(),
                   const SizedBox(height: 16),
                   const ProductDeliveryInfoSection(), // Delivery Info
                   const SizedBox(height: 16),
@@ -334,76 +337,149 @@ class _CenterColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Ürünün seçenekleri olup olmadığını kontrol et
+    final product = Provider.of<ProductDetailViewModel>(context).initialProduct;
+    // Sadece Telefon kategorisindeki ürünlerde varyant seçimi göster
+    // Kategori veya Alt Kategori kontrolü ekledik.
+    final hasVariants = (product.category?.toLowerCase().contains('telefon') ?? false) ||
+                        (product.subCategory?.toLowerCase().contains('telefon') ?? false);
+
+    return SingleChildScrollView(
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const ProductInfoSectionWeb(),
+            const SizedBox(height: 24),
+            if (hasVariants) ...[
+              const Text(
+                'Ürün Seç',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            const ProductVariantSelectorWeb(),
+            if (hasVariants)
+              const SizedBox(height: 16),
+            const ProductBottomBar(), // Added back because it was removed from ProductVariantSelector
+            const SizedBox(height: 16),
+            const Text(
+              'Ürün Seçenekleri',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const ProductAdditionalServices(),
+            const SizedBox(height: 16),
+            const ProductServiceButtons(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RightSidebar extends StatelessWidget {
+  const _RightSidebar();
+
+  @override
+  Widget build(BuildContext context) {
     return SingleChildScrollView(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: const [
-          ProductInfoSection(),
+          ProductStoreInfo(),
           SizedBox(height: 16),
-          ProductFullDescription(), // Show part of description
+          _SmallReviewsCard(),
           SizedBox(height: 16),
-          ProductReviewsSection(),
-          SizedBox(height: 16),
-          ProductQaCard(),
+          _SmallQaCard(),
         ],
       ),
     );
   }
 }
 
-class _StickyBuyBox extends StatelessWidget {
-  const _StickyBuyBox();
+class _SmallReviewsCard extends StatelessWidget {
+  const _SmallReviewsCard();
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade200),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text(
-                  '₺27.980,54', // Mock price for now, should come from model
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'Ücretsiz Kargo',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.green,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: 20),
-                ProductVariantSelector(),
-                SizedBox(height: 20),
-                ProductBottomBar(), // Add to Cart Button
-                SizedBox(height: 16),
-                ProductAdditionalServices(),
-              ],
-            ),
+          Row(
+            children: const [
+              Icon(Icons.star, size: 16, color: Colors.amber),
+              SizedBox(width: 4),
+              Text(
+                'Değerlendirmeler',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ],
           ),
-          const SizedBox(height: 16),
-          const ProductStoreInfo(),
+          const SizedBox(height: 8),
+          const ProductReviewsSection(), // Reusing the widget but it will be constrained by width
+        ],
+      ),
+    );
+  }
+}
+
+class _SmallQaCard extends StatelessWidget {
+  const _SmallQaCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.question_answer, size: 16, color: Colors.blue),
+              SizedBox(width: 4),
+              Text(
+                'Soru & Cevap',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const ProductQaCard(), // Reusing the widget but it will be constrained by width
         ],
       ),
     );

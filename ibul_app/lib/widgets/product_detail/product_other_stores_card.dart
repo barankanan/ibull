@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../models/product_model.dart';
+import '../../core/store_logo_helper.dart';
+
+import '../../screens/business_detail_page.dart';
 
 class ProductOtherStoresCard extends StatelessWidget {
   const ProductOtherStoresCard({super.key});
@@ -97,32 +100,64 @@ class ProductOtherStoresCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Store Header
-                    Row(
-                      children: [
-                        Container(
-                          width: 24,
-                          height: 24,
-                          decoration: const BoxDecoration(
-                            color: Colors.orange,
-                            shape: BoxShape.circle,
+                    InkWell(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => BusinessDetailPage(
+                              business: {
+                                'name': store['name'] ?? '',
+                                'rating': store['rating'] ?? '9.0',
+                                'verified': true,
+                              },
+                            ),
                           ),
-                          alignment: Alignment.center,
-                          child: const Text('T', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(store['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.green,
-                            borderRadius: BorderRadius.circular(4),
+                        );
+                      },
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                            alignment: Alignment.center,
+                            child: StoreLogoHelper.hasLogo(store['name'] ?? '')
+                                ? ClipOval(
+                                    child: Image.asset(
+                                      StoreLogoHelper.getStoreLogo(store['name'] ?? '')!,
+                                      width: 24,
+                                      height: 24,
+                                      fit: BoxFit.contain,
+                                    ),
+                                  )
+                                : Text(
+                                    (store['name'] as String? ?? 'M')[0].toUpperCase(),
+                                    style: const TextStyle(
+                                        color: Colors.orange,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold),
+                                  ),
                           ),
-                          child: Text(store['rating']?.toString() ?? '9.0', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                        ),
-                        const SizedBox(width: 4),
-                        const Icon(Icons.verified, size: 14, color: Colors.blue),
-                      ],
+                          const SizedBox(width: 8),
+                          Text(store['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(store['rating']?.toString() ?? '9.0', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.verified, size: 14, color: Colors.blue),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 12),
                     

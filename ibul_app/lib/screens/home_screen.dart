@@ -183,7 +183,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 1250,
             tags: '["Hızlı Kargo", "Ücretsiz Kargo"]',
             subCategory: 'Telefon',
-            store: 'Apple Store',
+            store: 'Teknosa',
             variantOptions: 'Renk:Siyah|Depolama:128 GB',
             variantGroupId: 'iphone13',
           ),
@@ -201,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             subCategory: 'Telefon',
             variantOptions: 'Renk:Siyah|Depolama:256 GB',
             variantGroupId: 'galaxys23',
-            store: 'Samsung TR',
+            store: 'Teknosa',
           ),
           DBProduct(
             id: 3,
@@ -215,7 +215,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 3200,
             tags: '["Çok Satan"]',
             subCategory: 'Süpürge',
-            store: 'Dyson',
+            store: 'Arçelik',
           ),
           DBProduct(
             id: 4,
@@ -230,7 +230,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 450,
             tags: '["İndirim"]',
             subCategory: 'Kulaklık',
-            store: 'Sony Eurasia',
+            store: 'Teknosa',
           ),
           DBProduct(
             id: 5,
@@ -244,7 +244,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 5600,
             tags: '["Popüler"]',
             subCategory: 'Bilgisayar',
-            store: 'Apple Store',
+            store: 'Teknosa',
           ),
 
           // --- SAÇ BAKIM ÜRÜNLERİ (DUMMY) ---
@@ -263,7 +263,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 150,
             tags: '["Hızlı Kargo", "Kuponlu"]',
             subCategory: 'Saç Bakımı',
-            store: 'Gratis',
+            store: 'Eve',
           ),
           DBProduct(
             id: 102,
@@ -277,7 +277,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 320,
             tags: '["Çok Satan"]',
             subCategory: 'Saç Bakımı',
-            store: 'Watsons',
+            store: 'Eve',
           ),
           DBProduct(
             id: 103,
@@ -291,7 +291,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 85,
             tags: '["Yeni"]',
             subCategory: 'Saç Bakımı',
-            store: 'Rossmann',
+            store: 'Eve',
           ),
 
           // Head & Shoulders
@@ -308,7 +308,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 1200,
             tags: '["Süper Fırsat"]',
             subCategory: 'Saç Bakımı',
-            store: 'Migros Sanal Market',
+            store: 'A101',
           ),
           DBProduct(
             id: 105,
@@ -322,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 560,
             tags: '["Ekonomik"]',
             subCategory: 'Saç Bakımı',
-            store: 'CarrefourSA',
+            store: 'ŞOK',
           ),
 
           // L'Oreal
@@ -338,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 2400,
             tags: '["Yıldızlı Ürün"]',
             subCategory: 'Saç Bakımı',
-            store: 'L\'Oreal Official',
+            store: 'Eve',
           ),
           DBProduct(
             id: 107,
@@ -352,7 +352,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 980,
             tags: '["İndirim"]',
             subCategory: 'Saç Bakımı',
-            store: 'Gratis',
+            store: 'Eve',
           ),
 
           // Elidor
@@ -368,7 +368,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 3500,
             tags: '["Ekonomik Paket"]',
             subCategory: 'Saç Bakımı',
-            store: 'Şok Market',
+            store: 'ŞOK',
           ),
           DBProduct(
             id: 109,
@@ -382,7 +382,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 1800,
             tags: '["Popüler"]',
             subCategory: 'Saç Bakımı',
-            store: 'Watsons',
+            store: 'Eve',
           ),
 
           // Dove
@@ -398,7 +398,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 650,
             tags: '["Kargo Bedava"]',
             subCategory: 'Saç Bakımı',
-            store: 'Gratis',
+            store: 'Eve',
           ),
           DBProduct(
             id: 111,
@@ -412,7 +412,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 420,
             tags: '["Doğal İçerik"]',
             subCategory: 'Saç Bakımı',
-            store: 'Migros Sanal Market',
+            store: 'A101',
           ),
 
           // Clear
@@ -428,7 +428,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 900,
             tags: '["Fırsat"]',
             subCategory: 'Saç Bakımı',
-            store: 'CarrefourSA',
+            store: 'ŞOK',
           ),
           DBProduct(
             id: 113,
@@ -442,7 +442,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 1500,
             tags: '["Çok Satan"]',
             subCategory: 'Saç Bakımı',
-            store: 'Watsons',
+            store: 'Eve',
           ),
         ];
       }
@@ -470,7 +470,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             reviewCount: 1250,
             tags: '["Hızlı Kargo", "Ücretsiz Kargo"]',
             subCategory: 'Telefon',
-            store: 'Apple Store',
+            store: 'Teknosa',
             variantOptions: 'Renk:Siyah|Depolama:128 GB',
             variantGroupId: 'iphone13',
           ),

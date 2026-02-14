@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
+import '../../core/store_logo_helper.dart';
+import '../../screens/business_detail_page.dart';
 
 class ProductOtherSellersFull extends StatefulWidget {
   const ProductOtherSellersFull({super.key});
@@ -188,24 +190,55 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
           Row(
             children: [
               Expanded(
-                child: Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        seller.name,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1565C0),
+                child: InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => BusinessDetailPage(
+                          business: {
+                            'name': seller.name,
+                            'rating': seller.rating,
+                            'verified': seller.isVerified,
+                          },
                         ),
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    if (seller.isVerified) ...[
-                      const SizedBox(width: 3),
-                      const Icon(Icons.verified, size: 14, color: Color(0xFF1565C0)),
+                    );
+                  },
+                  child: Row(
+                    children: [
+                      if (StoreLogoHelper.hasLogo(seller.name)) ...[
+                        Container(
+                          width: 24,
+                          height: 24,
+                          margin: const EdgeInsets.only(right: 8),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.grey.shade200),
+                            image: DecorationImage(
+                              image: AssetImage(StoreLogoHelper.getStoreLogo(seller.name)!),
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
+                      ],
+                      Flexible(
+                        child: Text(
+                          seller.name,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1565C0),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (seller.isVerified) ...[
+                        const SizedBox(width: 3),
+                        const Icon(Icons.verified, size: 14, color: Color(0xFF1565C0)),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
               if (seller.rating > 0) ...[

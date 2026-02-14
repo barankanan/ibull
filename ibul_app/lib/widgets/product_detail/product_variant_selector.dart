@@ -21,7 +21,7 @@ class _ProductVariantSelectorState extends State<ProductVariantSelector> {
     final product = Provider.of<ProductDetailViewModel>(context).initialProduct;
     // Basit bir kontrol: iPhone ise seçenekler var, değilse yok varsayalım.
     // Gerçekte API'den gelen veriye göre olacak.
-    final hasVariants = product.name.toLowerCase().contains('iphone');
+    final hasVariants = true; // product.name.toLowerCase().contains('iphone');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -90,27 +90,6 @@ class _ProductVariantSelectorState extends State<ProductVariantSelector> {
           ),
           const SizedBox(height: 24),
         ],
-        
-        // Sepete Ekle Kartı: Hem varyantlı hem varyantsız ürünlerde Kurye Teslimatı'nın üzerinde görünsün
-        const ProductBottomBar(),
-        const SizedBox(height: 16),
-
-        // Servis Kartları (Kurye Teslimatı vb.)
-        _buildServiceCard(
-          icon: Icons.local_shipping_outlined,
-          title: 'KURYE TESLİMATI',
-          subtitle: 'Tahmini 4 Saate adresinde',
-        ),
-        const SizedBox(height: 12),
-        _buildServiceCard(
-          icon: Icons.credit_card,
-          title: 'Ayda 325 TL den başlayan taksitle',
-        ),
-        const SizedBox(height: 12),
-        _buildServiceCard(
-          icon: Icons.refresh,
-          title: 'İptal ve iade Koşulları',
-        ),
       ],
     );
   }

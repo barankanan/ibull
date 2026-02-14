@@ -8,8 +8,14 @@ class ProductAdditionalServices extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = Provider.of<ProductDetailViewModel>(context);
+    final product = viewModel.initialProduct;
+    
+    // Sadece Telefon ve Elektronik kategorisindeki ürünlerde garanti göster
+    // Kategori veya Alt Kategori kontrolü ekledik.
+    final hasWarranty = (product.category?.toLowerCase().contains('telefon') ?? false) ||
+                        (product.subCategory?.toLowerCase().contains('telefon') ?? false);
 
-    if (viewModel.warrantyTitle.isEmpty) return const SizedBox.shrink();
+    if (!hasWarranty || viewModel.warrantyTitle.isEmpty) return const SizedBox.shrink();
 
     final warrantyTitle = viewModel.warrantyTitle;
     final warrantyDesc = viewModel.warrantyDescription;

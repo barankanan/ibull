@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:latlong2/latlong.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
+import '../../core/store_logo_helper.dart';
 import '../../data/business_data.dart';
 import '../../screens/business_detail_page.dart';
 
@@ -40,76 +41,94 @@ class ProductStoreInfo extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              // Logo Area
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white, 
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade200),
+          InkWell(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => BusinessDetailPage(business: business),
                 ),
-                alignment: Alignment.center,
-                // Logo placeholder or actual image if available
-                child: Text(
-                  storeName.isNotEmpty ? storeName[0].toUpperCase() : 'T', 
-                  style: const TextStyle(color: Color(0xFF673AB7), fontSize: 20, fontWeight: FontWeight.bold)
+              );
+            },
+            child: Row(
+              children: [
+                // Logo Area
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.white, 
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  alignment: Alignment.center,
+                  // Logo placeholder or actual image if available
+                  child: StoreLogoHelper.hasLogo(storeName)
+                      ? Padding(
+                          padding: const EdgeInsets.all(4.0),
+                          child: Image.asset(
+                            StoreLogoHelper.getStoreLogo(storeName)!,
+                            fit: BoxFit.contain,
+                          ),
+                        )
+                      : Text(
+                          storeName.isNotEmpty ? storeName[0].toUpperCase() : 'T', 
+                          style: const TextStyle(color: Color(0xFF673AB7), fontSize: 20, fontWeight: FontWeight.bold)
+                        ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              
-              // Name & Verification
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            storeName,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF333333),
+                const SizedBox(width: 12),
+                
+                // Name & Verification
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              storeName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF333333),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        const Icon(Icons.verified, size: 16, color: Colors.blue),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.green,
-                            borderRadius: BorderRadius.circular(4),
+                          const SizedBox(width: 6),
+                          const Icon(Icons.verified, size: 16, color: Colors.blue),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              '9.8',
+                              style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
                           ),
-                          child: const Text(
-                            '9.8',
-                            style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Mağaza Puanı',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Mağaza Puanı',
-                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              
-              const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
-            ],
+                
+                const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
+              ],
+            ),
           ),
           
           const SizedBox(height: 16),

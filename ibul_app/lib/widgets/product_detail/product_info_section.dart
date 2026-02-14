@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
 import '../../screens/product_detail_page.dart';
-import '../../screens/reviews_page.dart';
+import '../../screens/all_reviews_page.dart';
 
 class ProductInfoSection extends StatelessWidget {
   const ProductInfoSection({super.key});
@@ -18,68 +18,103 @@ class ProductInfoSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Web: Rating and Reviews count
-        if (isWeb)
-          Row(
-            children: [
-              _buildRatingStars(product.rating),
-              const SizedBox(width: 8),
-              Text(
-                '${product.rating}',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
+        if (isWeb) ...[
+          // Brand Name (Clickable)
+          GestureDetector(
+            onTap: () {},
+            child: Text(
+              product.brand,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
               ),
-              const SizedBox(width: 4),
-              Text(
-                '(${product.reviewCount} Değerlendirme)',
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: AppColors.primary,
-                  fontWeight: FontWeight.w500,
-                  decoration: TextDecoration.underline,
-                ),
-              ),
-              const Spacer(),
-              const Icon(Icons.share_outlined, color: Colors.grey, size: 20),
-              const SizedBox(width: 16),
-              const Icon(Icons.favorite_border, color: Colors.grey, size: 20),
-            ],
-          ),
-        
-        if (isWeb) const SizedBox(height: 12),
-
-        // Product Name
-        Text(
-          product.name,
-          style: TextStyle(
-            fontSize: isWeb ? 20 : 18,
-            fontWeight: FontWeight.w600,
-            color: Colors.black87,
-            height: 1.3,
-          ),
-        ),
-
-        const SizedBox(height: 8),
-        
-        // Brand Name (Clickable)
-        GestureDetector(
-          onTap: () {},
-          child: Text(
-            product.brand,
-            style: const TextStyle(
-              fontSize: 14,
-              color: AppColors.primary,
-              fontWeight: FontWeight.w600,
             ),
           ),
-        ),
+          const SizedBox(height: 8),
+
+          // Product Name
+          Text(
+            product.name,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Rating and Reviews count
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => AllReviewsPage(
+                      productName: product.name,
+                      brand: product.brand,
+                      rating: product.rating,
+                      reviewCount: product.reviewCount,
+                      images: product.images,
+                    ),
+                  ),
+                );
+              },
+              child: Row(
+                children: [
+                  _buildRatingStars(product.rating),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${product.rating}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '(${product.reviewCount} Değerlendirme)',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w500,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
 
         if (!isWeb) ...[
+          // Mobile Layout (Unchanged)
+          Text(
+            product.name,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: () {},
+            child: Text(
+              product.brand,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
           const SizedBox(height: 12),
-          // Mobile Rating
           Row(
             children: [
               _buildRatingStars(product.rating),
@@ -95,12 +130,8 @@ class ProductInfoSection extends StatelessWidget {
               ),
             ],
           ),
-        ],
-        
-        if (!isWeb) ...[
           const SizedBox(height: 16),
-          // Price for Mobile
-          _buildPrice(product),
+          // Price removed for mobile as it is already in the bottom bar
         ],
       ],
     );
