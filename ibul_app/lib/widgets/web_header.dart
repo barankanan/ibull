@@ -13,12 +13,14 @@ class WebHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
   final ValueChanged<String>? onCategorySelected;
   final String? selectedCategory;
+  final String? initialQuery;
 
   const WebHeader({
     super.key,
     required this.onSearch,
     this.onCategorySelected,
     this.selectedCategory,
+    this.initialQuery,
   });
 
   @override
@@ -35,6 +37,9 @@ class _WebHeaderState extends State<WebHeader> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialQuery != null) {
+      _searchController.text = widget.initialQuery!;
+    }
     _searchFocusNode.addListener(_onFocusChange);
   }
 
@@ -271,6 +276,7 @@ class _WebHeaderState extends State<WebHeader> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: TextField(
+                      textAlign: TextAlign.start,
                       controller: _searchController,
                       focusNode: _searchFocusNode,
                       onSubmitted: (value) {
@@ -281,10 +287,10 @@ class _WebHeaderState extends State<WebHeader> {
                         hintText: 'Ürün, kategori veya marka ara...',
                         hintStyle: TextStyle(color: Colors.grey, fontSize: 14),
                         border: InputBorder.none,
-                        contentPadding: EdgeInsets.only(bottom: 8), 
+                        isCollapsed: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 14),
                       ),
                       style: const TextStyle(fontSize: 14),
-                      textAlignVertical: TextAlignVertical.center,
                     ),
                   ),
                   

@@ -326,7 +326,9 @@ class _FilterSidebarState extends State<FilterSidebar> {
                       onPressed: () {
                         // Apply price filter
                         if (widget.onPriceRangeChanged != null) {
-                           // Logic to parse and call callback
+                          final minPrice = double.tryParse(_minPriceController.text.trim()) ?? 0.0;
+                          final maxPrice = double.tryParse(_maxPriceController.text.trim()) ?? double.infinity;
+                          widget.onPriceRangeChanged!(RangeValues(minPrice, maxPrice));
                         }
                       },
                       padding: EdgeInsets.zero,

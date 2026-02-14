@@ -12,104 +12,134 @@ class ProductInfoSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewModel = Provider.of<ProductDetailViewModel>(context);
     final product = viewModel.initialProduct;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isWeb = screenWidth > 900;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Brand Name (Purple, Underlined-like clickable look) & Bell Icon
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              product.brand,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF673AB7), // Deep Purple
-                decoration: TextDecoration.underline,
-                decorationColor: Color(0xFF673AB7),
+        // Web: Rating and Reviews count
+        if (isWeb)
+          Row(
+            children: [
+              _buildRatingStars(product.rating),
+              const SizedBox(width: 8),
+              Text(
+                '${product.rating}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
               ),
-            ),
-            const Icon(Icons.notifications_none, color: Colors.grey, size: 20),
-          ],
-        ),
-        const SizedBox(height: 4),
+              const SizedBox(width: 4),
+              Text(
+                '(${product.reviewCount} Değerlendirme)',
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w500,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+              const Spacer(),
+              const Icon(Icons.share_outlined, color: Colors.grey, size: 20),
+              const SizedBox(width: 16),
+              const Icon(Icons.favorite_border, color: Colors.grey, size: 20),
+            ],
+          ),
         
+        if (isWeb) const SizedBox(height: 12),
+
         // Product Name
         Text(
           product.name,
-          style: const TextStyle(
-            fontSize: 13, // Reduced from 16
-            fontWeight: FontWeight.w400,
+          style: TextStyle(
+            fontSize: isWeb ? 20 : 18,
+            fontWeight: FontWeight.w600,
             color: Colors.black87,
-            height: 1.2, // Tighter line height
+            height: 1.3,
           ),
         ),
-        const SizedBox(height: 6), // Reduced spacing
 
-        // Rating Row
+        const SizedBox(height: 8),
+        
+        // Brand Name (Clickable)
         GestureDetector(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ReviewsPage(
-                  product: product,
-                ),
-              ),
-            );
-          },
-          child: Row(
-            children: [
-              Row(
-                children: List.generate(5, (index) {
-                  return Icon(
-                    index < product.rating.round() ? Icons.star : Icons.star_border,
-                    size: 14, // Reduced from 16
-                    color: Colors.amber,
-                  );
-                }),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                product.rating.toString(),
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold), // Reduced from 13
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '/ ${product.reviewCount} Değerlendirme',
-                style: const TextStyle(
-                  fontSize: 11, // Reduced from 13
-                  color: Color(0xFF673AB7),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const Icon(Icons.chevron_right, size: 14, color: Color(0xFF673AB7)), // Reduced size
-            ],
+          onTap: () {},
+          child: Text(
+            product.brand,
+            style: const TextStyle(
+              fontSize: 14,
+              color: AppColors.primary,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
 
-        // Coupons / Campaigns
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFF8E1), // Amber 50
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFFFE082)), // Amber 200
-          ),
-          child: Row(
+        if (!isWeb) ...[
+          const SizedBox(height: 12),
+          // Mobile Rating
+          Row(
             children: [
-              const Icon(Icons.percent, size: 16, color: Colors.orange),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Sepette %15 İndirim Fırsatı',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87),
-                ),
+              _buildRatingStars(product.rating),
+              const SizedBox(width: 6),
+              Text(
+                '${product.rating}',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
               ),
-              Icon(Icons.chevron_right, size: 16, color: Colors.orange.shade700),
+              const SizedBox(width: 4),
+              Text(
+                '(${product.reviewCount})',
+                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              ),
             ],
+          ),
+        ],
+        
+        if (!isWeb) ...[
+          const SizedBox(height: 16),
+          // Price for Mobile
+          _buildPrice(product),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildRatingStars(double rating) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(5, (index) {
+        if (index < rating.floor()) {
+          return const Icon(Icons.star, color: Colors.amber, size: 16);
+        } else if (index < rating) {
+          return const Icon(Icons.star_half, color: Colors.amber, size: 16);
+        }
+        return Icon(Icons.star_border, color: Colors.grey[300], size: 16);
+      }),
+    );
+  }
+
+  Widget _buildPrice(dynamic product) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (product.oldPrice != null)
+          Text(
+            product.oldPrice!,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Colors.grey,
+              decoration: TextDecoration.lineThrough,
+            ),
+          ),
+        const SizedBox(height: 4),
+        Text(
+          product.price,
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: Colors.black,
           ),
         ),
       ],

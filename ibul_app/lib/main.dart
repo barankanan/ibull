@@ -38,6 +38,35 @@ void main() async {
     debugPrint('Unhandled Flutter error: ${details.exception}');
   };
 
+  // Render hatalarını ekranda göster
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    return Material(
+      child: Container(
+        color: Colors.white,
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                'Bir hata oluştu:',
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.red),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                details.exceptionAsString(),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.black87),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  };
+
   // Informative debug message on start (hot restart will re-run this)
   assert(() {
     debugPrint(
@@ -49,7 +78,7 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider.value(value: AppState()),
+        ChangeNotifierProvider(create: (_) => AppState()),
       ],
       child: const MyApp(),
     ),

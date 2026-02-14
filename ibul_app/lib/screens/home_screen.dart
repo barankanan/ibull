@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
 import 'package:flutter/gestures.dart'; // Scroll behavior için eklendi
+import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
 import '../models/db_product.dart';
@@ -14,6 +15,7 @@ import '../widgets/web_header.dart'; // Web Header eklendi
 import '../widgets/web_footer.dart'; // Web Footer eklendi
 import '../widgets/filter_sidebar.dart'; // Filter Sidebar eklendi
 import '../widgets/address_bar.dart';
+import '../widgets/address_edit_sheet.dart';
 import '../widgets/feature_menu.dart';
 import '../widgets/product_card.dart';
 import '../widgets/brand_section.dart';
@@ -32,8 +34,13 @@ import 'ai_chat_page.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
+  final String? initialCategory;
   
-  const HomeScreen({super.key, this.initialIndex = 0});
+  const HomeScreen({
+    super.key, 
+    this.initialIndex = 0,
+    this.initialCategory,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -43,7 +50,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   late int _selectedIndex;
   String _selectedBrand = 'Urban';
   String _selectedTechBrand = 'Apple'; // Teknoloji için seçili marka
-  String _selectedCategory = 'Ana Sayfa'; // Seçili kategori
+  late String _selectedCategory; // Seçili kategori
   String? _selectedSubCategory; // Seçili alt kategori
   final AppState _appState = AppState();
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
@@ -56,6 +63,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   final ScrollController _subCategoryScrollController = ScrollController();
   final ScrollController _flashProductsScrollController = ScrollController();
   final ScrollController _todayProductsScrollController = ScrollController();
+
+  String _currentAddress = 'Prefabrik ev-Gökmeydan Mah. Nazım Hikmet kültür merkezi karşısı';
+  
+  // _addresses is now managed by AppState
 
   final Map<String, List<String>> _standardFilters = {
     'Kategori': [
@@ -123,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     )..repeat(); // Sürekli dön
 
     _selectedIndex = widget.initialIndex;
+    _selectedCategory = widget.initialCategory ?? 'Ana Sayfa';
     _appState.cartCountNotifier.value = _appState.cart.length;
     _loadProducts();
   }
@@ -467,7 +479,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _errorMessage = null; // Hatayı kullanıcıya gösterme, dummy veriyi göster
       });
     } finally {
-      setState(() => _isLoadingProducts = false);
+      if (mounted) {
+        setState(() => _isLoadingProducts = false);
+      }
     }
   }
 
@@ -824,7 +838,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const AddressBar(),
+        AddressBar(
+          currentAddress: _currentAddress,
+          onAddressChanged: (newAddress) {
+            setState(() {
+              _currentAddress = newAddress;
+            });
+          },
+        ),
         const FeatureMenu(),
         const SizedBox(height: 8),
         // Banner Carousel
@@ -1047,6 +1068,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     // Let's stick to showing all if empty, but prefer filtered.
     final displayProducts = filteredProducts.isNotEmpty ? filteredProducts : _dbProducts;
 
+    // Filter "Bugün Kapında" products
+    final sameDayProducts = displayProducts.where((p) => 
+      p.tags.contains('Hızlı Teslimat') || 
+      p.tags.contains('Hızlı Kargo') || 
+      p.tags.contains('Yakın Lokasyon')
+    ).take(10).toList();
+
     // Prepare filters dynamically
     final Map<String, List<String>> displayFilters = {};
     _standardFilters.forEach((key, value) {
@@ -1110,14 +1138,75 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ],
               ),
               const SizedBox(height: 16),
+
+              // "Bugün Kapında" Alanı
+              if (sameDayProducts.isNotEmpty && (_selectedSubCategory == 'Telefonlar' || _selectedSubCategory == 'Telefon'))
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50, // Mavi arka plan
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.blue.shade200), // Mavi kenarlık
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.local_shipping, color: Colors.blue, size: 20),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Bugün Kapında',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue, // Mavi metin
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${sameDayProducts.length} ürün',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.blue.shade800,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 290,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: sameDayProducts.length,
+                          separatorBuilder: (context, index) => const SizedBox(width: 12),
+                          itemBuilder: (context, index) {
+                            return SizedBox(
+                              width: 160,
+                              child: ProductCard(
+                                product: _convertToProduct(sameDayProducts[index]),
+                                compact: true,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               displayProducts.isEmpty 
                   ? const Center(child: Text("Bu kategoride ürün bulunamadı.")) 
                   : GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 4,
-                  childAspectRatio: 0.75,
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 250, // Kartların aşırı genişlemesini önlemek için max genişlik
+                  childAspectRatio: 0.65, // Oranı artırarak kart yüksekliğini azalttık (Boşlukları kapatmak için)
                   crossAxisSpacing: 16,
                   mainAxisSpacing: 16,
                 ),
@@ -1137,6 +1226,90 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   // --- WEB GÖRÜNÜM (Yeni Tasarım) ---
+  void _showAddressSelectionDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Consumer<AppState>(
+          builder: (context, appState, _) {
+            return AlertDialog(
+              backgroundColor: Colors.white,
+              title: const Text('Teslimat Adresini Seçin'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    ...appState.deliveryAddresses.map((addr) => _buildAddressOption(addr['title']!, addr['detail']!)),
+                    const Divider(),
+                    ListTile(
+                      leading: const Icon(Icons.add, color: AppColors.primary),
+                      title: const Text('Yeni Adres Ekle', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showAddAddressDialog();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('İptal'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showAddAddressDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: AddressEditSheet(
+            type: 'Adres',
+            onSave: (Map<String, String> newAddress) {
+              final appState = context.read<AppState>();
+              appState.addDeliveryAddress(newAddress);
+              
+              setState(() {
+                _currentAddress = newAddress['detail'] ?? _currentAddress;
+              });
+              
+              // Re-open selection dialog to show the new list
+              // (Optional, user might expect to just stay on home with new address selected)
+              // _showAddressSelectionDialog(); 
+            },
+            onDelete: () {}, // No delete action needed for new address creation
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddressOption(String title, String address) {
+    return ListTile(
+      leading: const Icon(Icons.location_on_outlined),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+      subtitle: Text(address),
+      onTap: () {
+        setState(() {
+          _currentAddress = address;
+        });
+        Navigator.pop(context);
+      },
+    );
+  }
+
   Widget _buildWebHomeContent() {
     final isElectronics = _selectedCategory == 'Elektronik';
     final isHomePage = _selectedCategory == 'Ana Sayfa';
@@ -1225,7 +1398,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       physics: const NeverScrollableScrollPhysics(),
                       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 5, // 5 sütunlu grid
-                        childAspectRatio: 0.75, // Kart oranı
+                        childAspectRatio: 0.58, // Kart oranı
                         crossAxisSpacing: 16,
                         mainAxisSpacing: 16,
                       ),
@@ -1268,17 +1441,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                     const SizedBox(width: 8),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        'Prefabrik ev-Gökmeydan Mah. Nazım Hikmet kültür merkezi karşısı',
-                        style: TextStyle(fontSize: 14, color: Colors.black87),
+                        _currentAddress,
+                        style: const TextStyle(fontSize: 14, color: Colors.black87),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     const SizedBox(width: 16),
                     TextButton.icon(
-                      onPressed: () {},
+                      onPressed: _showAddressSelectionDialog,
                       style: TextButton.styleFrom(
                         foregroundColor: AppColors.primary,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1468,7 +1641,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Bugün Kapında',
+                              'Hızlı Teslimat',
                               style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF333333)),
                             ),
                             Text(

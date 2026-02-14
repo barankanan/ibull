@@ -101,8 +101,8 @@ class ResponsiveGridView extends StatelessWidget {
       padding: padding,
       child: GridView.count(
         crossAxisCount: crossAxisCount,
-        spacing: spacing,
-        runSpacing: runSpacing,
+        crossAxisSpacing: spacing,
+        mainAxisSpacing: runSpacing,
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         children: children,

@@ -1,8 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../core/constants.dart';
+import '../core/app_state.dart';
+import 'address_edit_sheet.dart';
 
 class AddressBar extends StatelessWidget {
-  const AddressBar({super.key});
+  final String currentAddress;
+  final Function(String)? onAddressChanged;
+
+  const AddressBar({
+    super.key,
+    this.currentAddress = 'Prefabrik ev-Gökmeydan Mah. Nazım Hikmet kül...',
+    this.onAddressChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -14,6 +24,7 @@ class AddressBar extends StatelessWidget {
           const Text(
             'Adresim',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+            // ...
           ),
           const SizedBox(height: 8),
           Container(
@@ -26,10 +37,10 @@ class AddressBar extends StatelessWidget {
               children: [
                 const Icon(Icons.location_on, color: AppColors.primary, size: 18),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Prefabrik ev-Gökmeydan Mah. Nazım Hikmet kül...',
-                    style: TextStyle(fontSize: 12),
+                    currentAddress,
+                    style: const TextStyle(fontSize: 12),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -43,7 +54,9 @@ class AddressBar extends StatelessWidget {
                       shape: const RoundedRectangleBorder(
                         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                       ),
-                      builder: (context) => const AddressSelectionSheet(),
+                      builder: (context) => AddressSelectionSheet(
+                        onSelected: onAddressChanged,
+                      ),
                     );
                   },
                   child: Container(
@@ -75,7 +88,9 @@ class AddressBar extends StatelessWidget {
 }
 
 class AddressSelectionSheet extends StatefulWidget {
-  const AddressSelectionSheet({super.key});
+  final Function(String)? onSelected;
+
+  const AddressSelectionSheet({super.key, this.onSelected});
 
   @override
   State<AddressSelectionSheet> createState() => AddressSelectionSheetState();
@@ -83,18 +98,8 @@ class AddressSelectionSheet extends StatefulWidget {
 
 class AddressSelectionSheetState extends State<AddressSelectionSheet> {
   int _selectedTab = 0; // 0: Teslimat, 1: Fatura
-  
-  // Dummy data
-  final List<Map<String, String>> _deliveryAddresses = [
-    {'title': 'Ev', 'detail': 'Prefabrik ev - Gökmeydan Mah..'},
-    {'title': 'İş', 'detail': 'Teknopark - Organize Sanayi Bölgesi'},
-  ];
 
-  final List<Map<String, String>> _billingInfos = [
-    {'title': 'Kişisel Fatura', 'detail': 'Baran Kananogullari - 1234567890'},
-  ];
-
-  void _openEditScreen({Map<String, String>? address}) {
+  void _openEditScreen({Map<String, String>? address, int? index}) {
     Navigator.pop(context); // Close selection sheet first
     showModalBottomSheet(
       context: context,
@@ -105,82 +110,119 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
       builder: (context) => AddressEditSheet(
         initialData: address,
         type: _selectedTab == 0 ? 'Adres' : 'Fatura',
+        onSave: (Map<String, String> newAddress) {
+          final appState = context.read<AppState>();
+          if (_selectedTab == 0) {
+            if (index != null) {
+              appState.updateDeliveryAddress(index, newAddress);
+            } else {
+              appState.addDeliveryAddress(newAddress);
+            }
+          } else {
+            if (index != null) {
+              appState.updateBillingInfo(index, newAddress);
+            } else {
+              appState.addBillingInfo(newAddress);
+            }
+          }
+          // Re-open selection sheet to show updated list
+          // showModalBottomSheet(...) // Optional, might be annoying if it pops up again
+        },
+        onDelete: () {
+             if (index != null) {
+               final appState = context.read<AppState>();
+               if (_selectedTab == 0) {
+                 appState.removeDeliveryAddress(index);
+               } else {
+                 appState.removeBillingInfo(index);
+               }
+             }
+        },
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.only(top: 20, left: 16, right: 16, bottom: 40),
-      // Dynamic height handling
-      height: MediaQuery.of(context).size.height * 0.6,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Consumer<AppState>(
+      builder: (context, appState, _) {
+        final list = _selectedTab == 0 ? appState.deliveryAddresses : appState.billingInfos;
+        
+        return Container(
+          padding: const EdgeInsets.only(top: 20, left: 16, right: 16, bottom: 40),
+          height: MediaQuery.of(context).size.height * 0.6,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Adreslerim',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Adreslerim',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
               ),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.pop(context),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+              const SizedBox(height: 16),
+              _buildTabs(),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: list.length,
+                  itemBuilder: (context, index) {
+                    final item = list[index];
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: CircleAvatar(
+                        backgroundColor: AppColors.primary.withOpacity(0.1),
+                        child: Icon(
+                          _selectedTab == 0 ? Icons.place : Icons.receipt,
+                          color: AppColors.primary,
+                          size: 20,
+                        ),
+                      ),
+                      title: Text(item['title']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      subtitle: Text(item['detail']!, style: const TextStyle(fontSize: 12), maxLines: 2, overflow: TextOverflow.ellipsis),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 20, color: Colors.grey),
+                        onPressed: () => _openEditScreen(address: item, index: index),
+                      ),
+                      onTap: () {
+                         if (widget.onSelected != null) {
+                           widget.onSelected!(item['detail']!); 
+                           Navigator.pop(context);
+                         } else {
+                           _openEditScreen(address: item, index: index);
+                         }
+                      },
+                    );
+                  },
+                ),
+              ),
+              SizedBox(
+                width: double.infinity,
+                height: 45,
+                child: ElevatedButton.icon(
+                  onPressed: () => _openEditScreen(),
+                  icon: const Icon(Icons.add),
+                  label: Text(_selectedTab == 0 ? 'Yeni Adres Ekle' : 'Yeni Fatura Ekle'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          _buildTabs(),
-          const SizedBox(height: 16),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _selectedTab == 0 ? _deliveryAddresses.length : _billingInfos.length,
-              itemBuilder: (context, index) {
-                final item = _selectedTab == 0 ? _deliveryAddresses[index] : _billingInfos[index];
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-                    child: Icon(
-                      _selectedTab == 0 ? Icons.place : Icons.receipt,
-                      color: AppColors.primary,
-                      size: 20,
-                    ),
-                  ),
-                  title: Text(item['title']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  subtitle: Text(item['detail']!, style: const TextStyle(fontSize: 12)),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.edit_outlined, size: 20, color: Colors.grey),
-                    onPressed: () => _openEditScreen(address: item),
-                  ),
-                  onTap: () {
-                     // Select logic here usually
-                     _openEditScreen(address: item);
-                  },
-                );
-              },
-            ),
-          ),
-          SizedBox(
-            width: double.infinity,
-            height: 45,
-            child: ElevatedButton.icon(
-              onPressed: () => _openEditScreen(),
-              icon: const Icon(Icons.add),
-              label: Text(_selectedTab == 0 ? 'Yeni Adres Ekle' : 'Yeni Fatura Ekle'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -231,115 +273,6 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
               ),
               child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             ),
-    );
-  }
-}
-
-class AddressEditSheet extends StatefulWidget {
-  final Map<String, String>? initialData;
-  final String type; // 'Adres' or 'Fatura'
-
-  const AddressEditSheet({super.key, this.initialData, required this.type});
-
-  @override
-  State<AddressEditSheet> createState() => AddressEditSheetState();
-}
-
-class AddressEditSheetState extends State<AddressEditSheet> {
-  late TextEditingController _titleController;
-  late TextEditingController _detailController;
-
-  @override
-  void initState() {
-    super.initState();
-    _titleController = TextEditingController(text: widget.initialData?['title'] ?? '');
-    _detailController = TextEditingController(text: widget.initialData?['detail'] ?? '');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    bool isEditing = widget.initialData != null;
-    
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 20, right: 20, top: 20
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-             Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                isEditing ? '${widget.type} Düzenle' : 'Yeni ${widget.type} Ekle',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.pop(context),
-              )
-            ],
-          ),
-          const SizedBox(height: 20),
-          TextField(
-            controller: _titleController,
-            decoration: InputDecoration(
-              labelText: 'Başlık (Örn: Ev, İş)',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _detailController,
-            maxLines: 3,
-            decoration: InputDecoration(
-              labelText: 'Detaylı Adres',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              if (isEditing) 
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.delete, size: 18),
-                    label: const Text('Sil'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
-                ),
-              if (isEditing) const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    // Save logic
-                    Navigator.pop(context);
-                  },
-                  icon: const Icon(Icons.save, size: 18),
-                  label: Text(isEditing ? 'Güncelle' : 'Kaydet'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 40),
-        ],
-      ),
     );
   }
 }

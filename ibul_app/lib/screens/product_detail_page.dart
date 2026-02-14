@@ -259,7 +259,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // LEFT: Product Images + Tabs (açıklama, lokasyon, özellikler)
+                // LEFT: Product Images + Tabs
                 SizedBox(
                   width: 360,
                   child: Column(
@@ -269,28 +269,18 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                       Expanded(
                         child: ProductTabsSection(
                           onScrollToDescription: _scrollToDescription,
-                          onScrollToSpecs: () {
-                            // Find ProductFullSpecs widget position and scroll to it
-                            final ctx = _specsKey.currentContext;
-                            if (ctx != null) {
-                              Scrollable.ensureVisible(
-                                ctx,
-                                duration: const Duration(milliseconds: 500),
-                                curve: Curves.easeInOut,
-                              );
-                            }
-                          },
+                          onScrollToSpecs: _scrollToSpecs,
                         ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 16),
-                // CENTER: Product Info + Buttons (beğen, şimdi al, sepete ekle)
-                const Expanded(child: _CenterColumn()),
+                // CENTER: Product Info
+                Expanded(child: _CenterColumn()),
                 const SizedBox(width: 16),
-                // RIGHT: Seller info + Other stores
-                const SizedBox(width: 260, child: _RightColumn()),
+                // RIGHT: Buy Box + Store Info
+                SizedBox(width: 280, child: const _StickyBuyBox()),
               ],
             ),
           ),
@@ -344,40 +334,19 @@ class _CenterColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      padding: const EdgeInsets.all(16),
-      child: const Column(
+    return SingleChildScrollView(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        children: const [
           ProductInfoSection(),
-          SizedBox(height: 14),
-          ProductVariantSelector(),
-          SizedBox(height: 12),
-          ProductAdditionalServices(),
+          SizedBox(height: 16),
+          ProductFullDescription(), // Show part of description
+          SizedBox(height: 16),
+          ProductReviewsSection(),
+          SizedBox(height: 16),
+          ProductQaCard(),
         ],
       ),
-    );
-  }
-}
-
-class _RightColumn extends StatelessWidget {
-  const _RightColumn();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Column(
-      children: [
-        ProductStoreInfo(),
-        SizedBox(height: 10),
-        // ProductOtherStoresCard removed as requested
-        ProductReviewsSection(),
-        SizedBox(height: 10),
-        ProductQaCard(),
-      ],
     );
   }
 }
@@ -387,38 +356,56 @@ class _StickyBuyBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade200),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  '₺27.980,54', // Mock price for now, should come from model
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Ücretsiz Kargo',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.green,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                SizedBox(height: 20),
+                ProductVariantSelector(),
+                SizedBox(height: 20),
+                ProductBottomBar(), // Add to Cart Button
+                SizedBox(height: 16),
+                ProductAdditionalServices(),
+              ],
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const ProductInfoSection(), // Price & Rating
-              const SizedBox(height: 20),
-              const ProductVariantSelector(), // Color/Storage
-              const SizedBox(height: 20),
-              const ProductBottomBar(), // Add to Cart Button
-              const SizedBox(height: 16),
-              const ProductAdditionalServices(), // Cargo info etc.
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        const ProductStoreInfo(),
-      ],
+          const SizedBox(height: 16),
+          const ProductStoreInfo(),
+        ],
+      ),
     );
   }
 }

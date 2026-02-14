@@ -110,7 +110,7 @@ class _ProductCardState extends State<ProductCard> {
                         _buildRating(),
                         const Spacer(),
                         _buildPrice(),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 8), // Fiyat ile buton arası boşluk
                         _buildButton(context),
                       ],
                     ),
@@ -133,7 +133,6 @@ class _ProductCardState extends State<ProductCard> {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.grey.shade200, width: 1),
-        // Shadow is optional for compact card, adding minimal if needed or keep flat
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
@@ -147,7 +146,7 @@ class _ProductCardState extends State<ProductCard> {
                 _buildImageSection(),
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(6, 6, 6, 4),
+                    padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -156,9 +155,9 @@ class _ProductCardState extends State<ProductCard> {
                         _buildTitle(),
                         const SizedBox(height: 2),
                         _buildRating(),
-                        const SizedBox(height: 8), // Spacer yerine sabit boşluk
+                        const Spacer(),
                         _buildPrice(),
-                        const Spacer(), // Butonu en alta itmek için
+                        const SizedBox(height: 4),
                         _buildButton(context),
                       ],
                     ),
@@ -401,7 +400,7 @@ class _ProductCardState extends State<ProductCard> {
   Widget _buildTitle() {
     final screenWidth = MediaQuery.of(context).size.width;
     final isSmallScreen = screenWidth < 360;
-    final fontSize = widget.compact ? (isSmallScreen ? 10.0 : 11.0) : 13.0;
+    final fontSize = widget.compact ? (isSmallScreen ? 9.0 : 10.0) : 13.0;
     
     // Brand bold, name regular - Brand tıklanabilir
     return Row(
@@ -468,8 +467,8 @@ class _ProductCardState extends State<ProductCard> {
     
     if (widget.compact) {
       // Compact mode: Stars + rating + count
-      final starSize = isSmallScreen ? 8.0 : 10.0;
-      final fontSize = isSmallScreen ? 9.0 : 10.0;
+      final starSize = isSmallScreen ? 7.0 : 9.0;
+      final fontSize = isSmallScreen ? 8.0 : 9.0;
       
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -578,7 +577,7 @@ class _ProductCardState extends State<ProductCard> {
       return Text(
         widget.product.price,
         style: TextStyle(
-          fontSize: isSmallScreen ? 12 : 14,
+          fontSize: isSmallScreen ? 11 : 12,
           fontWeight: FontWeight.bold,
           color: Colors.black,
         ),

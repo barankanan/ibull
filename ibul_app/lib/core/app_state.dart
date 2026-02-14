@@ -18,6 +18,16 @@ class AppState extends ChangeNotifier {
   // Takip edilen mağazalar
   final List<Map<String, dynamic>> _followedStores = [];
 
+  // Kayıtlı Adresler
+  final List<Map<String, String>> _deliveryAddresses = [
+    {'title': 'Ev', 'detail': 'Prefabrik ev - Gökmeydan Mah. Nazım Hikmet Kültür Merkezi Karşısı Prefabrik Ev No: 5, Eskişehir / Odunpazarı'},
+    {'title': 'İş', 'detail': 'Teknopark - Organize Sanayi Bölgesi, Eskişehir / Odunpazarı'},
+  ];
+
+  final List<Map<String, String>> _billingInfos = [
+    {'title': 'Kişisel Fatura', 'detail': 'Baran Kananogullari - 1234567890\nGökmeydan Mah. No:5, Eskişehir'},
+  ];
+
   // Kullanıcının oluşturduğu listeler
   final List<Map<String, dynamic>> _userLists = [
     {
@@ -198,6 +208,47 @@ class AppState extends ChangeNotifier {
   List<Product> get cart => List.unmodifiable(_cart);
   List<Map<String, dynamic>> get followedStores => List.unmodifiable(_followedStores);
   List<Map<String, dynamic>> get userLists => List.unmodifiable(_userLists);
+  List<Map<String, String>> get deliveryAddresses => List.unmodifiable(_deliveryAddresses);
+  List<Map<String, String>> get billingInfos => List.unmodifiable(_billingInfos);
+
+  // Adres İşlemleri
+  void addDeliveryAddress(Map<String, String> address) {
+    _deliveryAddresses.add(address);
+    notifyListeners();
+  }
+
+  void updateDeliveryAddress(int index, Map<String, String> address) {
+    if (index >= 0 && index < _deliveryAddresses.length) {
+      _deliveryAddresses[index] = address;
+      notifyListeners();
+    }
+  }
+
+  void removeDeliveryAddress(int index) {
+    if (index >= 0 && index < _deliveryAddresses.length) {
+      _deliveryAddresses.removeAt(index);
+      notifyListeners();
+    }
+  }
+
+  void addBillingInfo(Map<String, String> info) {
+    _billingInfos.add(info);
+    notifyListeners();
+  }
+
+  void updateBillingInfo(int index, Map<String, String> info) {
+    if (index >= 0 && index < _billingInfos.length) {
+      _billingInfos[index] = info;
+      notifyListeners();
+    }
+  }
+
+  void removeBillingInfo(int index) {
+    if (index >= 0 && index < _billingInfos.length) {
+      _billingInfos.removeAt(index);
+      notifyListeners();
+    }
+  }
 
   void addProductToUserList(int listId, Product product) {
     final index = _userLists.indexWhere((list) => list['id'] == listId);

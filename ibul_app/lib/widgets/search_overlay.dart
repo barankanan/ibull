@@ -1,15 +1,51 @@
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
+import '../../services/database_helper.dart';
+import '../../models/db_product.dart';
 
-class SearchOverlay extends StatelessWidget {
+class SearchOverlay extends StatefulWidget {
   final Function(String) onSearch;
-  final VoidCallback? onClose; // Make onClose optional if not always needed, or required
+  final VoidCallback? onClose;
 
   const SearchOverlay({
     super.key,
     required this.onSearch,
     this.onClose,
   });
+
+  @override
+  State<SearchOverlay> createState() => _SearchOverlayState();
+}
+
+class _SearchOverlayState extends State<SearchOverlay> {
+  List<DBProduct> _recentProducts = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecentProducts();
+  }
+
+  Future<void> _loadRecentProducts() async {
+    try {
+      final products = await DatabaseHelper.instance.getAllProducts();
+      // Take first 3 products as "recent" for now
+      if (mounted) {
+        setState(() {
+          _recentProducts = products.take(3).toList();
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading recent products: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,27 +129,18 @@ class SearchOverlay extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          Column(
-                            children: [
-                              _buildRecentProductItem(
-                                'Yenilenmiş iPhone 13 128 GB',
-                                '27.980,54 TL',
-                                'https://storage.googleapis.com/cms-storage-bucket/0dbfcc7a59cd1cf16282.png',
-                                isDiscounted: true,
-                              ),
-                              _buildRecentProductItem(
-                                'Apple iPhone 15 128 GB',
-                                '47.799 TL',
-                                'https://storage.googleapis.com/cms-storage-bucket/0dbfcc7a59cd1cf16282.png',
-                              ),
-                              _buildRecentProductItem(
-                                'Mighty Disko Topu',
-                                '349,90 TL',
-                                'https://storage.googleapis.com/cms-storage-bucket/0dbfcc7a59cd1cf16282.png',
-                                isDiscounted: true,
-                              ),
-                            ],
-                          ),
+                          _isLoading
+                              ? const Center(child: CircularProgressIndicator())
+                              : Column(
+                                  children: _recentProducts.map((product) {
+                                    return _buildRecentProductItem(
+                                      product.name,
+                                      product.price,
+                                      product.imageUrl,
+                                      isDiscounted: true, // Show badge for all or based on logic
+                                    );
+                                  }).toList(),
+                                ),
                         ],
                       ),
                     ),
@@ -162,7 +189,7 @@ class SearchOverlay extends StatelessWidget {
 
   Widget _buildHistoryItem(String text) {
     return InkWell(
-      onTap: () => onSearch(text),
+      onTap: () => widget.onSearch(text),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
@@ -184,7 +211,7 @@ class SearchOverlay extends StatelessWidget {
 
   Widget _buildPopularTag(String text) {
     return InkWell(
-      onTap: () => onSearch(text),
+      onTap: () => widget.onSearch(text),
       borderRadius: BorderRadius.circular(8),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -227,7 +254,9 @@ class SearchOverlay extends StatelessWidget {
               color: Colors.grey.shade100,
               borderRadius: BorderRadius.circular(4),
             ),
-            child: const Icon(Icons.image, color: Colors.grey), // Placeholder
+            child: imageUrl.startsWith('http')
+                ? Image.network(imageUrl, fit: BoxFit.cover)
+                : Image.asset(imageUrl, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.image, color: Colors.grey)),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -239,11 +268,11 @@ class SearchOverlay extends StatelessWidget {
                     margin: const EdgeInsets.only(bottom: 4),
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: Colors.orange,
+                      color: AppColors.primary, // Mor renk
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: const Text(
-                      'Kuponlu Ürün',
+                      'Yakın Lokasyon', // Metin değişti
                       style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -258,7 +287,7 @@ class SearchOverlay extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      price,
+                      price.contains('TL') ? price : '$price TL',
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,

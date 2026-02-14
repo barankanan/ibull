@@ -6,6 +6,7 @@ import '../widgets/filter_sidebar.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../core/constants.dart';
+import 'home_screen.dart';
 
 class SearchResultsPage extends StatefulWidget {
   final String query;
@@ -51,45 +52,90 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     'Kuponlu Ürünler': ['Kuponlu Ürünler'],
   };
 
+  // Sidebar state
+  final Map<String, Set<String>> _sidebarSelectedOptions = {};
+  RangeValues _sidebarPriceRange = const RangeValues(0, double.infinity);
+
   @override
   void initState() {
     super.initState();
     _filteredResults = widget.results;
   }
 
-  void _applyFilters(Map<String, dynamic> filters) {
+  void _filterResults() {
     setState(() {
-      _activeFilters = filters;
       _filteredResults = widget.results.where((product) {
-        // Price Filter
         double price = _parsePrice(product.price);
-        if (price < filters['minPrice'] || price > filters['maxPrice']) {
+
+        // 1. Sidebar Price Filter
+        if (price < _sidebarPriceRange.start || price > _sidebarPriceRange.end) {
           return false;
         }
 
-        // Brand Filter
-        if (filters['brands'] != null && 
-            (filters['brands'] as List).isNotEmpty && 
-            !(filters['brands'] as List).contains(product.brand)) {
-          return false;
+        // 2. Sidebar Options Filter
+        for (var entry in _sidebarSelectedOptions.entries) {
+          if (entry.value.isEmpty) continue;
+          final category = entry.key;
+          final options = entry.value;
+
+          if (category == 'Kategori') {
+            bool match = options.any((opt) => 
+              (product.subCategory ?? '').contains(opt) || 
+              (product.category ?? '').contains(opt)
+            );
+            if (!match) return false;
+          } else if (category == 'Marka') {
+            if (!options.contains(product.brand)) return false;
+          } else if (category == 'Renk') {
+             bool match = options.any((opt) => 
+               (product.variantOptions ?? '').contains(opt) ||
+               (product.description ?? '').contains(opt)
+             );
+             if (!match) return false;
+          } else if (category == 'Avantaj Seç') {
+             bool match = options.any((opt) => product.tags.contains(opt));
+             if (!match) return false;
+          } else if (category == 'Garanti Tipi') {
+             // Mock check
+             return true;
+          } else if (category == 'Kozmetik Durumu') {
+             // Mock check
+             return true;
+          } else if (category == 'Ürün Puanı') {
+             // "4 Yıldız ve Üzeri" -> extract 4
+             bool match = options.any((opt) {
+               int minStar = int.tryParse(opt.split(' ')[0]) ?? 0;
+               return product.rating >= minStar;
+             });
+             if (!match) return false;
+          }
         }
 
-        // Rating Filter
-        if (product.rating < filters['minRating']) {
-          return false;
-        }
+        // 3. Mobile BottomSheet Filters (_activeFilters)
+        if (_activeFilters.isNotEmpty) {
+           if (_activeFilters['minPrice'] != null && price < _activeFilters['minPrice']) return false;
+           if (_activeFilters['maxPrice'] != null && price > _activeFilters['maxPrice']) return false;
+           
+           if (_activeFilters['brands'] != null && 
+               (_activeFilters['brands'] as List).isNotEmpty && 
+               !(_activeFilters['brands'] as List).contains(product.brand)) {
+             return false;
+           }
 
-        // Shipping Filters
-        if (filters['freeShipping'] == true && !product.tags.contains('Ücretsiz Kargo')) {
-          return false;
-        }
-        if (filters['fastShipping'] == true && !product.tags.contains('Hızlı Kargo')) {
-          return false;
+           if (_activeFilters['minRating'] != null && product.rating < _activeFilters['minRating']) return false;
+
+           if (_activeFilters['freeShipping'] == true && !product.tags.contains('Ücretsiz Kargo')) return false;
+           if (_activeFilters['fastShipping'] == true && !product.tags.contains('Hızlı Kargo')) return false;
         }
 
         return true;
       }).toList();
     });
+  }
+
+  void _applyFilters(Map<String, dynamic> filters) {
+    _activeFilters = filters;
+    _filterResults();
   }
 
   double _parsePrice(String priceStr) {
@@ -148,16 +194,28 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
 
     return Column(
       children: [
-        WebHeader(onSearch: (q) {
-           // Navigate to new search or update current
-           Navigator.pushReplacement(
-             context, 
-             PageRouteBuilder(
-                pageBuilder: (_, __, ___) => SearchResultsPage(query: q, results: widget.results), // In real app, fetch new results
-                transitionDuration: Duration.zero,
-             )
-           );
-        }),
+        WebHeader(
+          initialQuery: widget.query,
+          onSearch: (q) {
+             // Navigate to new search or update current
+             Navigator.pushReplacement(
+               context, 
+               PageRouteBuilder(
+                  pageBuilder: (_, __, ___) => SearchResultsPage(query: q, results: widget.results), // In real app, fetch new results
+                  transitionDuration: Duration.zero,
+               )
+             );
+          },
+          onCategorySelected: (category) {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(
+                builder: (context) => HomeScreen(initialCategory: category),
+              ),
+              (route) => false,
+            );
+          },
+        ),
         Expanded(
           child: SingleChildScrollView(
             child: Column(
@@ -179,7 +237,23 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                             child: FilterSidebar(
                               filters: _standardFilters,
                               onFilterChanged: (key, value, isSelected) {
-                                // Implement filter logic
+                                setState(() {
+                                  if (_sidebarSelectedOptions[key] == null) {
+                                    _sidebarSelectedOptions[key] = {};
+                                  }
+                                  if (isSelected) {
+                                    _sidebarSelectedOptions[key]!.add(value);
+                                  } else {
+                                    _sidebarSelectedOptions[key]!.remove(value);
+                                  }
+                                  _filterResults();
+                                });
+                              },
+                              onPriceRangeChanged: (range) {
+                                setState(() {
+                                  _sidebarPriceRange = range;
+                                  _filterResults();
+                                });
                               },
                             ),
                           ),
@@ -195,23 +269,23 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                                   Container(
                                     padding: const EdgeInsets.all(16),
                                     decoration: BoxDecoration(
-                                      color: Colors.orange.shade50,
+                                      color: Colors.blue.shade50,
                                       borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(color: Colors.orange.shade200),
+                                      border: Border.all(color: Colors.blue.shade200),
                                     ),
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Row(
                                           children: [
-                                            const Icon(Icons.local_shipping, color: Colors.orange, size: 24),
+                                            const Icon(Icons.local_shipping, color: Colors.blue, size: 24),
                                             const SizedBox(width: 8),
                                             const Text(
                                               'Bugün Kapında',
                                               style: TextStyle(
                                                 fontSize: 18,
                                                 fontWeight: FontWeight.bold,
-                                                color: Colors.deepOrange,
+                                                color: Colors.blue,
                                               ),
                                             ),
                                             const Spacer(),
@@ -219,7 +293,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                                               '${sameDayProducts.length} ürün',
                                               style: TextStyle(
                                                 fontSize: 12,
-                                                color: Colors.orange.shade800,
+                                                color: Colors.blue.shade800,
                                                 fontWeight: FontWeight.w500,
                                               ),
                                             ),
@@ -229,9 +303,9 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                                         GridView.builder(
                                           shrinkWrap: true,
                                           physics: const NeverScrollableScrollPhysics(),
-                                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                            crossAxisCount: 4,
-                                            childAspectRatio: 0.55, // Adjusted for standard card
+                                          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                                            maxCrossAxisExtent: 250,
+                                            childAspectRatio: 0.65,
                                             mainAxisSpacing: 16,
                                             crossAxisSpacing: 16,
                                           ),
@@ -239,7 +313,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                                           itemBuilder: (context, index) {
                                             return ProductCard(
                                               product: sameDayProducts[index],
-                                              compact: false, // Standard layout
+                                              compact: false,
                                             );
                                           },
                                         ),
@@ -286,9 +360,9 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                                 : GridView.builder(
                                     shrinkWrap: true,
                                     physics: const NeverScrollableScrollPhysics(),
-                                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: 4, // 4 items per row on web
-                                      childAspectRatio: 0.55, // Adjusted for standard card (was 0.65)
+                                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                                      maxCrossAxisExtent: 250,
+                                      childAspectRatio: 0.65,
                                       mainAxisSpacing: 16,
                                       crossAxisSpacing: 16,
                                     ),
@@ -296,7 +370,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                                     itemBuilder: (context, index) {
                                       return ProductCard(
                                         product: _filteredResults[index],
-                                        compact: false, // Use standard card layout
+                                        compact: false,
                                       );
                                     },
                                   ),

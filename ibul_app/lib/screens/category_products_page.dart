@@ -1,3 +1,5 @@
+import 'package:flutter/gestures.dart'; // Scroll behavior için eklendi
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import '../core/constants.dart';
@@ -25,6 +27,7 @@ class CategoryProductsPage extends StatefulWidget {
 
 class _CategoryProductsPageState extends State<CategoryProductsPage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final ScrollController _todayProductsScrollController = ScrollController();
   List<Product> _filteredProducts = [];
   String _selectedFoodCategory = '';
   
@@ -42,6 +45,12 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
     {'name': 'Börek', 'icon': '🥟'},
     {'name': 'Salata - Diyet', 'icon': '🥗'},
     {'name': 'Dondurma', 'icon': '🍦'},
+  ];
+
+  final List<String> _allowedSubCategories = [
+    'Telefon', 
+    'Telefonlar',
+    'Akıllı Telefonlar',
   ];
 
   @override
@@ -153,6 +162,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
   @override
   void dispose() {
     _tabController.dispose();
+    _todayProductsScrollController.dispose();
     super.dispose();
   }
 
@@ -787,6 +797,13 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
 
   // Diğer kategoriler için varsayılan sayfa
   Widget _buildDefaultPage() {
+    // "Bugün Kapında" ürünlerini filtrele (Hızlı Teslimat, Hızlı Kargo, Yakın Lokasyon)
+    final sameDayProducts = _filteredProducts.where((p) => 
+      p.tags.contains('Hızlı Teslimat') || 
+      p.tags.contains('Hızlı Kargo') || 
+      p.tags.contains('Yakın Lokasyon')
+    ).take(10).toList();
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -904,35 +921,226 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
               ],
             ),
           ),
+
+          // "Bugün Kapında" Alanı
+          if (sameDayProducts.isNotEmpty && _allowedSubCategories.contains(widget.subCategory))
+            Container(
+              padding: const EdgeInsets.all(24),
+              margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFFE3F2FD), // Light Blue
+                    Colors.white,
+                    const Color(0xFFBBDEFB), // Blue 100
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.blue.withOpacity(0.1)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.local_shipping_outlined, color: Colors.blue, size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Bugün Kapında',
+                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF333333)),
+                          ),
+                          Text(
+                            'Yakın Lokasyon ile çevrendeki mağazalardan alışveriş yapabilirsin',
+                            style: TextStyle(fontSize: 13, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.location_on_outlined, color: Colors.white, size: 16),
+                            SizedBox(width: 6),
+                            Text('Hızlı Teslimat', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  // Yatay Liste
+                  SizedBox(
+                    height: 460,
+                    child: Stack(
+                      children: [
+                        ScrollConfiguration(
+                          behavior: ScrollConfiguration.of(context).copyWith(
+                            dragDevices: {
+                              PointerDeviceKind.touch,
+                              PointerDeviceKind.mouse,
+                            },
+                          ),
+                          child: ListView.separated(
+                            controller: _todayProductsScrollController,
+                            scrollDirection: Axis.horizontal,
+                            itemCount: sameDayProducts.length > 10 ? 10 : sameDayProducts.length,
+                            separatorBuilder: (context, index) => const SizedBox(width: 20),
+                            itemBuilder: (context, index) {
+                              final product = sameDayProducts[index];
+                              return SizedBox(
+                                width: 220,
+                                child: ProductCard(
+                                  product: product,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        // Sol Ok
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          child: Center(
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: IconButton(
+                                icon: const Icon(Icons.arrow_back_ios_new, size: 20, color: Colors.blue),
+                                onPressed: () {
+                                  _todayProductsScrollController.animateTo(
+                                    _todayProductsScrollController.offset - 300,
+                                    duration: const Duration(milliseconds: 300),
+                                    curve: Curves.easeInOut,
+                                  );
+                                },
+                                tooltip: 'Sola Kaydır',
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Sağ Ok
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          child: Center(
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: IconButton(
+                                icon: const Icon(Icons.arrow_forward_ios, size: 20, color: Colors.blue),
+                                onPressed: () {
+                                  _todayProductsScrollController.animateTo(
+                                    _todayProductsScrollController.offset + 300,
+                                    duration: const Duration(milliseconds: 300),
+                                    curve: Curves.easeInOut,
+                                  );
+                                },
+                                tooltip: 'Sağa Kaydır',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           
           // Ürün Listesi
           Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.all(16),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 0.50,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 12,
-              ),
-              itemCount: _filteredProducts.length,
-              itemBuilder: (context, index) {
-                final product = _filteredProducts[index];
-                return GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ProductDetailPage(product: product),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isWeb = constraints.maxWidth > 1100;
+                
+                Widget grid = GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: isWeb
+                      ? const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 5,
+                          childAspectRatio: 0.58,
+                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 16,
+                        )
+                      : const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 250,
+                          childAspectRatio: 0.65,
+                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 16,
+                        ),
+                  itemCount: _filteredProducts.length,
+                  itemBuilder: (context, index) {
+                    final product = _filteredProducts[index];
+                    return GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ProductDetailPage(product: product),
+                          ),
+                        );
+                      },
+                      child: ProductCard(
+                        product: product, 
+                        compact: false,
+                        margin: EdgeInsets.zero,
                       ),
                     );
                   },
-                  child: ProductCard(
-                    product: product, 
-                    compact: false,
-                    margin: EdgeInsets.zero,
-                  ),
                 );
+
+                if (isWeb) {
+                  return Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1400),
+                      child: grid,
+                    ),
+                  );
+                }
+                
+                return grid;
               },
             ),
           ),
