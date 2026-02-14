@@ -542,9 +542,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
         controller: _webScrollController,
         child: Column(
           children: [
-            // 1. Üst Turuncu Header
+            // 1. Üst Header
             Container(
-              color: const Color(0xFFF27A1A), // Trendyol Orange
+              color: AppColors.primary,
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: Center(
                 child: Container(
@@ -1052,8 +1052,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
             ),
             const SizedBox(height: 16),
             
+            // Kategori Barı (Mağaza içi mevcut kategorilerden)
+            _buildWebCategoryBar(),
+            const SizedBox(height: 16),
+            
             // Product Grid - Full Width
-            _buildProductGrid(),
+            _buildProductGrid(aspectRatioOverride: 0.68),
           ],
         ),
       ),
@@ -1833,7 +1837,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   }
 
   // Product Grid Widget
-  Widget _buildProductGrid() {
+  Widget _buildProductGrid({double? aspectRatioOverride}) {
     if (_isLoadingProducts) {
       return const Center(
         child: Padding(
@@ -1860,6 +1864,11 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
       // Kart yüksekliğini artırmak için oranı düşürüyoruz (eski oran 0.55 idi, overflow yapıyordu)
       // 0.48 oranı ile dikeyde daha fazla yer açıyoruz
       childAspectRatio = 0.4; 
+    }
+    
+    // Override aspect ratio if provided (e.g., Tüm Ürünler dikey azaltma)
+    if (aspectRatioOverride != null) {
+      childAspectRatio = aspectRatioOverride;
     }
     
     // Kategori filtresi uygula
@@ -1904,10 +1913,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
       itemCount: displayProducts.length,
       itemBuilder: (context, index) {
         final product = displayProducts[index];
-        return ProductCard(
-          product: product,
-          // compact: false, // Removed compact: true to use normal card design
-        );
+        final normalized = product.tags.isEmpty 
+            ? product.copyWith(tags: ['Ücretsiz Kargo']) 
+            : product;
+        return ProductCard(product: normalized);
       },
     );
   }
@@ -2109,6 +2118,58 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
           ),
         );
       },
+    );
+  }
+
+  // WEB: Kategori Barı (Tümü + çıkarılan kategoriler)
+  Widget _buildWebCategoryBar() {
+    final categories = _categories; // 'Tümü' + benzersiz alt kategoriler
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: List.generate(categories.length, (i) {
+            final isSelected = _selectedCategoryIndex == i;
+            final label = categories[i];
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    _selectedCategoryIndex = i;
+                  });
+                },
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected ? AppColors.primary : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isSelected ? AppColors.primary : Colors.grey.shade300,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
+      ),
     );
   }
 
