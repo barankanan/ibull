@@ -2,15 +2,18 @@ import 'package:flutter/material.dart';
 import '../../core/constants.dart';
 import '../../services/database_helper.dart';
 import '../../models/db_product.dart';
+import 'advanced_filter_drawer.dart';
 
 class SearchOverlay extends StatefulWidget {
   final Function(String) onSearch;
   final VoidCallback? onClose;
+  final bool showFilters;
 
   const SearchOverlay({
     super.key,
     required this.onSearch,
     this.onClose,
+    this.showFilters = false,
   });
 
   @override
@@ -20,10 +23,12 @@ class SearchOverlay extends StatefulWidget {
 class _SearchOverlayState extends State<SearchOverlay> {
   List<DBProduct> _recentProducts = [];
   bool _isLoading = true;
+  late bool _showFilters;
 
   @override
   void initState() {
     super.initState();
+    _showFilters = widget.showFilters;
     _loadRecentProducts();
   }
 
@@ -66,89 +71,112 @@ class _SearchOverlayState extends State<SearchOverlay> {
       ),
       child: ClipRRect(
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(24),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
+          children: [
+            Expanded(
+              flex: 5,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Left Column: History & Popular
-                    Expanded(
-                      flex: 4,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildSectionHeader('Geçmiş aramaların', 'Temizle'),
-                          const SizedBox(height: 16),
-                          _buildHistoryItem('iphone 15'),
-                          _buildHistoryItem('apple watch'),
-                          _buildHistoryItem('boy aynası'),
-                          _buildHistoryItem('kablosuz kulaklık'),
-                          
-                          const SizedBox(height: 32),
-                          _buildSectionHeader('Popüler aramalar', null),
-                          const SizedBox(height: 16),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: [
-                              _buildPopularTag('lego'),
-                              _buildPopularTag('iphone 15 pro'),
-                              _buildPopularTag('stanley'),
-                              _buildPopularTag('airfryer'),
-                              _buildPopularTag('dyson'),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    
-                    // Divider
                     Container(
-                      width: 1,
-                      height: 300,
-                      color: Colors.grey.shade200,
-                      margin: const EdgeInsets.symmetric(horizontal: 24),
-                    ),
-                    
-                    // Right Column: Recent Products
-                    Expanded(
-                      flex: 3,
-                      child: Column(
+                      padding: const EdgeInsets.all(24),
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Son gezdiğin ürünler',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
+                          // Left Column: History & Popular
+                          Expanded(
+                            flex: 4,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildSectionHeader('Geçmiş aramaların', 'Temizle'),
+                                const SizedBox(height: 16),
+                                _buildHistoryItem('iphone 15'),
+                                _buildHistoryItem('apple watch'),
+                                _buildHistoryItem('boy aynası'),
+                                _buildHistoryItem('kablosuz kulaklık'),
+                                
+                                const SizedBox(height: 32),
+                                _buildSectionHeader('Popüler aramalar', null),
+                                const SizedBox(height: 16),
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: [
+                                    _buildPopularTag('lego'),
+                                    _buildPopularTag('iphone 15 pro'),
+                                    _buildPopularTag('stanley'),
+                                    _buildPopularTag('airfryer'),
+                                    _buildPopularTag('dyson'),
+                                  ],
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          _isLoading
-                              ? const Center(child: CircularProgressIndicator())
-                              : Column(
-                                  children: _recentProducts.map((product) {
-                                    return _buildRecentProductItem(
-                                      product.name,
-                                      product.price,
-                                      product.imageUrl,
-                                      isDiscounted: true, // Show badge for all or based on logic
-                                    );
-                                  }).toList(),
-                                ),
+                          
+                          // Divider
+                          Container(
+                            width: 1,
+                            height: 300,
+                            color: Colors.grey.shade200,
+                            margin: const EdgeInsets.symmetric(horizontal: 24),
+                          ),
+                          
+                          Expanded(
+                            flex: 2,
+                            child: _showFilters
+                                ? SizedBox(
+                                    height: 260,
+                                    child: AdvancedFilterDrawer(
+                                      compact: true,
+                                      onClose: () {
+                                        setState(() {
+                                          _showFilters = false;
+                                        });
+                                      },
+                                      onApply: () {
+                                        if (widget.onClose != null) {
+                                          widget.onClose!();
+                                        }
+                                      },
+                                    ),
+                                  )
+                                : Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Son gezdiğin ürünler',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      _isLoading
+                                          ? const Center(child: CircularProgressIndicator())
+                                          : Column(
+                                              children: _recentProducts.map((product) {
+                                                return _buildRecentProductItem(
+                                                  product.name,
+                                                  product.price,
+                                                  product.imageUrl,
+                                                  isDiscounted: true,
+                                                );
+                                              }).toList(),
+                                            ),
+                                    ],
+                                  ),
+                          ),
                         ],
                       ),
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

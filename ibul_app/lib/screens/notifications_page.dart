@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
 import '../core/chat_state.dart';
-import '../core/store_logo_helper.dart';
 import 'courier_info_page.dart';
 import 'chat_page.dart';
 
@@ -76,6 +75,9 @@ class _NotificationsPageState extends State<NotificationsPage> with SingleTicker
       'sellerLogo': chat['sellerLogo'],
     }).toList();
 
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+    const double webMaxWidth = 900;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -89,32 +91,47 @@ class _NotificationsPageState extends State<NotificationsPage> with SingleTicker
         centerTitle: true,
         title: Padding(
           padding: const EdgeInsets.only(top: 12.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildTabButton(0, 'Bildirim', Icons.notifications),
-              const SizedBox(width: 8),
-              _buildTabButton(1, 'İzleme', Icons.play_arrow),
-              const SizedBox(width: 8),
-              _buildTabButton(2, 'Mesaj', Icons.message),
-            ],
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: isWeb ? webMaxWidth : double.infinity,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _buildTabButton(0, 'Bildirim', Icons.notifications),
+                  const SizedBox(width: 8),
+                  _buildTabButton(1, 'İzleme', Icons.play_arrow),
+                  const SizedBox(width: 8),
+                  _buildTabButton(2, 'Mesaj', Icons.message),
+                ],
+              ),
+            ),
           ),
         ),
         toolbarHeight: 70,
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildNotificationsTab(notifications),
-          _buildTrackingTab(),
-          _buildMessagesTab(messages),
-        ],
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: isWeb ? webMaxWidth : double.infinity,
+          ),
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildNotificationsTab(notifications),
+              _buildTrackingTab(),
+              _buildMessagesTab(messages),
+            ],
+          ),
+        ),
       ),
     );
   }
 
   Widget _buildTabButton(int index, String label, IconData icon) {
+    final bool isActive = _tabController.index == index;
+
     return Expanded(
       child: GestureDetector(
         onTap: () {
@@ -122,12 +139,12 @@ class _NotificationsPageState extends State<NotificationsPage> with SingleTicker
           setState(() {});
         },
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: _tabController.index == index ? AppColors.primary : Colors.white,
+            color: isActive ? AppColors.primary : Colors.white,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: _tabController.index == index ? AppColors.primary : Colors.grey.shade300,
+              color: isActive ? AppColors.primary : Colors.grey.shade300,
             ),
           ),
           child: Row(
@@ -136,13 +153,13 @@ class _NotificationsPageState extends State<NotificationsPage> with SingleTicker
               Icon(
                 icon,
                 size: 16,
-                color: _tabController.index == index ? Colors.white : Colors.grey,
+                color: isActive ? Colors.white : Colors.grey,
               ),
               const SizedBox(width: 4),
               Text(
                 label,
                 style: TextStyle(
-                  color: _tabController.index == index ? Colors.white : Colors.grey,
+                  color: isActive ? Colors.white : Colors.grey,
                   fontWeight: FontWeight.w600,
                   fontSize: 12,
                 ),
@@ -506,7 +523,11 @@ class _NotificationsPageState extends State<NotificationsPage> with SingleTicker
                               onPressed: () {
                                 Navigator.push(
                                   context,
-                                  MaterialPageRoute(builder: (context) => const CourierInfoPage()),
+                                  PageRouteBuilder(
+                                    pageBuilder: (context, animation, secondaryAnimation) => const CourierInfoPage(),
+                                    transitionDuration: Duration.zero,
+                                    reverseTransitionDuration: Duration.zero,
+                                  ),
                                 );
                               },
                               icon: const Icon(Icons.delivery_dining, size: 18),

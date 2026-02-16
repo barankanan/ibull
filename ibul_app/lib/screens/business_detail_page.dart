@@ -28,6 +28,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   bool _isNotificationsEnabled = false;
   String _searchQuery = '';
   bool _isLoadingProducts = false;
+  int _activeSellerReviewTab = 0;
   
   // Web Scroll Controller and Keys
   final ScrollController _webScrollController = ScrollController();
@@ -190,7 +191,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _isFollowing = AppState().isFollowingStore(widget.business);
     
     if (widget.storeProducts != null && widget.storeProducts!.isNotEmpty) {
@@ -378,6 +379,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                                       ),
                                     ),
                                     elevation: 0,
+                                    overlayColor: AppColors.primary.withOpacity(0.12),
                                   ),
                                   child: Text(
                                     _isFollowing ? 'Takiptesin' : 'Takip Et',
@@ -509,7 +511,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                       Tab(text: 'Ana Sayfa'),
                       Tab(text: 'Tüm Ürünler'),
                       Tab(text: 'Satıcı'),
-                      Tab(text: 'Satıcı Yorumları'),
                     ],
                   ),
                 ),
@@ -523,7 +524,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
             _buildAnaSayfaTab(),
             _buildTumUrunlerTab(),
             _buildSaticiTab(),
-            _buildSellerReviewsTab(),
           ],
         ),
       ),
@@ -657,6 +657,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(6),
                               ),
+                              overlayColor: AppColors.primary.withOpacity(0.12),
                             ),
                             child: Text(
                               _isFollowing ? 'Takip Ediliyor' : 'Takip Et',
@@ -689,7 +690,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                   height: 60,
                   child: Row(
                     children: [
-                      _buildWebNavLink('Keşfet', _activeWebTab == 'Keşfet'),
                       _buildWebNavLink('Ana Sayfa', _activeWebTab == 'Ana Sayfa', onTap: () {
                         setState(() => _activeWebTab = 'Ana Sayfa');
                         _webScrollController.animateTo(0, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
@@ -708,25 +708,8 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                           }
                         });
                       }),
-                      _buildWebNavLink('Duyurular', _activeWebTab == 'Duyurular', onTap: () {
-                        setState(() => _activeWebTab = 'Duyurular');
-                        Future.delayed(const Duration(milliseconds: 100), () {
-                          if (_flashProductsKey.currentContext != null) {
-                            Scrollable.ensureVisible(
-                              _flashProductsKey.currentContext!, 
-                              duration: const Duration(milliseconds: 500), 
-                              curve: Curves.easeInOut,
-                              alignment: 0.0,
-                            );
-                          }
-                        });
-                      }),
                       _buildWebNavLink('Satıcı', _activeWebTab == 'Satıcı', onTap: () {
                          setState(() => _activeWebTab = 'Satıcı');
-                         _webScrollController.animateTo(0, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
-                      }),
-                      _buildWebNavLink('Satıcı Yorumları', _activeWebTab == 'Satıcı Yorumları', onTap: () {
-                         setState(() => _activeWebTab = 'Satıcı Yorumları');
                          _webScrollController.animateTo(0, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
                       }),
                       const Spacer(),
@@ -761,8 +744,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
             // 3. Main Content
             if (_activeWebTab == 'Satıcı')
               _buildWebSellerTab()
-            else if (_activeWebTab == 'Satıcı Yorumları')
-              _buildWebSellerReviewsTab()
             else if (_activeWebTab == 'Tüm Ürünler')
               _buildWebAllProductsTab()
             else
@@ -773,59 +754,52 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Sidebar (Filters)
-                    SizedBox(
-                      width: 250,
-                      child: FilterSidebar(
-                        categories: _categories,
-                        selectedCategoryIndex: _selectedCategoryIndex,
-                        onCategorySelected: (index) {
-                          setState(() {
-                            _selectedCategoryIndex = index;
-                          });
-                        },
-                        priceRange: const RangeValues(0, 10000), // Dummy range
-                        onPriceRangeChanged: (range) {},
-                      ),
-                    ),
-                    const SizedBox(width: 24),
-                    
-                    // Main Content Area
+                    // Ana sayfada soldaki filtre alanı kaldırıldı, içerik tam genişlikte
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // DUYURULAR Section
+                          
+                          
+                          const SizedBox(height: 40),
+                          
                           if (bannerPaths.isNotEmpty) ...[
-                             Text(
-                              'DUYURULAR',
-                              key: _flashProductsKey,
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              height: 250,
-                              child: PageView.builder(
-                                itemCount: bannerPaths.length,
-                                controller: PageController(viewportFraction: 0.95),
-                                padEnds: false,
-                                itemBuilder: (context, index) {
-                                  return Container(
-                                    margin: const EdgeInsets.only(right: 20),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(12),
-                                      color: Colors.grey[200],
-                                      image: DecorationImage(
-                                        image: AssetImage(bannerPaths[index]),
-                                        fit: BoxFit.cover, // Resim oranını koruyarak doldur
-                                      ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    'DUYURULAR',
+                                    style: const TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black87,
                                     ),
-                                  );
-                                },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  SizedBox(
+                                    height: 250,
+                                    width: 900,
+                                    child: PageView.builder(
+                                      itemCount: bannerPaths.length,
+                                      controller: PageController(viewportFraction: 1.0),
+                                      padEnds: false,
+                                      itemBuilder: (context, index) {
+                                        return Container(
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(12),
+                                            color: Colors.grey[200],
+                                            image: DecorationImage(
+                                              image: AssetImage(bannerPaths[index]),
+                                              fit: BoxFit.cover,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -947,16 +921,19 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
+          splashColor: AppColors.primary.withOpacity(0.12),
+          hoverColor: AppColors.primary.withOpacity(0.08),
+          focusColor: AppColors.primary.withOpacity(0.12),
           borderRadius: BorderRadius.circular(4),
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
             decoration: BoxDecoration(
-              border: isActive ? const Border(bottom: BorderSide(color: Color(0xFFF27A1A), width: 3)) : null,
+              border: isActive ? Border(bottom: BorderSide(color: AppColors.primary, width: 3)) : null,
             ),
             child: Text(
               title,
               style: TextStyle(
-                color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
+                color: isActive ? AppColors.primary : Colors.black87,
                 fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
                 fontSize: 15,
               ),
@@ -1028,7 +1005,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header Row: Store Name & Count
             Row(
               children: [
                 Text(
@@ -1051,13 +1027,36 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
               ],
             ),
             const SizedBox(height: 16),
-            
-            // Kategori Barı (Mağaza içi mevcut kategorilerden)
-            _buildWebCategoryBar(),
-            const SizedBox(height: 16),
-            
-            // Product Grid - Full Width
-            _buildProductGrid(aspectRatioOverride: 0.68),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 250,
+                  child: FilterSidebar(
+                    categories: _categories,
+                    selectedCategoryIndex: _selectedCategoryIndex,
+                    onCategorySelected: (index) {
+                      setState(() {
+                        _selectedCategoryIndex = index;
+                      });
+                    },
+                    priceRange: const RangeValues(0, 10000),
+                    onPriceRangeChanged: (range) {},
+                  ),
+                ),
+                const SizedBox(width: 24),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildWebCategoryBar(),
+                      const SizedBox(height: 16),
+                      _buildProductGrid(aspectRatioOverride: 0.68),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1073,16 +1072,24 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top Stats Row
+            const Text(
+              "Satıcı Özeti",
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: _buildSellerStatCard(
                     icon: Icons.calendar_today,
-                    title: "Trendyol'daki Süresi",
+                    title: "İBUL'daki Süresi",
                     value: "1 Yıl",
                     color: const Color(0xFFFFF1E6),
-                    iconColor: const Color(0xFFF27A1A),
+                    iconColor: AppColors.primary,
                   ),
                 ),
                 const SizedBox(width: 24),
@@ -1093,7 +1100,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                     value: "İstanbul",
                     color: Colors.white,
                     borderColor: Colors.grey.shade200,
-                    iconColor: const Color(0xFFF27A1A),
+                    iconColor: AppColors.primary,
                   ),
                 ),
                 const SizedBox(width: 24),
@@ -1104,14 +1111,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                     value: "Uygun",
                     color: Colors.white,
                     borderColor: Colors.grey.shade200,
-                    iconColor: const Color(0xFFF27A1A),
+                    iconColor: AppColors.primary,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 24),
-            
-            // Middle Stats Row
             Row(
               children: [
                 Expanded(
@@ -1140,96 +1145,118 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
               ],
             ),
             const SizedBox(height: 40),
-
-            // Review Tabs
-            Container(
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+            const Text(
+              "Müşteri Değerlendirmeleri",
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
               ),
-              child: Row(
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.02),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildReviewTabItem("Ürün Değerlendirmeleri", true),
-                  const SizedBox(width: 32),
-                  _buildReviewTabItem("Satıcı Değerlendirmeleri", false),
+                  Container(
+                    decoration: BoxDecoration(
+                      border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                    ),
+                    child: Row(
+                      children: [
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              _activeSellerReviewTab = 0;
+                            });
+                          },
+                          child: _buildReviewTabItem(
+                            "Ürün Değerlendirmeleri",
+                            _activeSellerReviewTab == 0,
+                          ),
+                        ),
+                        const SizedBox(width: 32),
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              _activeSellerReviewTab = 1;
+                            });
+                          },
+                          child: _buildReviewTabItem(
+                            "Satıcı Değerlendirmeleri",
+                            _activeSellerReviewTab == 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            "4.4",
+                            style: TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Row(
+                            children: List.generate(5, (index) {
+                              if (index < 4) {
+                                return const Icon(Icons.star, color: Color(0xFFFFC107), size: 24);
+                              } else {
+                                return const Icon(Icons.star_half, color: Color(0xFFFFC107), size: 24);
+                              }
+                            }),
+                          ),
+                        ],
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            "1062767 Değerlendirme",
+                            style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.info_outline, size: 16, color: Colors.grey.shade500),
+                              const SizedBox(width: 4),
+                              Text(
+                                "Yorum Yayınlama Kriterleri",
+                                style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 32),
-
-            // Rating Summary
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      "4.4",
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Row(
-                      children: List.generate(5, (index) {
-                        if (index < 4) {
-                          return const Icon(Icons.star, color: Color(0xFFFFC107), size: 28);
-                        } else {
-                          return const Icon(Icons.star_half, color: Color(0xFFFFC107), size: 28);
-                        }
-                      }),
-                    ),
-                    const SizedBox(width: 16),
-                    const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.info_outline, color: Colors.grey, size: 20),
-                  ],
-                ),
-                Row(
-                  children: [
-                    Text("1062767 Değerlendirme", style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: Text("•", style: TextStyle(color: Colors.grey.shade400)),
-                    ),
-                    Text("295101 Yorum", style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                    const SizedBox(width: 16),
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline, size: 16, color: Colors.grey.shade500),
-                        const SizedBox(width: 4),
-                        Text("Yorum Yayınlama Kriterleri", style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
-                      ],
-                    )
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            // Rating Filters
-            const Text(
-              "Puana Göre Filtrele",
-              style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _buildRatingFilterChip(5, "203.5B"),
-                  _buildRatingFilterChip(4, "37B"),
-                  _buildRatingFilterChip(3, "22.1B"),
-                  _buildRatingFilterChip(2, "9749"),
-                  _buildRatingFilterChip(1, "22.9B"),
-                ],
-              ),
-            ),
-            const SizedBox(height: 40),
-
-            // Photo Reviews
             const Text(
               "Fotoğraflı Değerlendirmeler",
               style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500),
@@ -1248,7 +1275,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                       borderRadius: BorderRadius.circular(8),
                       color: Colors.grey.shade200,
                       image: const DecorationImage(
-                        image: NetworkImage("https://picsum.photos/200"), // Placeholder
+                        image: NetworkImage("https://picsum.photos/200"),
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -1256,10 +1283,16 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                 },
               ),
             ),
-            const SizedBox(height: 40),
-            
-            // Review List
-            _buildReviewsList(),
+            const SizedBox(height: 32),
+            if (_activeSellerReviewTab == 0)
+              _buildReviewsList()
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _sellerReviews
+                    .map((review) => _buildSellerReviewCard(review))
+                    .toList(),
+              ),
           ],
         ),
       ),
@@ -1344,7 +1377,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(
-            color: isActive ? const Color(0xFFF27A1A) : Colors.transparent,
+            color: isActive ? AppColors.primary : Colors.transparent,
             width: 3,
           ),
         ),
@@ -1354,38 +1387,8 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
         style: TextStyle(
           fontSize: 16,
           fontWeight: isActive ? FontWeight.bold : FontWeight.w600,
-          color: isActive ? const Color(0xFFF27A1A) : Colors.black87,
+          color: isActive ? AppColors.primary : Colors.black87,
         ),
-      ),
-    );
-  }
-
-  Widget _buildRatingFilterChip(int stars, String count) {
-    return Container(
-      margin: const EdgeInsets.only(right: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade200),
-        borderRadius: BorderRadius.circular(4),
-        color: Colors.white,
-      ),
-      child: Row(
-        children: [
-          Row(
-            children: List.generate(5, (index) {
-              return Icon(
-                Icons.star,
-                size: 14,
-                color: index < stars ? const Color(0xFFFFC107) : Colors.grey.shade300,
-              );
-            }),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            "($count)",
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-          ),
-        ],
       ),
     );
   }
@@ -1399,40 +1402,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 16),
-          // DUYURULAR Banner
-          if (bannerPaths.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('DUYURULAR', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: 160, // Biraz yükseklik artırıldı
-                    child: PageView.builder(
-                      itemCount: bannerPaths.length,
-                      controller: PageController(viewportFraction: 0.92), // Yanındakinin ucu görünsün
-                      padEnds: false, // Sol baştan başlasın
-                      itemBuilder: (context, index) {
-                        return Container(
-                          margin: const EdgeInsets.only(right: 10),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            color: Colors.grey[200],
-                            image: DecorationImage(
-                              image: AssetImage(bannerPaths[index]),
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (bannerPaths.isNotEmpty) const SizedBox(height: 24),
+          
           
           // Popüler Ürünler
           const Padding(
@@ -1802,6 +1772,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                         side: BorderSide(color: AppColors.primary, width: 2),
                       ),
                       elevation: 0,
+                      overlayColor: AppColors.primary.withOpacity(0.12),
                     ),
                     child: const Text('Ürün Değerlendirmeleri', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                   ),
@@ -1819,6 +1790,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                         side: BorderSide(color: AppColors.primary, width: 2),
                       ),
                       elevation: 0,
+                      overlayColor: AppColors.primary.withOpacity(0.12),
                     ),
                     child: const Text('Satıcı Değerlendirmeleri', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                   ),
@@ -2145,6 +2117,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage> with SingleTick
                     _selectedCategoryIndex = i;
                   });
                 },
+                splashColor: AppColors.primary.withOpacity(0.12),
+                hoverColor: AppColors.primary.withOpacity(0.08),
+                focusColor: AppColors.primary.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

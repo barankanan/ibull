@@ -53,6 +53,18 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
     'Akıllı Telefonlar',
   ];
 
+  String _normalize(String value) {
+    var t = value.toLowerCase().trim();
+    t = t.replaceAll('ı', 'i').replaceAll('İ', 'i');
+    t = t.replaceAll('ş', 's').replaceAll('Ş', 's');
+    t = t.replaceAll('ğ', 'g').replaceAll('Ğ', 'g');
+    t = t.replaceAll('ü', 'u').replaceAll('Ü', 'u');
+    t = t.replaceAll('ö', 'o').replaceAll('Ö', 'o');
+    t = t.replaceAll('ç', 'c').replaceAll('Ç', 'c');
+    t = t.replaceAll(RegExp(r'\s+'), ' ');
+    return t;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -76,17 +88,34 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
   }
   
   List<Product> _getDisplayProducts() {
-    // Eğer widget'tan gelen ürünler varsa onları kullan
     if (widget.products.isNotEmpty) {
-      return List.from(widget.products);
+      final selectedCategory = _normalize(widget.category);
+      final selectedSubCategory = _normalize(widget.subCategory);
+
+      final filtered = widget.products.where((product) {
+        final productCategory = _normalize(product.category ?? '');
+        final productSubCategory = _normalize(product.subCategory ?? '');
+
+        final categoryMatch = productCategory == selectedCategory;
+
+        if (widget.subCategory == 'HEPSİ') {
+          return categoryMatch;
+        }
+
+        final subCategoryMatch =
+            productSubCategory.isNotEmpty && productSubCategory == selectedSubCategory;
+
+        return categoryMatch && subCategoryMatch;
+      }).toList();
+
+      return filtered;
     }
-    
-    // Eğer yemek kategorisi ise ve ürün yoksa, örnek yemekler oluştur
+
     if (widget.subCategory == 'Yemek') {
       return _createSampleFoodProducts();
     }
-    
-    return List.from(widget.products);
+
+    return [];
   }
   
   List<Product> _createSampleFoodProducts() {
@@ -170,10 +199,11 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
     setState(() {
       _selectedFoodCategory = category;
       if (category == 'Tümü') {
-        _filteredProducts = List.from(widget.products);
+        _filteredProducts = _getDisplayProducts();
       } else {
         // Daha geniş filtreleme - kategori adı ürün adında veya kategorisinde geçiyorsa göster
-        _filteredProducts = widget.products.where((product) {
+        final baseProducts = _getDisplayProducts();
+        _filteredProducts = baseProducts.where((product) {
           final productName = product.name.toLowerCase();
           final categoryLower = category.toLowerCase();
           final subCat = (product.subCategory ?? '').toLowerCase();
@@ -192,7 +222,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
         
         // Eğer filtreleme sonucu boş ise, tüm ürünleri göster
         if (_filteredProducts.isEmpty) {
-          _filteredProducts = List.from(widget.products);
+          _filteredProducts = baseProducts;
         }
       }
     });
@@ -201,10 +231,11 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
   void _onSearch(String query) {
     setState(() {
       if (query.isEmpty) {
-        _filteredProducts = List.from(widget.products);
+        _filteredProducts = _getDisplayProducts();
       } else {
         final normalized = query.toLowerCase();
-        _filteredProducts = widget.products.where((p) {
+        final baseProducts = _getDisplayProducts();
+        _filteredProducts = baseProducts.where((p) {
           return p.name.toLowerCase().contains(normalized) ||
               p.brand.toLowerCase().contains(normalized);
         }).toList();
@@ -1099,16 +1130,16 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                   padding: const EdgeInsets.all(16),
                   gridDelegate: isWeb
                       ? const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 5,
-                          childAspectRatio: 0.58,
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
+                          crossAxisCount: 6,
+                          childAspectRatio: 0.75,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
                         )
                       : const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 250,
-                          childAspectRatio: 0.65,
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
+                          maxCrossAxisExtent: 230,
+                          childAspectRatio: 0.75,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
                         ),
                   itemCount: _filteredProducts.length,
                   itemBuilder: (context, index) {
@@ -1125,7 +1156,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                       child: ProductCard(
                         product: product, 
                         compact: false,
-                        margin: EdgeInsets.zero,
+                        tight: true,
                       ),
                     );
                   },

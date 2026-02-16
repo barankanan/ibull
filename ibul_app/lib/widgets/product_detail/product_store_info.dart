@@ -6,6 +6,7 @@ import '../../core/constants.dart';
 import '../../core/store_logo_helper.dart';
 import '../../data/business_data.dart';
 import '../../screens/business_detail_page.dart';
+import '../../screens/chat_page.dart';
 
 class ProductStoreInfo extends StatelessWidget {
   const ProductStoreInfo({super.key});
@@ -158,7 +159,29 @@ class ProductStoreInfo extends StatelessWidget {
                 child: SizedBox(
                   height: 36,
                   child: ElevatedButton(
-                    onPressed: () {},
+                    onPressed: () {
+                      final viewModel = Provider.of<ProductDetailViewModel>(context, listen: false);
+                      final product = viewModel.initialProduct;
+                      final storeName = product.store ?? 'Teknosa';
+
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => ChatPage(
+                            seller: {
+                              'id': storeName,
+                              'name': storeName,
+                              'logo': storeName.isNotEmpty ? storeName[0].toUpperCase() : 'S',
+                            },
+                            product: {
+                              'name': product.name,
+                              'image': product.images.isNotEmpty ? product.images[0] : null,
+                              'rating': product.rating.toString(),
+                            },
+                          ),
+                        ),
+                      );
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF673AB7),
                       foregroundColor: Colors.white,

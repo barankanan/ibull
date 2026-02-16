@@ -5,6 +5,7 @@ import '../core/constants.dart';
 import '../screens/cart_page.dart';
 import '../screens/account_page.dart';
 import '../screens/favorites_page.dart';
+import '../screens/notifications_page.dart';
 import '../core/app_state.dart';
 import 'search_overlay.dart';
 import 'advanced_filter_drawer.dart';
@@ -14,6 +15,7 @@ class WebHeader extends StatefulWidget {
   final ValueChanged<String>? onCategorySelected;
   final String? selectedCategory;
   final String? initialQuery;
+  final String? activeMenu;
 
   const WebHeader({
     super.key,
@@ -21,6 +23,7 @@ class WebHeader extends StatefulWidget {
     this.onCategorySelected,
     this.selectedCategory,
     this.initialQuery,
+    this.activeMenu,
   });
 
   @override
@@ -58,8 +61,10 @@ class _WebHeaderState extends State<WebHeader> {
 
   final GlobalKey _searchKey = GlobalKey();
 
-  void _showOverlay() {
-    if (_overlayEntry != null) return;
+  void _showOverlay({bool showFilters = false}) {
+    if (_overlayEntry != null) {
+      _hideOverlay();
+    }
 
     final RenderBox renderBox = _searchKey.currentContext!.findRenderObject() as RenderBox;
     final size = renderBox.size;
@@ -82,6 +87,7 @@ class _WebHeaderState extends State<WebHeader> {
                 _searchFocusNode.unfocus();
                 _hideOverlay();
               },
+              showFilters: showFilters,
             ),
           ),
         ),
@@ -206,33 +212,42 @@ class _WebHeaderState extends State<WebHeader> {
   }
 
   void _showFilterDrawer() {
-    showGeneralDialog(
+    showDialog(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Filter',
-      barrierColor: Colors.black54,
-      transitionDuration: const Duration(milliseconds: 300),
-      pageBuilder: (context, animation, secondaryAnimation) {
+      builder: (context) {
         return Align(
-          alignment: Alignment.centerRight,
+          alignment: Alignment.topRight,
           child: Material(
-            child: AdvancedFilterDrawer(
-              onClose: () => Navigator.pop(context),
-              onApply: () {
-                Navigator.pop(context);
-                // Apply filter logic here
-              },
+            color: Colors.transparent,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 80, right: 40),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: SizedBox(
+                  width: 350,
+                  height: 480,
+                  child: AdvancedFilterDrawer(
+                    onClose: () => Navigator.pop(context),
+                    onApply: () {
+                      Navigator.pop(context);
+                    },
+                  ),
+                ),
+              ),
             ),
           ),
-        );
-      },
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(1, 0),
-            end: Offset.zero,
-          ).animate(animation),
-          child: child,
         );
       },
     );
@@ -241,21 +256,31 @@ class _WebHeaderState extends State<WebHeader> {
   Widget _buildSearchBar() {
     return Row(
       children: [
-        Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.grey.shade200),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
+        InkWell(
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const NotificationsPage(),
               ),
-            ],
+            );
+          },
+          borderRadius: BorderRadius.circular(24),
+          child: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.grey.shade200),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.notifications_outlined, color: AppColors.primary, size: 20),
           ),
-          child: const Icon(Icons.notifications_outlined, color: AppColors.primary, size: 20),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -293,42 +318,30 @@ class _WebHeaderState extends State<WebHeader> {
                       style: const TextStyle(fontSize: 14),
                     ),
                   ),
-                  
-                  // Filter Button (Inside Search Bar, left of Search Button)
-                  InkWell(
-                    onTap: _showFilterDrawer,
-                    borderRadius: BorderRadius.circular(4),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      child: Row(
-                        children: const [
-                          Icon(Icons.tune, color: Colors.black54, size: 18),
-                          SizedBox(width: 6),
-                          Text(
-                            'Filtrele',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black54,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  
-                  // Vertical Divider
-                  Container(
-                    width: 1, 
-                    height: 24, 
-                    color: Colors.grey.shade300,
-                    margin: const EdgeInsets.symmetric(horizontal: 8),
-                  ),
+
+                  const SizedBox(width: 8),
 
                   InkWell(
                     onTap: () {
-                       widget.onSearch(_searchController.text);
-                       _hideOverlay();
+                      // Kamera ikonu şimdilik davranışsız
+                    },
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      child: const Icon(
+                        Icons.photo_camera_outlined,
+                        color: Colors.black54,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  InkWell(
+                    onTap: () {
+                      widget.onSearch(_searchController.text);
+                      _hideOverlay();
                     },
                     child: Container(
                       margin: const EdgeInsets.all(4),
@@ -408,19 +421,25 @@ class _WebHeaderState extends State<WebHeader> {
       ),
     );
   }
-
+  
   Widget _buildMenuItems(BuildContext context) {
     final appState = AppState();
+    final activeMenu = widget.activeMenu;
     
     return Row(
       children: [
         _MenuItem(
           icon: Icons.person_outline, 
           label: 'Hesabım', 
+          isActive: activeMenu == 'account',
           onTap: () {
-            Navigator.push(
+            Navigator.pushReplacement(
               context,
-              MaterialPageRoute(builder: (context) => const AccountPage()),
+              PageRouteBuilder(
+                pageBuilder: (context, animation1, animation2) => const AccountPage(),
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+              ),
             );
           }
         ),
@@ -428,10 +447,15 @@ class _WebHeaderState extends State<WebHeader> {
         _MenuItem(
           icon: Icons.favorite_border, 
           label: 'Favorilerim', 
+          isActive: activeMenu == 'favorites',
           onTap: () {
-            Navigator.push(
+            Navigator.pushReplacement(
               context,
-              MaterialPageRoute(builder: (context) => const FavoritesPage()),
+              PageRouteBuilder(
+                pageBuilder: (context, animation1, animation2) => const FavoritesPage(),
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+              ),
             );
           }
         ),
@@ -442,11 +466,16 @@ class _WebHeaderState extends State<WebHeader> {
             return _MenuItem(
               icon: Icons.shopping_cart_outlined, 
               label: 'Sepetim', 
+              isActive: activeMenu == 'cart',
               badgeCount: count > 0 ? count : null, 
               onTap: () {
-                Navigator.push(
+                Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (context) => const CartPage()),
+                  PageRouteBuilder(
+                    pageBuilder: (context, animation1, animation2) => const CartPage(),
+                    transitionDuration: Duration.zero,
+                    reverseTransitionDuration: Duration.zero,
+                  ),
                 );
               }
             );
@@ -455,7 +484,7 @@ class _WebHeaderState extends State<WebHeader> {
       ],
     );
   }
-
+  
   Widget _buildCategoryBar() {
     final categories = [
       'Yakın Lokasyon', 'Erkek', 'Kadın', 'Elektronik', 
@@ -481,7 +510,6 @@ class _WebHeaderState extends State<WebHeader> {
             child: Stack(
               alignment: Alignment.centerLeft,
               children: [
-              // Scrollable List
               ScrollConfiguration(
                 behavior: ScrollConfiguration.of(context).copyWith(
                   dragDevices: {
@@ -492,7 +520,7 @@ class _WebHeaderState extends State<WebHeader> {
                 child: ListView.separated(
                   controller: _categoryScrollController,
                   scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.only(left: 24, right: 60), // Added left padding to align with body
+                  padding: const EdgeInsets.only(left: 24, right: 60),
                   itemCount: categories.length,
                   shrinkWrap: true,
                   separatorBuilder: (context, index) => const SizedBox(width: 32),
@@ -502,7 +530,7 @@ class _WebHeaderState extends State<WebHeader> {
                     return InkWell(
                       onTap: () => widget.onCategorySelected?.call(category),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12), // Added horizontal padding
+                        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
                         decoration: BoxDecoration(
                           border: isSelected 
                             ? const Border(bottom: BorderSide(color: AppColors.primary, width: 2)) 
@@ -521,8 +549,6 @@ class _WebHeaderState extends State<WebHeader> {
                   },
                 ),
               ),
-              
-              // Right Arrow Button
               Positioned(
                 right: 0,
                 child: Container(
@@ -575,21 +601,442 @@ class _WebHeaderState extends State<WebHeader> {
   }
 }
 
+class _NotificationsPopup extends StatefulWidget {
+  final VoidCallback onClose;
+
+  const _NotificationsPopup({
+    required this.onClose,
+  });
+
+  @override
+  State<_NotificationsPopup> createState() => _NotificationsPopupState();
+}
+
+class _NotificationsPopupState extends State<_NotificationsPopup> {
+  int _activeTab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: 380,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Bildirimler',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: widget.onClose,
+                    icon: const Icon(Icons.close, size: 20),
+                    splashRadius: 18,
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Container(
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F5F7),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    _buildTabButton(0, 'Bildirim', Icons.notifications),
+                    _buildTabButton(1, 'İzleme', Icons.visibility_outlined),
+                    _buildTabButton(2, 'Mesaj', Icons.chat_bubble_outline),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Divider(height: 1),
+            SizedBox(
+              height: 260,
+              child: _buildTabContent(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabButton(int index, String label, IconData icon) {
+    final bool isActive = _activeTab == index;
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () {
+          setState(() {
+            _activeTab = index;
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: BoxDecoration(
+            color: isActive ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: isActive ? AppColors.primary : Colors.black54,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: isActive ? AppColors.primary : Colors.black54,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabContent() {
+    switch (_activeTab) {
+      case 0:
+        return _buildNotificationsTab();
+      case 1:
+        return _buildWatchlistTab();
+      case 2:
+        return _buildMessagesTab();
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _buildNotificationsTab() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _buildNotificationItem(
+          title: 'Sepetine bıraktığın ürün düştü',
+          subtitle: 'Takip ettiğin Dyson süpürgenin fiyatı %10 indi.',
+          time: '5 dk önce',
+          isNew: true,
+        ),
+        const SizedBox(height: 12),
+        _buildNotificationItem(
+          title: 'Siparişin kargoya verildi',
+          subtitle: 'Apple AirPods Max siparişin yola çıktı.',
+          time: 'Dün',
+          isNew: false,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWatchlistTab() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _buildWatchItem(
+          title: 'iPhone 15 Pro 256 GB',
+          tag: 'Fiyat izlemesi',
+          status: 'Fiyat değişmedi',
+        ),
+        const SizedBox(height: 12),
+        _buildWatchItem(
+          title: 'Kablosuz dik süpürge',
+          tag: 'Stok izlemesi',
+          status: 'Stokta 3 mağaza var',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMessagesTab() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _buildMessageItem(
+          sender: 'Teknosa',
+          preview: 'Merhaba, ürünle ilgili sorunu yardımcı olmak için buradayız.',
+          time: '2 sa önce',
+        ),
+        const SizedBox(height: 12),
+        _buildMessageItem(
+          sender: 'Baran K***',
+          preview: 'İlgin için teşekkürler, ürünü hala satıyorum.',
+          time: 'Dün',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNotificationItem({
+    required String title,
+    required String subtitle,
+    required String time,
+    required bool isNew,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.06),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.notifications, size: 18, color: AppColors.primary),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    time,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.black87,
+                ),
+              ),
+              if (isNew) ...[
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'Yeni',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWatchItem({
+    required String title,
+    required String tag,
+    required String status,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: Colors.orange.withOpacity(0.08),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.visibility_outlined, size: 18, color: Colors.orange),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      tag,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      status,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMessageItem({
+    required String sender,
+    required String preview,
+    required String time,
+  }) {
+    return Row(
+      children: [
+        CircleAvatar(
+          radius: 16,
+          backgroundColor: Colors.grey.shade200,
+          child: Text(
+            sender.isNotEmpty ? sender[0] : '?',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      sender,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    time,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                preview,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+}
+
 class _MenuItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
   final int? badgeCount;
+   final bool isActive;
 
   const _MenuItem({
     required this.icon,
     required this.label,
     required this.onTap,
     this.badgeCount,
+    this.isActive = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final Color color = isActive ? AppColors.primary : Colors.black87;
+
     return InkWell(
       onTap: onTap,
       hoverColor: Colors.transparent,
@@ -598,7 +1045,7 @@ class _MenuItem extends StatelessWidget {
           Stack(
             clipBehavior: Clip.none,
             children: [
-              Icon(icon, color: Colors.black87, size: 20),
+              Icon(icon, color: color, size: 20),
               if (badgeCount != null)
                   Positioned(
                   right: -6,
@@ -624,9 +1071,9 @@ class _MenuItem extends StatelessWidget {
           const SizedBox(width: 6),
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
-              color: Colors.black87,
+              color: color,
               fontWeight: FontWeight.w600,
             ),
           ),

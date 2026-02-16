@@ -39,6 +39,7 @@ class _AccountPageState extends State<AccountPage> {
         children: [
           WebHeader(
             onSearch: (q) {}, 
+            activeMenu: 'account',
             // Mock callbacks as AccountPage doesn't manage full state like Home
           ),
           Expanded(
@@ -771,4 +772,3 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 }
-

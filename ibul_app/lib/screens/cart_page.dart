@@ -1416,7 +1416,10 @@ class _CartPageState extends State<CartPage> with SingleTickerProviderStateMixin
       backgroundColor: const Color(0xFFF9FAFB),
       body: Column(
         children: [
-          WebHeader(onSearch: (q) {}),
+          WebHeader(
+            onSearch: (q) {},
+            activeMenu: 'cart',
+          ),
           Expanded(
             child: SingleChildScrollView(
               child: Column(

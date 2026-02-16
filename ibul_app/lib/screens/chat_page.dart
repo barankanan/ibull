@@ -6,12 +6,14 @@ class ChatPage extends StatefulWidget {
   final Map<String, dynamic> seller;
   final Map<String, dynamic>? product; // Optional product
   final bool isSellerChat; // True for official seller, False for user-to-user
+  final String? initialMessage; // Optional initial message to send automatically
 
   const ChatPage({
     super.key,
     required this.seller,
     this.product,
     this.isSellerChat = true,
+    this.initialMessage,
   });
 
   @override
@@ -38,8 +40,8 @@ class _ChatPageState extends State<ChatPage> {
       setState(() {
         _messages.addAll(savedMessages);
       });
-    } else if (widget.product == null) {
-      // Only add initial messages if product is null (no product context) AND no saved messages
+    } else if (widget.product == null && widget.initialMessage == null) {
+      // Only add initial messages if product is null (no product context) AND no saved messages AND no initial message
       _messages.add({
         'text': 'Ne zaman elime ulaşır',
         'isSender': false,
@@ -50,6 +52,33 @@ class _ChatPageState extends State<ChatPage> {
         'isSender': true,
         'time': '14:58',
       });
+    }
+
+    // Handle initial message passed from navigation
+    if (widget.initialMessage != null) {
+      final now = DateTime.now();
+      final timestamp = '${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+      final messageMap = {
+        'text': widget.initialMessage,
+        'isSender': true,
+        'time': timestamp,
+      };
+      
+      setState(() {
+        _messages.add(messageMap);
+      });
+
+      // Save to chat state
+      ChatState().addOrUpdateChat(
+        sellerId: sellerId,
+        sellerName: widget.seller['name'] ?? 'Satıcı',
+        sellerLogo: widget.seller['logo'] ?? 'S',
+        productName: productName,
+        productImage: widget.product?['image'],
+        lastMessage: widget.initialMessage,
+        timestamp: '${now.day}/${now.month}/${now.year} $timestamp',
+        fullMessage: messageMap,
+      );
     }
   }
 

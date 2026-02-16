@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
+import '../screens/admin_panel_page.dart';
 
 class WebFooter extends StatelessWidget {
   const WebFooter({super.key});
@@ -108,6 +109,24 @@ class WebFooter extends StatelessWidget {
                   _buildFooterLink('Kullanım Koşulları'),
                   const SizedBox(width: 20),
                   _buildFooterLink('KVKK Aydınlatma Metni'),
+                  const SizedBox(width: 20),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const AdminPanelPage()),
+                      );
+                    },
+                    child: Text(
+                      'Admin Paneli',
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ],

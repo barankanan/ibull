@@ -13,8 +13,10 @@ class _CourierInfoPageState extends State<CourierInfoPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: isWeb ? Colors.grey.shade100 : Colors.white,
       appBar: AppBar(
         backgroundColor: const Color(0xFF4A00E0), // Deep purple matching the image
         leading: IconButton(
@@ -28,156 +30,186 @@ class _CourierInfoPageState extends State<CourierInfoPage> {
         centerTitle: true,
         elevation: 0,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Kurye',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
-            ),
-            const Divider(),
-            _buildInfoRow(
-              icon: Container(
-                width: 40,
-                height: 40,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF4A00E0),
-                  shape: BoxShape.circle,
-                ),
-                child: const Center(
-                  child: Text('BP', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-              ),
-              title: 'Kurye',
-              subtitle: 'Baran Kananoğulları',
-            ),
-            const Divider(),
-            _buildInfoRow(
-              icon: const SizedBox(
-                 width: 40,
-                child: Icon(Icons.delivery_dining, color: Color(0xFF4A00E0), size: 28),
-              ),
-              title: 'Teslimat',
-              subtitle: 'Tahmini 4 Saate Adresteyiz',
-            ),
-            const Divider(),
-             _buildInfoRow(
-              icon: const SizedBox(
-                 width: 40,
-                child: Icon(Icons.phone_in_talk_outlined, color: Color(0xFF4A00E0), size: 28),
-              ),
-              title: 'İletişim Bilgisi',
-              subtitle: '0537 624 7077',
-            ),
-            const Divider(),
-             _buildInfoRow(
-              icon: const SizedBox(
-                 width: 40,
-                child: Icon(Icons.moped, color: Color(0xFF4A00E0), size: 28),
-              ),
-              title: 'Araç',
-              subtitle: 'Motor (31 İAB 111)',
-            ),
-             const Divider(),
-             _buildInfoRow(
-              icon: const SizedBox(
-                 width: 40,
-                child: Icon(Icons.map_outlined, color: Color(0xFF4A00E0), size: 28),
-              ),
-              title: 'Ücretlendirme',
-              subtitle: 'Km başında 6,30 TL',
-              hasArrow: true,
-            ),
-             const Divider(),
-             const SizedBox(height: 30),
-             const Text(
-              'Adres',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
-            ),
-            const Divider(),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8.0),
-              child: Row(
-                children: [
-                  const SizedBox(
-                    width: 40,
-                    child: Icon(Icons.home_outlined, color: Color(0xFF4A00E0), size: 30),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: isWeb ? 600 : double.infinity,
+          ),
+          child: SingleChildScrollView(
+            padding: EdgeInsets.all(isWeb ? 24 : 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(isWeb ? 16 : 0),
+                    boxShadow: isWeb
+                        ? [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.06),
+                              blurRadius: 12,
+                              offset: const Offset(0, 6),
+                            ),
+                          ]
+                        : null,
+                    border: isWeb ? Border.all(color: Colors.grey.shade200) : null,
                   ),
-                  const SizedBox(width: 12),
-                  const Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.all(isWeb ? 20 : 0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Adresteyim',
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Kurye',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
                         ),
-                        SizedBox(height: 2),
-                        Text(
-                          'Adresimi Doğrula',
-                          style: TextStyle(fontSize: 13, color: Colors.black54),
+                        const Divider(),
+                        _buildInfoRow(
+                          icon: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF4A00E0),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Center(
+                              child: Text('BP', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            ),
+                          ),
+                          title: 'Kurye',
+                          subtitle: 'Baran Kananoğulları',
+                        ),
+                        const Divider(),
+                        _buildInfoRow(
+                          icon: const SizedBox(
+                            width: 40,
+                            child: Icon(Icons.delivery_dining, color: Color(0xFF4A00E0), size: 28),
+                          ),
+                          title: 'Teslimat',
+                          subtitle: 'Tahmini 4 Saate Adresteyiz',
+                        ),
+                        const Divider(),
+                        _buildInfoRow(
+                          icon: const SizedBox(
+                            width: 40,
+                            child: Icon(Icons.phone_in_talk_outlined, color: Color(0xFF4A00E0), size: 28),
+                          ),
+                          title: 'İletişim Bilgisi',
+                          subtitle: '0537 624 7077',
+                        ),
+                        const Divider(),
+                        _buildInfoRow(
+                          icon: const SizedBox(
+                            width: 40,
+                            child: Icon(Icons.moped, color: Color(0xFF4A00E0), size: 28),
+                          ),
+                          title: 'Araç',
+                          subtitle: 'Motor (31 İAB 111)',
+                        ),
+                        const Divider(),
+                        _buildInfoRow(
+                          icon: const SizedBox(
+                            width: 40,
+                            child: Icon(Icons.map_outlined, color: Color(0xFF4A00E0), size: 28),
+                          ),
+                          title: 'Ücretlendirme',
+                          subtitle: 'Km başında 6,30 TL',
+                          hasArrow: true,
+                        ),
+                        const Divider(),
+                        const SizedBox(height: 24),
+                        const Text(
+                          'Adres',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
+                        ),
+                        const Divider(),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: Row(
+                            children: [
+                              const SizedBox(
+                                width: 40,
+                                child: Icon(Icons.home_outlined, color: Color(0xFF4A00E0), size: 30),
+                              ),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Adresteyim',
+                                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+                                    ),
+                                    SizedBox(height: 2),
+                                    Text(
+                                      'Adresimi Doğrula',
+                                      style: TextStyle(fontSize: 13, color: Colors.black54),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: isAtAddress,
+                                activeThumbColor: const Color(0xFF4A00E0),
+                                onChanged: (val) {
+                                  setState(() {
+                                    isAtAddress = val;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Divider(),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12.0),
+                          child: InkWell(
+                            onTap: () {
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                shape: const RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                                ),
+                                builder: (context) => const AddressSelectionSheet(),
+                              );
+                            },
+                            child: Row(
+                              children: [
+                                const SizedBox(
+                                  width: 40,
+                                  child: Icon(Icons.add, color: Color(0xFF4A00E0), size: 30),
+                                ),
+                                const SizedBox(width: 12),
+                                const Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Adres Değiştir',
+                                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+                                      ),
+                                      SizedBox(height: 2),
+                                      Text(
+                                        'Yeni adres ekle',
+                                        style: TextStyle(fontSize: 13, color: Colors.black54),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  Switch(
-                    value: isAtAddress, 
-                    activeThumbColor: const Color(0xFF4A00E0),
-                    onChanged: (val) {
-                      setState(() {
-                        isAtAddress = val;
-                      });
-                    }
-                  ),
-                ],
-              ),
-            ),
-            const Divider(),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12.0),
-              child: InkWell(
-                onTap: () {
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    shape: const RoundedRectangleBorder(
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                    ),
-                    builder: (context) => const AddressSelectionSheet(),
-                  );
-                },
-                child: Row(
-                  children: [
-                    const SizedBox(
-                      width: 40,
-                      child: Icon(Icons.add, color: Color(0xFF4A00E0), size: 30),
-                    ),
-                     const SizedBox(width: 12),
-                     const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Adres Değiştir',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Yeni adres ekle',
-                            style: TextStyle(fontSize: 13, color: Colors.black54),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
                 ),
-              ),
+              ],
             ),
-
-
-          ],
+          ),
         ),
       ),
     );

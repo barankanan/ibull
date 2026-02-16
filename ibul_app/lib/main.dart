@@ -112,7 +112,6 @@ class MyApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: AppColors.background,
       ),
-      // Wrap HomeScreen so we can detect hot reload and show status
       home: const HomeWrapper(),
       routes: {
         '/map': (context) => const MapPage(),
@@ -141,5 +140,3 @@ class _HomeWrapperState extends State<HomeWrapper> {
     return const HomeScreen();
   }
 }
-
-

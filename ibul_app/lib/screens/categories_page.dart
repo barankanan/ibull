@@ -69,6 +69,18 @@ class _CategoriesPageState extends State<CategoriesPage> {
     "Aksesuar": "assets/subcategory_icons/aksesuar.png",
   };
   
+  String _normalize(String value) {
+    var t = value.toLowerCase().trim();
+    t = t.replaceAll('ı', 'i').replaceAll('İ', 'i');
+    t = t.replaceAll('ş', 's').replaceAll('Ş', 's');
+    t = t.replaceAll('ğ', 'g').replaceAll('Ğ', 'g');
+    t = t.replaceAll('ü', 'u').replaceAll('Ü', 'u');
+    t = t.replaceAll('ö', 'o').replaceAll('Ö', 'o');
+    t = t.replaceAll('ç', 'c').replaceAll('Ç', 'c');
+    t = t.replaceAll(RegExp(r'\s+'), ' ');
+    return t;
+  }
+  
   @override
   void initState() {
     super.initState();
@@ -568,25 +580,22 @@ class _CategoriesPageState extends State<CategoriesPage> {
       return;
     }
     
-    // İlgili kategorideki ürünleri filtrele
+    final selectedCategory = _normalize(category);
+    final selectedSubCategory = _normalize(subCategory);
+
     final filteredProducts = _allProducts.where((product) {
-      // Kategori eşleşmesi
-      bool categoryMatch = product.category == category;
-      
-      // Alt kategori eşleşmesi (esnek kontrol)
-      bool subCategoryMatch = false;
-      if (product.subCategory != null && product.subCategory!.isNotEmpty) {
-        // Tam eşleşme veya içeriyor kontrolü
-        subCategoryMatch = product.subCategory == subCategory || 
-                          product.subCategory!.contains(subCategory) ||
-                          subCategory.contains(product.subCategory!);
-      }
-      
-      // "HEPSİ" seçiliyse sadece kategori kontrolü yap
+      final productCategory = _normalize(product.category ?? '');
+      final productSubCategory = _normalize(product.subCategory ?? '');
+
+      final categoryMatch = productCategory == selectedCategory;
+
       if (subCategory == "HEPSİ") {
         return categoryMatch;
       }
-      
+
+      final subCategoryMatch = productSubCategory.isNotEmpty &&
+          productSubCategory == selectedSubCategory;
+
       return categoryMatch && subCategoryMatch;
     }).toList();
     

@@ -12,6 +12,7 @@ class ProductCard extends StatefulWidget {
   final double? width;
   final bool compact;
   final EdgeInsetsGeometry? margin;
+  final bool tight;
 
   const ProductCard({
     super.key, 
@@ -19,6 +20,7 @@ class ProductCard extends StatefulWidget {
     this.width, 
     this.compact = false,
     this.margin,
+    this.tight = false,
   });
 
   @override
@@ -108,7 +110,7 @@ class _ProductCardState extends State<ProductCard> {
                         _buildTitle(),
                         const SizedBox(height: 3),
                         _buildRating(),
-                        const Spacer(),
+                widget.tight ? const SizedBox(height: 4) : const Spacer(),
                         _buildPrice(),
                         const SizedBox(height: 8), // Fiyat ile buton arası boşluk
                         _buildButton(context),
@@ -155,7 +157,7 @@ class _ProductCardState extends State<ProductCard> {
                         _buildTitle(),
                         const SizedBox(height: 2),
                         _buildRating(),
-                        const Spacer(),
+                        widget.tight ? const SizedBox(height: 4) : const Spacer(),
                         _buildPrice(),
                         const SizedBox(height: 4),
                         _buildButton(context),

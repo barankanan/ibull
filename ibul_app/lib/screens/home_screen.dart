@@ -125,6 +125,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     'Kuponlu Ürünler': ['Kuponlu Ürünler'],
   };
   
+  String _normalizeText(String value) {
+    var t = value.toLowerCase().trim();
+    t = t.replaceAll('ı', 'i').replaceAll('İ', 'i');
+    t = t.replaceAll('ş', 's').replaceAll('Ş', 's');
+    t = t.replaceAll('ğ', 'g').replaceAll('Ğ', 'g');
+    t = t.replaceAll('ü', 'u').replaceAll('Ü', 'u');
+    t = t.replaceAll('ö', 'o').replaceAll('Ö', 'o');
+    t = t.replaceAll('ç', 'c').replaceAll('Ç', 'c');
+    t = t.replaceAll(RegExp(r'\s+'), ' ');
+    return t;
+  }
+  
   @override
   void initState() {
     super.initState();
@@ -146,6 +158,76 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _flashProductsScrollController.dispose();
     _todayProductsScrollController.dispose();
     super.dispose();
+  }
+
+  List<DBProduct> _getProductsForCurrentSubCategory() {
+    if (_selectedSubCategory == null) {
+      return [];
+    }
+
+    final selectedMainCategory = _normalizeText(_selectedCategory);
+    final selectedSub = _normalizeText(_selectedSubCategory!);
+
+    final baseProducts = _dbProducts.where((p) {
+      final category = _normalizeText(p.category);
+      return category == selectedMainCategory;
+    }).toList();
+
+    return baseProducts.where((p) {
+      final subCat = _normalizeText(p.subCategory ?? '');
+      final name = _normalizeText(p.name);
+
+      if (selectedMainCategory == _normalizeText('Elektronik')) {
+        if (selectedSub.contains('telefonlar') || selectedSub == _normalizeText('telefon')) {
+          return subCat.contains('telefon') ||
+              name.contains('telefon') ||
+              name.contains('iphone') ||
+              name.contains('galaxy');
+        }
+
+        if (selectedSub.contains('laptop') || selectedSub.contains('tablet')) {
+          return subCat.contains('bilgisayar') ||
+              subCat.contains('tablet') ||
+              name.contains('laptop') ||
+              name.contains('macbook') ||
+              name.contains('bilgisayar');
+        }
+
+        if (selectedSub.contains('televizyon')) {
+          return subCat.contains('tv') ||
+              subCat.contains('televizyon') ||
+              name.contains('tv') ||
+              name.contains('televizyon');
+        }
+
+        if (selectedSub.contains('beyaz esya')) {
+          return subCat.contains('beyaz esya');
+        }
+
+        if (selectedSub.contains('isitma') || selectedSub.contains('sogutma')) {
+          return subCat.contains('klima') ||
+              subCat.contains('isitici') ||
+              name.contains('klima') ||
+              name.contains('isitici');
+        }
+
+        if (selectedSub.contains('sinema') || selectedSub.contains('ses sistemleri')) {
+          return subCat.contains('tv & ses sistemleri') ||
+              subCat.contains('ses') ||
+              name.contains('ses sistemi');
+        }
+
+        if (selectedSub.contains('telefon aksesuar')) {
+          return subCat.contains('telefon & aksesuar') ||
+              name.contains('kılıf') ||
+              name.contains('kulaklık') ||
+              name.contains('sarj') ||
+              name.contains('şarj');
+        }
+      }
+
+      return subCat == selectedSub;
+    }).toList();
   }
 
   Future<void> _loadProducts() async {
@@ -1060,22 +1142,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildSubCategoryView() {
-    // Filter products by selected subcategory if available
-    final filteredProducts = _dbProducts.where((p) => p.subCategory == _selectedSubCategory).toList();
-    // If no products found for this subcategory (e.g. dummy data missing), show all products for demo purposes
-    // or show empty state. For now, let's show all but maybe limiting them, or just show a message.
-    // Better to show all for demo so the grid isn't empty, but maybe with a warning?
-    // Let's stick to showing all if empty, but prefer filtered.
-    final displayProducts = filteredProducts.isNotEmpty ? filteredProducts : _dbProducts;
+    final displayProducts = _getProductsForCurrentSubCategory();
 
-    // Filter "Bugün Kapında" products
     final sameDayProducts = displayProducts.where((p) => 
       p.tags.contains('Hızlı Teslimat') || 
       p.tags.contains('Hızlı Kargo') || 
       p.tags.contains('Yakın Lokasyon')
     ).take(10).toList();
 
-    // Prepare filters dynamically
     final Map<String, List<String>> displayFilters = {};
     _standardFilters.forEach((key, value) {
       // "Telefonlar" dışındaki kategorilerde "Kategori" ve "Marka" altı boş olsun

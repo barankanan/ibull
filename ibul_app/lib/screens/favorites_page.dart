@@ -179,7 +179,10 @@ class _FavoritesPageState extends State<FavoritesPage> {
       backgroundColor: const Color(0xFFF9FAFB),
       body: Column(
         children: [
-          WebHeader(onSearch: (q) {}),
+          WebHeader(
+            onSearch: (q) {},
+            activeMenu: 'favorites',
+          ),
           Expanded(
             child: SingleChildScrollView(
               child: Column(
