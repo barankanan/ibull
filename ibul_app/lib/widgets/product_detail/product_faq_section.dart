@@ -20,7 +20,15 @@ class _ProductFaqSectionState extends State<ProductFaqSection> {
     final brand = product.brand;
     final fullName = '$brand $productName';
 
-    final faqs = _generateFaqs(product);
+    final rawFaqs = product.faq ?? const <Map<String, String>>[];
+    final faqs = rawFaqs
+        .map((m) => {
+              'question': (m['question'] ?? '').trim(),
+              'answer': (m['answer'] ?? '').trim(),
+            })
+        .where((m) => m['question']!.isNotEmpty && m['answer']!.isNotEmpty)
+        .take(5)
+        .toList();
 
     if (faqs.isEmpty) return const SizedBox.shrink();
 
@@ -139,129 +147,5 @@ class _ProductFaqSectionState extends State<ProductFaqSection> {
         ],
       ),
     );
-  }
-
-  List<Map<String, String>> _generateFaqs(dynamic product) {
-    final name = product.name.toString().toLowerCase();
-    final brand = product.brand.toString();
-    final fullName = '$brand ${product.name}';
-
-    if (name.contains('iphone') || (brand.contains('Apple') && name.contains('phone'))) {
-      return [
-        {
-          'question': '$fullName suya dayanıklı mı?',
-          'answer':
-              'Evet, $fullName IP68 sertifikasına sahiptir. 6 metreye kadar derinlikte 30 dakikaya kadar suya dayanıklıdır. Ancak su hasarı garanti kapsamında değildir.',
-        },
-        {
-          'question': '$fullName kaç inç ekrana sahip?',
-          'answer':
-              '$fullName, Super Retina XDR OLED ekrana sahiptir. ${name.contains('pro max') || name.contains('plus') ? '6,7 inç' : '6,1 inç'} ekran boyutu ile geniş bir görüntüleme alanı sunar.',
-        },
-        {
-          'question': '$fullName\'ın kamerası kaç megapiksel?',
-          'answer':
-              '$fullName, ${name.contains('15') || name.contains('16') || name.contains('17') ? '48 MP ana kamera' : '12 MP çift kamera'} sistemine sahiptir. Gece modu, portre modu ve sinematik video gibi gelişmiş fotoğrafçılık özellikleri sunar.',
-        },
-        {
-          'question': '$fullName\'ın pil ömrü ne kadar?',
-          'answer':
-              '$fullName, normal kullanımda yaklaşık ${name.contains('pro max') ? '29 saate' : name.contains('13') ? '19 saate' : '22 saate'} kadar pil ömrü sunar. MagSafe ve Qi kablosuz şarj desteği bulunmaktadır.',
-        },
-      ];
-    } else if (name.contains('galaxy') || brand.contains('Samsung')) {
-      return [
-        {
-          'question': '$fullName suya dayanıklı mı?',
-          'answer':
-              'Evet, $fullName IP68 sertifikasına sahiptir. 1,5 metre derinlikte 30 dakikaya kadar suya ve toza karşı dayanıklıdır.',
-        },
-        {
-          'question': '$fullName\'ın ekran boyutu nedir?',
-          'answer':
-              '$fullName, Dynamic AMOLED 2X ekrana sahiptir. ${name.contains('ultra') ? '6,8 inç' : '6,2 inç'} ekran boyutu ile yüksek çözünürlüklü görüntü sunar.',
-        },
-        {
-          'question': '$fullName kaç megapiksel kameraya sahip?',
-          'answer':
-              '$fullName, ${name.contains('ultra') ? '200 MP ana kamera' : '50 MP ana kamera'} ile dikkat çekici fotoğraflar çekmenizi sağlar. Gece modu ve yapay zeka destekli fotoğraf düzenleme özellikleri mevcuttur.',
-        },
-        {
-          'question': '$fullName\'ın pil kapasitesi ne kadar?',
-          'answer':
-              '$fullName, ${name.contains('ultra') ? '5000 mAh' : '4000 mAh'} pil kapasitesine sahiptir. 25W hızlı şarj ve kablosuz şarj desteği sunar.',
-        },
-      ];
-    } else if (name.contains('macbook') || name.contains('laptop')) {
-      return [
-        {
-          'question': '$fullName\'ın pil ömrü ne kadar?',
-          'answer':
-              '$fullName, tek şarjla 18 saate kadar pil ömrü sunar. Enerji verimli çip teknolojisi sayesinde uzun süreli kullanım imkanı sağlar.',
-        },
-        {
-          'question': '$fullName kaç GB RAM\'e sahip?',
-          'answer':
-              '$fullName, birleşik bellek mimarisi ile 8 GB RAM sunmaktadır. Bu sayede çoklu uygulama kullanımında yüksek performans sağlar.',
-        },
-        {
-          'question': '$fullName\'ın ekran boyutu nedir?',
-          'answer':
-              '$fullName, 13,6 inç Liquid Retina ekrana sahiptir. 500 nit parlaklık ve P3 geniş renk gamı ile profesyonel düzeyde görüntü kalitesi sunar.',
-        },
-        {
-          'question': '$fullName ağırlığı ne kadar?',
-          'answer':
-              '$fullName yalnızca 1,24 kg ağırlığındadır. İnce ve hafif tasarımı sayesinde her yere kolayca taşınabilir.',
-        },
-      ];
-    } else if (name.contains('airpods') || name.contains('kulaklık')) {
-      return [
-        {
-          'question': '$fullName suya dayanıklı mı?',
-          'answer':
-              '$fullName, IPX4 ter ve suya dayanıklılık sertifikasına sahiptir. Spor yaparken veya hafif yağmurda güvenle kullanabilirsiniz.',
-        },
-        {
-          'question': '$fullName\'ın pil ömrü ne kadar?',
-          'answer':
-              '$fullName, tek şarjla 6 saate kadar dinleme süresi sunar. Şarj kutusu ile birlikte toplam 30 saate kadar kullanım imkanı sağlar.',
-        },
-        {
-          'question': '$fullName aktif gürültü engelleme özelliğine sahip mi?',
-          'answer':
-              'Evet, $fullName gelişmiş Aktif Gürültü Engelleme (ANC) teknolojisine sahiptir. Şeffaflık modu ile çevrenizden haberdar olabilirsiniz.',
-        },
-        {
-          'question': '$fullName hangi cihazlarla uyumlu?',
-          'answer':
-              '$fullName, tüm Apple cihazları ile sorunsuz çalışır. Ayrıca Bluetooth 5.3 desteği sayesinde Android ve Windows cihazlarla da kullanılabilir.',
-        },
-      ];
-    } else {
-      // Generic FAQs
-      return [
-        {
-          'question': '$fullName garanti kapsamında mı?',
-          'answer':
-              'Evet, $fullName 2 yıl üretici garantisi kapsamındadır. Garanti süresince ücretsiz teknik destek ve onarım hizmeti sunulmaktadır.',
-        },
-        {
-          'question': '$fullName için kargo ücretsiz mi?',
-          'answer':
-              'Evet, $fullName siparişlerinizde kargo ücretsizdir. Siparişiniz 1-3 iş günü içerisinde adresinize teslim edilir.',
-        },
-        {
-          'question': '$fullName iade edilebilir mi?',
-          'answer':
-              'Evet, $fullName teslim tarihinden itibaren 15 gün içerisinde ücretsiz iade edilebilir. Ürünün kullanılmamış ve orijinal ambalajında olması gerekmektedir.',
-        },
-        {
-          'question': '$fullName orijinal ürün mü?',
-          'answer':
-              'Evet, platformumuzda satılan tüm ürünler %100 orijinaldir. $fullName yetkili distribütör garantisi ile satılmaktadır.',
-        },
-      ];
-    }
   }
 }

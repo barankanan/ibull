@@ -16,7 +16,8 @@ class SkeletonLoading extends StatefulWidget {
   State<SkeletonLoading> createState() => _SkeletonLoadingState();
 }
 
-class _SkeletonLoadingState extends State<SkeletonLoading> with SingleTickerProviderStateMixin {
+class _SkeletonLoadingState extends State<SkeletonLoading>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _animation;
 
@@ -76,8 +77,9 @@ class ProductCardSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 160,
-      margin: const EdgeInsets.only(right: 12, bottom: 8),
+      width: 198,
+      height: 312,
+      margin: const EdgeInsets.only(right: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -92,33 +94,37 @@ class ProductCardSkeleton extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Image Skeleton
-          const SkeletonLoading(width: double.infinity, height: 160, borderRadius: 12),
-          
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  // Badge Skeleton
-                  SkeletonLoading(width: 80, height: 20, borderRadius: 12),
-                  SizedBox(height: 8),
-                  // Title Skeleton
-                  SkeletonLoading(width: 120, height: 14, borderRadius: 4),
-                  SizedBox(height: 4),
-                  SkeletonLoading(width: 100, height: 14, borderRadius: 4),
-                  SizedBox(height: 8),
-                  // Rating Skeleton
-                  SkeletonLoading(width: 80, height: 12, borderRadius: 4),
-                  Spacer(),
-                  // Price Skeleton
-                  SkeletonLoading(width: 90, height: 18, borderRadius: 4),
-                  SizedBox(height: 10),
-                  // Button Skeleton
-                  SkeletonLoading(width: double.infinity, height: 34, borderRadius: 12),
-                ],
-              ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(10, 10, 10, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SkeletonLoading(
+                  width: double.infinity,
+                  height: 146,
+                  borderRadius: 14,
+                ),
+                SizedBox(height: 6),
+                SkeletonLoading(
+                  width: double.infinity,
+                  height: 24,
+                  borderRadius: 999,
+                ),
+                SizedBox(height: 6),
+                SkeletonLoading(width: 132, height: 14, borderRadius: 4),
+                SizedBox(height: 4),
+                SkeletonLoading(width: 88, height: 12, borderRadius: 4),
+                SizedBox(height: 6),
+                SkeletonLoading(width: 96, height: 11, borderRadius: 4),
+                SizedBox(height: 2),
+                SkeletonLoading(width: 118, height: 18, borderRadius: 4),
+                SizedBox(height: 8),
+                SkeletonLoading(
+                  width: double.infinity,
+                  height: 38,
+                  borderRadius: 12,
+                ),
+              ],
             ),
           ),
         ],

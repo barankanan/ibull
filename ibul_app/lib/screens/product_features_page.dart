@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/product_model.dart';
-import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/app_state.dart';
 import 'reviews_page.dart';
+import 'login_page.dart';
+import '../widgets/product_detail/product_detail_content_helper.dart';
 
 class ProductFeaturesPage extends StatefulWidget {
   final Product product;
@@ -13,7 +15,8 @@ class ProductFeaturesPage extends StatefulWidget {
   State<ProductFeaturesPage> createState() => _ProductFeaturesPageState();
 }
 
-class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTickerProviderStateMixin {
+class _ProductFeaturesPageState extends State<ProductFeaturesPage>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final AppState _appState = AppState();
   bool _isAddedToCart = false;
@@ -23,6 +26,32 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _isAddedToCart = _appState.cart.contains(widget.product);
+  }
+
+  void _showLoginRequiredDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Giriş Yap'),
+        content: const Text('Bu işlemi yapmak için giriş yapmanız gerekiyor.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginPage()),
+              );
+            },
+            child: const Text('Giriş Yap'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -54,8 +83,12 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
         actions: [
           IconButton(
             icon: Icon(
-              _appState.isFavorite(widget.product) ? Icons.favorite : Icons.favorite_border,
-              color: _appState.isFavorite(widget.product) ? AppColors.primary : Colors.black,
+              _appState.isFavorite(widget.product)
+                  ? Icons.favorite
+                  : Icons.favorite_border,
+              color: _appState.isFavorite(widget.product)
+                  ? AppColors.primary
+                  : Colors.black,
             ),
             onPressed: () {
               setState(() {
@@ -70,7 +103,10 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
           unselectedLabelColor: Colors.grey,
           indicatorColor: AppColors.primary,
           indicatorWeight: 3,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          labelStyle: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
           tabs: const [
             Tab(text: 'Ürün Özellikleri'),
             Tab(text: 'Ürün Açıklaması'),
@@ -82,9 +118,9 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
         children: [
           // Product Summary Card
           _buildProductSummary(),
-          
+
           const Divider(height: 1),
-          
+
           // Tab Content
           Expanded(
             child: TabBarView(
@@ -96,7 +132,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
               ],
             ),
           ),
-          
+
           // Bottom Bar
           _buildBottomBar(),
         ],
@@ -107,9 +143,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
   Widget _buildProductSummary() {
     return Container(
       padding: const EdgeInsets.all(16.0),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-      ),
+      decoration: const BoxDecoration(color: Colors.white),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -126,7 +160,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
                 ? Image.network(
                     widget.product.images.first,
                     fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) => 
+                    errorBuilder: (context, error, stackTrace) =>
                         const Icon(Icons.image, color: Colors.grey),
                   )
                 : const Icon(Icons.image, color: Colors.grey),
@@ -172,10 +206,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
                     const SizedBox(width: 6),
                     Text(
                       '${widget.product.reviewCount * 100} puan & ${widget.product.reviewCount} yorum >',
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
                     ),
                   ],
                 ),
@@ -188,11 +219,21 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
   }
 
   Widget _buildFeaturesTab() {
+    final specs = ProductDetailContentHelper.buildSpecs(widget.product);
+    if (specs.isEmpty) {
+      return Center(
+        child: Text(
+          'Bu ürün için özellik bilgisi bulunamadı.',
+          style: TextStyle(color: Colors.grey[600]),
+        ),
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       children: [
         const Text(
-          'Genel Bilgiler',
+          'Ürün Özellikleri',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.bold,
@@ -200,17 +241,9 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
           ),
         ),
         const SizedBox(height: 16),
-        _buildBulletPoint('Bu ürün ${widget.product.brand} tarafından gönderilecektir.'),
-        _buildBulletPoint('Kampanya fiyatından satılmak üzere 100 adetten fazla stok sunulmuştur.'),
-        _buildBulletPoint('İncelemiş olduğunuz ürünün satış fiyatını satıcı belirlemektedir.'),
-        _buildBulletPoint('Ürüne ait garanti belgesi ile tanıtma ve kullanım kılavuzları; kağıt ortamında paylaşılabileceği gibi elektronik ortamda erişim sağlayabileceğiniz, link ve karekod biçiminde de sunulabilecektir. Ürün teslimi sonrası ambalajın, paketin, kutunun dikkatle açılması tavsiye edilir.'),
-        _buildBulletPoint(widget.product.name),
-        _buildBulletPoint('6.1 inç Super Retina XDR ekranıyla yüksek kontrast oranı, parlaklık seviyesi ve genel görüntü kalitesi sunar.'),
-        _buildBulletPoint('48 MP\'lik ve 12 MP ultra geniş kamerasıyla akıllı telefonlar içinde dikkat çeker.'),
-        _buildBulletPoint('Yan tarafa monte edilmiş parmak izi okuyucu tasarımlı iPhone telefonları kolaylığı sunar.'),
-        _buildBulletPoint('Büyük dosyaları ve uygulamaları saklama kapasitesiyle 128 GB telefonlar arasındadır.'),
-        _buildBulletPoint('Zarif ve şık bir görünüm arayanlara siyah telefonlar ideal bir seçenektir.'),
-        _buildBulletPoint('6.1 inç Apple iPhone 15, ergonomik kullanım sağlar.'),
+        ...specs.map(
+          (spec) => _buildBulletPoint('${spec['key']}: ${spec['value']}'),
+        ),
       ],
     );
   }
@@ -242,21 +275,45 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
   }
 
   Widget _buildDescriptionTab() {
-    return SingleChildScrollView(
+    final additionalInfo = ProductDetailContentHelper.buildAdditionalInfo(
+      widget.product,
+    );
+
+    return ListView(
       padding: const EdgeInsets.all(16),
-      child: Text(
-        widget.product.getDisplayDescription(),
-        style: TextStyle(color: Colors.grey[800], height: 1.5),
-      ),
+      children: [
+        Text(
+          widget.product.getDisplayDescription(),
+          style: TextStyle(color: Colors.grey[800], height: 1.5),
+        ),
+        if (additionalInfo.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          const Text(
+            'Ek Bilgiler',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+          ),
+          const SizedBox(height: 14),
+          ...additionalInfo.map(_buildBulletPoint),
+        ],
+      ],
     );
   }
 
   Widget _buildReturnPolicyTab() {
+    final isFood = (widget.product.category ?? '').toLowerCase() == 'yemek';
+    final returnPolicyText = isFood
+        ? 'Yemek kategorisindeki ürünlerde iade ve iptal koşulları satıcı politikalarına göre değişebilir.'
+        : 'Ürünü teslim aldıktan sonra 15 gün içinde ücretsiz iade talebi oluşturabilirsiniz.';
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Text(
-        'İade Koşulları burada yer alacaktır.',
-        style: TextStyle(color: Colors.grey[600]),
+        returnPolicyText,
+        style: TextStyle(color: Colors.grey[700], height: 1.5),
       ),
     );
   }
@@ -268,7 +325,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
@@ -283,7 +340,9 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
                 onPressed: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const ReviewsPage()),
+                    MaterialPageRoute(
+                      builder: (context) => const ReviewsPage(),
+                    ),
                   );
                 },
                 style: OutlinedButton.styleFrom(
@@ -309,18 +368,24 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage> with SingleTi
               child: ElevatedButton(
                 onPressed: () {
                   setState(() {
+                    if (!_appState.isLoggedIn) {
+                      _showLoginRequiredDialog(context);
+                      return;
+                    }
                     if (_isAddedToCart) {
-                       _appState.removeFromCart(widget.product);
-                       _isAddedToCart = false;
-                       ScaffoldMessenger.of(context).showSnackBar(
-                         const SnackBar(content: Text('Ürün sepetten çıkarıldı')),
-                       );
+                      _appState.removeFromCart(widget.product);
+                      _isAddedToCart = false;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Ürün sepetten çıkarıldı'),
+                        ),
+                      );
                     } else {
-                       _appState.addToCart(widget.product);
-                       _isAddedToCart = true;
-                       ScaffoldMessenger.of(context).showSnackBar(
-                         const SnackBar(content: Text('Ürün sepete eklendi')),
-                       );
+                      _appState.addToCart(widget.product);
+                      _isAddedToCart = true;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Ürün sepete eklendi')),
+                      );
                     }
                   });
                 },

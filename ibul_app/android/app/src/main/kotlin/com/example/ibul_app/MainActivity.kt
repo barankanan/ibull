@@ -1,4 +1,4 @@
-package com.example.ibul_app
+package com.ibul.app
 
 import io.flutter.embedding.android.FlutterActivity
 

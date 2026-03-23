@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
+import 'product_detail_content_helper.dart';
 
 class ProductFullSpecs extends StatefulWidget {
   const ProductFullSpecs({super.key});
@@ -17,8 +18,7 @@ class _ProductFullSpecsState extends State<ProductFullSpecs> {
   Widget build(BuildContext context) {
     final viewModel = Provider.of<ProductDetailViewModel>(context);
     final product = viewModel.initialProduct;
-    final specsText = product.getDisplaySpecs();
-    final specs = _parseSpecs(specsText, product);
+    final specs = ProductDetailContentHelper.buildSpecs(product);
 
     if (specs.isEmpty) return const SizedBox.shrink();
 
@@ -60,7 +60,9 @@ class _ProductFullSpecsState extends State<ProductFullSpecs> {
                 end: Alignment.centerRight,
               ),
               border: Border(
-                bottom: BorderSide(color: AppColors.primary.withValues(alpha: 0.12)),
+                bottom: BorderSide(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                ),
               ),
             ),
             child: Row(
@@ -71,7 +73,11 @@ class _ProductFullSpecsState extends State<ProductFullSpecs> {
                     color: AppColors.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(Icons.tune_outlined, size: 18, color: AppColors.primary),
+                  child: Icon(
+                    Icons.tune_outlined,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 const Text(
@@ -84,7 +90,10 @@ class _ProductFullSpecsState extends State<ProductFullSpecs> {
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
@@ -128,12 +137,25 @@ class _ProductFullSpecsState extends State<ProductFullSpecs> {
                     final isLastInRow = (index + 1) % crossAxisCount == 0;
 
                     return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
-                        color: isEvenRow ? AppColors.primary.withValues(alpha: 0.03) : Colors.white,
+                        color: isEvenRow
+                            ? AppColors.primary.withValues(alpha: 0.03)
+                            : Colors.white,
                         border: Border(
-                          bottom: BorderSide(color: Colors.grey[200]!, width: 0.5),
-                          right: isLastInRow ? BorderSide.none : BorderSide(color: Colors.grey[200]!, width: 0.5),
+                          bottom: BorderSide(
+                            color: Colors.grey[200]!,
+                            width: 0.5,
+                          ),
+                          right: isLastInRow
+                              ? BorderSide.none
+                              : BorderSide(
+                                  color: Colors.grey[200]!,
+                                  width: 0.5,
+                                ),
                         ),
                       ),
                       child: Row(
@@ -182,8 +204,12 @@ class _ProductFullSpecsState extends State<ProductFullSpecs> {
                     onPressed: () => setState(() => _isExpanded = !_isExpanded),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.primary,
-                      side: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
-                      backgroundColor: AppColors.primary.withValues(alpha: 0.04),
+                      side: BorderSide(
+                        color: AppColors.primary.withValues(alpha: 0.3),
+                      ),
+                      backgroundColor: AppColors.primary.withValues(
+                        alpha: 0.04,
+                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(22),
                       ),
@@ -202,7 +228,9 @@ class _ProductFullSpecsState extends State<ProductFullSpecs> {
                         ),
                         const SizedBox(width: 4),
                         Icon(
-                          _isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                          _isExpanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
                           size: 18,
                         ),
                       ],
@@ -215,65 +243,5 @@ class _ProductFullSpecsState extends State<ProductFullSpecs> {
         ],
       ),
     );
-  }
-
-  List<Map<String, String>> _parseSpecs(String specsText, dynamic product) {
-    final specs = <Map<String, String>>[];
-    final brand = product.brand ?? '';
-    final name = product.name ?? '';
-
-    // Parse from specs text (format: "Key: Value\nKey: Value")
-    final lines = specsText.split('\n');
-    for (var line in lines) {
-      final parts = line.split(':');
-      if (parts.length >= 2) {
-        specs.add({
-          'key': parts[0].trim(),
-          'value': parts.sublist(1).join(':').trim(),
-        });
-      }
-    }
-
-    // Add common specs based on category
-    if (brand.contains('Apple') || name.contains('iPhone')) {
-      _addIfMissing(specs, 'Garanti Tipi', 'Apple Türkiye Garantili');
-      _addIfMissing(specs, 'Kamera Çözünürlüğü', '12 MP + 12 MP');
-      _addIfMissing(specs, 'Dahili Hafıza', '128 GB');
-      _addIfMissing(specs, 'Ekran Boyutu', '6,1 inç');
-      _addIfMissing(specs, 'Pil Gücü (mAh)', '3095');
-      _addIfMissing(specs, 'Mobil Bağlantı Hızı', '5G');
-      _addIfMissing(specs, 'CPU Aralık', '2.5-3.2 GHz');
-      _addIfMissing(specs, 'Ekran Çözünürlüğü', 'FHD+');
-      _addIfMissing(specs, 'Ana Kamera Çözünürlük', '10 - 15 MP');
-      _addIfMissing(specs, 'Parmak İzi Okuyucu', 'Yok');
-      _addIfMissing(specs, 'Suya/Toza Dayanıklılık', 'Var');
-      _addIfMissing(specs, 'RAM Kapasitesi', '4 GB');
-    } else if (brand.contains('Samsung')) {
-      _addIfMissing(specs, 'Garanti Tipi', 'Samsung Türkiye Garantili');
-      _addIfMissing(specs, 'Kamera Çözünürlüğü', '200 MP');
-      _addIfMissing(specs, 'Dahili Hafıza', '256 GB');
-      _addIfMissing(specs, 'Ekran Boyutu', '6,8 inç');
-      _addIfMissing(specs, 'Pil Gücü (mAh)', '5000');
-      _addIfMissing(specs, 'Mobil Bağlantı Hızı', '5G');
-      _addIfMissing(specs, 'CPU Aralık', '3.36 GHz');
-      _addIfMissing(specs, 'Ekran Çözünürlüğü', 'QHD+');
-      _addIfMissing(specs, 'S Pen Desteği', 'Var');
-      _addIfMissing(specs, 'Parmak İzi Okuyucu', 'Ekran Altı');
-      _addIfMissing(specs, 'Suya/Toza Dayanıklılık', 'IP68');
-      _addIfMissing(specs, 'RAM Kapasitesi', '12 GB');
-    } else {
-      // Generic specs
-      _addIfMissing(specs, 'Marka', brand);
-      _addIfMissing(specs, 'Garanti', '2 Yıl');
-      _addIfMissing(specs, 'Menşei', 'Türkiye');
-    }
-
-    return specs;
-  }
-
-  void _addIfMissing(List<Map<String, String>> specs, String key, String value) {
-    if (!specs.any((s) => s['key'] == key)) {
-      specs.add({'key': key, 'value': value});
-    }
   }
 }

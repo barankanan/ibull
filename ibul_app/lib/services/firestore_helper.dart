@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/db_product.dart';
@@ -18,13 +19,26 @@ class FirestoreHelper {
   CollectionReference get _bannersRef => _firestore.collection('banners');
   CollectionReference get _categoriesRef => _firestore.collection('categories');
 
+  Map<String, dynamic> _normalizeFirestorePayload(Map<String, dynamic> raw) {
+    final payload = Map<String, dynamic>.from(raw);
+    final isActive = payload['isActive'];
+    if (isActive is int) {
+      payload['isActive'] = isActive == 1;
+    }
+    final isPart = payload['isPart'];
+    if (isPart is int) {
+      payload['isPart'] = isPart == 1;
+    }
+    return payload;
+  }
+
   // ==================== PRODUCTS CRUD ====================
 
   // Tüm ürünleri getir
   Future<List<DBProduct>> getAllProducts() async {
     try {
       final snapshot = await _productsRef
-          .where('isActive', isEqualTo: true)
+          .where('isActive', whereIn: [true, 1])
           // .orderBy('id', descending: false) // İndeks hatasını önlemek için sıralamayı kaldırdık
           .get();
 
@@ -38,7 +52,7 @@ class FirestoreHelper {
       
       return products;
     } catch (e) {
-      print('Error getting products: $e');
+      debugPrint('Error getting products: $e');
       return [];
     }
   }
@@ -48,7 +62,7 @@ class FirestoreHelper {
     try {
       final snapshot = await _productsRef
           .where('category', isEqualTo: category)
-          .where('isActive', isEqualTo: true)
+          .where('isActive', whereIn: [true, 1])
           // .orderBy('id', descending: true)
           .get();
 
@@ -59,7 +73,7 @@ class FirestoreHelper {
       
       return products;
     } catch (e) {
-      print('Error getting products by category: $e');
+      debugPrint('Error getting products by category: $e');
       return [];
     }
   }
@@ -69,7 +83,7 @@ class FirestoreHelper {
     try {
       final snapshot = await _productsRef
           .where('brand', isEqualTo: brand)
-          .where('isActive', isEqualTo: true)
+          .where('isActive', whereIn: [true, 1])
           // .orderBy('id', descending: true)
           .get();
 
@@ -80,7 +94,7 @@ class FirestoreHelper {
       
       return products;
     } catch (e) {
-      print('Error getting products by brand: $e');
+      debugPrint('Error getting products by brand: $e');
       return [];
     }
   }
@@ -99,7 +113,7 @@ class FirestoreHelper {
                (product.description?.toLowerCase().contains(lowerQuery) ?? false);
       }).toList();
     } catch (e) {
-      print('Error searching products: $e');
+      debugPrint('Error searching products: $e');
       return [];
     }
   }
@@ -117,7 +131,7 @@ class FirestoreHelper {
       }
       return null;
     } catch (e) {
-      print('Error getting product: $e');
+      debugPrint('Error getting product: $e');
       return null;
     }
   }
@@ -132,27 +146,38 @@ class FirestoreHelper {
       final productWithId = product.copyWith(id: newId);
       
       // Belge ID'si olarak da bu int ID'nin string halini kullanalım
-      await _productsRef.doc(newId.toString()).set(productWithId.toMap());
+      await _productsRef.doc(newId.toString()).set(_normalizeFirestorePayload(productWithId.toMap()));
     } catch (e) {
-      print('Error inserting product: $e');
+      debugPrint('Error inserting product: $e');
     }
   }
 
   // Toplu ürün ekle (Batch write)
   Future<void> insertProducts(List<DBProduct> products) async {
     try {
-      final batch = _firestore.batch();
-      
-      for (var product in products) {
-        int newId = product.id ?? DateTime.now().millisecondsSinceEpoch + products.indexOf(product);
-        final productWithId = product.copyWith(id: newId);
-        final docRef = _productsRef.doc(newId.toString());
-        batch.set(docRef, productWithId.toMap());
+      if (products.isEmpty) {
+        return;
       }
-      
-      await batch.commit();
+
+      const maxWritesPerBatch = 400;
+      final baseId = DateTime.now().millisecondsSinceEpoch;
+
+      for (var i = 0; i < products.length; i += maxWritesPerBatch) {
+        final batch = _firestore.batch();
+        final end = (i + maxWritesPerBatch) > products.length ? products.length : (i + maxWritesPerBatch);
+
+        for (var j = i; j < end; j++) {
+          final product = products[j];
+          final newId = product.id ?? (baseId + j);
+          final productWithId = product.copyWith(id: newId);
+          final docRef = _productsRef.doc(newId.toString());
+          batch.set(docRef, _normalizeFirestorePayload(productWithId.toMap()));
+        }
+
+        await batch.commit();
+      }
     } catch (e) {
-      print('Error batch inserting products: $e');
+      debugPrint('Error batch inserting products: $e');
     }
   }
 
@@ -163,7 +188,7 @@ class FirestoreHelper {
     try {
       final snapshot = await _productsRef
           .where('variantGroupId', isEqualTo: variantGroupId)
-          .where('isActive', isEqualTo: true)
+          .where('isActive', whereIn: [true, 1])
           // .orderBy('id', descending: false)
           .get();
 
@@ -174,7 +199,7 @@ class FirestoreHelper {
       
       return products;
     } catch (e) {
-      print('Error getting product variants: $e');
+      debugPrint('Error getting product variants: $e');
       return [];
     }
   }
@@ -244,7 +269,7 @@ class FirestoreHelper {
 
   Future<void> insertBanners(List<DBBanner> banners) async {
     for (var banner in banners) {
-      await _bannersRef.add(banner.toMap());
+      await _bannersRef.add(_normalizeFirestorePayload(banner.toMap()));
     }
   }
 
@@ -252,18 +277,18 @@ class FirestoreHelper {
     try {
       final snapshot = await _bannersRef
           .where('type', isEqualTo: type)
-          .where('isActive', isEqualTo: true)
+          .where('isActive', whereIn: [true, 1])
           // .orderBy('orderIndex', descending: false)
           .get();
 
       final banners = snapshot.docs.map((doc) => DBBanner.fromMap(doc.data() as Map<String, dynamic>)).toList();
       
       // Client-side sıralama
-      banners.sort((a, b) => (a.orderIndex ?? 0).compareTo(b.orderIndex ?? 0));
+      banners.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
       
       return banners;
     } catch (e) {
-      print('Error getting banners: $e');
+      debugPrint('Error getting banners: $e');
       return [];
     }
   }
@@ -275,18 +300,18 @@ class FirestoreHelper {
       // Firestore'da null sorgusu: where('parentId', isNull: true)
       final snapshot = await _categoriesRef
           .where('parentId', isNull: true)
-          .where('isActive', isEqualTo: true)
+          .where('isActive', whereIn: [true, 1])
           // .orderBy('orderIndex', descending: false)
           .get();
 
       final categories = snapshot.docs.map((doc) => DBCategory.fromMap(doc.data() as Map<String, dynamic>)).toList();
       
       // Client-side sıralama
-      categories.sort((a, b) => (a.orderIndex ?? 0).compareTo(b.orderIndex ?? 0));
+      categories.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
       
       return categories;
     } catch (e) {
-      print('Error getting main categories: $e');
+      debugPrint('Error getting main categories: $e');
       return [];
     }
   }
@@ -295,97 +320,177 @@ class FirestoreHelper {
     try {
       final snapshot = await _categoriesRef
           .where('parentId', isEqualTo: parentId)
-          .where('isActive', isEqualTo: true)
+          .where('isActive', whereIn: [true, 1])
           // .orderBy('orderIndex', descending: false)
           .get();
 
       final categories = snapshot.docs.map((doc) => DBCategory.fromMap(doc.data() as Map<String, dynamic>)).toList();
       
       // Client-side sıralama
-      categories.sort((a, b) => (a.orderIndex ?? 0).compareTo(b.orderIndex ?? 0));
+      categories.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
       
       return categories;
     } catch (e) {
-      print('Error getting subcategories: $e');
+      debugPrint('Error getting subcategories: $e');
       return [];
     }
   }
   
-  // İlk verileri yükleme (Seeding)
+  // Eski verileri packages/ibul_app öneki ile güncelle
+  Future<void> _fixImagePaths() async {
+    try {
+      // 1. Ürünleri düzelt
+      final productSnapshot = await _productsRef.where('isActive', isEqualTo: true).get();
+      int updatedCount = 0;
+      
+      final batch = _firestore.batch();
+      
+      for (var doc in productSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        String imageUrl = data['imageUrl'] ?? '';
+        String imageUrls = data['imageUrls'] ?? '[]';
+        
+        bool needsUpdate = false;
+        
+        // Ana görseli kontrol et
+        if (imageUrl.isNotEmpty && imageUrl.startsWith('assets/') && !imageUrl.startsWith('packages/ibul_app/')) {
+          imageUrl = 'packages/ibul_app/$imageUrl';
+          needsUpdate = true;
+        }
+        
+        // Görsel listesini kontrol et
+        if (imageUrls.isNotEmpty && imageUrls != '[]') {
+          try {
+            List<dynamic> urls = json.decode(imageUrls);
+            bool listChanged = false;
+            for (int i = 0; i < urls.length; i++) {
+              String url = urls[i].toString();
+              if (url.startsWith('assets/') && !url.startsWith('packages/ibul_app/')) {
+                urls[i] = 'packages/ibul_app/$url';
+                listChanged = true;
+              }
+            }
+            if (listChanged) {
+              imageUrls = json.encode(urls);
+              needsUpdate = true;
+            }
+          } catch (e) {
+            // JSON hatası olursa yoksay
+          }
+        }
+        
+        if (needsUpdate) {
+          batch.update(doc.reference, {
+            'imageUrl': imageUrl,
+            'imageUrls': imageUrls,
+          });
+          updatedCount++;
+        }
+      }
+      
+      if (updatedCount > 0) {
+        await batch.commit();
+        debugPrint('🛠️ $updatedCount ürün görsel yolu düzeltildi (packages/ibul_app/ eklendi)');
+      }
+      
+      // 2. Bannerları düzelt
+      final bannerSnapshot = await _bannersRef.where('isActive', isEqualTo: true).get();
+      int updatedBanners = 0;
+      final bannerBatch = _firestore.batch();
+      
+      for (var doc in bannerSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        String imageUrl = data['imageUrl'] ?? '';
+        
+        if (imageUrl.isNotEmpty && imageUrl.startsWith('assets/') && !imageUrl.startsWith('packages/ibul_app/')) {
+          imageUrl = 'packages/ibul_app/$imageUrl';
+          bannerBatch.update(doc.reference, {'imageUrl': imageUrl});
+          updatedBanners++;
+        }
+      }
+      
+      if (updatedBanners > 0) {
+        await bannerBatch.commit();
+        debugPrint('🛠️ $updatedBanners banner görsel yolu düzeltildi');
+      }
+      
+    } catch (e) {
+      debugPrint('Error fixing image paths: $e');
+    }
+  }
+
   Future<void> seedInitialData() async {
-    // Mevcut ürünleri kontrol et
-    final snapshot = await _productsRef.get();
+    // 1. Önce eski yolları düzelt
+    await _fixImagePaths();
     
-    // Eğer veritabanı boşsa veya sadece 2 tane dummy ürün varsa (DataSeeder'dan gelen)
-    // JSON'dan yükleme yap
-    // if (snapshot.docs.length > 5) {
-    //   return;
-    // }
-    
-    print('🌱 Veri kontrolü yapılıyor, eksik veriler assets/urunler.json dosyasından tamamlanacak...');
+    final snapshot = await _productsRef.limit(5).get();
+
+    if (snapshot.docs.length >= 5) {
+      await _seedBanners();
+      await _seedCategories();
+      return;
+    }
+
+    debugPrint('🌱 Veri kontrolü yapılıyor, eksik veriler assets/urunler.json dosyasından tamamlanacak...');
     
     try {
-      // JSON dosyasını oku
-      String jsonString;
-      try {
-        // Önce paket yolu ile dene (ibul_app paketi içindeyse)
-        jsonString = await rootBundle.loadString('packages/ibul_app/assets/urunler.json');
-      } catch (e) {
-        print('Paket yolundan yüklenemedi, düz yol deneniyor: $e');
-        // Başarısız olursa düz yol ile dene (Root app ise)
-        jsonString = await rootBundle.loadString('assets/urunler.json');
-      }
+      // JSON dosyasını doğrudan uygulama asset'inden oku
+      final jsonString = await rootBundle.loadString('packages/ibul_app/assets/urunler.json');
       
       final List<dynamic> jsonList = json.decode(jsonString);
       
       // Mevcut ürün isimlerini al (tekrar eklememek için)
       final existingNames = snapshot.docs
-          .map((doc) => (doc.data() as Map<String, dynamic>)['name'] as String)
+          .map((doc) => ((doc.data() as Map<String, dynamic>)['name'] as String?)?.trim())
+          .whereType<String>()
+          .where((name) => name.isNotEmpty)
           .toSet();
       
       final List<DBProduct> productsToAdd = [];
       
       for (var item in jsonList) {
-        final name = item['isim'];
-        if (existingNames.contains(name)) continue;
+        final name = (item['isim'] ?? '').toString().trim();
+        if (name.isEmpty || existingNames.contains(name)) continue;
 
         // Fiyat formatlama: 64.999 (double) -> "64.999 TL"
         // Eğer tam sayı ise: 2500 -> "2.500 TL" formatı gerekebilir ama şimdilik basit toString
-        String price = item['fiyat'].toString();
+        final price = (item['fiyat'] ?? '').toString();
         // Eğer nokta yoksa ve 3 haneden büyükse binlik ayracı ekle (basitçe)
         // Ama JSON'da zaten 64.999 gibi nokta ile geliyor.
         
         productsToAdd.add(DBProduct(
           name: name,
-          brand: item['marka'] ?? '',
-          store: item['magaza'],
+          brand: (item['marka'] ?? '').toString(),
+          store: (item['magaza'] ?? '').toString(),
           price: "$price TL",
           oldPrice: item['eski_fiyat'] != null ? "${item['eski_fiyat']} TL" : null,
-          rating: (item['puan'] as num).toDouble(),
-          reviewCount: item['degerlendirme'] ?? 0,
-          imageUrl: (item['gorseller'] as List).isNotEmpty ? item['gorseller'][0] : '',
-          imageUrls: json.encode(item['gorseller']),
-          category: item['kategori'] ?? 'Diğer',
-          subCategory: item['alt_kategori'],
+          rating: (item['puan'] as num?)?.toDouble() ?? 0,
+          reviewCount: (item['degerlendirme'] as num?)?.toInt() ?? 0,
+          imageUrl: (item['gorseller'] is List && (item['gorseller'] as List).isNotEmpty)
+              ? (item['gorseller'] as List).first.toString()
+              : '',
+          imageUrls: json.encode(item['gorseller'] ?? []),
+          category: (item['kategori'] ?? 'Diğer').toString(),
+          subCategory: item['alt_kategori']?.toString(),
           tags: json.encode(item['etiketler'] ?? []),
-          description: item['aciklama'],
+          description: item['aciklama']?.toString(),
           specifications: json.encode(item['ozellikler'] ?? {}),
-          stock: item['stok'],
-          variantGroupId: item['varyant_grup_id'],
-          variantOptions: item['varyant_secenekler'],
+          stock: (item['stok'] as num?)?.toInt(),
+          variantGroupId: item['varyant_grup_id']?.toString(),
+          variantOptions: item['varyant_secenekler']?.toString(),
           isActive: true,
         ));
       }
       
       if (productsToAdd.isNotEmpty) {
         await insertProducts(productsToAdd);
-        print('✅ ${productsToAdd.length} ürün JSON\'dan eklendi');
+        debugPrint('✅ ${productsToAdd.length} ürün JSON\'dan eklendi');
       } else {
-        print('ℹ️ Eklenecek yeni ürün bulunamadı.');
+        debugPrint('ℹ️ Eklenecek yeni ürün bulunamadı.');
       }
 
     } catch (e) {
-      print('Error seeding from JSON: $e');
+      debugPrint('Error seeding from JSON: $e');
       // JSON yüklenemezse fallback olarak manuel ekle
       if (snapshot.docs.isEmpty) {
         await _seedFallbackProducts();
@@ -407,8 +512,8 @@ class FirestoreHelper {
         oldPrice: '4.862 TL',
         rating: 4.8,
         reviewCount: 62,
-        imageUrl: 'assets/products/dyson_v15.jpeg',
-        imageUrls: '["assets/products/dyson_v15.jpeg"]',
+        imageUrl: 'packages/ibul_app/assets/products/dyson_v15.jpeg',
+        imageUrls: '["packages/ibul_app/assets/products/dyson_v15.jpeg"]',
         category: 'Elektronik',
         tags: '["Ücretsiz Kargo", "%25 indirim"]',
         description: 'Güçlü motor teknolojisi ile derin temizlik',
@@ -423,8 +528,8 @@ class FirestoreHelper {
         oldPrice: null,
         rating: 3.0,
         reviewCount: 2,
-        imageUrl: 'assets/products/sony_xm5.jpg',
-        imageUrls: '["assets/products/sony_xm5.jpg"]',
+        imageUrl: 'packages/ibul_app/assets/products/sony_xm5.jpg',
+        imageUrls: '["packages/ibul_app/assets/products/sony_xm5.jpg"]',
         category: 'Elektronik',
         tags: '["Hızlı Kargo"]',
         description: 'Solar şarj teknolojisi ile akıllı saat',
@@ -435,7 +540,7 @@ class FirestoreHelper {
     ];
     
     await insertProducts(products);
-    print('✅ ${products.length} ürün (fallback) eklendi');
+    debugPrint('✅ ${products.length} ürün (fallback) eklendi');
   }
 
   Future<void> _seedBanners() async {
@@ -445,7 +550,7 @@ class FirestoreHelper {
     // 2. Bannerları Ekle
     final banners = [
       DBBanner(
-        imageUrl: 'assets/images/banners/gorsel-zeka-banner.png',
+        imageUrl: 'packages/ibul_app/assets/images/banners/gorsel-zeka-banner.png',
         link: null,
         orderIndex: 1,
         type: 'main',
@@ -454,7 +559,7 @@ class FirestoreHelper {
         isActive: true,
       ),
       DBBanner(
-        imageUrl: 'assets/images/banners/yakin-lokasyon-banner.png',
+        imageUrl: 'packages/ibul_app/assets/images/banners/yakin-lokasyon-banner.png',
         link: null,
         orderIndex: 2,
         type: 'main',
@@ -465,9 +570,9 @@ class FirestoreHelper {
     ];
 
     for (var banner in banners) {
-      await _bannersRef.add(banner.toMap());
+      await _bannersRef.add(_normalizeFirestorePayload(banner.toMap()));
     }
-    print('✅ ${banners.length} banner eklendi');
+    debugPrint('✅ ${banners.length} banner eklendi');
   }
 
   Future<void> _seedCategories() async {
@@ -512,13 +617,14 @@ class FirestoreHelper {
 
     for (var category in categories) {
       // Kategori ID'si varsa onu kullan, yoksa otomatik
+      final payload = _normalizeFirestorePayload(category.toMap());
       if (category.id != null) {
-        await _categoriesRef.doc(category.id.toString()).set(category.toMap());
+        await _categoriesRef.doc(category.id.toString()).set(payload);
       } else {
-        await _categoriesRef.add(category.toMap());
+        await _categoriesRef.add(payload);
       }
     }
-    print('✅ ${categories.length} kategori eklendi');
+    debugPrint('✅ ${categories.length} kategori eklendi');
   }
 
   // ==================== UTILITY ====================

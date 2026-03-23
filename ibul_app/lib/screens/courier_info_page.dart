@@ -1,252 +1,252 @@
 import 'package:flutter/material.dart';
-import '../widgets/address_bar.dart';
 
-class CourierInfoPage extends StatefulWidget {
-  const CourierInfoPage({super.key});
+class CourierInfoPage extends StatelessWidget {
+  const CourierInfoPage({super.key, required this.trackingData});
 
-  @override
-  State<CourierInfoPage> createState() => _CourierInfoPageState();
-}
-
-class _CourierInfoPageState extends State<CourierInfoPage> {
-  bool isAtAddress = true;
+  final Map<String, dynamic> trackingData;
 
   @override
   Widget build(BuildContext context) {
-    final isWeb = MediaQuery.of(context).size.width >= 800;
+    final storeName = _readText(const ['store_name'], fallback: 'Mağaza');
+    final productName = _readText(const ['product_name'], fallback: 'Ürün');
+    final trackingNo = _readText(const ['tracking_number'], fallback: '-');
+    final normalizedStatus = _normalizeStatus(
+      _readText(const ['status', 'shipment_step'], fallback: ''),
+    );
+
+    final courierNameRaw = _readText(const [
+      'courier_name',
+      'courier_full_name',
+      'courier_display_name',
+    ], fallback: '');
+    final courierPhoneRaw = _readText(const ['courier_phone'], fallback: '');
+    final courierVehicleRaw = _readText(const [
+      'courier_vehicle',
+    ], fallback: '');
+    final courierNote = _readText(const [
+      'courier_note',
+      'courier_message',
+    ], fallback: '');
+    final hasCourierInfo =
+        courierNameRaw.isNotEmpty ||
+        courierPhoneRaw.isNotEmpty ||
+        courierVehicleRaw.isNotEmpty;
+
+    final courierName = courierNameRaw.isEmpty
+        ? 'Bilgi paylaşılmadı'
+        : courierNameRaw;
+    final courierPhone = courierPhoneRaw.isEmpty
+        ? 'Bilgi paylaşılmadı'
+        : courierPhoneRaw;
+    final courierVehicle = courierVehicleRaw.isEmpty
+        ? 'Bilgi paylaşılmadı'
+        : courierVehicleRaw;
 
     return Scaffold(
-      backgroundColor: isWeb ? Colors.grey.shade100 : Colors.white,
+      backgroundColor: const Color(0xFFF4F5F8),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF4A00E0), // Deep purple matching the image
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
+        backgroundColor: const Color(0xFF4A00E0),
+        foregroundColor: Colors.white,
         title: const Text(
-          'Kurye Bilgi',
-          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+          'Kurye Bilgisi',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
         ),
         centerTitle: true,
-        elevation: 0,
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: isWeb ? 600 : double.infinity,
-          ),
-          child: SingleChildScrollView(
-            padding: EdgeInsets.all(isWeb ? 24 : 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(isWeb ? 16 : 0),
-                    boxShadow: isWeb
-                        ? [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.06),
-                              blurRadius: 12,
-                              offset: const Offset(0, 6),
-                            ),
-                          ]
-                        : null,
-                    border: isWeb ? Border.all(color: Colors.grey.shade200) : null,
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.all(isWeb ? 20 : 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Kurye',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
-                        ),
-                        const Divider(),
-                        _buildInfoRow(
-                          icon: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF4A00E0),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Center(
-                              child: Text('BP', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                            ),
-                          ),
-                          title: 'Kurye',
-                          subtitle: 'Baran Kananoğulları',
-                        ),
-                        const Divider(),
-                        _buildInfoRow(
-                          icon: const SizedBox(
-                            width: 40,
-                            child: Icon(Icons.delivery_dining, color: Color(0xFF4A00E0), size: 28),
-                          ),
-                          title: 'Teslimat',
-                          subtitle: 'Tahmini 4 Saate Adresteyiz',
-                        ),
-                        const Divider(),
-                        _buildInfoRow(
-                          icon: const SizedBox(
-                            width: 40,
-                            child: Icon(Icons.phone_in_talk_outlined, color: Color(0xFF4A00E0), size: 28),
-                          ),
-                          title: 'İletişim Bilgisi',
-                          subtitle: '0537 624 7077',
-                        ),
-                        const Divider(),
-                        _buildInfoRow(
-                          icon: const SizedBox(
-                            width: 40,
-                            child: Icon(Icons.moped, color: Color(0xFF4A00E0), size: 28),
-                          ),
-                          title: 'Araç',
-                          subtitle: 'Motor (31 İAB 111)',
-                        ),
-                        const Divider(),
-                        _buildInfoRow(
-                          icon: const SizedBox(
-                            width: 40,
-                            child: Icon(Icons.map_outlined, color: Color(0xFF4A00E0), size: 28),
-                          ),
-                          title: 'Ücretlendirme',
-                          subtitle: 'Km başında 6,30 TL',
-                          hasArrow: true,
-                        ),
-                        const Divider(),
-                        const SizedBox(height: 24),
-                        const Text(
-                          'Adres',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
-                        ),
-                        const Divider(),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          child: Row(
-                            children: [
-                              const SizedBox(
-                                width: 40,
-                                child: Icon(Icons.home_outlined, color: Color(0xFF4A00E0), size: 30),
-                              ),
-                              const SizedBox(width: 12),
-                              const Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Adresteyim',
-                                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
-                                    ),
-                                    SizedBox(height: 2),
-                                    Text(
-                                      'Adresimi Doğrula',
-                                      style: TextStyle(fontSize: 13, color: Colors.black54),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Switch(
-                                value: isAtAddress,
-                                activeThumbColor: const Color(0xFF4A00E0),
-                                onChanged: (val) {
-                                  setState(() {
-                                    isAtAddress = val;
-                                  });
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Divider(),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12.0),
-                          child: InkWell(
-                            onTap: () {
-                              showModalBottomSheet(
-                                context: context,
-                                isScrollControlled: true,
-                                shape: const RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                                ),
-                                builder: (context) => const AddressSelectionSheet(),
-                              );
-                            },
-                            child: Row(
-                              children: [
-                                const SizedBox(
-                                  width: 40,
-                                  child: Icon(Icons.add, color: Color(0xFF4A00E0), size: 30),
-                                ),
-                                const SizedBox(width: 12),
-                                const Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Adres Değiştir',
-                                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
-                                      ),
-                                      SizedBox(height: 2),
-                                      Text(
-                                        'Yeni adres ekle',
-                                        style: TextStyle(fontSize: 13, color: Colors.black54),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF5B12F0), Color(0xFF3B0AC0)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$storeName • $productName',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 6),
+                  Text(
+                    'Takip no: $trackingNo',
+                    style: const TextStyle(
+                      color: Color(0xFFEDE7FF),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE4E7EC)),
+              ),
+              child: Column(
+                children: [
+                  _buildInfoRow(
+                    icon: Icons.person_outline_rounded,
+                    title: _courierRoleTitle(normalizedStatus),
+                    value: courierName,
+                  ),
+                  _buildDivider(),
+                  _buildInfoRow(
+                    icon: Icons.phone_in_talk_outlined,
+                    title: 'Telefon',
+                    value: courierPhone,
+                  ),
+                  _buildDivider(),
+                  _buildInfoRow(
+                    icon: Icons.two_wheeler_outlined,
+                    title: 'Araç',
+                    value: courierVehicle,
+                  ),
+                  _buildDivider(),
+                  _buildInfoRow(
+                    icon: Icons.local_shipping_outlined,
+                    title: 'Sipariş Durumu',
+                    value: _statusTitle(normalizedStatus),
+                  ),
+                ],
+              ),
+            ),
+            if (courierNote.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F9FC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE4E7EC)),
+                ),
+                child: Text(
+                  'Kurye Notu: $courierNote',
+                  style: const TextStyle(
+                    color: Color(0xFF344054),
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+            if (!hasCourierInfo) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFAEB),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFEC84B)),
+                ),
+                child: const Text(
+                  'Kurye bilgisi henüz sisteme işlenmedi.',
+                  style: TextStyle(
+                    color: Color(0xFF7A2E0B),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
   }
 
   Widget _buildInfoRow({
-    required Widget icon,
+    required IconData icon,
     required String title,
-    required String subtitle,
-    bool hasArrow = false,
+    required String value,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12.0),
-      child: Row(
-        children: [
-          icon,
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: const Color(0xFF5B12F0), size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF667085),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(fontSize: 13, color: Colors.black54),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: Color(0xFF101828),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          if (hasArrow)
-            const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
-        ],
-      ),
+        ),
+      ],
     );
+  }
+
+  Widget _buildDivider() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 12),
+      child: Divider(height: 1),
+    );
+  }
+
+  String _readText(List<String> keys, {required String fallback}) {
+    for (final key in keys) {
+      final value = trackingData[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return fallback;
+  }
+
+  String _normalizeStatus(String raw) {
+    final value = raw.trim().toLowerCase();
+    if (value == 'shipped') return 'out_for_delivery';
+    return value;
+  }
+
+  String _courierRoleTitle(String status) {
+    if (status == 'delivered') return 'Teslim Eden Kurye';
+    return 'Ürünü Teslim Alan Kurye';
+  }
+
+  String _statusTitle(String status) {
+    switch (status) {
+      case 'out_for_delivery':
+        return 'Dağıtımda';
+      case 'delivered':
+        return 'Teslim Edildi';
+      case 'cancelled':
+        return 'İptal Edildi';
+      default:
+        return 'Güncellendi';
+    }
   }
 }

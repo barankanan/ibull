@@ -1,14 +1,18 @@
-
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import '../core/constants.dart';
-import '../screens/cart_page.dart';
-import '../screens/account_page.dart';
-import '../screens/favorites_page.dart';
-import '../screens/notifications_page.dart';
+import 'package:provider/provider.dart';
 import '../core/app_state.dart';
+import '../core/constants.dart';
+import '../screens/notifications_page.dart';
+import '../core/route_observer.dart';
+import 'web_header_menu_items.dart';
 import 'search_overlay.dart';
 import 'advanced_filter_drawer.dart';
+import '../screens/map_page.dart';
+import '../screens/product_detail_page.dart';
+import '../screens/camera_page.dart';
+
+const bool _kDebugHeaderOverlayTint = true;
 
 class WebHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
@@ -30,23 +34,44 @@ class WebHeader extends StatefulWidget {
   State<WebHeader> createState() => _WebHeaderState();
 }
 
-class _WebHeaderState extends State<WebHeader> {
+class _WebHeaderState extends State<WebHeader> with RouteAware {
   final ScrollController _categoryScrollController = ScrollController();
   final LayerLink _layerLink = LayerLink();
   final FocusNode _searchFocusNode = FocusNode();
   OverlayEntry? _overlayEntry;
   final TextEditingController _searchController = TextEditingController();
+  final ValueNotifier<String> _queryNotifier = ValueNotifier('');
+  ModalRoute<dynamic>? _route;
 
   @override
   void initState() {
     super.initState();
     if (widget.initialQuery != null) {
       _searchController.text = widget.initialQuery!;
+      _queryNotifier.value = widget.initialQuery!;
     }
     _searchFocusNode.addListener(_onFocusChange);
+    _searchController.addListener(_onSearchTextChanged);
+  }
+
+  void _onSearchTextChanged() {
+    _queryNotifier.value = _searchController.text;
+    _refreshOverlayEntry();
+  }
+
+  @override
+  void didUpdateWidget(covariant WebHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextQuery = widget.initialQuery ?? '';
+    final previousQuery = oldWidget.initialQuery ?? '';
+    if (nextQuery != previousQuery && _searchController.text != nextQuery) {
+      _searchController.text = nextQuery;
+      _queryNotifier.value = nextQuery;
+    }
   }
 
   void _onFocusChange() {
+    _refreshOverlayEntry();
     if (_searchFocusNode.hasFocus) {
       _showOverlay();
     } else {
@@ -66,7 +91,8 @@ class _WebHeaderState extends State<WebHeader> {
       _hideOverlay();
     }
 
-    final RenderBox renderBox = _searchKey.currentContext!.findRenderObject() as RenderBox;
+    final RenderBox renderBox =
+        _searchKey.currentContext!.findRenderObject() as RenderBox;
     final size = renderBox.size;
 
     _overlayEntry = OverlayEntry(
@@ -76,18 +102,32 @@ class _WebHeaderState extends State<WebHeader> {
           link: _layerLink,
           showWhenUnlinked: false,
           offset: const Offset(0, 50), // Height of bar (48) + spacing (2)
-          child: Material(
-            elevation: 8,
-            borderRadius: BorderRadius.circular(12),
-            child: SearchOverlay(
-              onClose: _hideOverlay,
-              onSearch: (query) {
-                _searchController.text = query;
-                widget.onSearch(query);
-                _searchFocusNode.unfocus();
-                _hideOverlay();
-              },
-              showFilters: showFilters,
+          child: IgnorePointer(
+            ignoring: !_shouldOverlayReceivePointers,
+            child: ColoredBox(
+              color: _kDebugHeaderOverlayTint
+                  ? const Color(0x44FF0000)
+                  : Colors.transparent,
+              child: Material(
+                elevation: 8,
+                borderRadius: BorderRadius.circular(12),
+                child: SearchOverlay(
+                  queryListenable: _queryNotifier,
+                  onClose: _hideOverlay,
+                  onSearch: (query) => _submitSearch(query),
+                  onProductTap: (product) {
+                    context.read<AppState>().addRecentlyViewedProduct(product);
+                    _searchFocusNode.unfocus();
+                    _hideOverlay();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ProductDetailPage(product: product),
+                      ),
+                    );
+                  },
+                  showFilters: showFilters,
+                ),
+              ),
             ),
           ),
         ),
@@ -102,15 +142,78 @@ class _WebHeaderState extends State<WebHeader> {
     _overlayEntry = null;
   }
 
+  bool get _shouldOverlayReceivePointers {
+    final isCurrentRoute = _route?.isCurrent ?? true;
+    return mounted && isCurrentRoute && _searchFocusNode.hasFocus;
+  }
+
+  void _refreshOverlayEntry() {
+    _overlayEntry?.markNeedsBuild();
+  }
+
+  void _submitSearch([String? rawValue]) {
+    final query = (rawValue ?? _searchController.text).trim();
+    if (query.isEmpty) return;
+
+    context.read<AppState>().addSearchHistory(query);
+    _searchController.text = query;
+    _queryNotifier.value = query;
+    _searchFocusNode.unfocus();
+    _hideOverlay();
+    Future.microtask(() {
+      if (!mounted) return;
+      try {
+        widget.onSearch(query);
+      } catch (error, stackTrace) {
+        debugPrint('WebHeader search submit failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route == null || route == _route) {
+      return;
+    }
+    if (_route != null) {
+      routeObserver.unsubscribe(this);
+    }
+    _route = route;
+    if (route is PageRoute) {
+      routeObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPushNext() {
+    _refreshOverlayEntry();
+    _searchFocusNode.unfocus();
+    _hideOverlay();
+  }
+
+  @override
+  void deactivate() {
+    _refreshOverlayEntry();
+    _searchFocusNode.unfocus();
+    _hideOverlay();
+    super.deactivate();
+  }
+
   @override
   void dispose() {
+    routeObserver.unsubscribe(this);
     _categoryScrollController.dispose();
+    _searchFocusNode.removeListener(_onFocusChange);
     _searchFocusNode.dispose();
+    _searchController.removeListener(_onSearchTextChanged);
     _searchController.dispose();
+    _queryNotifier.dispose();
     _hideOverlay();
     super.dispose();
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -133,27 +236,25 @@ class _WebHeaderState extends State<WebHeader> {
             children: [
               // 1. Logo
               _buildLogo(),
-              
+
               const SizedBox(width: 48),
-              
+
               // 2. Search Bar
-              Expanded(
-                child: _buildSearchBar(),
-              ),
-              
+              Expanded(child: _buildSearchBar()),
+
               const SizedBox(width: 32),
-              
+
               // 3. Location (Konum)
               _buildLocation(),
-              
+
               const SizedBox(width: 32),
 
               // 4. Menu Items (Hesabım, Favorilerim, Sepetim)
-              _buildMenuItems(context),
+              WebHeaderMenuItems(activeMenu: widget.activeMenu),
             ],
           ),
         ),
-        
+
         // Kategori Menüsü (Alt Bar)
         _buildCategoryBar(),
       ],
@@ -173,13 +274,27 @@ class _WebHeaderState extends State<WebHeader> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              borderRadius: BorderRadius.circular(8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.asset(
+              'assets/icons/ibul_logo_2.png',
+              width: 32,
+              height: 32,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.shopping_bag_outlined,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
             ),
-            child: const Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 24),
           ),
           const SizedBox(width: 8),
           Text(
@@ -189,7 +304,7 @@ class _WebHeaderState extends State<WebHeader> {
               fontWeight: FontWeight.w900,
               color: AppColors.primary,
               letterSpacing: -0.5,
-              fontFamily: 'Montserrat', 
+              fontFamily: 'Montserrat',
             ),
           ),
         ],
@@ -259,9 +374,7 @@ class _WebHeaderState extends State<WebHeader> {
         InkWell(
           onTap: () {
             Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const NotificationsPage(),
-              ),
+              MaterialPageRoute(builder: (_) => const NotificationsPage()),
             );
           },
           borderRadius: BorderRadius.circular(24),
@@ -279,7 +392,11 @@ class _WebHeaderState extends State<WebHeader> {
                 ),
               ],
             ),
-            child: const Icon(Icons.notifications_outlined, color: AppColors.primary, size: 20),
+            child: const Icon(
+              Icons.notifications_outlined,
+              color: AppColors.primary,
+              size: 20,
+            ),
           ),
         ),
         const SizedBox(width: 12),
@@ -304,10 +421,7 @@ class _WebHeaderState extends State<WebHeader> {
                       textAlign: TextAlign.start,
                       controller: _searchController,
                       focusNode: _searchFocusNode,
-                      onSubmitted: (value) {
-                        widget.onSearch(value);
-                        _hideOverlay();
-                      },
+                      onSubmitted: _submitSearch,
                       decoration: const InputDecoration(
                         hintText: 'Ürün, kategori veya marka ara...',
                         hintStyle: TextStyle(color: Colors.grey, fontSize: 14),
@@ -323,11 +437,18 @@ class _WebHeaderState extends State<WebHeader> {
 
                   InkWell(
                     onTap: () {
-                      // Kamera ikonu şimdilik davranışsız
+                      _searchFocusNode.unfocus();
+                      _hideOverlay();
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const CameraPage()),
+                      );
                     },
                     borderRadius: BorderRadius.circular(4),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 8,
+                      ),
                       child: const Icon(
                         Icons.photo_camera_outlined,
                         color: Colors.black54,
@@ -339,10 +460,7 @@ class _WebHeaderState extends State<WebHeader> {
                   const SizedBox(width: 8),
 
                   InkWell(
-                    onTap: () {
-                      widget.onSearch(_searchController.text);
-                      _hideOverlay();
-                    },
+                    onTap: () => _submitSearch(),
                     child: Container(
                       margin: const EdgeInsets.all(4),
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -375,16 +493,10 @@ class _WebHeaderState extends State<WebHeader> {
     return InkWell(
       onTap: () {
         // Navigate to MapPage
-        Navigator.pushNamed(context, '/map');
-        // Or if named route is not set up, use direct push:
-        // Navigator.push(context, MaterialPageRoute(builder: (context) => const MapPage()));
-        // Assuming '/map' or importing MapPage.
-        // Let's use MaterialPageRoute for safety as I don't see routes defined here.
-        // Need to import MapPage first? It is likely not imported. 
-        // I will rely on the fact that I need to add import or use named route if available.
-        // Let's check imports in next step or assume standard approach.
-        // I'll add the import in a separate block if needed, but for now let's just use the callback if possible or standard push.
-        // Since I can't easily check main.dart for routes right now without another read, I'll use a direct push and ensure import.
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const MapPage()),
+        );
       },
       child: Row(
         children: [
@@ -421,78 +533,22 @@ class _WebHeaderState extends State<WebHeader> {
       ),
     );
   }
-  
-  Widget _buildMenuItems(BuildContext context) {
-    final appState = AppState();
-    final activeMenu = widget.activeMenu;
-    
-    return Row(
-      children: [
-        _MenuItem(
-          icon: Icons.person_outline, 
-          label: 'Hesabım', 
-          isActive: activeMenu == 'account',
-          onTap: () {
-            Navigator.pushReplacement(
-              context,
-              PageRouteBuilder(
-                pageBuilder: (context, animation1, animation2) => const AccountPage(),
-                transitionDuration: Duration.zero,
-                reverseTransitionDuration: Duration.zero,
-              ),
-            );
-          }
-        ),
-        const SizedBox(width: 24),
-        _MenuItem(
-          icon: Icons.favorite_border, 
-          label: 'Favorilerim', 
-          isActive: activeMenu == 'favorites',
-          onTap: () {
-            Navigator.pushReplacement(
-              context,
-              PageRouteBuilder(
-                pageBuilder: (context, animation1, animation2) => const FavoritesPage(),
-                transitionDuration: Duration.zero,
-                reverseTransitionDuration: Duration.zero,
-              ),
-            );
-          }
-        ),
-        const SizedBox(width: 24),
-        ValueListenableBuilder<int>(
-          valueListenable: appState.cartCountNotifier,
-          builder: (context, count, child) {
-            return _MenuItem(
-              icon: Icons.shopping_cart_outlined, 
-              label: 'Sepetim', 
-              isActive: activeMenu == 'cart',
-              badgeCount: count > 0 ? count : null, 
-              onTap: () {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) => const CartPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
-              }
-            );
-          },
-        ),
-      ],
-    );
-  }
-  
+
   Widget _buildCategoryBar() {
     final categories = [
-      'Yakın Lokasyon', 'Erkek', 'Kadın', 'Elektronik', 
-      'Ayakkabı & Çanta', 'Saat & Aksesuar',
-      'Ev & Yaşam', 'Kırtasiye & Ofis',
-      'Oto, Bahçe, Yapı Market', 'Oyuncak, Müzik, Film', 
-      'Spor & Outdoor', 'Kozmetik & Kişisel Bakım', 
-      'Pet Shop'
+      'Yakın Lokasyon',
+      'Erkek',
+      'Kadın',
+      'Elektronik',
+      'Ayakkabı & Çanta',
+      'Saat & Aksesuar',
+      'Ev & Yaşam',
+      'Kırtasiye & Ofis',
+      'Oto, Bahçe, Yapı Market',
+      'Oyuncak, Müzik, Film',
+      'Spor & Outdoor',
+      'Kozmetik & Kişisel Bakım',
+      'Pet Shop',
     ];
 
     return Container(
@@ -510,89 +566,111 @@ class _WebHeaderState extends State<WebHeader> {
             child: Stack(
               alignment: Alignment.centerLeft,
               children: [
-              ScrollConfiguration(
-                behavior: ScrollConfiguration.of(context).copyWith(
-                  dragDevices: {
-                    PointerDeviceKind.touch,
-                    PointerDeviceKind.mouse,
-                  },
-                ),
-                child: ListView.separated(
-                  controller: _categoryScrollController,
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.only(left: 24, right: 60),
-                  itemCount: categories.length,
-                  shrinkWrap: true,
-                  separatorBuilder: (context, index) => const SizedBox(width: 32),
-                  itemBuilder: (context, index) {
-                    final category = categories[index];
-                    final isSelected = widget.selectedCategory == category;
-                    return InkWell(
-                      onTap: () => widget.onCategorySelected?.call(category),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-                        decoration: BoxDecoration(
-                          border: isSelected 
-                            ? const Border(bottom: BorderSide(color: AppColors.primary, width: 2)) 
-                            : null,
-                        ),
-                        child: Text(
-                          category,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: isSelected ? AppColors.primary : Colors.grey[800],
+                ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context).copyWith(
+                    dragDevices: {
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                    },
+                  ),
+                  child: ListView.separated(
+                    controller: _categoryScrollController,
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.only(left: 24, right: 60),
+                    itemCount: categories.length,
+                    shrinkWrap: true,
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 32),
+                    itemBuilder: (context, index) {
+                      final category = categories[index];
+                      final isSelected = widget.selectedCategory == category;
+                      return InkWell(
+                        onTap: () {
+                          if (category == 'Yakın Lokasyon') {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const MapPage(),
+                              ),
+                            );
+                          } else {
+                            widget.onCategorySelected?.call(category);
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 4,
+                            horizontal: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            border: isSelected
+                                ? const Border(
+                                    bottom: BorderSide(
+                                      color: AppColors.primary,
+                                      width: 2,
+                                    ),
+                                  )
+                                : null,
+                          ),
+                          child: Text(
+                            category,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: isSelected
+                                  ? AppColors.primary
+                                  : Colors.grey[800],
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              Positioned(
-                right: 0,
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.centerRight,
-                      end: Alignment.centerLeft,
-                      colors: [
-                        Colors.white,
-                        Colors.white.withOpacity(0.0),
-                      ],
-                      stops: const [0.5, 1.0],
-                    ),
+                      );
+                    },
                   ),
-                  padding: const EdgeInsets.only(left: 20),
+                ),
+                Positioned(
+                  right: 0,
                   child: Container(
-                    width: 32,
-                    height: 32,
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                      gradient: LinearGradient(
+                        begin: Alignment.centerRight,
+                        end: Alignment.centerLeft,
+                        colors: [Colors.white, Colors.white.withOpacity(0.0)],
+                        stops: const [0.5, 1.0],
+                      ),
                     ),
-                    child: IconButton(
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.chevron_right, color: AppColors.primary),
-                      onPressed: () {
-                        _categoryScrollController.animateTo(
-                          _categoryScrollController.offset + 200,
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                        );
-                      },
+                    padding: const EdgeInsets.only(left: 20),
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(
+                          Icons.chevron_right,
+                          color: AppColors.primary,
+                        ),
+                        onPressed: () {
+                          _categoryScrollController.animateTo(
+                            _categoryScrollController.offset + 200,
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
             ),
           ),
         ),
@@ -604,9 +682,7 @@ class _WebHeaderState extends State<WebHeader> {
 class _NotificationsPopup extends StatefulWidget {
   final VoidCallback onClose;
 
-  const _NotificationsPopup({
-    required this.onClose,
-  });
+  const _NotificationsPopup({required this.onClose});
 
   @override
   State<_NotificationsPopup> createState() => _NotificationsPopupState();
@@ -676,10 +752,7 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
             ),
             const SizedBox(height: 8),
             const Divider(height: 1),
-            SizedBox(
-              height: 260,
-              child: _buildTabContent(),
-            ),
+            SizedBox(height: 260, child: _buildTabContent()),
           ],
         ),
       ),
@@ -795,7 +868,8 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
       children: [
         _buildMessageItem(
           sender: 'Teknosa',
-          preview: 'Merhaba, ürünle ilgili sorunu yardımcı olmak için buradayız.',
+          preview:
+              'Merhaba, ürünle ilgili sorunu yardımcı olmak için buradayız.',
           time: '2 sa önce',
         ),
         const SizedBox(height: 12),
@@ -824,7 +898,11 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
             color: AppColors.primary.withOpacity(0.06),
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.notifications, size: 18, color: AppColors.primary),
+          child: const Icon(
+            Icons.notifications,
+            size: 18,
+            color: AppColors.primary,
+          ),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -846,25 +924,22 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
                   const SizedBox(width: 8),
                   Text(
                     time,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey,
-                    ),
+                    style: const TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                 ],
               ),
               const SizedBox(height: 4),
               Text(
                 subtitle,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Colors.black87,
-                ),
+                style: const TextStyle(fontSize: 12, color: Colors.black87),
               ),
               if (isNew) ...[
                 const SizedBox(height: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(20),
@@ -901,7 +976,11 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
             color: Colors.orange.withOpacity(0.08),
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.visibility_outlined, size: 18, color: Colors.orange),
+          child: const Icon(
+            Icons.visibility_outlined,
+            size: 18,
+            color: Colors.orange,
+          ),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -920,7 +999,10 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(20),
@@ -992,10 +1074,7 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
                   const SizedBox(width: 8),
                   Text(
                     time,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey,
-                    ),
+                    style: const TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                 ],
               ),
@@ -1004,81 +1083,12 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
                 preview,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Colors.black87,
-                ),
+                style: const TextStyle(fontSize: 12, color: Colors.black87),
               ),
             ],
           ),
         ),
       ],
-    );
-  }
-
-}
-
-class _MenuItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final int? badgeCount;
-   final bool isActive;
-
-  const _MenuItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.badgeCount,
-    this.isActive = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final Color color = isActive ? AppColors.primary : Colors.black87;
-
-    return InkWell(
-      onTap: onTap,
-      hoverColor: Colors.transparent,
-      child: Row(
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(icon, color: color, size: 20),
-              if (badgeCount != null)
-                  Positioned(
-                  right: -6,
-                  top: -6,
-                  child: Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: const BoxDecoration(
-                      color: AppColors.primary,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      badgeCount.toString(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              color: color,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

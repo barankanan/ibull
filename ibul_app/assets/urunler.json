@@ -35,9 +35,9 @@
     "varyant_grup_id": "IPHONE15-TEKNOSA",
     "varyant_secenekler": "Renk:Mavi|Depolama:256GB",
     "gorseller": [
-      "assets/products/iphone15_mavi_256gb.png",
-      "assets/products/iphone15_mavi_yan.webp",
-      "assets/products/iphone15_mavi_512gb.png"
+      "packages/ibul_app/assets/products/iphone15_mavi_256gb.png",
+      "packages/ibul_app/assets/products/iphone15_mavi_yan.webp",
+      "packages/ibul_app/assets/products/iphone15_mavi_512gb.png"
     ]
   },
   {
@@ -76,8 +76,8 @@
     "varyant_grup_id": "IPHONE15-TEKNOSA",
     "varyant_secenekler": "Renk:Beyaz|Depolama:256GB",
     "gorseller": [
-      "assets/products/iphone15promax beyaz.webp",
-      "assets/products/iphone15promax1Tb.jpeg"
+      "packages/ibul_app/assets/products/iphone15promax beyaz.webp",
+      "packages/ibul_app/assets/products/iphone15promax1Tb.jpeg"
     ]
   },
   {
@@ -116,8 +116,8 @@
     "varyant_grup_id": "IPHONE15-TEKNOSA",
     "varyant_secenekler": "Renk:Mavi|Depolama:512GB",
     "gorseller": [
-      "assets/products/iphone15_mavi_512gb.png",
-      "assets/products/iphone15_mavi_yan.webp"
+      "packages/ibul_app/assets/products/iphone15_mavi_512gb.png",
+      "packages/ibul_app/assets/products/iphone15_mavi_yan.webp"
     ]
   },
   {
@@ -150,8 +150,8 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/macbook_pro_m3_space_black.jpg",
-      "assets/products/macbook_pro_m3_back.jpg"
+      "packages/ibul_app/assets/products/macbook_pro_m3_space_black.jpg",
+      "packages/ibul_app/assets/products/macbook_pro_m3_back.jpg"
     ]
   },
   {
@@ -185,8 +185,8 @@
     "varyant_grup_id": "SAMSUNG-S24-QUEEN",
     "varyant_secenekler": "Renk:Titanyum Siyah|Depolama:512GB",
     "gorseller": [
-      "assets/products/s24_siyah_512gb.png",
-      "assets/products/s24_siyah_256gb.jpg"
+      "packages/ibul_app/assets/products/s24_siyah_512gb.png",
+      "packages/ibul_app/assets/products/s24_siyah_256gb.jpg"
     ]
   },
   {
@@ -217,7 +217,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/sony_xm5.jpg"
+      "packages/ibul_app/assets/products/sony_xm5.jpg"
     ]
   },
   {
@@ -248,7 +248,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/canon_r6.jpeg"
+      "packages/ibul_app/assets/products/canon_r6.jpeg"
     ]
   },
   {
@@ -282,7 +282,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/nike_airmax90.jpeg"
+      "packages/ibul_app/assets/products/nike_airmax90.jpeg"
     ]
   },
   {
@@ -315,7 +315,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/adidas_ultraboost.jpeg"
+      "packages/ibul_app/assets/products/adidas_ultraboost.jpeg"
     ]
   },
   {
@@ -348,7 +348,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/zara_blazer.jpg"
+      "packages/ibul_app/assets/products/zara_blazer.jpg"
     ]
   },
   {
@@ -380,7 +380,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Mavi Erkek Kot Pantolon.jpeg"
+      "packages/ibul_app/assets/products/Mavi Erkek Kot Pantolon.jpeg"
     ]
   },
   {
@@ -412,7 +412,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Chicco Bebek Arabası.jpeg"
+      "packages/ibul_app/assets/products/Chicco Bebek Arabası.jpeg"
     ]
   },
   {
@@ -443,7 +443,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Dior Sauvage EDT.jpeg"
+      "packages/ibul_app/assets/products/Dior Sauvage EDT.jpeg"
     ]
   },
   {
@@ -476,7 +476,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Ikea Billy Kitaplık.jpeg"
+      "packages/ibul_app/assets/products/Ikea Billy Kitaplık.jpeg"
     ]
   },
   {
@@ -508,7 +508,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Haruki Murakami 1Q84.jpeg"
+      "packages/ibul_app/assets/products/Haruki Murakami 1Q84.jpeg"
     ]
   },
   {
@@ -539,7 +539,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Nutella 750g.jpeg"
+      "packages/ibul_app/assets/products/Nutella 750g.jpeg"
     ]
   },
   {
@@ -571,7 +571,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/iphone13_hasarli.webp"
+      "packages/ibul_app/assets/products/iphone13_hasarli.webp"
     ]
   },
   {
@@ -601,7 +601,7 @@
     ],
     "parca_mi": 1,
     "gorseller": [
-      "assets/products/iPhone 13 Ekran Parçası.jpeg"
+      "packages/ibul_app/assets/products/iPhone 13 Ekran Parçası.jpeg"
     ]
   },
   {
@@ -634,7 +634,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Elseve Şampuan Glycolic Gloss.jpeg"
+      "packages/ibul_app/assets/products/Elseve Şampuan Glycolic Gloss.jpeg"
     ]
   },
   {
@@ -668,7 +668,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Urban Care Biotin & Kafein Tonik.jpeg"
+      "packages/ibul_app/assets/products/Urban Care Biotin & Kafein Tonik.jpeg"
     ]
   },
   {
@@ -699,7 +699,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Morfose Milk Therapy Saç Köpüğü.jpeg"
+      "packages/ibul_app/assets/products/Morfose Milk Therapy Saç Köpüğü.jpeg"
     ]
   },
   {
@@ -730,7 +730,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Finish Bulaşık Tableti.jpeg"
+      "packages/ibul_app/assets/products/Finish Bulaşık Tableti.jpeg"
     ]
   },
   {
@@ -761,7 +761,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Mood Onarıcı Saç Şampuanı.jpeg"
+      "packages/ibul_app/assets/products/Mood Onarıcı Saç Şampuanı.jpeg"
     ]
   },
   {
@@ -794,7 +794,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Head & Shoulders Mentol Ferahlığı Şampuan.jpeg"
+      "packages/ibul_app/assets/products/Head & Shoulders Mentol Ferahlığı Şampuan.jpeg"
     ]
   },
   {
@@ -827,7 +827,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Dove Yoğun Onarım Şampuan.jpeg"
+      "packages/ibul_app/assets/products/Dove Yoğun Onarım Şampuan.jpeg"
     ]
   },
   {
@@ -860,7 +860,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Clear Men Güçlü & Parlak Şampuan.jpeg"
+      "packages/ibul_app/assets/products/Clear Men Güçlü & Parlak Şampuan.jpeg"
     ]
   },
   {
@@ -893,7 +893,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Urban Care Argan Oil Şampuan.jpeg"
+      "packages/ibul_app/assets/products/Urban Care Argan Oil Şampuan.jpeg"
     ]
   },
   {
@@ -926,7 +926,7 @@
     ],
     "parca_mi": 0,
     "gorseller": [
-      "assets/products/Urban Care Hyaluronic Şampuan.jpg"
+      "packages/ibul_app/assets/products/Urban Care Hyaluronic Şampuan.jpg"
     ]
   }
 ]

@@ -67,7 +67,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '926056125070',
     projectId: 'ibul-ecommerce',
     storageBucket: 'ibul-ecommerce.firebasestorage.app',
-    iosBundleId: 'com.example.ibulApp',
+    iosBundleId: 'com.ibul.app',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -76,6 +76,6 @@ class DefaultFirebaseOptions {
     messagingSenderId: '926056125070',
     projectId: 'ibul-ecommerce',
     storageBucket: 'ibul-ecommerce.firebasestorage.app',
-    iosBundleId: 'com.example.ibulApp',
+    iosBundleId: 'com.ibul.app',
   );
 }

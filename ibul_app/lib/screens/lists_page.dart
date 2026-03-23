@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+
+import '../core/app_state.dart';
 import '../core/constants.dart';
 import 'list_detail_page.dart';
 
-/// Kullanıcının oluşturduğu listeleri gösteren sayfa
 class ListsPage extends StatefulWidget {
   const ListsPage({super.key});
 
@@ -11,39 +12,68 @@ class ListsPage extends StatefulWidget {
 }
 
 class _ListsPageState extends State<ListsPage> {
-  // Dummy data for lists
-  final List<Map<String, dynamic>> _lists = [
-    {
-      'id': 1,
-      'name': 'Old Money Listesi',
-      'coverImage': 'https://via.placeholder.com/400x200.png?text=Old+Money',
-      'logo': 'https://via.placeholder.com/60x60.png?text=OM',
-      'memberCount': 629,
-      'description': 'Burada Eski Tarz Ürünleri Bulabilir Ve Detaylı Bilgi Alabilirsin',
-      'itemCount': 12,
-    },
-    {
-      'id': 2,
-      'name': 'Teknoloji Ürünleri',
-      'coverImage': 'https://via.placeholder.com/400x200.png?text=Tech',
-      'logo': 'https://via.placeholder.com/60x60.png?text=T',
-      'memberCount': 453,
-      'description': 'En yeni teknoloji ürünleri ve akıllı cihazlar',
-      'itemCount': 8,
-    },
-    {
-      'id': 3,
-      'name': 'Ev Dekorasyonu',
-      'coverImage': 'https://via.placeholder.com/400x200.png?text=Home+Decor',
-      'logo': 'https://via.placeholder.com/60x60.png?text=HD',
-      'memberCount': 321,
-      'description': 'Modern ve şık ev dekorasyon ürünleri',
-      'itemCount': 15,
-    },
-  ];
+  final AppState _appState = AppState();
+
+  @override
+  void initState() {
+    super.initState();
+    _appState.addListener(_handleStateChanged);
+  }
+
+  @override
+  void dispose() {
+    _appState.removeListener(_handleStateChanged);
+    super.dispose();
+  }
+
+  void _handleStateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _showCreateListDialog() {
+    final controller = TextEditingController();
+    final descController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Yeni Liste Oluştur'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(hintText: 'Liste adı'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: descController,
+              decoration: const InputDecoration(hintText: 'Açıklama'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('İptal'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isEmpty) return;
+              _appState.createUserList(name, descController.text.trim());
+              Navigator.pop(context);
+            },
+            child: const Text('Oluştur'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final lists = _appState.userLists;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -65,20 +95,16 @@ class _ListsPageState extends State<ListsPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.add, color: AppColors.primary),
-            onPressed: () {
-              // Yeni liste oluştur
-            },
+            onPressed: _showCreateListDialog,
           ),
         ],
       ),
-      body: _lists.isEmpty
+      body: lists.isEmpty
           ? _buildEmptyState()
           : ListView.builder(
               padding: const EdgeInsets.all(16),
-              itemCount: _lists.length,
-              itemBuilder: (context, index) {
-                return _buildListCard(_lists[index]);
-              },
+              itemCount: lists.length,
+              itemBuilder: (context, index) => _buildListCard(lists[index]),
             ),
     );
   }
@@ -101,16 +127,11 @@ class _ListsPageState extends State<ListsPage> {
           const SizedBox(height: 8),
           Text(
             'Beğendiğiniz ürünleri listelerinize ekleyin',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[500],
-            ),
+            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
           const SizedBox(height: 24),
           ElevatedButton(
-            onPressed: () {
-              // Yeni liste oluştur
-            },
+            onPressed: _showCreateListDialog,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
@@ -132,145 +153,84 @@ class _ListsPageState extends State<ListsPage> {
   }
 
   Widget _buildListCard(Map<String, dynamic> list) {
+    final coverImage = list['coverImage']?.toString() ?? '';
     return GestureDetector(
       onTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (context) => ListDetailPage(listData: list),
-          ),
+          MaterialPageRoute(builder: (_) => ListDetailPage(listData: list)),
         );
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Cover Image
-            Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                  child: Image.network(
-                    list['coverImage'],
-                    width: double.infinity,
-                    height: 120,
-                    fit: BoxFit.cover,
-                  ),
+            Container(
+              height: 118,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(18),
                 ),
-                // Logo overlay
-                Positioned(
-                  left: 16,
-                  bottom: -20,
-                  child: Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 3),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 8,
-                        ),
-                      ],
-                    ),
-                    child: ClipOval(
-                      child: Image.network(
-                        list['logo'],
-                        fit: BoxFit.cover,
+                color: const Color(0xFFF0EEF8),
+              ),
+              child: coverImage.isEmpty
+                  ? Icon(
+                      Icons.image_outlined,
+                      size: 38,
+                      color: Colors.grey[400],
+                    )
+                  : ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(18),
                       ),
+                      child: coverImage.startsWith('http')
+                          ? Image.network(coverImage, fit: BoxFit.cover)
+                          : Image.asset(coverImage, fit: BoxFit.cover),
                     ),
-                  ),
-                ),
-              ],
             ),
-            
-            const SizedBox(height: 28),
-            
-            // List Info
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.all(14),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          list['name'],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          list['name']?.toString() ?? 'Listem',
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
-                            color: Colors.black87,
                           ),
                         ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${list['itemCount'] ?? 0} ürün',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.person, size: 14, color: AppColors.primary),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${list['memberCount']} Kişi üye',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: AppColors.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    list['description'],
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey[600],
-                      height: 1.3,
+                      ],
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Icon(Icons.bookmark, size: 16, color: Colors.grey[500]),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${list['itemCount']} Ürün',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
+                  const Icon(Icons.chevron_right, color: AppColors.primary),
                 ],
               ),
             ),
-            
-            const SizedBox(height: 16),
           ],
         ),
       ),

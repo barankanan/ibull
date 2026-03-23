@@ -9,10 +9,15 @@
       "client_info": {
         "mobilesdk_app_id": "1:926056125070:android:5be2c001a895e7116cefdf",
         "android_client_info": {
-          "package_name": "com.example.ibul_app"
+          "package_name": "com.ibul.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "926056125070-vhmpff59pmeg9b917h39ug7ecqmi36da.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBir4mFOOwkTXj5ykRNFLkv_Gto9TyBT5M"
@@ -20,7 +25,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "926056125070-vhmpff59pmeg9b917h39ug7ecqmi36da.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "926056125070-acq3vnn137v06v53ebf1no2a4em1iqtv.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ibul.app"
+              }
+            }
+          ]
         }
       }
     }

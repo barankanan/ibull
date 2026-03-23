@@ -26,6 +26,10 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Yakın mağazaları göstermek ve mesafeyi hesaplamak için konum izni gereklidir.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Arka planda size yakın mağaza bildirimleri gönderebilmek için konum izni gereklidir.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

@@ -1,5 +1,6 @@
 class DBProduct {
-  final int? id;
+  final String? id;
+  final String? sellerId;
   final String name;
   final String brand;
   final String? store; // Mağaza adı
@@ -14,16 +15,32 @@ class DBProduct {
   final String tags; // JSON array - ["Ücretsiz Kargo", "İndirimde"]
   final String? keywords; // Anahtar kelimeler (arama için) - virgülle ayrılmış
   final String? description; // Ürün açıklaması
-  final String? specifications; // JSON object - {"RAM": "8GB", "Depolama": "256GB", "Ekran": "6.7 inç"}
+  final String?
+  specifications; // JSON object - {"RAM": "8GB", "Depolama": "256GB", "Ekran": "6.7 inç"}
   final bool isPart; // Parça mı? (2.el ürünler için)
-  final String? damagedParts; // Hasarlı parçalar (virgülle ayrılmış) - "ekran,batarya,kamera"
-  final String? variantGroupId; // Varyant grup ID'si - aynı grup ID'li ürünler varyant olarak gösterilir
-  final String? variantOptions; // Varyant seçenekleri (pipe ayrılmış) - "Renk:Siyah|Depolama:512GB"
+  final String?
+  damagedParts; // Hasarlı parçalar (virgülle ayrılmış) - "ekran,batarya,kamera"
+  final String?
+  variantGroupId; // Varyant grup ID'si - aynı grup ID'li ürünler varyant olarak gösterilir
+  final String?
+  variantOptions; // Varyant seçenekleri (pipe ayrılmış) - "Renk:Siyah|Depolama:512GB"
   final int? stock; // Stok miktarı
   final bool isActive; // Ürün aktif mi?
-  
+  final String? attributes;
+  final String? videoUrl; // Video URL (Supabase video_url)
+  final String? videoPath;
+  final String? videoPublicUrl;
+  final String? thumbnailPath;
+  final String? thumbnailPublicUrl;
+  final int? videoDurationSeconds;
+  final int? videoSizeBytes;
+  final int? thumbnailSizeBytes;
+  final String? videoStatus;
+  final dynamic variants; // JSON List (Supabase variants)
+
   DBProduct({
     this.id,
+    this.sellerId,
     required this.name,
     required this.brand,
     this.store,
@@ -45,12 +62,24 @@ class DBProduct {
     this.variantOptions,
     this.stock,
     this.isActive = true,
+    this.attributes,
+    this.videoUrl,
+    this.videoPath,
+    this.videoPublicUrl,
+    this.thumbnailPath,
+    this.thumbnailPublicUrl,
+    this.videoDurationSeconds,
+    this.videoSizeBytes,
+    this.thumbnailSizeBytes,
+    this.videoStatus,
+    this.variants,
   });
-  
+
   // Database'e kaydetmek için Map'e çevir
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'sellerId': sellerId,
       'name': name,
       'brand': brand,
       'store': store,
@@ -72,20 +101,34 @@ class DBProduct {
       'variantOptions': variantOptions,
       'stock': stock,
       'isActive': isActive ? 1 : 0,
+      'attributes': attributes,
+      'videoUrl': videoUrl,
+      'video_path': videoPath,
+      'video_public_url': videoPublicUrl,
+      'thumbnail_path': thumbnailPath,
+      'thumbnail_public_url': thumbnailPublicUrl,
+      'video_duration_seconds': videoDurationSeconds,
+      'video_size_bytes': videoSizeBytes,
+      'thumbnail_size_bytes': thumbnailSizeBytes,
+      'video_status': videoStatus,
+      'variants': variants,
     };
   }
-  
+
   // Database'den okumak için Map'ten oluştur
   factory DBProduct.fromMap(Map<String, dynamic> map) {
+    final isPartRaw = map['isPart'];
+    final isActiveRaw = map['isActive'];
     return DBProduct(
-      id: map['id'] as int?,
+      id: map['id']?.toString(),
+      sellerId: map['sellerId']?.toString() ?? map['seller_id']?.toString(),
       name: map['name'] as String,
       brand: map['brand'] as String,
       store: map['store'] as String?,
       price: map['price'] as String,
       oldPrice: map['oldPrice'] as String?,
-      rating: map['rating'] as double,
-      reviewCount: map['reviewCount'] as int,
+      rating: (map['rating'] as num).toDouble(),
+      reviewCount: (map['reviewCount'] as num).toInt(),
       imageUrl: map['imageUrl'] as String,
       imageUrls: map['imageUrls'] as String?,
       category: map['category'] as String,
@@ -94,18 +137,33 @@ class DBProduct {
       keywords: map['keywords'] as String?,
       description: map['description'] as String?,
       specifications: map['specifications'] as String?,
-      isPart: map['isPart'] == 1,
+      isPart: isPartRaw is bool ? isPartRaw : isPartRaw == 1,
       damagedParts: map['damagedParts'] as String?,
       variantGroupId: map['variantGroupId'] as String?,
       variantOptions: map['variantOptions'] as String?,
-      stock: map['stock'] as int?,
-      isActive: map['isActive'] == 1,
+      stock: (map['stock'] as num?)?.toInt(),
+      isActive: isActiveRaw is bool ? isActiveRaw : isActiveRaw == 1,
+      attributes: map['attributes'] as String?,
+      videoUrl:
+          map['video_public_url'] as String? ??
+          map['video_url'] as String? ??
+          map['videoUrl'] as String?,
+      videoPath: map['video_path'] as String?,
+      videoPublicUrl: map['video_public_url'] as String?,
+      thumbnailPath: map['thumbnail_path'] as String?,
+      thumbnailPublicUrl: map['thumbnail_public_url'] as String?,
+      videoDurationSeconds: (map['video_duration_seconds'] as num?)?.toInt(),
+      videoSizeBytes: (map['video_size_bytes'] as num?)?.toInt(),
+      thumbnailSizeBytes: (map['thumbnail_size_bytes'] as num?)?.toInt(),
+      videoStatus: map['video_status'] as String?,
+      variants: map['variants'],
     );
   }
-  
+
   // Kopyalama fonksiyonu (güncelleme için)
   DBProduct copyWith({
-    int? id,
+    String? id,
+    String? sellerId,
     String? name,
     String? brand,
     String? store,
@@ -127,9 +185,21 @@ class DBProduct {
     String? variantOptions,
     int? stock,
     bool? isActive,
+    String? attributes,
+    String? videoUrl,
+    String? videoPath,
+    String? videoPublicUrl,
+    String? thumbnailPath,
+    String? thumbnailPublicUrl,
+    int? videoDurationSeconds,
+    int? videoSizeBytes,
+    int? thumbnailSizeBytes,
+    String? videoStatus,
+    dynamic variants,
   }) {
     return DBProduct(
       id: id ?? this.id,
+      sellerId: sellerId ?? this.sellerId,
       name: name ?? this.name,
       brand: brand ?? this.brand,
       store: store ?? this.store,
@@ -151,15 +221,26 @@ class DBProduct {
       variantOptions: variantOptions ?? this.variantOptions,
       stock: stock ?? this.stock,
       isActive: isActive ?? this.isActive,
+      attributes: attributes ?? this.attributes,
+      videoUrl: videoUrl ?? this.videoUrl,
+      videoPath: videoPath ?? this.videoPath,
+      videoPublicUrl: videoPublicUrl ?? this.videoPublicUrl,
+      thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+      thumbnailPublicUrl: thumbnailPublicUrl ?? this.thumbnailPublicUrl,
+      videoDurationSeconds: videoDurationSeconds ?? this.videoDurationSeconds,
+      videoSizeBytes: videoSizeBytes ?? this.videoSizeBytes,
+      thumbnailSizeBytes: thumbnailSizeBytes ?? this.thumbnailSizeBytes,
+      videoStatus: videoStatus ?? this.videoStatus,
+      variants: variants ?? this.variants,
     );
   }
-  
+
   // Varyant seçeneklerini Map olarak parse et
   Map<String, String> getVariantOptionsMap() {
     if (variantOptions == null || variantOptions!.isEmpty) {
       return {};
     }
-    
+
     try {
       final options = <String, String>{};
       final pairs = variantOptions!.split('|');
@@ -174,9 +255,9 @@ class DBProduct {
       return {};
     }
   }
-  
+
   @override
   String toString() {
-    return 'DBProduct(id: $id, name: $name, brand: $brand, price: $price)';
+    return 'DBProduct(id: $id, sellerId: $sellerId, name: $name, brand: $brand, price: $price)';
   }
 }

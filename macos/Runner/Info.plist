@@ -22,6 +22,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Haritada konumunuzu göstermek ve size en yakın mağazaları bulmak için konum iznine ihtiyacımız var.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Haritada konumunuzu göstermek ve size en yakın mağazaları bulmak için konum iznine ihtiyacımız var.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Haritada konumunuzu göstermek ve size en yakın mağazaları bulmak için konum iznine ihtiyacımız var.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>

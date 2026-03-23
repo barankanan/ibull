@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../core/auth/user_identity.dart';
 import '../core/constants.dart';
+import '../core/app_state.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../widgets/account_sidebar.dart';
+import '../services/order_service.dart';
 import 'order_detail_page.dart';
 
 class OrdersPage extends StatefulWidget {
@@ -14,6 +18,9 @@ class OrdersPage extends StatefulWidget {
 
 class _OrdersPageState extends State<OrdersPage> {
   String _selectedTab = 'Tümü';
+  bool _isLoading = false;
+  List<Map<String, dynamic>> _realOrders = [];
+  String? _lastLoadedUserId;
 
   final List<String> _tabs = [
     'Tümü',
@@ -24,7 +31,8 @@ class _OrdersPageState extends State<OrdersPage> {
     'İptaller',
   ];
 
-  final List<Map<String, dynamic>> _allOrders = [
+  // Mock data for GUEST users only
+  final List<Map<String, dynamic>> _guestOrders = [
     {
       'date': '14 Ocak 2024 / 20:52',
       'itemCount': 1,
@@ -89,21 +97,69 @@ class _OrdersPageState extends State<OrdersPage> {
     },
   ];
 
-  List<Map<String, dynamic>> get _filteredOrders {
-    if (_selectedTab == 'Tümü') {
-      return _allOrders;
-    } else if (_selectedTab == 'Devam Edenler') {
-      return _allOrders.where((order) => order['statusType'] == 'devam').toList();
-    } else if (_selectedTab == 'Teslim Edilen') {
-      return _allOrders.where((order) => order['statusType'] == 'teslim').toList();
-    } else if (_selectedTab == 'İptaller') {
-      return _allOrders.where((order) => order['statusType'] == 'iptal').toList();
-    } else if (_selectedTab == 'İadeler') {
-      return _allOrders.where((order) => order['statusType'] == 'iade').toList();
-    } else if (_selectedTab == 'Garantili Siparişler') {
-      return _allOrders.where((order) => order['statusType'] == 'garantili').toList();
+  @override
+  void initState() {
+    super.initState();
+    _loadOrders();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final appState = Provider.of<AppState>(context);
+    final userId = appState.currentUser?['uid']?.toString();
+    final isGuestUser = UserIdentity.isGuest(appState.currentUser);
+    if (isGuestUser || userId == null || userId.isEmpty) return;
+    if (_lastLoadedUserId == userId) return;
+    _lastLoadedUserId = userId;
+    _loadOrders();
+  }
+
+  Future<void> _loadOrders() async {
+    final appState = AppState();
+    final userId = appState.currentUser?['uid']?.toString();
+    final isGuestUser = UserIdentity.isGuest(appState.currentUser);
+    if (userId == null || userId.isEmpty || isGuestUser) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final orders = await OrderService.instance.getUserOrders(userId);
+      if (!mounted) return;
+      setState(() {
+        _lastLoadedUserId = userId;
+        _realOrders = orders.map(_mapRealOrderForUi).toList();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
-    return _allOrders;
+  }
+
+  List<Map<String, dynamic>> get _filteredOrders {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final isGuestUser = UserIdentity.isGuest(appState.currentUser);
+
+    final source = isGuestUser ? _guestOrders : _realOrders;
+    if (_selectedTab == 'Tümü') return source;
+    if (_selectedTab == 'Devam Edenler') {
+      return source.where((order) => order['statusType'] == 'devam').toList();
+    }
+    if (_selectedTab == 'Teslim Edilen') {
+      return source.where((order) => order['statusType'] == 'teslim').toList();
+    }
+    if (_selectedTab == 'İptaller') {
+      return source.where((order) => order['statusType'] == 'iptal').toList();
+    }
+    if (_selectedTab == 'İadeler') {
+      return source.where((order) => order['statusType'] == 'iade').toList();
+    }
+    if (_selectedTab == 'Garantili Siparişler') {
+      return source
+          .where((order) => order['statusType'] == 'garantili')
+          .toList();
+    }
+    return source;
   }
 
   @override
@@ -124,129 +180,190 @@ class _OrdersPageState extends State<OrdersPage> {
         children: [
           WebHeader(onSearch: (q) {}),
           Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1200),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Left Sidebar
-                            const SizedBox(
-                              width: 280,
-                              child: AccountSidebar(activePage: 'Siparişlerim'),
-                            ),
-                            const SizedBox(width: 32),
-                            // Right Content
-                            Expanded(
-                              child: Column(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 1200),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 40,
+                                horizontal: 24,
+                              ),
+                              child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text(
-                                    'Siparişlerim',
-                                    style: TextStyle(
-                                      fontSize: 24,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF1F2937),
+                                  const SizedBox(
+                                    width: 280,
+                                    child: AccountSidebar(
+                                      activePage: 'Siparişlerim',
                                     ),
                                   ),
-                                  const SizedBox(height: 24),
-                                  // Search and Filter Row
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Container(
-                                          height: 48,
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            border: Border.all(color: Colors.grey.shade200),
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          child: TextField(
-                                            decoration: InputDecoration(
-                                              hintText: 'Siparişlerimde ara...',
-                                              hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade400),
-                                              prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                                              border: InputBorder.none,
-                                              contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                                            ),
+                                  const SizedBox(width: 32),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Siparişlerim',
+                                          style: TextStyle(
+                                            fontSize: 24,
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFF1F2937),
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Container(
-                                        height: 48,
-                                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          border: Border.all(color: Colors.grey.shade200),
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        child: Row(
+                                        const SizedBox(height: 24),
+                                        Row(
                                           children: [
-                                            Icon(Icons.tune, color: AppColors.primary, size: 20),
-                                            const SizedBox(width: 8),
-                                            const Text(
-                                              'Filtrele',
-                                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                                            Expanded(
+                                              child: Container(
+                                                height: 48,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white,
+                                                  border: Border.all(
+                                                    color: Colors.grey.shade200,
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: TextField(
+                                                  decoration: InputDecoration(
+                                                    hintText:
+                                                        'Siparişlerimde ara...',
+                                                    hintStyle: TextStyle(
+                                                      fontSize: 14,
+                                                      color:
+                                                          Colors.grey.shade400,
+                                                    ),
+                                                    prefixIcon: const Icon(
+                                                      Icons.search,
+                                                      color: Colors.grey,
+                                                    ),
+                                                    border: InputBorder.none,
+                                                    contentPadding:
+                                                        const EdgeInsets.symmetric(
+                                                          vertical: 14,
+                                                        ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 16),
+                                            Container(
+                                              height: 48,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 16,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                border: Border.all(
+                                                  color: Colors.grey.shade200,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.tune,
+                                                    color: AppColors.primary,
+                                                    size: 20,
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  const Text(
+                                                    'Filtrele',
+                                                    style: TextStyle(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
                                             ),
                                           ],
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 24),
-                                  // Tabs
-                                  SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
-                                    child: Row(
-                                      children: _tabs.map((tab) {
-                                        final isSelected = _selectedTab == tab;
-                                        return Padding(
-                                          padding: const EdgeInsets.only(right: 12),
-                                          child: InkWell(
-                                            onTap: () => setState(() => _selectedTab = tab),
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                                              decoration: BoxDecoration(
-                                                color: isSelected ? AppColors.primary : Colors.white,
-                                                borderRadius: BorderRadius.circular(20),
-                                                border: Border.all(
-                                                  color: isSelected ? AppColors.primary : Colors.grey.shade200,
+                                        const SizedBox(height: 24),
+                                        SingleChildScrollView(
+                                          scrollDirection: Axis.horizontal,
+                                          child: Row(
+                                            children: _tabs.map((tab) {
+                                              final isSelected =
+                                                  _selectedTab == tab;
+                                              return Padding(
+                                                padding: const EdgeInsets.only(
+                                                  right: 12,
                                                 ),
-                                              ),
-                                              child: Text(
-                                                tab,
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: isSelected ? Colors.white : Colors.grey.shade700,
+                                                child: InkWell(
+                                                  onTap: () => setState(
+                                                    () => _selectedTab = tab,
+                                                  ),
+                                                  child: Container(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 20,
+                                                          vertical: 10,
+                                                        ),
+                                                    decoration: BoxDecoration(
+                                                      color: isSelected
+                                                          ? AppColors.primary
+                                                          : Colors.white,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            20,
+                                                          ),
+                                                      border: Border.all(
+                                                        color: isSelected
+                                                            ? AppColors.primary
+                                                            : Colors
+                                                                  .grey
+                                                                  .shade200,
+                                                      ),
+                                                    ),
+                                                    child: Text(
+                                                      tab,
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                        color: isSelected
+                                                            ? Colors.white
+                                                            : Colors
+                                                                  .grey
+                                                                  .shade700,
+                                                      ),
+                                                    ),
+                                                  ),
                                                 ),
-                                              ),
-                                            ),
+                                              );
+                                            }).toList(),
                                           ),
-                                        );
-                                      }).toList(),
+                                        ),
+                                        const SizedBox(height: 24),
+                                        ..._buildOrdersList(isWeb: true),
+                                      ],
                                     ),
                                   ),
-                                  const SizedBox(height: 24),
-                                  // Orders List
-                                  ..._buildOrdersList(isWeb: true),
                                 ],
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
+                      const WebFooter(),
+                    ],
                   ),
-                  const WebFooter(),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ],
@@ -291,10 +408,19 @@ class _OrdersPageState extends State<OrdersPage> {
                     child: TextField(
                       decoration: InputDecoration(
                         hintText: 'Arama yap',
-                        hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                        prefixIcon: Icon(Icons.search, color: AppColors.primary, size: 20),
+                        hintStyle: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade400,
+                        ),
+                        prefixIcon: Icon(
+                          Icons.search,
+                          color: AppColors.primary,
+                          size: 20,
+                        ),
                         border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                        contentPadding: const EdgeInsets.symmetric(
+                          vertical: 10,
+                        ),
                       ),
                     ),
                   ),
@@ -313,7 +439,11 @@ class _OrdersPageState extends State<OrdersPage> {
                       const SizedBox(width: 4),
                       const Text(
                         'Filtre',
-                        style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ],
                   ),
@@ -321,7 +451,7 @@ class _OrdersPageState extends State<OrdersPage> {
               ],
             ),
           ),
-          
+
           // Horizontal Tab Bar
           Container(
             height: 36,
@@ -340,9 +470,14 @@ class _OrdersPageState extends State<OrdersPage> {
                   },
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primary : Colors.transparent,
+                      color: isSelected
+                          ? AppColors.primary
+                          : Colors.transparent,
                       border: Border.all(color: AppColors.primary),
                       borderRadius: BorderRadius.circular(20),
                     ),
@@ -362,7 +497,7 @@ class _OrdersPageState extends State<OrdersPage> {
             ),
           ),
           const SizedBox(height: 16),
-          
+
           // Orders List
           Expanded(
             child: ListView(
@@ -376,6 +511,12 @@ class _OrdersPageState extends State<OrdersPage> {
   }
 
   List<Widget> _buildOrdersList({bool isWeb = false}) {
+    if (_isLoading) {
+      return const [
+        SizedBox(height: 80),
+        Center(child: CircularProgressIndicator()),
+      ];
+    }
     final filteredOrders = _filteredOrders;
     if (filteredOrders.isEmpty) {
       return [
@@ -398,25 +539,168 @@ class _OrdersPageState extends State<OrdersPage> {
         widgets.add(_buildDateHeader(currentDateGroup!));
       }
 
-      widgets.add(_buildOrderCard(
-        orderData: order,
-        date: order['date'],
-        itemCount: order['itemCount'],
-        productImage: null,
-        productName: order['productName'],
-        statusIcon: order['statusIcon'],
-        statusText: order['statusText'],
-        statusColor: order['statusColor'],
-        totalPrice: order['totalPrice'],
-        multipleImages: order['multipleImages'],
-        hasReviewButton: order['hasReviewButton'] ?? false,
-        isWeb: isWeb,
-      ));
+      widgets.add(
+        _buildOrderCard(
+          orderData: order,
+          date: order['date'],
+          itemCount: order['itemCount'],
+          productImage: order['productImage'],
+          productName: order['productName'],
+          statusIcon: order['statusIcon'],
+          statusText: order['statusText'],
+          statusColor: order['statusColor'],
+          totalPrice: order['totalPrice'],
+          multipleImages: order['multipleImages'],
+          hasReviewButton: order['hasReviewButton'] ?? false,
+          canRequestReturn: order['canRequestReturn'] ?? false,
+          isWeb: isWeb,
+        ),
+      );
       widgets.add(const SizedBox(height: 16));
     }
 
     widgets.add(const SizedBox(height: 16));
     return widgets;
+  }
+
+  Map<String, dynamic> _mapRealOrderForUi(Map<String, dynamic> order) {
+    final items =
+        (order['items'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+    final firstItem = items.isNotEmpty ? items.first : <String, dynamic>{};
+    final createdAt = DateTime.tryParse(order['created_at']?.toString() ?? '');
+    final status = (order['status']?.toString() ?? '').toLowerCase();
+    final resolvedStatus = _resolveOrderStatus(status, items);
+    final statusConfig = _mapStatus(resolvedStatus);
+    final productNames = items
+        .map((e) => e['product_name']?.toString() ?? '')
+        .where((e) => e.isNotEmpty)
+        .toList();
+    return {
+      'date': createdAt != null ? _formatDateTime(createdAt) : '-',
+      'itemCount': items.length,
+      'productName': productNames.isEmpty ? 'Sipariş' : productNames.join(', '),
+      'statusIcon': statusConfig['icon'],
+      'statusText': statusConfig['label'],
+      'statusColor': statusConfig['color'],
+      'statusType': statusConfig['type'],
+      'totalPrice':
+          '${(order['total_amount'] as num? ?? 0).toStringAsFixed(2)} TL',
+      'dateGroup': _dateGroup(createdAt),
+      'sellerName': firstItem['store_name']?.toString() ?? '-',
+      'productImage': firstItem['product_image_url']?.toString(),
+      'multipleImages': items.length > 1 ? items.length - 1 : null,
+      'hasReviewButton': resolvedStatus == 'delivered',
+      'canRequestReturn': resolvedStatus == 'delivered',
+      'rawOrder': order,
+    };
+  }
+
+  String _resolveOrderStatus(
+    String orderStatus,
+    List<Map<String, dynamic>> items,
+  ) {
+    final itemStatuses = items
+        .map((e) => (e['status'] ?? '').toString().trim().toLowerCase())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final statuses = itemStatuses.isEmpty
+        ? <String>[orderStatus]
+        : itemStatuses;
+    if (statuses.any(_isReturnFlowStatus)) return 'return_requested';
+    if (statuses.every((s) => s == 'delivered')) return 'delivered';
+    if (statuses.any((s) => s == 'cancelled')) return 'cancelled';
+    if (statuses.any(
+      (s) =>
+          s == 'shipped' ||
+          s == 'transfer' ||
+          s == 'branch' ||
+          s == 'out_for_delivery',
+    )) {
+      return 'shipped';
+    }
+    if (statuses.any((s) => s == 'preparing' || s == 'ready_to_ship')) {
+      return 'preparing';
+    }
+    if (statuses.any((s) => s == 'confirmed' || s == 'new')) {
+      return 'confirmed';
+    }
+    return orderStatus;
+  }
+
+  bool _isReturnFlowStatus(String status) {
+    switch (status) {
+      case 'return_requested':
+      case 'return_approved':
+      case 'return_shipped_back':
+      case 'return_received':
+      case 'returned':
+      case 'refunded':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  Map<String, dynamic> _mapStatus(String status) {
+    switch (status) {
+      case 'confirmed':
+      case 'preparing':
+      case 'shipped':
+        return {
+          'label': status == 'shipped'
+              ? 'Siparişiniz Kargoda'
+              : 'Siparişiniz Hazırlanıyor',
+          'icon': status == 'shipped'
+              ? Icons.local_shipping
+              : Icons.inventory_2,
+          'color': status == 'shipped' ? Colors.orange : Colors.green,
+          'type': 'devam',
+        };
+      case 'delivered':
+        return {
+          'label': 'Sipariş Teslim Edildi',
+          'icon': Icons.check_circle,
+          'color': Colors.green,
+          'type': 'teslim',
+        };
+      case 'cancelled':
+        return {
+          'label': 'Siparişiniz İptal Edildi',
+          'icon': Icons.close,
+          'color': Colors.red,
+          'type': 'iptal',
+        };
+      case 'return_requested':
+      case 'return_approved':
+      case 'return_shipped_back':
+      case 'return_received':
+      case 'returned':
+      case 'refunded':
+        return {
+          'label': 'İade Süreci Başlatıldı',
+          'icon': Icons.assignment_return_rounded,
+          'color': const Color(0xFFFF8A00),
+          'type': 'iade',
+        };
+      default:
+        return {
+          'label': 'Siparişiniz Onaylandı',
+          'icon': Icons.receipt_long,
+          'color': AppColors.primary,
+          'type': 'devam',
+        };
+    }
+  }
+
+  String _formatDateTime(DateTime date) {
+    return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year} / ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _dateGroup(DateTime? date) {
+    if (date == null) return 'Siparişler';
+    final now = DateTime.now();
+    if (date.year == now.year && date.month == now.month) return 'Bu Ay';
+    return '${date.month}.${date.year}';
   }
 
   Widget _buildDateHeader(String date) {
@@ -445,6 +729,7 @@ class _OrdersPageState extends State<OrdersPage> {
     required String totalPrice,
     int? multipleImages,
     bool hasReviewButton = false,
+    bool canRequestReturn = false,
     bool isWeb = false,
   }) {
     return Container(
@@ -453,13 +738,15 @@ class _OrdersPageState extends State<OrdersPage> {
         color: Colors.white,
         border: Border.all(color: Colors.grey.shade200),
         borderRadius: BorderRadius.circular(12),
-        boxShadow: isWeb ? [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          )
-        ] : null,
+        boxShadow: isWeb
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.02),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -470,25 +757,28 @@ class _OrdersPageState extends State<OrdersPage> {
             children: [
               Text(
                 date,
-                style: TextStyle(fontSize: isWeb ? 13 : 11, color: Colors.grey.shade600),
+                style: TextStyle(
+                  fontSize: isWeb ? 13 : 11,
+                  color: Colors.grey.shade600,
+                ),
               ),
               GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => OrderDetailPage(orderData: orderData),
-                    ),
-                  );
-                },
+                onTap: () => _openOrderDetail(orderData),
                 child: Row(
                   children: [
                     Text(
                       'Sipariş Bilgi',
-                      style: TextStyle(fontSize: isWeb ? 13 : 11, color: AppColors.primary),
+                      style: TextStyle(
+                        fontSize: isWeb ? 13 : 11,
+                        color: AppColors.primary,
+                      ),
                     ),
                     const SizedBox(width: 4),
-                    Icon(Icons.chevron_right, size: isWeb ? 18 : 16, color: AppColors.primary),
+                    Icon(
+                      Icons.chevron_right,
+                      size: isWeb ? 18 : 16,
+                      color: AppColors.primary,
+                    ),
                   ],
                 ),
               ),
@@ -497,10 +787,14 @@ class _OrdersPageState extends State<OrdersPage> {
           const SizedBox(height: 6),
           Text(
             '$itemCount ürün siparişi alındı',
-            style: TextStyle(fontSize: isWeb ? 14 : 12, color: AppColors.primary, fontWeight: FontWeight.w500),
+            style: TextStyle(
+              fontSize: isWeb ? 14 : 12,
+              color: AppColors.primary,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           SizedBox(height: isWeb ? 16 : 12),
-          
+
           // Product Info
           Row(
             children: [
@@ -523,7 +817,11 @@ class _OrdersPageState extends State<OrdersPage> {
                               fit: BoxFit.cover,
                             ),
                           )
-                        : Icon(Icons.image, color: Colors.grey, size: isWeb ? 40 : 30),
+                        : Icon(
+                            Icons.image,
+                            color: Colors.grey,
+                            size: isWeb ? 40 : 30,
+                          ),
                   ),
                   if (multipleImages != null)
                     Positioned(
@@ -555,7 +853,7 @@ class _OrdersPageState extends State<OrdersPage> {
                 ],
               ),
               const SizedBox(width: 16),
-              
+
               // Product Details
               Expanded(
                 child: Column(
@@ -563,19 +861,30 @@ class _OrdersPageState extends State<OrdersPage> {
                   children: [
                     Text(
                       productName,
-                      style: TextStyle(fontSize: isWeb ? 15 : 12, fontWeight: FontWeight.w500),
+                      style: TextStyle(
+                        fontSize: isWeb ? 15 : 12,
+                        fontWeight: FontWeight.w500,
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Icon(statusIcon, size: isWeb ? 18 : 16, color: statusColor),
+                        Icon(
+                          statusIcon,
+                          size: isWeb ? 18 : 16,
+                          color: statusColor,
+                        ),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
                             statusText,
-                            style: TextStyle(fontSize: isWeb ? 13 : 11, color: statusColor, fontWeight: FontWeight.w500),
+                            style: TextStyle(
+                              fontSize: isWeb ? 13 : 11,
+                              color: statusColor,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       ],
@@ -583,7 +892,7 @@ class _OrdersPageState extends State<OrdersPage> {
                   ],
                 ),
               ),
-              
+
               // Price and Action for Web (Right Aligned)
               if (isWeb) ...[
                 const SizedBox(width: 32),
@@ -598,17 +907,49 @@ class _OrdersPageState extends State<OrdersPage> {
                         color: AppColors.primary,
                       ),
                     ),
-                    if (hasReviewButton) ...[
+                    if (hasReviewButton || canRequestReturn) ...[
                       const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: () {},
-                        icon: const Icon(Icons.star, size: 16),
-                        label: const Text('Değerlendir'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(color: AppColors.primary),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        ),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.end,
+                        children: [
+                          if (hasReviewButton)
+                            OutlinedButton.icon(
+                              onPressed: () => _openOrderDetail(orderData),
+                              icon: const Icon(Icons.star, size: 16),
+                              label: const Text('Değerlendir'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.primary,
+                                side: const BorderSide(
+                                  color: AppColors.primary,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                          if (canRequestReturn)
+                            OutlinedButton.icon(
+                              onPressed: () => _openOrderDetail(orderData),
+                              icon: const Icon(
+                                Icons.assignment_return_rounded,
+                                size: 16,
+                              ),
+                              label: const Text('İade Talebi'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFD93E53),
+                                side: const BorderSide(
+                                  color: Color(0xFFD93E53),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ],
@@ -617,46 +958,107 @@ class _OrdersPageState extends State<OrdersPage> {
             ],
           ),
           SizedBox(height: isWeb ? 16 : 12),
-          
-          // Total and Review Button (Mobile Only)
+
+          // Total and Action Buttons (Mobile Only)
           if (!isWeb)
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                RichText(
-                  text: TextSpan(
-                    children: [
-                      TextSpan(
-                        text: 'Toplam Tutar : ',
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                      ),
-                      TextSpan(
-                        text: totalPrice,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary,
+                Expanded(
+                  child: RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'Toplam Tutar : ',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
                         ),
-                      ),
-                    ],
+                        TextSpan(
+                          text: totalPrice,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                if (hasReviewButton)
-                  OutlinedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.star, size: 14),
-                    label: const Text('Değerlendir', style: TextStyle(fontSize: 11)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side: const BorderSide(color: AppColors.primary),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      minimumSize: const Size(0, 28),
-                    ),
+                if (hasReviewButton || canRequestReturn)
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      if (hasReviewButton)
+                        OutlinedButton.icon(
+                          onPressed: () => _openOrderDetail(orderData),
+                          icon: const Icon(Icons.star, size: 14),
+                          label: const Text(
+                            'Değerlendir',
+                            style: TextStyle(fontSize: 11),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            minimumSize: const Size(0, 28),
+                          ),
+                        ),
+                      if (canRequestReturn)
+                        OutlinedButton.icon(
+                          onPressed: () => _openOrderDetail(orderData),
+                          icon: const Icon(
+                            Icons.assignment_return_rounded,
+                            size: 14,
+                          ),
+                          label: const Text(
+                            'İade Talebi',
+                            style: TextStyle(fontSize: 11),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFD93E53),
+                            side: const BorderSide(color: Color(0xFFD93E53)),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            minimumSize: const Size(0, 28),
+                          ),
+                        ),
+                    ],
                   ),
               ],
             ),
         ],
       ),
     );
+  }
+
+  Future<void> _openOrderDetail(Map<String, dynamic> orderData) async {
+    final result = await Navigator.push<dynamic>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => OrderDetailPage(orderData: orderData),
+      ),
+    );
+    final changed =
+        result == true || (result is Map && result['refresh'] == true);
+    final focusReturns = result is Map && result['focus_returns'] == true;
+    if (changed) {
+      await _loadOrders();
+      if (mounted) {
+        setState(() {
+          if (focusReturns) {
+            _selectedTab = 'İadeler';
+          }
+        });
+      }
+    }
   }
 }

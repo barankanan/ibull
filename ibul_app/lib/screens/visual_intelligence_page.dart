@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
+import '../services/visual_intelligence_service.dart';
 import 'visual_intelligence_result_page.dart';
 
 class VisualIntelligencePage extends StatefulWidget {
@@ -34,10 +35,7 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.grey.shade300,
-                    Colors.grey.shade400,
-                  ],
+                  colors: [Colors.grey.shade300, Colors.grey.shade400],
                 ),
               ),
               child: _capturedImagePath == null
@@ -80,7 +78,11 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
                         shape: BoxShape.circle,
                       ),
                       child: IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+                        icon: const Icon(
+                          Icons.arrow_back,
+                          color: Colors.white,
+                          size: 28,
+                        ),
                         onPressed: () => Navigator.pop(context),
                       ),
                     ),
@@ -96,7 +98,10 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
               bottom: 180,
               left: 20,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.6),
                   borderRadius: BorderRadius.circular(20),
@@ -162,9 +167,13 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
                             child: Text(
                               _modes[index],
                               style: TextStyle(
-                                color: isSelected ? Colors.orange : Colors.white.withOpacity(0.6),
+                                color: isSelected
+                                    ? Colors.orange
+                                    : Colors.white.withOpacity(0.6),
                                 fontSize: 13,
-                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
                               ),
                             ),
                           ),
@@ -285,20 +294,20 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
   }
 
   void _capturePhoto() {
+    final capture = VisualIntelligenceService.capturePlaceholder();
     setState(() {
-      _capturedImagePath = 'mock_image_path'; // Mock image path
+      _capturedImagePath = capture.previewToken;
     });
   }
 
   void _analyzeAndContinue() {
-    // Simulate AI analysis
-    // In real app, this would call an AI service
+    final capture = VisualIntelligenceService.capturePlaceholder();
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const VisualIntelligenceResultPage(
-          detectedProduct: 'Bisiklet',
-          missingPart: 'Bisiklet Koltuğu',
+        builder: (context) => VisualIntelligenceResultPage(
+          detectedProduct: capture.detectedProduct,
+          missingPart: capture.missingPart,
         ),
       ),
     );

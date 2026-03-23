@@ -61,7 +61,7 @@ class _NavigationPageState extends State<NavigationPage> {
             children: [
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.ibul_app',
+                userAgentPackageName: 'com.ibul.app',
               ),
               // Route line
               PolylineLayer(

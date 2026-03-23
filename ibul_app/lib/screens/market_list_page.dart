@@ -101,6 +101,7 @@ class _MarketListPageState extends State<MarketListPage> {
     }
 
     return Product(
+      productId: dbProduct.id,
       name: dbProduct.name,
       brand: dbProduct.brand,
       price: dbProduct.price,
@@ -109,6 +110,7 @@ class _MarketListPageState extends State<MarketListPage> {
       tags: tags,
       images: images.isEmpty ? [] : images,
       store: dbProduct.store,
+      sellerId: dbProduct.sellerId,
       category: dbProduct.category,
       subCategory: dbProduct.subCategory,
       description: dbProduct.description,

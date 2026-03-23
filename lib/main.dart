@@ -1,40 +1,24 @@
-import 'dart:async';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
-import 'package:ibul_app/core/app_state.dart';
-import 'package:ibul_app/core/constants.dart';
-import 'package:ibul_app/firebase_options.dart';
-import 'package:ibul_app/screens/home_screen.dart';
+import 'package:ibul_app/app/app_bootstrap.dart';
+import 'package:ibul_app/screens/ihiz_courier_page.dart';
+import 'package:ibul_app/screens/map_page.dart';
+import 'package:ibul_app/screens/seller/admin_panel_page.dart';
+import 'package:ibul_app/screens/seller_panel_page.dart';
+import 'package:ibul_app/screens/become_seller_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
+  await initializeAppSupabase();
+  configureAppDiagnostics(
+    startupMessage: 'Starting IBUL App. Platform: ${kIsWeb ? "web" : "native"}',
   );
 
-  debugPrint('Starting IBUL App. Platform: ${kIsWeb ? "web" : "native"}');
-
-  // Global Flutter error handler (shows errors in terminal)
-  FlutterError.onError = (FlutterErrorDetails details) {
-    FlutterError.dumpErrorToConsole(details);
-    debugPrint('Unhandled Flutter error: ${details.exception}');
-  };
-
-  // Informative debug message on start (hot restart will re-run this)
-  assert(() {
-    debugPrint(
-      'App is running in DEBUG mode. Start with ./scripts/run.sh or flutter run -d <deviceId>, then press "r" (hot reload) or "R" (hot restart) in this terminal.'
-    );
-    return true;
-  }());
-
   runApp(
-    ChangeNotifierProvider.value(
-      value: AppState(),
+    MultiProvider(
+      providers: buildAppProviders(),
       child: const MyApp(),
     ),
   );
@@ -48,38 +32,40 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'IBUL App',
-      theme: ThemeData(
-        useMaterial3: true,
-        primaryColor: AppColors.primary,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.primary,
-          primary: AppColors.primary,
-        ),
-        scaffoldBackgroundColor: AppColors.background,
-      ),
+      theme: buildAppTheme(),
+      onGenerateRoute: (RouteSettings settings) {
+        switch (settings.name) {
+          case '/map':
+            final args = parseMapRouteArguments(settings.arguments);
+            return MaterialPageRoute(
+              builder: (_) => MapPage(
+                targetStoreName: args.targetStoreName,
+                initialStoreProductQuery: args.initialStoreProductQuery,
+              ),
+            );
+          case '/seller':
+            return MaterialPageRoute(builder: (_) => const SellerPanelPage());
+          case '/admin':
+            return MaterialPageRoute(builder: (_) => const AdminPanelPage());
+          case '/become-seller':
+            return MaterialPageRoute(builder: (_) => const BecomeSellerPage());
+          case '/ihiz':
+            return MaterialPageRoute(builder: (_) => const IhizCourierPage());
+          case '/':
+            return MaterialPageRoute(builder: (_) => const HomeWrapper());
+          default:
+            return null;
+        }
+      },
+      routes: {
+        '/ihiz': (context) => const IhizCourierPage(),
+        '/map': (context) => const MapPage(),
+        '/seller': (context) => const SellerPanelPage(),
+        '/admin': (context) => const AdminPanelPage(),
+        '/become-seller': (context) => const BecomeSellerPage(),
+      },
       // Wrap HomeScreen so we can detect hot reload and show status
       home: const HomeWrapper(),
     );
-  }
-}
-
-// Wrapper that logs hot reloads and prints heartbeat to terminal
-class HomeWrapper extends StatefulWidget {
-  const HomeWrapper({super.key});
-
-  @override
-  State<HomeWrapper> createState() => _HomeWrapperState();
-}
-
-class _HomeWrapperState extends State<HomeWrapper> {
-  @override
-  void reassemble() {
-    super.reassemble();
-    debugPrint('Hot reload / reassemble at ${DateTime.now().toIso8601String()}');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return const HomeScreen();
   }
 }

@@ -10,16 +10,17 @@ class VisualSearchSelectionPage extends StatelessWidget {
     try {
       final ImagePicker picker = ImagePicker();
       final XFile? image = await picker.pickImage(source: source);
-      
+
       if (image != null) {
         if (!context.mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => VisualIntelligenceResultPage(
-              detectedProduct: 'Tespit Edilen Ürün',
-              missingPart: 'Görsel Zeka',
+              detectedProduct: image.name,
+              missingPart: 'Parça ve Uyumlu Ürünler',
               imagePath: image.path,
+              imageName: image.name,
               mode: VisualIntelligenceMode.parts,
             ),
           ),
@@ -27,15 +28,18 @@ class VisualSearchSelectionPage extends StatelessWidget {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Hata: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Hata: $e')));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+    const double webMaxWidth = 900;
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -55,36 +59,49 @@ class VisualSearchSelectionPage extends StatelessWidget {
         ),
         centerTitle: true,
       ),
-      body: ListView(
-        children: [
-          _buildOptionTile(
-            context,
-            title: 'Fotoğraf Çek',
-            onTap: () => _pickImage(context, ImageSource.camera),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: isWeb ? webMaxWidth : double.infinity,
           ),
-          const Divider(height: 1, indent: 16, endIndent: 0, color: Color(0xFFEEEEEE)),
-          _buildOptionTile(
-            context,
-            title: 'Fotoğraf Yükle',
-            onTap: () => _pickImage(context, ImageSource.gallery),
+          child: ListView(
+            children: [
+              _buildOptionTile(
+                context,
+                title: 'Fotoğraf Çek',
+                onTap: () => _pickImage(context, ImageSource.camera),
+              ),
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+              _buildOptionTile(
+                context,
+                title: 'Fotoğraf Yükle',
+                onTap: () => _pickImage(context, ImageSource.gallery),
+              ),
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+              _buildOptionTile(
+                context,
+                title: 'Barkod Okut',
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Barkod okuma özelliği yakında eklenecek.'),
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            ],
           ),
-          const Divider(height: 1, indent: 16, endIndent: 0, color: Color(0xFFEEEEEE)),
-          _buildOptionTile(
-            context,
-            title: 'Barkod Okut',
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Barkod okuma özelliği yakında eklenecek.')),
-              );
-            },
-          ),
-          const Divider(height: 1, color: Color(0xFFEEEEEE)),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildOptionTile(BuildContext context, {required String title, required VoidCallback onTap}) {
+  Widget _buildOptionTile(
+    BuildContext context, {
+    required String title,
+    required VoidCallback onTap,
+  }) {
     return ListTile(
       title: Text(
         title,
@@ -94,7 +111,11 @@ class VisualSearchSelectionPage extends StatelessWidget {
           color: Colors.black87,
         ),
       ),
-      trailing: Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey[400]),
+      trailing: Icon(
+        Icons.arrow_forward_ios,
+        size: 14,
+        color: Colors.grey[400],
+      ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       onTap: onTap,
       tileColor: Colors.white,

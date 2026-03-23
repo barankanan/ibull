@@ -1,227 +1,256 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../viewmodels/product_detail_viewmodel.dart';
+
+import '../../core/app_state.dart';
+import '../../core/auth/user_identity.dart';
 import '../../core/constants.dart';
 import '../../screens/all_questions_page.dart';
+import '../../screens/ask_product_question_page.dart';
+import '../../services/product_question_service.dart';
+import '../../viewmodels/product_detail_viewmodel.dart';
 
-class ProductQaCard extends StatelessWidget {
+class ProductQaCard extends StatefulWidget {
   const ProductQaCard({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final viewModel = Provider.of<ProductDetailViewModel>(context);
+  State<ProductQaCard> createState() => _ProductQaCardState();
+}
+
+class _ProductQaCardState extends State<ProductQaCard> {
+  late Future<List<Map<String, dynamic>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadQuestions();
+  }
+
+  Future<List<Map<String, dynamic>>> _loadQuestions() async {
+    final viewModel = context.read<ProductDetailViewModel>();
+    final appState = context.read<AppState>();
     final product = viewModel.initialProduct;
-    final brand = product.brand;
-    final name = product.name;
-    final questions = _generateQuestions(brand, name);
+    final serviceQuestions = await ProductQuestionService.instance.getQuestions(
+      productName: product.name,
+      storeName: product.store,
+    );
+    if (serviceQuestions.isNotEmpty) return serviceQuestions;
+    return appState.getProductQuestionsFor(
+      productName: product.name,
+      storeName: product.store,
+    );
+  }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          const Row(
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<ProductDetailViewModel>();
+    final product = viewModel.initialProduct;
+    final appState = context.watch<AppState>();
+    final canAskQuestion =
+        appState.isLoggedIn && !UserIdentity.isGuest(appState.currentUser);
+
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final questions = snapshot.data ?? const <Map<String, dynamic>>[];
+        final latest = questions.take(2).toList();
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey[200]!),
+          ),
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.question_answer_outlined, size: 18, color: Colors.black87),
-              SizedBox(width: 6),
-              Text(
-                'Ürün Soru & Cevap',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${questions.length} soru soruldu',
-            style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-          ),
-          const SizedBox(height: 10),
-
-          // Questions list
-          ...questions.take(3).map((q) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              const Row(
                 children: [
-                  Container(
-                    margin: const EdgeInsets.only(top: 2),
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      color: Colors.orange[50],
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Icon(Icons.help_outline, size: 12, color: Colors.orange[700]),
+                  Icon(
+                    Icons.question_answer_outlined,
+                    size: 18,
+                    color: AppColors.primary,
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          q['question']!,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.black87,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Icon(Icons.check_circle, size: 11, color: Colors.green[600]),
-                            const SizedBox(width: 3),
-                            Text(
-                              q['answeredBy']!,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey[500],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                  SizedBox(width: 6),
+                  Text(
+                    'Ürün Soru & Cevap',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
                     ),
                   ),
                 ],
               ),
-            );
-          }),
-
-          const SizedBox(height: 6),
-
-          // "Soruları Gör" button
-          SizedBox(
-            width: double.infinity,
-            height: 34,
-            child: OutlinedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => AllQuestionsPage(
-                      productName: product.name,
-                      brand: product.brand,
-                      rating: product.rating,
-                      reviewCount: product.reviewCount,
-                      images: product.images,
+              const SizedBox(height: 4),
+              Text(
+                questions.isEmpty
+                    ? 'Henüz soru sorulmadı'
+                    : '${questions.length} soru listeleniyor',
+                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+              ),
+              const SizedBox(height: 10),
+              if (snapshot.connectionState == ConnectionState.waiting)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   ),
-                );
-              },
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                side: BorderSide(color: AppColors.primary.withValues(alpha: 0.4)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
+                )
+              else if (latest.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.help_outline,
+                        size: 30,
+                        color: Colors.grey[400],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Henüz soru sorulmadı',
+                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                ...latest.map(
+                  (question) => Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          question['question']?.toString() ?? '',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          (question['answer']?.toString().trim().isEmpty ??
+                                  true)
+                              ? 'Satıcı yanıtı bekleniyor'
+                              : 'Yanıt: ${question['answer']}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                padding: EdgeInsets.zero,
-              ),
-              child: const Text(
-                'Soruları Gör',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 36,
+                child: ElevatedButton.icon(
+                  onPressed: canAskQuestion
+                      ? () async {
+                          final result = await Navigator.push<bool>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AskProductQuestionPage(
+                                product: {
+                                  'productName': product.name,
+                                  'storeName': product.store ?? '',
+                                  'sellerId': '',
+                                  'imageUrl': product.images.isNotEmpty
+                                      ? product.images.first
+                                      : '',
+                                },
+                              ),
+                            ),
+                          );
+                          if (result == true && mounted) {
+                            setState(() {
+                              _future = _loadQuestions();
+                            });
+                          }
+                        }
+                      : null,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: Text(
+                    canAskQuestion ? 'Soru Sor' : 'Giriş Yaparak Soru Sor',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.grey.shade300,
+                    disabledForegroundColor: Colors.grey.shade600,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                height: 36,
+                child: OutlinedButton(
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => AllQuestionsPage(
+                          productName: product.name,
+                          brand: product.brand,
+                          rating: product.rating,
+                          reviewCount: product.reviewCount,
+                          images: product.images,
+                          storeName: product.store,
+                        ),
+                      ),
+                    );
+                    if (mounted) {
+                      setState(() {
+                        _future = _loadQuestions();
+                      });
+                    }
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: BorderSide(
+                      color: AppColors.primary.withValues(alpha: 0.4),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                  child: const Text(
+                    'Tüm Soruları Göster',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
-  }
-
-  List<Map<String, String>> _generateQuestions(String brand, String name) {
-    final n = name.toLowerCase();
-
-    if (n.contains('iphone') || (brand.contains('Apple') && n.contains('phone'))) {
-      return [
-        {
-          'question': 'Bu telefon çift sim kart destekliyor mu?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'Kutuda şarj adaptörü geliyor mu?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'Türkiye garantili mi?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'Kılıf hediye var mı?',
-          'answeredBy': 'Topluluk tarafından yanıtlandı',
-        },
-        {
-          'question': 'eSIM desteği var mı?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-      ];
-    } else if (n.contains('galaxy') || brand.contains('Samsung')) {
-      return [
-        {
-          'question': 'S Pen kutu içeriğinde geliyor mu?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'Hafıza kartı takılabiliyor mu?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'Samsung Türkiye garantili mi?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'Hızlı şarj destekliyor mu?',
-          'answeredBy': 'Topluluk tarafından yanıtlandı',
-        },
-      ];
-    } else if (n.contains('macbook') || n.contains('laptop')) {
-      return [
-        {
-          'question': 'Windows kurulabilir mi?',
-          'answeredBy': 'Topluluk tarafından yanıtlandı',
-        },
-        {
-          'question': 'RAM yükseltilebilir mi?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'Harici monitör bağlanabilir mi?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-      ];
-    } else {
-      return [
-        {
-          'question': 'Bu ürün orijinal mi?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'Faturası ile birlikte mi geliyor?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-        {
-          'question': 'İade süreci nasıl işliyor?',
-          'answeredBy': 'Topluluk tarafından yanıtlandı',
-        },
-        {
-          'question': 'Garanti süresi ne kadar?',
-          'answeredBy': 'Satıcı tarafından yanıtlandı',
-        },
-      ];
-    }
   }
 }

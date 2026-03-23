@@ -115,28 +115,7 @@ class _ProductTabsSectionState extends State<ProductTabsSection> {
                     child: SizedBox(
                       width: double.infinity,
                       height: 40,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          if (viewModel.selectedTabIndex == 2) {
-                            widget.onScrollToSpecs?.call();
-                          } else {
-                            widget.onScrollToDescription?.call();
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF673AB7),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(color: Colors.grey.shade300),
-                          ),
-                        ),
-                        child: const Text(
-                          'İncele',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
+                      child: _buildBottomButton(context, viewModel),
                     ),
                   ),
                 ),
@@ -145,6 +124,53 @@ class _ProductTabsSectionState extends State<ProductTabsSection> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBottomButton(BuildContext context, ProductDetailViewModel viewModel) {
+    String buttonText = 'İncele';
+    VoidCallback? onPressed;
+
+    if (viewModel.selectedTabIndex == 1) { // Yakın Lokasyon Tab
+      buttonText = 'Yakında Arat';
+      onPressed = () {
+        // Navigate to MapPage and search for nearby stores
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MapPage(
+              // initialSearchQuery: viewModel.initialProduct.name, // TODO: Implement initialSearchQuery in MapPage if needed
+            ),
+          ),
+        );
+      };
+    } else if (viewModel.selectedTabIndex == 2) { // Ürün Özellikleri Tab
+      buttonText = 'İncele';
+      onPressed = widget.onScrollToSpecs;
+    } else { // Ürün Açıklaması Tab
+      buttonText = 'İncele';
+      onPressed = widget.onScrollToDescription;
+    }
+
+    return SizedBox(
+      width: double.infinity,
+      height: 40,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: const Color(0xFF673AB7),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: Colors.grey.shade300),
+          ),
+        ),
+        child: Text(
+          buttonText,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
     );
   }
 

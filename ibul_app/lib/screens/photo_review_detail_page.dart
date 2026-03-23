@@ -1,244 +1,335 @@
 import 'package:flutter/material.dart';
-import '../core/constants.dart';
-import '../models/product_model.dart';
-import '../core/app_state.dart';
 
-class PhotoReviewDetailPage extends StatelessWidget {
-  final Map<String, dynamic> review;
-  final Product? product;
+import '../core/constants.dart';
+
+class PhotoReviewDetailPage extends StatefulWidget {
+  final List<Map<String, dynamic>> galleryItems;
+  final int initialIndex;
 
   const PhotoReviewDetailPage({
     super.key,
-    required this.review,
-    this.product,
+    required this.galleryItems,
+    this.initialIndex = 0,
   });
 
   @override
+  State<PhotoReviewDetailPage> createState() => _PhotoReviewDetailPageState();
+}
+
+class _PhotoReviewDetailPageState extends State<PhotoReviewDetailPage> {
+  late final PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex.clamp(
+      0,
+      widget.galleryItems.length - 1,
+    );
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Determine image URL (network or asset)
-    final String imageUrl = review['productImage'] ?? '';
-    final bool isNetworkImage = imageUrl.startsWith('http');
-    
-    // Get product price info or use fallback
-    final String price = product?.price ?? '1.569,60 TL';
-    final String? oldPrice = product?.oldPrice;
-
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // Main Image (Centered)
-          Center(
-            child: InteractiveViewer(
-              minScale: 0.5,
-              maxScale: 4.0,
-              child: isNetworkImage
-                  ? Image.network(
-                      imageUrl,
-                      fit: BoxFit.contain,
-                      width: double.infinity,
-                      errorBuilder: (context, error, stackTrace) => const Icon(
-                        Icons.image_not_supported,
-                        color: Colors.white,
-                        size: 60,
-                      ),
-                    )
-                  : Image.asset(
-                      imageUrl,
-                      fit: BoxFit.contain,
-                      width: double.infinity,
-                      errorBuilder: (context, error, stackTrace) => const Icon(
-                        Icons.image_not_supported,
-                        color: Colors.white,
-                        size: 60,
-                      ),
-                    ),
-            ),
-          ),
-
-          // Top Bar
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      backgroundColor: const Color(0xFFF8F6FD),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Fotoğraflı Değerlendirmeler 1/1', // Dynamic count could be added
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                  InkWell(
+                    onTap: () => Navigator.pop(context),
+                    borderRadius: BorderRadius.circular(24),
+                    child: Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(21),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back_ios_new,
+                        color: AppColors.primary,
+                        size: 18,
+                      ),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white, size: 28),
-                    onPressed: () => Navigator.pop(context),
+                  const Spacer(),
+                  const Text(
+                    'Ürün Görsel',
+                    style: TextStyle(
+                      color: AppColors.primary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: AppColors.primary.withOpacity(0.12),
+                      ),
+                    ),
+                    child: Text(
+                      '${_currentIndex + 1}/${widget.galleryItems.length}',
+                      style: const TextStyle(
+                        color: AppColors.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
-          ),
-
-          // Bottom Content
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Container(
-              padding: const EdgeInsets.only(top: 20, left: 16, right: 16, bottom: 0),
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: widget.galleryItems.length,
+                onPageChanged: (index) {
+                  setState(() {
+                    _currentIndex = index;
+                  });
+                },
+                itemBuilder: (context, index) {
+                  final galleryItem = widget.galleryItems[index];
+                  return _GalleryPage(item: galleryItem);
+                },
+              ),
+            ),
+            Container(
+              height: 82,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.transparent,
-                    Colors.black87,
-                    Colors.black,
-                  ],
-                  stops: [0.0, 0.3, 1.0],
+                color: Colors.white,
+                border: Border(top: BorderSide(color: Color(0xFFE8E2F3))),
+              ),
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: widget.galleryItems.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  final previewItem = widget.galleryItems[index];
+                  final isSelected = index == _currentIndex;
+                  return GestureDetector(
+                    onTap: () {
+                      _pageController.animateToPage(
+                        index,
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOutCubic,
+                      );
+                    },
+                    child: Container(
+                      width: 58,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: isSelected
+                              ? AppColors.primary
+                              : Colors.grey.shade300,
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(13),
+                        child: _ReviewImage(
+                          imageUrl: previewItem['imageUrl']?.toString() ?? '',
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GalleryPage extends StatelessWidget {
+  final Map<String, dynamic> item;
+
+  const _GalleryPage({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final rating = (item['rating'] as num?)?.toDouble() ?? 0;
+    final userName = item['userName']?.toString() ?? 'Kullanıcı';
+    final comment = item['comment']?.toString() ?? '';
+    final date = item['date']?.toString() ?? '';
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFE8E2F3)),
+            ),
+            child: AspectRatio(
+              aspectRatio: 0.9,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: _ReviewImage(
+                  imageUrl: item['imageUrl']?.toString() ?? '',
+                  fit: BoxFit.contain,
                 ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Stars
-                  Row(
-                    children: List.generate(5, (index) {
-                      final rating = review['rating'] as double? ?? 0.0;
-                      if (index < rating.floor()) {
-                        return const Icon(Icons.star, color: Colors.amber, size: 20);
-                      } else if (index < rating) {
-                        return const Icon(Icons.star_half, color: Colors.amber, size: 20);
-                      }
-                      return const Icon(Icons.star_border, color: Colors.grey, size: 20);
-                    }),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            item['productName']?.toString() ?? 'Ürün',
+            style: const TextStyle(
+              fontSize: 13,
+              color: Colors.black54,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: AppColors.primary.withOpacity(0.15),
+                child: Text(
+                  userName.isNotEmpty ? userName[0].toUpperCase() : 'K',
+                  style: const TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(height: 8),
-
-                  // User Info
-                  Row(
-                    children: [
-                      Text(
-                        review['userName'] ?? 'Kullanıcı',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      userName,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
                       ),
-                      const SizedBox(width: 8),
-                      const Text('•', style: TextStyle(color: Colors.grey)),
-                      const SizedBox(width: 8),
-                      Text(
-                        review['date'] ?? '',
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 14,
-                        ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      date,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade500,
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-
-                  // Review Text
-                  Text(
-                    review['reviewText'] ?? '',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
                     ),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 8),
-
-                  // Seller Info
-                  Text(
-                    'Bu ürün ${review['seller'] ?? 'SATICI'} satıcısından alındı.',
-                    style: TextStyle(
-                      color: Colors.grey.shade400,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Bottom Bar (Price & Button)
-                  Container(
-                    padding: EdgeInsets.only(
-                      top: 16,
-                      bottom: MediaQuery.of(context).padding.bottom + 16,
-                    ),
-                    decoration: const BoxDecoration(
-                      border: Border(top: BorderSide(color: Colors.white12)),
-                    ),
-                    child: Row(
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (oldPrice != null)
-                              Text(
-                                oldPrice,
-                                style: const TextStyle(
-                                  color: Colors.grey,
-                                  decoration: TextDecoration.lineThrough,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            Text(
-                              price,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const Spacer(),
-                        SizedBox(
-                          height: 48,
-                          child: ElevatedButton(
-                            onPressed: () {
-                              if (product != null) {
-                                final appState = AppState();
-                                appState.addToCart(product!);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Ürün sepete eklendi'),
-                                    duration: Duration(seconds: 1),
-                                  ),
-                                );
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary, // Purple color
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              padding: const EdgeInsets.symmetric(horizontal: 32),
-                            ),
-                            child: const Text(
-                              'Sepete Ekle',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                  ],
+                ),
+              ),
+              Row(
+                children: List.generate(5, (index) {
+                  return Icon(
+                    index < rating.round()
+                        ? Icons.star_rounded
+                        : Icons.star_outline_rounded,
+                    size: 20,
+                    color: AppColors.primary,
+                  );
+                }),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF7A2FF3), Color(0xFF5E17EB)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              comment,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                height: 1.6,
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ReviewImage extends StatelessWidget {
+  final String imageUrl;
+  final BoxFit fit;
+
+  const _ReviewImage({required this.imageUrl, this.fit = BoxFit.cover});
+
+  @override
+  Widget build(BuildContext context) {
+    if (imageUrl.startsWith('data:image/')) {
+      return Image.memory(
+        UriData.parse(imageUrl).contentAsBytes(),
+        fit: fit,
+        errorBuilder: (_, __, ___) => _fallback(),
+      );
+    }
+    if (imageUrl.startsWith('http')) {
+      return Image.network(
+        imageUrl,
+        fit: fit,
+        errorBuilder: (_, __, ___) => _fallback(),
+      );
+    }
+    if (imageUrl.isEmpty) {
+      return _fallback();
+    }
+    return Image.asset(
+      imageUrl,
+      fit: fit,
+      errorBuilder: (_, __, ___) => _fallback(),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: Colors.grey.shade100,
+      alignment: Alignment.center,
+      child: Icon(Icons.image_outlined, color: Colors.grey.shade400, size: 36),
     );
   }
 }

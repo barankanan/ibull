@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../models/product_model.dart';
 import '../../core/constants.dart';
+import 'product_detail_content_helper.dart';
 
 class ProductComparisonSection extends StatefulWidget {
   const ProductComparisonSection({super.key});
@@ -21,8 +22,18 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
     final currentProduct = viewModel.initialProduct;
     final similarProducts = viewModel.similarProducts;
 
-    // Take up to 3 similar products for comparison (current + 3 = 4 columns)
-    final comparisonProducts = similarProducts.take(3).toList();
+    var filteredSimilar = similarProducts
+        .where((p) => _isComparableProduct(currentProduct, p))
+        .toList();
+    if (filteredSimilar.isEmpty) {
+      final currentCategory = (currentProduct.category ?? '').toLowerCase();
+      filteredSimilar = similarProducts.where((p) {
+        final pCategory = (p.category ?? '').toLowerCase();
+        return currentCategory.isNotEmpty && pCategory == currentCategory;
+      }).toList();
+    }
+
+    final comparisonProducts = filteredSimilar.take(3).toList();
     if (comparisonProducts.isEmpty) return const SizedBox.shrink();
 
     // All products including current
@@ -30,8 +41,9 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
 
     // Build spec rows
     final allSpecRows = _buildSpecRows(allProducts);
-    final visibleRows =
-        _isExpanded ? allSpecRows : allSpecRows.take(8).toList();
+    final visibleRows = _isExpanded
+        ? allSpecRows
+        : allSpecRows.take(8).toList();
 
     final screenWidth = MediaQuery.of(context).size.width;
     final isWide = screenWidth > 900;
@@ -68,7 +80,9 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
                 end: Alignment.centerRight,
               ),
               border: Border(
-                bottom: BorderSide(color: AppColors.primary.withValues(alpha: 0.12)),
+                bottom: BorderSide(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                ),
               ),
             ),
             child: Row(
@@ -79,7 +93,11 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
                     color: AppColors.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(Icons.compare_arrows_outlined, size: 18, color: AppColors.primary),
+                  child: Icon(
+                    Icons.compare_arrows_outlined,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -99,10 +117,7 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
                       const SizedBox(height: 2),
                       Text(
                         'Son güncelleme: Şubat 2026',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[500],
-                        ),
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                       ),
                     ],
                   ),
@@ -121,7 +136,10 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
                     child: SizedBox(
                       width: 900,
                       child: _buildComparisonTable(
-                          allProducts, visibleRows, allSpecRows),
+                        allProducts,
+                        visibleRows,
+                        allSpecRows,
+                      ),
                     ),
                   ),
           ),
@@ -130,8 +148,60 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
     );
   }
 
-  Widget _buildComparisonTable(List<Product> products,
-      List<_SpecRow> visibleRows, List<_SpecRow> allRows) {
+  bool _isComparableProduct(Product currentProduct, Product candidate) {
+    final currentSubCategory = (currentProduct.subCategory ?? '')
+        .trim()
+        .toLowerCase();
+    final candidateSubCategory = (candidate.subCategory ?? '')
+        .trim()
+        .toLowerCase();
+
+    if (currentSubCategory.isNotEmpty && candidateSubCategory.isNotEmpty) {
+      return currentSubCategory == candidateSubCategory;
+    }
+
+    final currentCategory = (currentProduct.category ?? '')
+        .trim()
+        .toLowerCase();
+    final candidateCategory = (candidate.category ?? '').trim().toLowerCase();
+    if (currentCategory.isNotEmpty && candidateCategory.isNotEmpty) {
+      return currentCategory == candidateCategory &&
+          _inferProductType(currentProduct) == _inferProductType(candidate);
+    }
+
+    return _inferProductType(currentProduct) == _inferProductType(candidate);
+  }
+
+  String _inferProductType(Product product) {
+    final name = product.name.toLowerCase();
+    final category = (product.category ?? '').toLowerCase();
+    final subCategory = (product.subCategory ?? '').toLowerCase();
+
+    if (name.contains('iphone') ||
+        name.contains('galaxy') ||
+        category.contains('telefon') ||
+        subCategory.contains('telefon') ||
+        subCategory.contains('cep telefonu')) {
+      return 'phone';
+    }
+    if (name.contains('macbook') ||
+        name.contains('laptop') ||
+        name.contains('notebook') ||
+        category.contains('bilgisayar') ||
+        subCategory.contains('bilgisayar')) {
+      return 'computer';
+    }
+    if (category.contains('yemek') || subCategory.contains('yemek')) {
+      return 'food';
+    }
+    return 'other';
+  }
+
+  Widget _buildComparisonTable(
+    List<Product> products,
+    List<_SpecRow> visibleRows,
+    List<_SpecRow> allRows,
+  ) {
     return Column(
       children: [
         // Product images & names row
@@ -156,7 +226,9 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
                 onPressed: () => setState(() => _isExpanded = !_isExpanded),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.primary,
-                  side: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
+                  side: BorderSide(
+                    color: AppColors.primary.withValues(alpha: 0.3),
+                  ),
                   backgroundColor: AppColors.primary.withValues(alpha: 0.04),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(22),
@@ -225,7 +297,7 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
                           child: Image.asset(
                             product.images.first,
                             fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) =>
+                            errorBuilder: (_, error, stackTrace) =>
                                 _buildPlaceholderIcon(product),
                           ),
                         )
@@ -257,7 +329,9 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
     final category = (product.category ?? '').toLowerCase();
     final name = product.name.toLowerCase();
 
-    if (name.contains('iphone') || name.contains('galaxy') || name.contains('telefon')) {
+    if (name.contains('iphone') ||
+        name.contains('galaxy') ||
+        name.contains('telefon')) {
       icon = Icons.phone_iphone;
     } else if (name.contains('macbook') || name.contains('laptop')) {
       icon = Icons.laptop_mac;
@@ -269,13 +343,14 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
       icon = Icons.shopping_bag_outlined;
     }
 
-    return Center(
-      child: Icon(icon, size: 40, color: Colors.grey[400]),
-    );
+    return Center(child: Icon(icon, size: 40, color: Colors.grey[400]));
   }
 
   Widget _buildSpecRowWidget(
-      _SpecRow row, List<Product> products, bool isEvenRow) {
+    _SpecRow row,
+    List<Product> products,
+    bool isEvenRow,
+  ) {
     return Container(
       decoration: BoxDecoration(
         color: isEvenRow ? Colors.white : Colors.grey[50],
@@ -301,10 +376,7 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
           // Values for each product
           ...row.values.map((value) {
             if (row.label == 'Değerlendirmeler') {
-              return Expanded(
-                flex: 2,
-                child: _buildRatingCell(value),
-              );
+              return Expanded(flex: 2, child: _buildRatingCell(value));
             }
             return Expanded(
               flex: 2,
@@ -354,256 +426,100 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
     final rows = <_SpecRow>[];
 
     // Fiyat
-    rows.add(_SpecRow(
-      label: 'Fiyat',
-      values: products.map((p) => p.price).toList(),
-    ));
+    rows.add(
+      _SpecRow(label: 'Fiyat', values: products.map((p) => p.price).toList()),
+    );
 
     // Değerlendirmeler
-    rows.add(_SpecRow(
-      label: 'Değerlendirmeler',
-      values: products.map((p) => '${p.rating}').toList(),
-    ));
+    rows.add(
+      _SpecRow(
+        label: 'Değerlendirmeler',
+        values: products.map((p) => '${p.rating}').toList(),
+      ),
+    );
 
     // Satıcı
-    rows.add(_SpecRow(
-      label: 'Satıcı',
-      values: products.map((p) => p.store ?? '-').toList(),
-    ));
+    rows.add(
+      _SpecRow(
+        label: 'Satıcı',
+        values: products.map((p) => p.store ?? '-').toList(),
+      ),
+    );
 
-    // Determine category-specific specs
-    final mainProduct = products.first;
-    final brand = mainProduct.brand.toLowerCase();
-    final name = mainProduct.name.toLowerCase();
-    final category = (mainProduct.category ?? '').toLowerCase();
+    // Dynamic product specs (same source with web/mobile product specs section)
+    rows.addAll(_buildDynamicSpecRows(products));
 
-    if (name.contains('iphone') || brand.contains('apple') && (name.contains('phone') || category.contains('telefon'))) {
-      _addPhoneComparisonSpecs(rows, products, isApple: true);
-    } else if (name.contains('galaxy') || brand.contains('samsung')) {
-      _addPhoneComparisonSpecs(rows, products, isApple: false);
-    } else if (name.contains('macbook') || name.contains('laptop')) {
-      _addLaptopComparisonSpecs(rows, products);
-    } else if (category.contains('kişisel') || category.contains('bakım')) {
-      _addPersonalCareComparisonSpecs(rows, products);
-    } else {
-      _addGenericComparisonSpecs(rows, products);
+    // Fallback rows if no spec parsed
+    if (rows.length <= 3) {
+      rows.add(
+        _SpecRow(label: 'Marka', values: products.map((p) => p.brand).toList()),
+      );
+      rows.add(
+        _SpecRow(
+          label: 'Kategori',
+          values: products
+              .map((p) => p.subCategory ?? p.category ?? '-')
+              .toList(),
+        ),
+      );
     }
 
     return rows;
   }
 
-  void _addPhoneComparisonSpecs(List<_SpecRow> rows, List<Product> products,
-      {required bool isApple}) {
-    // Arttırılabilir Hafıza
-    rows.add(_SpecRow(
-      label: 'Arttırılabilir Hafıza',
-      values: products.map((p) {
-        if (p.brand.contains('Apple')) return 'Yok';
-        return 'Var';
-      }).toList(),
-    ));
+  List<_SpecRow> _buildDynamicSpecRows(List<Product> products) {
+    final productSpecMaps = products.map((product) {
+      final rawSpecs = ProductDetailContentHelper.buildSpecs(product);
+      final map = <String, String>{};
+      for (final spec in rawSpecs) {
+        final key = (spec['key'] ?? '').trim();
+        final value = (spec['value'] ?? '').trim();
+        if (key.isEmpty || value.isEmpty) continue;
+        map[key] = value;
+      }
+      return map;
+    }).toList();
 
-    // Garanti Tipi
-    rows.add(_SpecRow(
-      label: 'Garanti Tipi',
-      values: products.map((p) {
-        if (p.brand.contains('Apple')) return 'Apple Türkiye Garantili';
-        if (p.brand.contains('Samsung')) return 'Samsung Türkiye Garantili';
-        return 'İthalatçı Garantili';
-      }).toList(),
-    ));
+    final normalizedToDisplay = <String, String>{};
+    final orderedKeys = <String>[];
 
-    // Ekran Tipi
-    rows.add(_SpecRow(
-      label: 'Ekran Tipi',
-      values: products.map((p) {
-        final n = p.name.toLowerCase();
-        if (n.contains('iphone 17') || n.contains('iphone 16')) return 'Süper Retina';
-        if (n.contains('iphone')) return 'OLED';
-        if (n.contains('galaxy')) return 'Dynamic AMOLED';
-        return '-';
-      }).toList(),
-    ));
+    for (final specMap in productSpecMaps) {
+      for (final key in specMap.keys) {
+        final normalized = key.toLowerCase();
+        if (!normalizedToDisplay.containsKey(normalized)) {
+          normalizedToDisplay[normalized] = key;
+          orderedKeys.add(normalized);
+        }
+      }
+    }
 
-    // Telefon Serisi
-    rows.add(_SpecRow(
-      label: 'Telefon Serisi',
-      values: products.map((p) {
-        final n = p.name;
-        if (n.contains('iPhone 13')) return 'iPhone 13';
-        if (n.contains('iPhone 15')) return 'iPhone 15';
-        if (n.contains('iPhone 17')) return 'iPhone 17';
-        if (n.contains('iPhone 14')) return 'iPhone 14';
-        if (n.contains('iPhone 16')) return 'iPhone 16';
-        if (n.contains('Galaxy S24')) return 'Galaxy S24';
-        if (n.contains('Galaxy S23')) return 'Galaxy S23';
-        return p.brand;
-      }).toList(),
-    ));
-
-    // Dahili Hafıza
-    rows.add(_SpecRow(
-      label: 'Dahili Hafıza',
-      values: products.map((p) {
-        final n = p.name.toLowerCase();
-        if (n.contains('256')) return '256 GB';
-        if (n.contains('512')) return '512 GB';
-        if (n.contains('1 tb') || n.contains('1tb')) return '1 TB';
-        return '128 GB';
-      }).toList(),
-    ));
-
-    // Pil Gücü
-    rows.add(_SpecRow(
-      label: 'Pil Gücü',
-      values: products.map((p) {
-        final n = p.name.toLowerCase();
-        if (n.contains('iphone 13')) return '3095 mAh';
-        if (n.contains('iphone 15 pro max')) return '4422 mAh';
-        if (n.contains('iphone 15')) return '3877 mAh';
-        if (n.contains('iphone 17')) return '3692 mAh';
-        if (n.contains('galaxy s24 ultra')) return '5000 mAh';
-        if (n.contains('galaxy s24')) return '4000 mAh';
-        return '-';
-      }).toList(),
-    ));
-
-    // Ekran Boyutu
-    rows.add(_SpecRow(
-      label: 'Ekran Boyutu',
-      values: products.map((p) {
-        final n = p.name.toLowerCase();
-        if (n.contains('iphone 13') || n.contains('iphone 15') && !n.contains('max') && !n.contains('plus')) return '6,1 inç';
-        if (n.contains('pro max') || n.contains('plus')) return '6,7 inç';
-        if (n.contains('galaxy s24 ultra')) return '6,8 inç';
-        if (n.contains('iphone 17')) return '6,3 inç';
-        return '6,1 inç';
-      }).toList(),
-    ));
-
-    // İşlemci
-    rows.add(_SpecRow(
-      label: 'İşlemci',
-      values: products.map((p) {
-        final n = p.name.toLowerCase();
-        if (n.contains('iphone 13')) return 'A15 Bionic';
-        if (n.contains('iphone 15')) return 'A16 Bionic';
-        if (n.contains('iphone 17')) return 'A19 Pro';
-        if (n.contains('galaxy s24')) return 'Snapdragon 8 Gen 3';
-        return '-';
-      }).toList(),
-    ));
-
-    // 5G Desteği
-    rows.add(_SpecRow(
-      label: '5G Desteği',
-      values: products.map((p) => 'Var').toList(),
-    ));
-
-    // Kamera
-    rows.add(_SpecRow(
-      label: 'Ana Kamera',
-      values: products.map((p) {
-        final n = p.name.toLowerCase();
-        if (n.contains('iphone 13')) return '12 MP';
-        if (n.contains('iphone 15 pro')) return '48 MP';
-        if (n.contains('iphone 15')) return '48 MP';
-        if (n.contains('iphone 17')) return '48 MP';
-        if (n.contains('galaxy s24 ultra')) return '200 MP';
-        if (n.contains('galaxy s24')) return '50 MP';
-        return '-';
-      }).toList(),
-    ));
-
-    // RAM
-    rows.add(_SpecRow(
-      label: 'RAM',
-      values: products.map((p) {
-        final n = p.name.toLowerCase();
-        if (n.contains('iphone 13')) return '4 GB';
-        if (n.contains('iphone 15')) return '6 GB';
-        if (n.contains('iphone 17')) return '8 GB';
-        if (n.contains('galaxy s24 ultra')) return '12 GB';
-        if (n.contains('galaxy s24')) return '8 GB';
-        return '-';
-      }).toList(),
-    ));
-  }
-
-  void _addLaptopComparisonSpecs(
-      List<_SpecRow> rows, List<Product> products) {
-    rows.add(_SpecRow(
-      label: 'İşlemci',
-      values: products.map((p) {
-        if (p.name.contains('M3')) return 'Apple M3';
-        if (p.name.contains('M2')) return 'Apple M2';
-        return 'Intel Core i7';
-      }).toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'RAM',
-      values: products.map((_) => '8 GB').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Depolama',
-      values: products.map((_) => '256 GB SSD').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Ekran Boyutu',
-      values: products.map((_) => '13,6 inç').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Pil Ömrü',
-      values: products.map((_) => '18 saat').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Ağırlık',
-      values: products.map((_) => '1,24 kg').toList(),
-    ));
-  }
-
-  void _addPersonalCareComparisonSpecs(
-      List<_SpecRow> rows, List<Product> products) {
-    rows.add(_SpecRow(
-      label: 'Hacim',
-      values: products.map((_) => '350 ml').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Saç Tipi',
-      values: products.map((_) => 'Tüm Saç Tipleri').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Paraben',
-      values: products.map((_) => 'İçermez').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Sülfat',
-      values: products.map((_) => 'İçermez').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Menşei',
-      values: products.map((_) => 'Türkiye').toList(),
-    ));
-  }
-
-  void _addGenericComparisonSpecs(
-      List<_SpecRow> rows, List<Product> products) {
-    rows.add(_SpecRow(
-      label: 'Marka',
-      values: products.map((p) => p.brand).toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Kategori',
-      values: products.map((p) => p.subCategory ?? p.category ?? '-').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Garanti',
-      values: products.map((_) => '2 Yıl').toList(),
-    ));
-    rows.add(_SpecRow(
-      label: 'Kargo',
-      values: products.map((_) => 'Ücretsiz').toList(),
-    ));
+    final baseRowKeys = {'fiyat', 'değerlendirmeler', 'satıcı'};
+    return orderedKeys
+        .where((normalized) => !baseRowKeys.contains(normalized))
+        .map((normalized) {
+          final label = normalizedToDisplay[normalized]!;
+          final values = productSpecMaps.map((specMap) {
+            final direct = specMap[label];
+            if (direct != null && direct.isNotEmpty) return direct;
+            return specMap.entries
+                    .firstWhere(
+                      (entry) => entry.key.toLowerCase() == normalized,
+                      orElse: () => const MapEntry('', '-'),
+                    )
+                    .value
+                    .trim()
+                    .isEmpty
+                ? '-'
+                : specMap.entries
+                      .firstWhere(
+                        (entry) => entry.key.toLowerCase() == normalized,
+                        orElse: () => const MapEntry('', '-'),
+                      )
+                      .value;
+          }).toList();
+          return _SpecRow(label: label, values: values);
+        })
+        .toList();
   }
 }
 

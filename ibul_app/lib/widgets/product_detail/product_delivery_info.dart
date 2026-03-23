@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../screens/delivery_info_page.dart';
 
 class ProductDeliveryInfoSection extends StatelessWidget {
   const ProductDeliveryInfoSection({super.key});
@@ -7,11 +8,21 @@ class ProductDeliveryInfoSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _buildInfoTile(
-          icon: Icons.local_shipping_outlined,
-          title: 'KURYE TESLİMATI',
-          subtitle: 'Tahmini 4 Saate adresinde',
-          color: const Color(0xFF673AB7), // Deep Purple
+        GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const DeliveryInfoPage(),
+              ),
+            );
+          },
+          child: _buildInfoTile(
+            icon: Icons.local_shipping_outlined,
+            title: 'KURYE TESLIMATİ',
+            subtitle: 'Tahmini 4 Saate adresinde',
+            color: const Color(0xFF673AB7), // Deep Purple
+          ),
         ),
         const SizedBox(height: 12),
         _buildInfoTile(

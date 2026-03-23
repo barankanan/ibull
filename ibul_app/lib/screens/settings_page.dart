@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../core/constants.dart';
+import '../core/app_state.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../widgets/account_sidebar.dart';
+import '../services/auth_service.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -12,11 +15,159 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  late TextEditingController _nameController;
+  late TextEditingController _surnameController;
+  late TextEditingController _phoneController;
+  late TextEditingController _emailController;
+  late TextEditingController _addressController;
+  
+  // New controllers for other fields
+  late TextEditingController _heightController;
+  late TextEditingController _weightController;
+  late TextEditingController _genderController;
+  late TextEditingController _birthDateController;
+  late TextEditingController _styleController;
+  
   bool _smsNotifications = false;
   bool _emailNotifications = true;
   bool _showCurrentPassword = false;
   bool _showNewPassword = false;
   bool _showConfirmPassword = false;
+
+  bool _initialized = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+    _surnameController = TextEditingController();
+    _phoneController = TextEditingController();
+    _emailController = TextEditingController();
+    _addressController = TextEditingController();
+    
+    _heightController = TextEditingController();
+    _weightController = TextEditingController();
+    _genderController = TextEditingController();
+    _birthDateController = TextEditingController();
+    _styleController = TextEditingController();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_initialized) {
+      final appState = Provider.of<AppState>(context, listen: false);
+      final user = appState.currentUser;
+      
+      String fullName = user?['displayName'] ?? user?['name'] ?? '';
+      String name = '';
+      String surname = '';
+      
+      if (fullName.isNotEmpty) {
+        List<String> parts = fullName.split(' ');
+        if (parts.length > 1) {
+          surname = parts.last;
+          name = parts.sublist(0, parts.length - 1).join(' ');
+        } else {
+          name = fullName;
+        }
+      }
+
+      _nameController.text = name;
+      _surnameController.text = surname;
+      _phoneController.text = user?['phone'] ?? '';
+      _emailController.text = user?['email'] ?? '';
+      _addressController.text = user?['address'] ?? '';
+      
+      // Initialize other fields if they exist, otherwise they stay empty
+      if (user?['weight'] != null) _weightController.text = user!['weight'].toString();
+      if (user?['height'] != null) _heightController.text = user!['height'].toString();
+      if (user?['gender'] != null) _genderController.text = user!['gender'];
+      if (user?['birthDate'] != null) _birthDateController.text = user!['birthDate'];
+      if (user?['style'] != null) _styleController.text = user!['style'];
+      
+      _initialized = true;
+    }
+  }
+
+  Future<void> _deleteAccount() async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hesabı Sil'),
+        content: const Text('Hesabınızı kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('İptal'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Sil', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      // Perform delete operation
+      final appState = Provider.of<AppState>(context, listen: false);
+      await appState.deleteAccount();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Hesabınız silindi.'), backgroundColor: Colors.red),
+        );
+        Navigator.popUntil(context, (route) => route.isFirst); // Go to login/home
+      }
+    }
+  }
+  
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _surnameController.dispose();
+    _phoneController.dispose();
+    _emailController.dispose();
+    _addressController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveChanges() async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final fullName = '${_nameController.text.trim()} ${_surnameController.text.trim()}'.trim();
+    
+    try {
+      await appState.updateUserProfile(
+        displayName: fullName.isNotEmpty ? fullName : null,
+        weight: double.tryParse(_weightController.text),
+        height: double.tryParse(_heightController.text),
+        gender: _genderController.text.isNotEmpty ? _genderController.text : null,
+        birthDate: _birthDateController.text.isNotEmpty ? _birthDateController.text : null,
+        style: _styleController.text.isNotEmpty ? _styleController.text : null,
+        phone: _phoneController.text.isNotEmpty ? _phoneController.text : null,
+        address: _addressController.text.isNotEmpty ? _addressController.text : null,
+      );
+      
+      // Update other fields in Firestore directly since updateProfile only handles basic info
+      // Ideally we should add these to updateProfile or have a separate method
+      // For now let's assume updateProfile handles what it can
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Değişiklikler başarıyla kaydedildi'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Hata oluştu: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -126,9 +277,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                             Expanded(
                                               child: Row(
                                                 children: [
-                                                  Expanded(child: _buildTextField('Ad', 'Baran', isWeb: true)),
+                                                  Expanded(child: _buildTextField('Ad', 'Baran', controller: _nameController, isWeb: true)),
                                                   const SizedBox(width: 16),
-                                                  Expanded(child: _buildTextField('Soyad', 'Kananoğulları', isWeb: true)),
+                                                  Expanded(child: _buildTextField('Soyad', 'Kananoğulları', controller: _surnameController, isWeb: true)),
                                                 ],
                                               ),
                                             ),
@@ -139,19 +290,19 @@ class _SettingsPageState extends State<SettingsPage> {
                                         // Personal Details Grid
                                         Row(
                                           children: [
-                                            Expanded(child: _buildSelectField('Boy', '1.87', isWeb: true)),
+                                            Expanded(child: _buildTextField('Boy', '1.75 (Örn)', controller: _heightController, isWeb: true)),
                                             const SizedBox(width: 16),
-                                            Expanded(child: _buildSelectField('Kilo', '78', isWeb: true)),
+                                            Expanded(child: _buildTextField('Kilo', '70 (Örn)', controller: _weightController, isWeb: true)),
                                             const SizedBox(width: 16),
-                                            Expanded(child: _buildSelectField('Doğum Tarihi', '31/05/2005', isWeb: true)),
+                                            Expanded(child: _buildTextField('Doğum Tarihi', 'GG/AA/YYYY', controller: _birthDateController, isWeb: true)),
                                           ],
                                         ),
                                         const SizedBox(height: 24),
                                         Row(
                                           children: [
-                                            Expanded(child: _buildAddField('Tarz', '...', isWeb: true)),
+                                            Expanded(child: _buildTextField('Tarz', 'Seçiniz', controller: _styleController, isWeb: true)),
                                             const SizedBox(width: 16),
-                                            Expanded(child: _buildSelectField('Cinsiyet', 'Erkek', isWeb: true)),
+                                            Expanded(child: _buildTextField('Cinsiyet', 'Erkek/Kadın', controller: _genderController, isWeb: true)),
                                             const SizedBox(width: 16),
                                             const Expanded(child: SizedBox()), // Spacer for grid alignment
                                           ],
@@ -196,8 +347,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                                       const SizedBox(width: 8),
                                                       Expanded(
                                                         child: TextField(
+                                                          controller: _phoneController,
                                                           decoration: InputDecoration(
-                                                            hintText: '537 624 7077',
+                                                            hintText: 'Numara giriniz',
                                                             filled: true,
                                                             fillColor: Colors.grey.shade50,
                                                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
@@ -211,11 +363,11 @@ class _SettingsPageState extends State<SettingsPage> {
                                               ),
                                             ),
                                             const SizedBox(width: 24),
-                                            Expanded(child: _buildTextField('E-mail', 'baran.kan27@gmail.com', isWeb: true)),
+                                            Expanded(child: _buildTextField('E-mail', 'E-mail giriniz', controller: _emailController, isWeb: true)),
                                           ],
                                         ),
                                         const SizedBox(height: 24),
-                                        _buildTextField('Adresim', 'Hatay / Arsuz', isWeb: true),
+                                        _buildTextField('Adresim', 'Adres giriniz', controller: _addressController, isWeb: true),
                                         
                                         const Padding(
                                           padding: EdgeInsets.symmetric(vertical: 32),
@@ -299,7 +451,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                           mainAxisAlignment: MainAxisAlignment.end,
                                           children: [
                                             OutlinedButton(
-                                              onPressed: () {},
+                                              onPressed: _deleteAccount,
                                               style: OutlinedButton.styleFrom(
                                                 foregroundColor: Colors.red,
                                                 side: const BorderSide(color: Colors.red),
@@ -310,7 +462,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                             ),
                                             const SizedBox(width: 16),
                                             ElevatedButton(
-                                              onPressed: () {},
+                                              onPressed: _saveChanges,
                                               style: ElevatedButton.styleFrom(
                                                 backgroundColor: AppColors.primary,
                                                 foregroundColor: Colors.white,
@@ -421,29 +573,29 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   Row(
                     children: [
-                      Expanded(child: _buildTextField('Ad', 'Baran')),
+                      Expanded(child: _buildTextField('Ad', 'Adınız', controller: _nameController)),
                       const SizedBox(width: 12),
-                      Expanded(child: _buildSelectField('Boy', '1.87')),
+                      Expanded(child: _buildTextField('Boy', '1.75 (Örn)', controller: _heightController)),
                     ],
                   ),
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      Expanded(child: _buildTextField('Soyad', 'Kananoğulları')),
+                      Expanded(child: _buildTextField('Soyad', 'Soyadınız', controller: _surnameController)),
                       const SizedBox(width: 12),
-                      Expanded(child: _buildSelectField('Kilo', '78')),
+                      Expanded(child: _buildTextField('Kilo', '70 (Örn)', controller: _weightController)),
                     ],
                   ),
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      Expanded(child: _buildSelectField('Doğum Tarihi', '31/05/2005')),
+                      Expanded(child: _buildTextField('Doğum Tarihi', 'GG/AA/YYYY', controller: _birthDateController)),
                       const SizedBox(width: 12),
-                      Expanded(child: _buildAddField('Tarz', '...')),
+                      Expanded(child: _buildTextField('Tarz', 'Seçiniz', controller: _styleController)),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  _buildSelectField('Cinsiyet', 'Erkek'),
+                  _buildTextField('Cinsiyet', 'Erkek/Kadın', controller: _genderController),
                 ],
               ),
             ),
@@ -485,8 +637,9 @@ class _SettingsPageState extends State<SettingsPage> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: TextField(
+                          controller: _phoneController,
                           decoration: InputDecoration(
-                            hintText: '537 624 7077',
+                            hintText: 'Numara giriniz',
                             hintStyle: const TextStyle(fontSize: 13),
                             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                             border: OutlineInputBorder(
@@ -509,8 +662,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   const SizedBox(height: 4),
                   TextField(
+                    controller: _emailController,
                     decoration: InputDecoration(
-                      hintText: 'baran.kan27@gmail.com',
+                      hintText: 'E-mail giriniz',
                       hintStyle: const TextStyle(fontSize: 13),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                       border: OutlineInputBorder(
@@ -530,8 +684,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   const SizedBox(height: 4),
                   TextField(
+                    controller: _addressController,
                     decoration: InputDecoration(
-                      hintText: 'Hatay / Arsuz',
+                      hintText: 'Adres giriniz',
                       hintStyle: const TextStyle(fontSize: 13),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                       suffixIcon: const Icon(Icons.chevron_right, size: 20),
@@ -719,7 +874,7 @@ class _SettingsPageState extends State<SettingsPage> {
                             _smsNotifications = value;
                           });
                         },
-                        activeColor: AppColors.primary,
+                        activeThumbColor: AppColors.primary,
                       ),
                     ],
                   ),
@@ -749,7 +904,7 @@ class _SettingsPageState extends State<SettingsPage> {
                             _emailNotifications = value;
                           });
                         },
-                        activeColor: AppColors.primary,
+                        activeThumbColor: AppColors.primary,
                       ),
                     ],
                   ),
@@ -762,7 +917,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: OutlinedButton(
-                onPressed: () {},
+                onPressed: _deleteAccount,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.primary,
                   side: const BorderSide(color: AppColors.primary, width: 1.5),
@@ -792,7 +947,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildTextField(String label, String hint, {bool isWeb = false}) {
+  Widget _buildTextField(String label, String hint, {bool isWeb = false, TextEditingController? controller}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -802,84 +957,13 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 8),
         TextField(
+          controller: controller,
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: TextStyle(fontSize: isWeb ? 14 : 13),
             contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: isWeb ? 12 : 10),
             filled: isWeb,
             fillColor: isWeb ? Colors.grey.shade50 : null,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(isWeb ? 8 : 6),
-              borderSide: isWeb ? BorderSide.none : BorderSide(color: Colors.grey.shade300),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(isWeb ? 8 : 6),
-              borderSide: isWeb ? BorderSide.none : BorderSide(color: Colors.grey.shade300),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSelectField(String label, String value, {bool isWeb = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(fontSize: isWeb ? 13 : 11, color: isWeb ? const Color(0xFF374151) : Colors.grey, fontWeight: isWeb ? FontWeight.w500 : FontWeight.normal),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          readOnly: true,
-          decoration: InputDecoration(
-            hintText: value,
-            hintStyle: TextStyle(fontSize: isWeb ? 14 : 13, color: Colors.black),
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: isWeb ? 12 : 10),
-            filled: isWeb,
-            fillColor: isWeb ? Colors.grey.shade50 : null,
-            suffixIcon: Icon(Icons.keyboard_arrow_down, size: 20, color: isWeb ? Colors.grey : AppColors.primary),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(isWeb ? 8 : 6),
-              borderSide: isWeb ? BorderSide.none : BorderSide(color: Colors.grey.shade300),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(isWeb ? 8 : 6),
-              borderSide: isWeb ? BorderSide.none : BorderSide(color: Colors.grey.shade300),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAddField(String label, String hint, {bool isWeb = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(fontSize: isWeb ? 13 : 11, color: isWeb ? const Color(0xFF374151) : Colors.grey, fontWeight: isWeb ? FontWeight.w500 : FontWeight.normal),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: TextStyle(fontSize: isWeb ? 14 : 13, color: Colors.grey),
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: isWeb ? 12 : 10),
-            filled: isWeb,
-            fillColor: isWeb ? Colors.grey.shade50 : null,
-            suffixIcon: isWeb 
-              ? const Icon(Icons.add, size: 20, color: Colors.grey)
-              : Container(
-                  margin: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: AppColors.primary,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.add, size: 18, color: Colors.white),
-                ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(isWeb ? 8 : 6),
               borderSide: isWeb ? BorderSide.none : BorderSide(color: Colors.grey.shade300),
@@ -962,7 +1046,7 @@ class _SettingsPageState extends State<SettingsPage> {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: AppColors.primary,
+            activeThumbColor: AppColors.primary,
           ),
         ],
       ),

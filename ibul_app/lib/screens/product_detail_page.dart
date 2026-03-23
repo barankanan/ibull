@@ -3,13 +3,13 @@ import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
+import '../services/review_repository.dart';
 import '../viewmodels/product_detail_viewmodel.dart';
 import '../widgets/web_header.dart';
 import '../widgets/product_detail/product_delivery_info.dart';
 import '../widgets/product_detail/product_image_slider.dart';
 import '../widgets/product_detail/product_info_section_web.dart';
 import '../widgets/product_detail/product_info_section_mobile.dart';
-import '../widgets/product_detail/product_variant_selector_web.dart';
 import '../widgets/product_detail/product_variant_selector_mobile.dart';
 import '../widgets/product_detail/product_service_buttons.dart';
 import '../widgets/product_detail/product_tabs_section.dart';
@@ -28,31 +28,88 @@ import '../widgets/product_detail/product_qa_card.dart';
 import '../widgets/product_detail/product_reviews_full_section.dart';
 import '../widgets/product_detail/product_qa_full_section.dart';
 import '../widgets/product_detail/product_complementary_set.dart';
+import '../widgets/product_detail/product_category_cards.dart'; // Import
 import 'home_screen.dart';
 import 'search_results_page.dart';
 
 class ProductDetailPage extends StatelessWidget {
   final Product product;
+  final String? heroTag;
 
-  const ProductDetailPage({super.key, required this.product});
+  const ProductDetailPage({super.key, required this.product, this.heroTag});
 
   @override
   Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final localReviews = appState.getProductReviewsFor(
+      productName: product.name,
+      storeName: product.store,
+    );
+    final initialSummary = ReviewRepository.instance
+        .getInitialProductReviewSummary(
+          productName: product.name,
+          storeName: product.store,
+          localReviews: localReviews,
+          fallbackRating: product.rating,
+          fallbackCount: product.reviewCount,
+        );
+
+    if (initialSummary.averageRating > 0 || initialSummary.reviewCount > 0) {
+      return _buildResolvedPage(
+        context,
+        product.copyWith(
+          rating: initialSummary.averageRating,
+          reviewCount: initialSummary.reviewCount,
+        ),
+      );
+    }
+
+    return FutureBuilder<ReviewSummary>(
+      future: ReviewRepository.instance.getProductReviewSummary(
+        productName: product.name,
+        storeName: product.store,
+        localReviews: localReviews,
+      ),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData &&
+            snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            backgroundColor: Colors.white,
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final resolvedSummary = snapshot.data ?? initialSummary;
+        return _buildResolvedPage(
+          context,
+          product.copyWith(
+            rating: resolvedSummary.averageRating,
+            reviewCount: resolvedSummary.reviewCount,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildResolvedPage(BuildContext context, Product resolvedProduct) {
     return ChangeNotifierProvider(
       create: (context) => ProductDetailViewModel(
-        initialProduct: product,
+        initialProduct: resolvedProduct,
         appState: Provider.of<AppState>(context, listen: false),
       ),
-      child: const _ProductDetailPageContent(),
+      child: _ProductDetailPageContent(heroTag: heroTag),
     );
   }
 }
 
 class _ProductDetailPageContent extends StatefulWidget {
-  const _ProductDetailPageContent();
+  final String? heroTag;
+
+  const _ProductDetailPageContent({this.heroTag});
 
   @override
-  State<_ProductDetailPageContent> createState() => _ProductDetailPageContentState();
+  State<_ProductDetailPageContent> createState() =>
+      _ProductDetailPageContentState();
 }
 
 class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
@@ -100,19 +157,21 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => SearchResultsPage(query: query, results: const []),
+                        builder: (context) => SearchResultsPage(query: query),
                       ),
                     );
                   },
                   onCategorySelected: (category) {
                     Navigator.pushAndRemoveUntil(
                       context,
-                      MaterialPageRoute(builder: (context) => const HomeScreen()),
+                      MaterialPageRoute(
+                        builder: (context) => const HomeScreen(),
+                      ),
                       (route) => false,
                     );
                   },
                 ),
-              
+
               // Content
               Expanded(
                 child: SingleChildScrollView(
@@ -126,44 +185,48 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                       else
                         _buildNarrowLayout(context),
                       if (isWide)
-                      // Similar Products (full width)
-                      Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1200),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Column(
-                              children: [
-                                const ProductComplementarySet(),
-                                const SizedBox(height: 24),
-                                const SimilarProductsSection(),
-                                const SizedBox(height: 24),
-                                ProductFullDescription(key: _descriptionKey),
-                                const SizedBox(height: 24),
-                                ProductFullSpecs(key: _specsKey),
-                                const SizedBox(height: 24),
-                                const ProductComparisonSection(),
-                                const SizedBox(height: 24),
-                                const ProductReviewsFullSection(),
-                                const SizedBox(height: 24),
-                                const ProductQaFullSection(),
-                                const SizedBox(height: 24),
-                                const ProductFaqSection(),
-                                const SizedBox(height: 24),
-                                const ProductOtherSellersFull(),
-                                const SizedBox(height: 32),
-                              ],
+                        // Similar Products (full width)
+                        Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 1200),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              child: Column(
+                                children: [
+                                  const ProductComplementarySet(),
+                                  const SizedBox(height: 24),
+                                  const SimilarProductsSection(),
+                                  const SizedBox(height: 24),
+                                  ProductFullDescription(key: _descriptionKey),
+                                  const SizedBox(height: 24),
+                                  ProductFullSpecs(key: _specsKey),
+                                  const SizedBox(height: 24),
+                                  const ProductComparisonSection(),
+                                  const SizedBox(height: 24),
+                                  const ProductReviewsFullSection(),
+                                  const SizedBox(height: 24),
+                                  const ProductQaFullSection(),
+                                  const SizedBox(height: 24),
+                                  const ProductFaqSection(),
+                                  const SizedBox(height: 24),
+                                  const ProductCategoryCards(), // Add here
+                                  const SizedBox(height: 24),
+                                  const ProductOtherSellersFull(),
+                                  const SizedBox(height: 32),
+                                ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                 ),
               ),
             ],
           ),
-          
+
           // Mobile Floating Header (Back Button)
           if (!isWide)
             Positioned(
@@ -187,7 +250,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                 ),
               ),
             ),
-          
+
           // Sticky Bottom Bar for Mobile
           if (!isWide)
             const Positioned(
@@ -202,14 +265,19 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   }
 
   Widget _buildBreadcrumb(BuildContext context) {
-    final viewModel = Provider.of<ProductDetailViewModel>(context, listen: false);
+    final viewModel = Provider.of<ProductDetailViewModel>(
+      context,
+      listen: false,
+    );
     final product = viewModel.initialProduct;
     final parts = <String>[
       'iBul',
       product.brand,
       if (product.category != null) product.category!,
       if (product.subCategory != null) product.subCategory!,
-      product.name.length > 40 ? '${product.name.substring(0, 40)}...' : product.name,
+      product.name.length > 40
+          ? '${product.name.substring(0, 40)}...'
+          : product.name,
     ];
 
     return Container(
@@ -240,7 +308,11 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                     if (!isLast)
                       const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 6),
-                        child: Icon(Icons.chevron_right, size: 14, color: Colors.grey),
+                        child: Icon(
+                          Icons.chevron_right,
+                          size: 14,
+                          color: Colors.grey,
+                        ),
                       ),
                   ],
                 );
@@ -267,7 +339,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                   width: 360,
                   child: Column(
                     children: [
-                      const ProductImageSlider(),
+                      ProductImageSlider(heroTag: widget.heroTag),
                       const SizedBox(height: 14),
                       Expanded(
                         child: ProductTabsSection(
@@ -293,39 +365,112 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   }
 
   Widget _buildNarrowLayout(BuildContext context) {
+    // Ürün verisini al
+    final viewModel = Provider.of<ProductDetailViewModel>(context);
+    final product = viewModel.initialProduct;
+    final hasVariants =
+        product.variants != null && product.variants!.isNotEmpty;
+
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 600),
-        child: Column(
-          children: [
-            const ProductImageSlider(isMobile: true),
-            Padding(
-              padding: const EdgeInsets.all(16), // Increased padding
-              child: Column(
-                children: [
-                  const SizedBox(height: 12),
-                  const ProductInfoSectionMobile(),
-                  const SizedBox(height: 16),
-                  const ProductStoreInfo(),
-                  const SizedBox(height: 16),
-                  const ProductVariantSelectorMobile(),
-                  const SizedBox(height: 16),
-                  const ProductDeliveryInfoSection(), // Delivery Info
-                  const SizedBox(height: 16),
-                  const ProductOtherStoresCard(),
-                  const SizedBox(height: 16),
-                  const ProductAdditionalServices(),
-                  const SizedBox(height: 16),
-                  const ProductReviewsSection(),
-                  const SizedBox(height: 16),
-                  const ProductComplementarySet(),
-                  const SizedBox(height: 16),
-                  const SimilarProductsSection(), // Added Similar Products
-                  const SizedBox(height: 80), // Space for bottom bar
-                ],
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              ProductImageSlider(isMobile: true, heroTag: widget.heroTag),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 12),
+                    const ProductInfoSectionMobile(),
+                    const SizedBox(height: 16),
+                    const ProductStoreInfo(),
+                    const SizedBox(height: 16),
+
+                    if (hasVariants) ...[
+                      const SizedBox(height: 8),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Ürün Seçenekleri',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (hasVariants) ...[
+                        const ProductVariantSelectorMobile(),
+                        const SizedBox(height: 16),
+                      ],
+                    ],
+                    if (!hasVariants) ...[
+                      const SizedBox(height: 8),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Ürün Seçenekleri',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Bu ürün için seçenek bulunmuyor.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Ek Hizmetler Başlığı
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Ek Hizmetler',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const ProductAdditionalServices(),
+                    const SizedBox(height: 16),
+
+                    const ProductDeliveryInfoSection(),
+                    const SizedBox(height: 16),
+                    const ProductOtherStoresCard(),
+                    const SizedBox(height: 16),
+                    const ProductReviewsSection(),
+                    const SizedBox(height: 16),
+                    const ProductQaCard(),
+                    const SizedBox(height: 16),
+                    const ProductFaqSection(),
+                    const SizedBox(height: 16),
+                    const ProductCategoryCards(),
+                    const SizedBox(height: 16),
+                    const ProductComplementarySet(),
+                    const SizedBox(height: 16),
+                    const SimilarProductsSection(),
+                    const SizedBox(height: 80),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -338,11 +483,11 @@ class _CenterColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Ürünün seçenekleri olup olmadığını kontrol et
-    final product = Provider.of<ProductDetailViewModel>(context).initialProduct;
-    // Sadece Telefon kategorisindeki ürünlerde varyant seçimi göster
-    // Kategori veya Alt Kategori kontrolü ekledik.
-    final hasVariants = (product.category?.toLowerCase().contains('telefon') ?? false) ||
-                        (product.subCategory?.toLowerCase().contains('telefon') ?? false);
+    final viewModel = Provider.of<ProductDetailViewModel>(context);
+    final product = viewModel.initialProduct;
+    // Varyant kontrolünü kaldırdık, varsa göstersin
+    final hasVariants =
+        product.variants != null && product.variants!.isNotEmpty;
 
     return SingleChildScrollView(
       child: Container(
@@ -353,7 +498,9 @@ class _CenterColumn extends StatelessWidget {
           border: Border.all(color: Colors.grey.shade200),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Colors.black.withOpacity(
+                0.05,
+              ), // withValues -> withOpacity
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -364,24 +511,47 @@ class _CenterColumn extends StatelessWidget {
           children: [
             const ProductInfoSectionWeb(),
             const SizedBox(height: 24),
+
+            // Varyant Seçici Web - Moved to match Mobile logic (conceptually below Store Info which is in Sidebar, but here in main flow)
+            // In Web Wide layout, Store Info is in the Right Sidebar.
+            // So we keep Variants here in the center column, but above Additional Services.
             if (hasVariants) ...[
               const Text(
-                'Ürün Seç',
+                'Ürün Seçenekleri',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: Colors.black87,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              if (hasVariants) ...[
+                const ProductVariantSelectorMobile(),
+                const SizedBox(height: 16),
+              ],
             ],
-            const ProductVariantSelectorWeb(),
-            if (hasVariants)
-              const SizedBox(height: 16),
-            const ProductBottomBar(), // Added back because it was removed from ProductVariantSelector
-            const SizedBox(height: 16),
+            if (!hasVariants) ...[
+              const Text(
+                'Ürün Seçenekleri',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Bu ürün için seçenek bulunmuyor.',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            const ProductBottomBar(),
+            const SizedBox(height: 24),
+
             const Text(
-              'Ürün Seçenekleri',
+              'Ek Hizmetler',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,

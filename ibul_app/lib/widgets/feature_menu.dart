@@ -1,13 +1,63 @@
 import 'package:flutter/material.dart';
 
 class FeatureMenu extends StatelessWidget {
-  const FeatureMenu({super.key});
+  final List<Map<String, dynamic>> remoteCategories;
+
+  const FeatureMenu({super.key, this.remoteCategories = const []});
+
+  static const List<_FeatureConfig> _featureConfigs = [
+    _FeatureConfig(
+      key: 'yakin_lokasyon',
+      label: 'Yakın Lokasyon',
+      assetPath: 'assets/images/features/yakin-lokasyon.png',
+    ),
+    _FeatureConfig(
+      key: 'urun_listele',
+      label: 'Ürün Listele',
+      assetPath: 'assets/images/features/listele.png',
+    ),
+    _FeatureConfig(
+      key: 'gorsel_zeka',
+      label: 'Görsel Zeka',
+      assetPath: 'assets/images/features/gorsel-zeka.png',
+    ),
+    _FeatureConfig(
+      key: 'urun_parcala',
+      label: 'Ürün Parçala',
+      assetPath: 'assets/images/features/urun-parcala.png',
+    ),
+    _FeatureConfig(
+      key: 'ibul_premium',
+      label: 'İBUL Premium',
+      assetPath: 'assets/images/features/ibul-premium.png',
+    ),
+    _FeatureConfig(
+      key: 'bana_ozel',
+      label: 'Bana Özel',
+      assetPath: 'assets/images/features/sana-ozel.png',
+    ),
+    _FeatureConfig(
+      key: 'hizli_yemek',
+      label: 'Hızlı Yemek',
+      assetPath: 'assets/images/features/hizli-yemek.png',
+    ),
+    _FeatureConfig(
+      key: 'yapay_zeka',
+      label: 'Yapay Zeka',
+      assetPath: 'assets/images/features/yapay-zeka.png',
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isSmallScreen = screenWidth < 360;
-    
+    final Map<String, Map<String, dynamic>> remoteByKey = {
+      for (final category in remoteCategories)
+        if ((category['category_key']?.toString() ?? '').isNotEmpty)
+          category['category_key'].toString(): category,
+    };
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: isSmallScreen ? 8.0 : 12.0,
@@ -21,51 +71,35 @@ class FeatureMenu extends StatelessWidget {
         childAspectRatio: isSmallScreen ? 0.75 : 0.7,
         padding: EdgeInsets.zero,
         shrinkWrap: true,
-        children: const [
-          _FeatureTile(
-            imagePath: 'assets/images/features/yakin-lokasyon.png',
-            label: 'Yakın Lokasyon',
-          ),
-          _FeatureTile(
-            imagePath: 'assets/images/features/listele.png',
-            label: 'Ürün Listele',
-          ),
-          _FeatureTile(
-            imagePath: 'assets/images/features/gorsel-zeka.png',
-            label: 'Görsel Zeka',
-          ),
-          _FeatureTile(
-            imagePath: 'assets/images/features/urun-parcala.png',
-            label: 'Ürün Parçala',
-          ),
-          _FeatureTile(
-            imagePath: 'assets/images/features/ibul-premium.png',
-            label: 'İBUL Premium',
-          ),
-          _FeatureTile(
-            imagePath: 'assets/images/features/sana-ozel.png',
-            label: 'Bana Özel',
-          ),
-          _FeatureTile(
-            imagePath: 'assets/images/features/hizli-yemek.png',
-            label: 'Hızlı Yemek',
-          ),
-          _FeatureTile(
-            imagePath: 'assets/images/features/yapay-zeka.png',
-            label: 'Yapay Zeka',
-          ),
-        ],
+        children: _featureConfigs.map((config) {
+          final remote = remoteByKey[config.key];
+          final remoteUrl = remote?['image_url']?.toString();
+          final displayName = remote?['display_name']?.toString();
+          final isActive = remote?['is_active'] != false;
+
+          return _FeatureTile(
+            imageUrl: (isActive && remoteUrl != null && remoteUrl.isNotEmpty)
+                ? remoteUrl
+                : null,
+            assetPath: config.assetPath,
+            label: (displayName != null && displayName.isNotEmpty)
+                ? displayName
+                : config.label,
+          );
+        }).toList(),
       ),
     );
   }
 }
 
 class _FeatureTile extends StatelessWidget {
-  final String imagePath;
+  final String? imageUrl;
+  final String assetPath;
   final String label;
 
   const _FeatureTile({
-    required this.imagePath,
+    this.imageUrl,
+    required this.assetPath,
     required this.label,
   });
 
@@ -74,7 +108,7 @@ class _FeatureTile extends StatelessWidget {
     final screenWidth = MediaQuery.of(context).size.width;
     final isSmallScreen = screenWidth < 360;
     final fontSize = isSmallScreen ? 10.0 : 11.0;
-    
+
     return InkWell(
       onTap: () {},
       child: Column(
@@ -98,22 +132,15 @@ class _FeatureTile extends StatelessWidget {
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(isSmallScreen ? 12 : 16),
-                child: Image.asset(
-                  imagePath,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    color: Colors.grey.shade200,
-                    child: const Center(
-                      child: Icon(Icons.image_not_supported, color: Colors.grey, size: 30),
-                    ),
-                  ),
-                ),
+                child: _buildImage(),
               ),
             ),
           ),
           SizedBox(height: isSmallScreen ? 4 : 8),
           Padding(
-            padding: EdgeInsets.symmetric(horizontal: isSmallScreen ? 1.0 : 2.0),
+            padding: EdgeInsets.symmetric(
+              horizontal: isSmallScreen ? 1.0 : 2.0,
+            ),
             child: Text(
               label,
               textAlign: TextAlign.center,
@@ -130,4 +157,50 @@ class _FeatureTile extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildImage() {
+    final fallback = Container(
+      color: Colors.grey.shade200,
+      child: const Center(
+        child: Icon(Icons.image_not_supported, color: Colors.grey, size: 30),
+      ),
+    );
+
+    if (imageUrl != null && imageUrl!.isNotEmpty) {
+      return Image.network(
+        imageUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => _buildAssetFallback(
+          fallback,
+        ),
+      );
+    }
+
+    return _buildAssetFallback(fallback);
+  }
+
+  Widget _buildAssetFallback(Widget fallback) {
+    return Image.asset(
+      assetPath,
+      package: 'ibul_app',
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) => Image.asset(
+        assetPath,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => fallback,
+      ),
+    );
+  }
+}
+
+class _FeatureConfig {
+  final String key;
+  final String label;
+  final String assetPath;
+
+  const _FeatureConfig({
+    required this.key,
+    required this.label,
+    required this.assetPath,
+  });
 }

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../core/mobile_category_catalog.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
 import '../models/db_product.dart';
@@ -7,6 +8,7 @@ import '../services/database_helper.dart';
 import 'search_results_page.dart';
 import 'market_list_page.dart';
 import 'category_products_page.dart';
+import '../widgets/custom_header.dart'; // CustomHeader eklendi
 
 class CategoriesPage extends StatefulWidget {
   const CategoriesPage({super.key});
@@ -16,86 +18,112 @@ class CategoriesPage extends StatefulWidget {
 }
 
 class _CategoriesPageState extends State<CategoriesPage> {
+  static const Set<String> _hiddenMobileCategories = {'Yakın Lokasyon'};
   int _selectedIndex = 0;
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
-  List<DBProduct> _allProducts = [];
   bool _isLoading = true;
-
-  final List<String> _categories = [
-    "Yakın Lokasyon",
-    "Elektronik",
-    "Spor & Outdoor",
-    "Giyim & Aksesuar",
-    "Anne & Bebek & Oyuncak",
-    "Kozmetik & Kişisel Bakım",
-    "Ev & Yaşam",
-    "Kitap & Hobi",
-    "Süpermarket & Petshop",
-    "2.el Ürünler",
-  ];
-  
-  final Map<String, String> _categoryIcons = {
-    "Yakın Lokasyon": "assets/category_icons/Yakın lokasyon.png",
-    "Elektronik": "assets/category_icons/elektronik.png",
-    "Spor & Outdoor": "assets/category_icons/spor & Outdoor.png",
-    "Giyim & Aksesuar": "assets/category_icons/Giyim & Aksesuar.png",
-    "Anne & Bebek & Oyuncak": "assets/category_icons/Anne & Bebek & Oyuncak.png",
-    "Kozmetik & Kişisel Bakım": "assets/category_icons/kozmetik & Kişisel Bakım.png",
-    "Ev & Yaşam": "assets/category_icons/Ev & Yaşam.png",
-    "Kitap & Hobi": "assets/category_icons/Kitap & Hobi.png",
-    "Süpermarket & Petshop": "assets/category_icons/Süpermakret & Petshop.png",
-  };
-  
-  final Map<String, String> _subCategoryIcons = {
-    // Yakın Lokasyon
-    "Yemek": "assets/subcategory_icons/yemek.png",
-    "Market": "assets/subcategory_icons/market.png",
-    "İşletme": "assets/subcategory_icons/işletme.png",
-    "Meslekler": "assets/subcategory_icons/meslekler.png",
-    // Elektronik
-    "Telefon & Aksesuar": "assets/subcategory_icons/telefon & aksesuar.png",
-    "Bilgisayar & Tablet": "assets/subcategory_icons/bilgisayar & tablet.png",
-    "TV & Ses Sistemleri": "assets/subcategory_icons/tv & ses sistemleri.png",
-    "Kamera & Fotoğraf": "assets/subcategory_icons/kamera & fotoğraf.png",
-    // Spor & Outdoor
-    "Spor Ayakkabı": "assets/subcategory_icons/spor ayakkabı.png",
-    "Spor Giyim": "assets/subcategory_icons/spor giyim.png",
-    "Fitness & Kondisyon": "assets/subcategory_icons/fitness & kondisyon.png",
-    "Outdoor": "assets/subcategory_icons/outdoor.png",
-    // Giyim & Aksesuar
-    "Kadın Giyim": "assets/subcategory_icons/Kadın giyim.png",
-    "Erkek Giyim": "assets/subcategory_icons/Erkek Giyim.png",
-    "Çocuk Giyim": "assets/subcategory_icons/Çocuk Giyim.png",
-    "Aksesuar": "assets/subcategory_icons/aksesuar.png",
-  };
-  
-  String _normalize(String value) {
-    var t = value.toLowerCase().trim();
-    t = t.replaceAll('ı', 'i').replaceAll('İ', 'i');
-    t = t.replaceAll('ş', 's').replaceAll('Ş', 's');
-    t = t.replaceAll('ğ', 'g').replaceAll('Ğ', 'g');
-    t = t.replaceAll('ü', 'u').replaceAll('Ü', 'u');
-    t = t.replaceAll('ö', 'o').replaceAll('Ö', 'o');
-    t = t.replaceAll('ç', 'c').replaceAll('Ç', 'c');
-    t = t.replaceAll(RegExp(r'\s+'), ' ');
-    return t;
-  }
+  List<MobileCategoryNode> _categoryTree = const [];
   
   @override
   void initState() {
     super.initState();
-    _loadProducts();
+    _loadCategories();
   }
-  
-  Future<void> _loadProducts() async {
-    setState(() => _isLoading = true);
-    try {
-      _allProducts = await _dbHelper.getAllProducts();
-    } catch (e) {
-      print('Ürünler yüklenirken hata: $e');
-    } finally {
-      setState(() => _isLoading = false);
+
+  Future<void> _loadCategories() async {
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+      });
     }
+
+    try {
+      final categories = await _dbHelper.getCategoriesWithSubs();
+      if (!mounted) return;
+      setState(() {
+        _categoryTree = buildMobileCategoryTree(
+          categories,
+          includeUnmatchedMainCategories: false,
+          includeMissingDefaultCategories: true,
+          excludedNames: _hiddenMobileCategories,
+        );
+        if (_selectedIndex >= _categoryTree.length) {
+          _selectedIndex = 0;
+        }
+      });
+    } catch (e) {
+      debugPrint('Kategori agaci yuklenemedi: $e');
+      if (!mounted) return;
+      setState(() {
+        _categoryTree = buildMobileCategoryTree(
+          const [],
+          includeUnmatchedMainCategories: false,
+          includeMissingDefaultCategories: true,
+          excludedNames: _hiddenMobileCategories,
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildSubCategoryImage(MobileCategoryNode category) {
+    final fallback = Icon(
+      iconDataForCategoryName(category.iconName),
+      color: Colors.grey[600],
+      size: 30,
+    );
+
+    if (category.imageUrl != null && category.imageUrl!.isNotEmpty) {
+      return Image.network(
+        category.imageUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) =>
+            _buildAssetFallback(category.fallbackAssetPath, fallback),
+      );
+    }
+
+    return _buildAssetFallback(category.fallbackAssetPath, fallback);
+  }
+
+  Widget _buildCategoryBarImage(MobileCategoryNode category) {
+    final fallback = Icon(
+      iconDataForCategoryName(category.iconName),
+      color: Colors.white,
+      size: 26,
+    );
+
+    if (category.imageUrl != null && category.imageUrl!.isNotEmpty) {
+      return Image.network(
+        category.imageUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) =>
+            _buildAssetFallback(category.fallbackAssetPath, fallback),
+      );
+    }
+
+    return _buildAssetFallback(category.fallbackAssetPath, fallback);
+  }
+
+  Widget _buildAssetFallback(String? assetPath, Widget fallback) {
+    if (assetPath == null || assetPath.isEmpty) {
+      return fallback;
+    }
+
+    return Image.asset(
+      assetPath,
+      package: 'ibul_app',
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) => Image.asset(
+        assetPath,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => fallback,
+      ),
+    );
   }
   
   Product _convertToProduct(DBProduct dbProduct) {
@@ -125,6 +153,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     }
 
     return Product(
+      productId: dbProduct.id,
       name: dbProduct.name,
       brand: dbProduct.brand,
       price: dbProduct.price,
@@ -133,6 +162,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       tags: tags,
       images: images.isEmpty ? [] : images,
       store: dbProduct.store,
+      sellerId: dbProduct.sellerId,
       category: dbProduct.category,
       subCategory: dbProduct.subCategory,
       description: dbProduct.description,
@@ -144,23 +174,11 @@ class _CategoriesPageState extends State<CategoriesPage> {
   // Mappings for specific icons or dummy images could be added here
   // For now we will use generic icons or text avatars
 
-  // Mock products for search
-  List<Product> _getProductsForSearch() {
-    return _allProducts.take(20).map((dbProduct) => _convertToProduct(dbProduct)).toList();
-  }
-
   void _onSearch(String query) {
-    final normalized = query.toLowerCase();
-    final results = _getProductsForSearch().where((p) {
-      return p.name.toLowerCase().contains(normalized) ||
-          p.brand.toLowerCase().contains(normalized) ||
-          _categories.any((cat) => cat.toLowerCase().contains(normalized));
-    }).toList();
-
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => SearchResultsPage(query: query, results: results),
+        pageBuilder: (context, animation, secondaryAnimation) => SearchResultsPage(query: query),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
         },
@@ -173,174 +191,117 @@ class _CategoriesPageState extends State<CategoriesPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: Container(
-          height: 38,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.search, color: AppColors.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  onSubmitted: (value) {
-                    final query = value.trim();
-                    if (query.isNotEmpty) _onSearch(query);
-                  },
-                  decoration: const InputDecoration(
-                    hintText: 'Marka, ürün veya kategori ara',
-                    hintStyle: TextStyle(color: Colors.grey, fontSize: 12),
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(vertical: 10),
-                  ),
-                  style: const TextStyle(fontSize: 12),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Column(
+              children: [
+                // Custom Header Entegrasyonu
+                CustomHeader(
+                  onSearch: _onSearch,
                 ),
-              ),
-              IconButton(
-                onPressed: () {},
-                icon: const Icon(Icons.mic, color: AppColors.primary),
-                splashRadius: 20,
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(),
-              ),
-            ],
-          ),
-        ),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 8),
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.grey.shade200),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
+                const Divider(height: 1),
+                _buildTopCategoryBar(),
+                const Divider(height: 1),
+                Expanded(
+                  child: _buildBodyContent(),
                 ),
               ],
             ),
-            child: IconButton(
-              padding: EdgeInsets.zero,
-              icon: const Icon(Icons.camera_alt_outlined, color: Colors.grey, size: 22),
-              onPressed: () {},
-            ),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildTopCategoryBar(),
-          const Divider(height: 1),
-          Expanded(
-            child: _buildBodyContent(),
-          ),
-        ],
+            if (_isLoading)
+              Positioned.fill(
+                child: ColoredBox(
+                  color: Colors.white.withValues(alpha: 0.72),
+                  child: const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildTopCategoryBar() {
+    if (_categoryTree.isEmpty) {
+      return const SizedBox(height: 132);
+    }
+
     return SizedBox(
-      height: 130,
+      height: 132,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        itemCount: _categories.length,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        itemCount: _categoryTree.length,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         cacheExtent: 300,
         physics: const BouncingScrollPhysics(),
         itemBuilder: (context, index) {
           final isSelected = _selectedIndex == index;
+          final category = _categoryTree[index];
           return GestureDetector(
             onTap: () {
               setState(() {
                 _selectedIndex = index;
               });
             },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Container(
+              width: 94,
+              margin: const EdgeInsets.symmetric(horizontal: 6),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.start,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(2),
+                    padding: const EdgeInsets.all(3),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      border: isSelected ? Border.all(color: AppColors.primary, width: 2) : null,
+                      borderRadius: BorderRadius.circular(24),
+                      border: isSelected
+                          ? Border.all(color: AppColors.primary, width: 2.5)
+                          : null,
                     ),
                     child: Container(
-                      width: 56,
-                      height: 56,
+                      width: 60,
+                      height: 60,
                       decoration: BoxDecoration(
-                        color: Colors.grey[100],
+                        color: AppColors.primary,
                         borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.16),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
-                      child: _categoryIcons.containsKey(_categories[index])
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(18),
-                              child: Image.asset(
-                                _categoryIcons[_categories[index]]!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Center(
-                                    child: Text(
-                                      _categories[index][0],
-                                      style: TextStyle(
-                                        color: Colors.grey[800],
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 20,
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            )
-                          : Center(
-                              child: Text(
-                                _categories[index][0],
-                                style: TextStyle(
-                                  color: Colors.grey[800],
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 20,
-                                ),
-                              ),
-                            ),
+                      clipBehavior: Clip.antiAlias,
+                      child: _buildCategoryBarImage(category),
                     ),
                   ),
-                  const SizedBox(height: 4), // Reduced spacing
+                  const SizedBox(height: 10),
                   Text(
-                    _categories[index],
+                    category.name,
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 10,
-                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                       color: isSelected ? AppColors.primary : Colors.black87,
                     ),
-                    maxLines: 2,
-                    textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 2),
-                  if (isSelected)
-                    Container(
-                      height: 3,
-                      width: 40,
-                      decoration: const BoxDecoration(
+                  const SizedBox(height: 6),
+                  AnimatedOpacity(
+                    duration: const Duration(milliseconds: 180),
+                    opacity: isSelected ? 1 : 0,
+                    child: Container(
+                      width: 46,
+                      height: 5,
+                      decoration: BoxDecoration(
                         color: AppColors.primary,
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(3)),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                     ),
-                  if (!isSelected)
-                    const SizedBox(height: 3),
+                  ),
                 ],
               ),
             ),
@@ -359,218 +320,100 @@ class _CategoriesPageState extends State<CategoriesPage> {
   }
 
   Widget _getContentForIndex(int index) {
-    // 0: Yakın Lokasyon
-    if (index == 0) {
-      return _buildYakinLokasyonView();
+    if (_categoryTree.isEmpty) {
+      return const SizedBox.shrink();
     }
-    // 1: Elektronik
-    else if (index == 1) {
-       return _buildGenericSubCategoryView(
-        "Elektronik",
-        [
-          "Telefon & Aksesuar",
-          "Bilgisayar & Tablet",
-          "TV & Ses Sistemleri",
-          "Kamera & Fotoğraf",
-        ]
-      );
-    }
-    // 2: Spor & Outdoor
-    else if (index == 2) {
-       return _buildGenericSubCategoryView(
-        "Spor & Outdoor",
-        [
-          "Spor Ayakkabı",
-          "Spor Giyim",
-          "Fitness & Kondisyon",
-          "Outdoor",
-        ]
-      );
-    }
-    // 3: Giyim & Aksesuar
-    else if (index == 3) {
-       return _buildGenericSubCategoryView(
-        "Giyim & Aksesuar",
-        [
-          "Kadın Giyim",
-          "Erkek Giyim",
-          "Çocuk Giyim",
-          "Aksesuar",
-        ]
-      );
-    }
-    // 4: Anne & Bebek & Oyuncak
-    else if (index == 4) {
-       return _buildGenericSubCategoryView(
-        "Anne & Bebek & Oyuncak",
-        [
-          "Bebek Arabaları",
-          "Bebek Giyim",
-          "Oyuncak",
-          "Anne Ürünleri",
-        ]
-      );
-    }
-    // 5: Kozmetik & Kişisel Bakım
-    else if (index == 5) {
-       return _buildGenericSubCategoryView(
-        "Kozmetik & Kişisel Bakım",
-        [
-          "Parfüm & Deodorant",
-          "Saç Bakımı",
-          "Cilt Bakımı",
-          "Makyaj",
-        ]
-      );
-    }
-    // 6: Ev & Yaşam
-    else if (index == 6) {
-       return _buildGenericSubCategoryView(
-        "Ev & Yaşam",
-        [
-          "Mobilya",
-          "Ev Tekstili",
-          "Mutfak",
-          "Banyo",
-        ]
-      );
-    }
-    // 7: Kitap & Hobi
-    else if (index == 7) {
-       return _buildGenericSubCategoryView(
-        "Kitap & Hobi",
-        [
-          "Kitap",
-          "Kırtasiye",
-          "Müzik",
-          "Hobi",
-        ]
-      );
-    }
-    // 8: Süpermarket & Petshop
-    else if (index == 8) {
-       return _buildGenericSubCategoryView(
-        "Süpermarket & Petshop",
-        [
-          "Gıda & İçecek",
-          "Temizlik Ürünleri",
-          "Petshop",
-          "Kişisel Bakım",
-        ]
-      );
-    }
-    // 9: 2.el Ürünler
-    else if (index == 9) {
-      return _buildSecondHandView();
-    }
-    // Others generic
-    else {
-      return _buildGenericSubCategoryView(
-        _categories[index],
-        ["Alt Kategori 1", "Alt Kategori 2", "Alt Kategori 3"]
-      );
-    }
+
+    final safeIndex = index.clamp(0, _categoryTree.length - 1);
+    final category = _categoryTree[safeIndex];
+    return _buildUnifiedGridView(category);
   }
 
-  Widget _buildYakinLokasyonView() {
-    final items = [
-      {'name': 'Yemek', 'icon': Icons.fastfood, 'color':Colors.red[100]},
-      {'name': 'Market', 'icon': Icons.shopping_basket, 'color':Colors.green[100], 'subItems': ['Şok', 'A101', 'BIM']},
-      {'name': 'İşletme', 'icon': Icons.store, 'color':Colors.blue[100]},
-      {'name': 'Meslekler', 'icon': Icons.work, 'color':Colors.orange[100]},
-    ];
+  Widget _buildUnifiedGridView(MobileCategoryNode category) {
+    final items = category.subCategories;
 
-    return _buildUnifiedGridView("Yakın Lokasyon", items.map((e) => e['name'] as String).toList());
-  }
-
-  Widget _buildSecondHandView() {
-    final items = [
-      '2.el Elektronik',
-      '2.el Giyim',
-      '2.el Mobilya',
-      '2.el Beyaz Eşya',
-      '2.el Kitap',
-      'HEPSİ',
-    ];
-
-    return _buildUnifiedGridView("2.el Ürünler", items);
-  }
-
-  Widget _buildGenericSubCategoryView(String title, List<String> subCats) {
-    return _buildUnifiedGridView(title, subCats);
-  }
-
-  Widget _buildUnifiedGridView(String title, List<String> items) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         Text(
-          title,
+          category.name,
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 16),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 4,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-            childAspectRatio: 1.0,
-          ),
-          itemCount: items.length,
-          itemBuilder: (context, i) {
-             return GestureDetector(
-               onTap: () {
-                 // Alt kategoriye tıklayınca o kategorideki ürünleri göster
-                 _showCategoryProducts(title, items[i]);
-               },
-               child: Column(
-                children: [
-                  Expanded(
-                    child: Container(
+        if (items.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: const Text('Bu kategori için henüz alt kategori bulunmuyor.'),
+          )
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: items.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 4,
+              crossAxisSpacing: 6,
+              mainAxisSpacing: 10,
+              childAspectRatio: 0.74,
+            ),
+            itemBuilder: (context, i) {
+              final subCategory = items[i];
+              return GestureDetector(
+                onTap: () {
+                  _showCategoryProducts(category.name, subCategory.name);
+                },
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  children: [
+                    Container(
                       width: double.infinity,
+                      height: 62,
+                      padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: Colors.grey.shade200),
                         boxShadow: [
-                           BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.04),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
                         ],
-                        border: Border.all(color: Colors.grey.shade100)
                       ),
-                      padding: const EdgeInsets.all(8),
-                      child: _subCategoryIcons.containsKey(items[i])
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(14),
-                              child: Image.asset(
-                                _subCategoryIcons[items[i]]!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Icon(Icons.category, color: Colors.grey[600], size: 30);
-                                },
-                              ),
-                            )
-                          : Icon(Icons.category, color: Colors.grey[600], size: 30),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: _buildSubCategoryImage(subCategory),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    items[i],
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 10, color: Colors.black87),
-                  ),
-                ],
-              ),
-             );
-          },
-        )
+                    const SizedBox(height: 7),
+                    Text(
+                      subCategory.name,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black87,
+                        height: 1.2,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
       ],
     );
   }
   
-  void _showCategoryProducts(String category, String subCategory) {
+  Future<void> _showCategoryProducts(String category, String subCategory) async {
     // Yakın Lokasyon - Market için özel sayfa
     if (category == "Yakın Lokasyon" && subCategory == "Market") {
       Navigator.push(
@@ -579,40 +422,38 @@ class _CategoriesPageState extends State<CategoriesPage> {
       );
       return;
     }
-    
-    final selectedCategory = _normalize(category);
-    final selectedSubCategory = _normalize(subCategory);
 
-    final filteredProducts = _allProducts.where((product) {
-      final productCategory = _normalize(product.category ?? '');
-      final productSubCategory = _normalize(product.subCategory ?? '');
+    if (_isLoading) return;
 
-      final categoryMatch = productCategory == selectedCategory;
+    setState(() => _isLoading = true);
+    try {
+      final page = await _dbHelper.getCategoryProductsPaged(
+        category: category,
+        subCategory: subCategory == "HEPSİ" ? null : subCategory,
+        limit: 120,
+      );
+      if (!mounted) return;
 
-      if (subCategory == "HEPSİ") {
-        return categoryMatch;
-      }
+      final products = page.items
+          .map((dbProduct) => _convertToProduct(dbProduct))
+          .toList(growable: false);
 
-      final subCategoryMatch = productSubCategory.isNotEmpty &&
-          productSubCategory == selectedSubCategory;
-
-      return categoryMatch && subCategoryMatch;
-    }).toList();
-    
-    print('Kategori: $category, Alt Kategori: $subCategory');
-    print('Bulunan ürün sayısı: ${filteredProducts.length}');
-    
-    final products = filteredProducts.map((dbProduct) => _convertToProduct(dbProduct)).toList();
-    
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => CategoryProductsPage(
-          category: category,
-          subCategory: subCategory,
-          products: products,
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CategoryProductsPage(
+            category: category,
+            subCategory: subCategory,
+            products: products,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      debugPrint('Kategori ürünleri yüklenirken hata: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 }

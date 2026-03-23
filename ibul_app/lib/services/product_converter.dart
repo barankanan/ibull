@@ -36,13 +36,15 @@ class ProductConverter {
       reviewCount: dbProduct.reviewCount,
       images: images,
       tags: tags,
+      store: dbProduct.store,
+      sellerId: dbProduct.sellerId,
     );
   }
   
   /// Product'ı DBProduct'a çevir (Database'e kaydetmek için)
   static DBProduct toDBProduct(
     Product product, {
-    int? id,
+    String? id,
     String? oldPrice,
     String category = 'Genel',
     String? description,

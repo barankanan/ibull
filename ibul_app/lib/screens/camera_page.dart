@@ -4,8 +4,6 @@ import 'home_screen.dart';
 import 'categories_page.dart';
 import 'map_page.dart';
 import 'cart_page.dart';
-import 'account_page.dart';
-import 'visual_intelligence_page.dart';
 import 'product_search_page.dart';
 import 'visual_search_selection_page.dart';
 import '../core/app_state.dart';
@@ -22,6 +20,9 @@ class _CameraPageState extends State<CameraPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isWebLayout = MediaQuery.of(context).size.width >= 800;
+    const double webMaxWidth = 900;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -32,154 +33,174 @@ class _CameraPageState extends State<CameraPage> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            _buildOptionCard(
-              context,
-              title: 'Görsel Zeka',
-              icon: 'assets/images/visual_intelligence.png',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const VisualSearchSelectionPage()),
-                );
-              },
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: isWebLayout ? webMaxWidth : double.infinity,
+          ),
+          child: ListView(
+            padding: EdgeInsets.symmetric(
+              horizontal: isWebLayout ? 16 : 16,
+              vertical: isWebLayout ? 24 : 20,
             ),
-            const SizedBox(height: 16),
-            _buildOptionCard(
-              context,
-              title: 'Ürünü Arat',
-              icon: 'assets/images/product_search.png',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ProductSearchPage()),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-            _buildOptionCard(
-              context,
-              title: 'Geçmiş',
-              icon: 'assets/images/history.png',
-              onTap: () {
-                // Geçmiş sayfasına git
-              },
-            ),
-          ],
+            children: [
+              _buildOptionCard(
+                context,
+                title: 'Görsel Zeka',
+                icon: 'assets/images/visual_intelligence.png',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const VisualSearchSelectionPage(),
+                    ),
+                  );
+                },
+                isWebLayout: isWebLayout,
+              ),
+              const SizedBox(height: 16),
+              _buildOptionCard(
+                context,
+                title: 'Ürünü Arat',
+                icon: 'assets/images/product_search.png',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const ProductSearchPage(),
+                    ),
+                  );
+                },
+                isWebLayout: isWebLayout,
+              ),
+              const SizedBox(height: 16),
+              _buildOptionCard(
+                context,
+                title: 'Geçmiş',
+                icon: 'assets/images/history.png',
+                onTap: () {
+                  // Geçmiş sayfasına git
+                },
+                isWebLayout: isWebLayout,
+              ),
+            ],
+          ),
         ),
       ),
-      bottomNavigationBar: Theme(
-        data: Theme.of(context).copyWith(
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-        ),
-        child: BottomNavigationBar(
-          currentIndex: 0,
-          onTap: (index) {
-            if (index == 0) {
-              // Ana Sayfa
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const HomeScreen()),
-                (route) => false,
-              );
-            } else if (index == 1) {
-              // Kategori
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const CategoriesPage()),
-                (route) => false,
-              );
-            } else if (index == 2) {
-              // Harita
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const MapPage()),
-              );
-            } else if (index == 3) {
-              // Sepet
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const CartPage()),
-              );
-            } else if (index == 4) {
-              // Hesap
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const HomeScreen(initialIndex: 4)),
-                (route) => false,
-              );
-            }
-          },
-          selectedItemColor: AppColors.primary,
-          unselectedItemColor: Colors.black,
-          type: BottomNavigationBarType.fixed,
-          showUnselectedLabels: true,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
-          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
-          items: [
-            const BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home),
-              label: 'Ana Sayfa',
+      bottomNavigationBar: isWebLayout
+          ? null
+          : Theme(
+              data: Theme.of(context).copyWith(
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+              ),
+              child: BottomNavigationBar(
+                currentIndex: 0,
+                onTap: (index) {
+                  if (index == 0) {
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const HomeScreen(),
+                      ),
+                      (route) => false,
+                    );
+                  } else if (index == 1) {
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CategoriesPage(),
+                      ),
+                      (route) => false,
+                    );
+                  } else if (index == 2) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const MapPage()),
+                    );
+                  } else if (index == 3) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const CartPage()),
+                    );
+                  } else if (index == 4) {
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const HomeScreen(initialIndex: 4),
+                      ),
+                      (route) => false,
+                    );
+                  }
+                },
+                selectedItemColor: AppColors.primary,
+                unselectedItemColor: Colors.black,
+                type: BottomNavigationBarType.fixed,
+                showUnselectedLabels: true,
+                selectedLabelStyle: const TextStyle(
+                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                ),
+                unselectedLabelStyle: const TextStyle(
+                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                ),
+                items: [
+                  const BottomNavigationBarItem(
+                    icon: Icon(Icons.home_outlined),
+                    activeIcon: Icon(Icons.home),
+                    label: 'Ana Sayfa',
+                  ),
+                  const BottomNavigationBarItem(
+                    icon: Icon(Icons.segment),
+                    label: 'Kategori',
+                  ),
+                  const BottomNavigationBarItem(
+                    icon: Icon(Icons.map_outlined),
+                    activeIcon: Icon(Icons.map),
+                    label: 'Harita',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: _buildCartIcon(isActive: false),
+                    activeIcon: _buildCartIcon(isActive: true),
+                    label: 'Sepet',
+                  ),
+                  const BottomNavigationBarItem(
+                    icon: Icon(Icons.person_outline),
+                    activeIcon: Icon(Icons.person),
+                    label: 'Hesap',
+                  ),
+                ],
+              ),
             ),
-            const BottomNavigationBarItem(
-              icon: Icon(Icons.segment),
-              label: 'Kategori',
-            ),
-            const BottomNavigationBarItem(
-              icon: Icon(Icons.map_outlined),
-              activeIcon: Icon(Icons.map),
-              label: 'Harita',
-            ),
-            BottomNavigationBarItem(
-              icon: _buildCartIcon(isActive: false),
-              activeIcon: _buildCartIcon(isActive: true),
-              label: 'Sepet',
-            ),
-            const BottomNavigationBarItem(
-              icon: Icon(Icons.person_outline),
-              activeIcon: Icon(Icons.person),
-              label: 'Hesap',
-            ),
-          ],
-        ),
-      ),
     );
   }
 
-  Widget _buildOptionCard(BuildContext context, {
+  Widget _buildOptionCard(
+    BuildContext context, {
     required String title,
     required String icon,
     required VoidCallback onTap,
+    required bool isWebLayout,
   }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.symmetric(
+          horizontal: isWebLayout ? 18 : 16,
+          vertical: isWebLayout ? 18 : 16,
+        ),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
-              spreadRadius: 1,
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          border: Border.all(color: Colors.grey.shade200),
         ),
         child: Row(
           children: [
-            // Icon placeholder
             Container(
-              width: 50,
-              height: 50,
+              width: isWebLayout ? 48 : 50,
+              height: isWebLayout ? 48 : 50,
               decoration: BoxDecoration(
                 color: AppColors.background,
                 borderRadius: BorderRadius.circular(8),
@@ -188,28 +209,22 @@ class _CameraPageState extends State<CameraPage> {
                 child: Icon(
                   _getIconData(title),
                   color: AppColors.primary,
-                  size: 28,
+                  size: isWebLayout ? 24 : 28,
                 ),
               ),
             ),
-            const SizedBox(width: 16),
-            // Title
+            SizedBox(width: isWebLayout ? 14 : 16),
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 16,
+                style: TextStyle(
+                  fontSize: isWebLayout ? 28 / 2 : 16,
                   fontWeight: FontWeight.w500,
                   color: Colors.black,
                 ),
               ),
             ),
-            // Arrow
-            const Icon(
-              Icons.chevron_right,
-              color: Colors.grey,
-              size: 24,
-            ),
+            const Icon(Icons.chevron_right, color: Colors.grey, size: 24),
           ],
         ),
       ),
@@ -234,9 +249,7 @@ class _CameraPageState extends State<CameraPage> {
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Icon(
-          isActive ? Icons.shopping_cart : Icons.shopping_cart_outlined,
-        ),
+        Icon(isActive ? Icons.shopping_cart : Icons.shopping_cart_outlined),
         if (cartItemCount > 0)
           Positioned(
             right: -6,
@@ -247,10 +260,7 @@ class _CameraPageState extends State<CameraPage> {
                 color: Colors.red,
                 shape: BoxShape.circle,
               ),
-              constraints: const BoxConstraints(
-                minWidth: 16,
-                minHeight: 16,
-              ),
+              constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
               child: Text(
                 cartItemCount > 9 ? '9+' : cartItemCount.toString(),
                 style: const TextStyle(

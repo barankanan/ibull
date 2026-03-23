@@ -36,14 +36,15 @@ class DBCategory {
   }
   
   factory DBCategory.fromMap(Map<String, dynamic> map) {
+    final isActiveRaw = map['isActive'];
     return DBCategory(
       id: map['id'] as int?,
       name: map['name'] as String,
       iconName: map['iconName'] as String?,
       imageUrl: map['imageUrl'] as String?,
-      orderIndex: map['orderIndex'] as int,
-      parentId: map['parentId'] as int?,
-      isActive: map['isActive'] == 1,
+      orderIndex: (map['orderIndex'] as num).toInt(),
+      parentId: (map['parentId'] as num?)?.toInt(),
+      isActive: isActiveRaw is bool ? isActiveRaw : isActiveRaw == 1,
     );
   }
   

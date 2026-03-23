@@ -2,6 +2,28 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Flutter: Run ibul_app (CanvasKit)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "cwd": "${workspaceFolder}/ibul_app",
+      "args": [
+        "--web-renderer",
+        "canvaskit"
+      ]
+    },
+    {
+      "name": "Flutter: Run ibul_app (HTML)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "cwd": "${workspaceFolder}/ibul_app",
+      "args": [
+        "--web-renderer",
+        "html"
+      ]
+    },
+    {
       "name": "Flutter: Run ibul_app",
       "request": "launch",
       "type": "dart",

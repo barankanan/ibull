@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../core/constants.dart';
-import 'visual_intelligence_page.dart';
 import 'visual_intelligence_result_page.dart';
-import 'product_search_result_page.dart';
 
 class ProductSearchPage extends StatelessWidget {
   const ProductSearchPage({super.key});
@@ -12,16 +10,17 @@ class ProductSearchPage extends StatelessWidget {
     try {
       final ImagePicker picker = ImagePicker();
       final XFile? image = await picker.pickImage(source: source);
-      
+
       if (image != null) {
         if (!context.mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => VisualIntelligenceResultPage(
-              detectedProduct: 'Tespit Edilen Ürün',
+              detectedProduct: image.name,
               missingPart: 'Benzer Ürünler',
               imagePath: image.path,
+              imageName: image.name,
               mode: VisualIntelligenceMode.similar,
             ),
           ),
@@ -29,15 +28,18 @@ class ProductSearchPage extends StatelessWidget {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Hata: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Hata: $e')));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isWeb = MediaQuery.of(context).size.width >= 800;
+    const double webMaxWidth = 900;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -57,35 +59,43 @@ class ProductSearchPage extends StatelessWidget {
         ),
         centerTitle: true,
       ),
-      body: Column(
-        children: [
-          const Divider(height: 1, thickness: 1),
-          _buildOption(
-            context,
-            title: 'Fotoğraf Çek',
-            onTap: () => _pickImage(context, ImageSource.camera),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: isWeb ? webMaxWidth : double.infinity,
           ),
-          const Divider(height: 1, thickness: 1, indent: 16, endIndent: 16),
-          _buildOption(
-            context,
-            title: 'Fotoğraf Yükle',
-            onTap: () => _pickImage(context, ImageSource.gallery),
+          child: Column(
+            children: [
+              const Divider(height: 1, thickness: 1),
+              _buildOption(
+                context,
+                title: 'Fotoğraf Çek',
+                onTap: () => _pickImage(context, ImageSource.camera),
+              ),
+              const Divider(height: 1, thickness: 1),
+              _buildOption(
+                context,
+                title: 'Fotoğraf Yükle',
+                onTap: () => _pickImage(context, ImageSource.gallery),
+              ),
+              const Divider(height: 1, thickness: 1),
+              _buildOption(
+                context,
+                title: 'Barkod Okut',
+                onTap: () {
+                  // Barkod okuyucu
+                },
+              ),
+              const Divider(height: 1, thickness: 1),
+            ],
           ),
-          const Divider(height: 1, thickness: 1, indent: 16, endIndent: 16),
-          _buildOption(
-            context,
-            title: 'Barkod Okut',
-            onTap: () {
-              // Barkod okuyucu
-            },
-          ),
-          const Divider(height: 1, thickness: 1),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildOption(BuildContext context, {
+  Widget _buildOption(
+    BuildContext context, {
     required String title,
     required VoidCallback onTap,
   }) {
@@ -98,16 +108,9 @@ class ProductSearchPage extends StatelessWidget {
           children: [
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 16,
-                color: Colors.black87,
-              ),
+              style: const TextStyle(fontSize: 16, color: Colors.black87),
             ),
-            const Icon(
-              Icons.chevron_right,
-              color: Colors.black54,
-              size: 24,
-            ),
+            const Icon(Icons.chevron_right, color: Colors.black54, size: 24),
           ],
         ),
       ),

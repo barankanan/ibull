@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../models/product_model.dart';
+import '../models/product_list_model.dart';
 import 'home_screen.dart';
 import 'list_detail_page.dart';
 import 'product_detail_page.dart';
+import 'login_page.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../widgets/product_card.dart';
+import '../widgets/account_sidebar.dart';
 
 class FavoritesPage extends StatefulWidget {
   const FavoritesPage({super.key});
@@ -21,11 +24,38 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   final List<String> _tabs = ['Beğeniler', 'Listelerim', 'Öneriler'];
   final AppState _appState = AppState();
-  
+
+  void _showLoginRequiredDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Giriş Yap'),
+        content: const Text('Bu işlemi yapmak için giriş yapmanız gerekiyor.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginPage()),
+              );
+            },
+            child: const Text('Giriş Yap'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
     _appState.addListener(_onAppStateChanged);
+    _appState.refreshCommunityLists();
   }
 
   @override
@@ -43,47 +73,113 @@ class _FavoritesPageState extends State<FavoritesPage> {
   void _showCreateListDialog() {
     final TextEditingController nameController = TextEditingController();
     final TextEditingController descController = TextEditingController();
+    var visibility = ProductListVisibility.private;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Yeni Liste Oluştur'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                hintText: 'Liste Adı',
-                labelText: 'Liste Adı',
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Yeni Liste Oluştur'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  hintText: 'Liste Adı',
+                  labelText: 'Liste Adı',
+                ),
               ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: descController,
+                decoration: const InputDecoration(
+                  hintText: 'Açıklama',
+                  labelText: 'Açıklama',
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: ProductListVisibility.values.map((item) {
+                  final isSelected = visibility == item;
+                  return Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        right: item == ProductListVisibility.private ? 8 : 0,
+                      ),
+                      child: InkWell(
+                        onTap: () {
+                          setDialogState(() {
+                            visibility = item;
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? AppColors.primary.withOpacity(0.08)
+                                : Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppColors.primary
+                                  : Colors.grey.shade300,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.label,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : Colors.black87,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                item == ProductListVisibility.private
+                                    ? 'Sadece sende kalsın'
+                                    : 'Uygulamada herkese görünsün',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('İptal'),
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: descController,
-              decoration: const InputDecoration(
-                hintText: 'Açıklama',
-                labelText: 'Açıklama',
-              ),
+            ElevatedButton(
+              onPressed: () {
+                if (nameController.text.isNotEmpty) {
+                  _appState.createUserList(
+                    nameController.text,
+                    descController.text,
+                    visibility: visibility,
+                  );
+                  Navigator.pop(context);
+                  setState(() {});
+                }
+              },
+              child: const Text('Oluştur'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('İptal'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (nameController.text.isNotEmpty) {
-                _appState.createUserList(nameController.text, descController.text);
-                Navigator.pop(context);
-                setState(() {}); // Rebuild to show new list
-              }
-            },
-            child: const Text('Oluştur'),
-          ),
-        ],
       ),
     );
   }
@@ -170,7 +266,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
     if (isWeb) {
       return _buildWebView();
     }
-    
+
     return _buildMobileView();
   }
 
@@ -179,87 +275,134 @@ class _FavoritesPageState extends State<FavoritesPage> {
       backgroundColor: const Color(0xFFF9FAFB),
       body: Column(
         children: [
-          WebHeader(
-            onSearch: (q) {},
-            activeMenu: 'favorites',
-          ),
+          WebHeader(onSearch: (q) {}),
           Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1200),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Title & Tabs Row
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  _selectedTab == 'Beğeniler' ? 'Favorilerim' : _selectedTab,
-                                  style: const TextStyle(
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF1F2937),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 1200),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 40,
+                                horizontal: 24,
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const SizedBox(
+                                    width: 280,
+                                    child: AccountSidebar(
+                                      activePage: 'Favorilerim',
+                                    ),
                                   ),
-                                ),
-                                // Web Tabs
-                                Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: Colors.grey.shade200),
-                                  ),
-                                  child: Row(
-                                    children: _tabs.map((tab) {
-                                      final isSelected = _selectedTab == tab;
-                                      return InkWell(
-                                        onTap: () => setState(() => _selectedTab = tab),
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                                          decoration: BoxDecoration(
-                                            color: isSelected ? AppColors.primary : Colors.transparent,
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          child: Text(
-                                            tab,
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w600,
-                                              color: isSelected ? Colors.white : Colors.grey.shade600,
+                                  const SizedBox(width: 32),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              _selectedTab == 'Beğeniler'
+                                                  ? 'Favorilerim'
+                                                  : _selectedTab,
+                                              style: const TextStyle(
+                                                fontSize: 24,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF1F2937),
+                                              ),
                                             ),
-                                          ),
+                                            Container(
+                                              padding: const EdgeInsets.all(4),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
+                                                  color: Colors.grey.shade200,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                children: _tabs.map((tab) {
+                                                  final isSelected =
+                                                      _selectedTab == tab;
+                                                  return InkWell(
+                                                    onTap: () => setState(
+                                                      () => _selectedTab = tab,
+                                                    ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          8,
+                                                        ),
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 24,
+                                                            vertical: 10,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color: isSelected
+                                                            ? AppColors.primary
+                                                            : Colors
+                                                                  .transparent,
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              8,
+                                                            ),
+                                                      ),
+                                                      child: Text(
+                                                        tab,
+                                                        style: TextStyle(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                          color: isSelected
+                                                              ? Colors.white
+                                                              : Colors
+                                                                    .grey
+                                                                    .shade600,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  );
+                                                }).toList(),
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                      );
-                                    }).toList(),
+                                        const SizedBox(height: 24),
+                                        if (_selectedTab == 'Beğeniler')
+                                          _buildWebFavoritesGrid()
+                                        else if (_selectedTab == 'Listelerim')
+                                          _buildWebListsView()
+                                        else
+                                          _buildWebRecommendationsGrid(),
+                                        const SizedBox(height: 60),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                            
-                            const SizedBox(height: 32),
-                            
-                            // Content
-                            if (_selectedTab == 'Beğeniler')
-                              _buildWebFavoritesGrid()
-                            else if (_selectedTab == 'Listelerim')
-                              _buildWebListsView()
-                            else
-                              _buildWebRecommendationsGrid(),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
+                      const WebFooter(),
+                    ],
                   ),
-                  const WebFooter(),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ],
@@ -269,8 +412,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   Widget _buildWebFavoritesGrid() {
     final favorites = _appState.favorites;
-    
+
     if (favorites.isEmpty) {
+      // Empty state remains the same
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(60),
@@ -285,7 +429,11 @@ class _FavoritesPageState extends State<FavoritesPage> {
             const SizedBox(height: 24),
             Text(
               'Henüz favori ürünün yok',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey[800]),
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[800],
+              ),
             ),
             const SizedBox(height: 8),
             Text(
@@ -295,51 +443,56 @@ class _FavoritesPageState extends State<FavoritesPage> {
             const SizedBox(height: 32),
             ElevatedButton(
               onPressed: () {
-                // Go to home
                 Navigator.pushAndRemoveUntil(
-                  context, 
-                  MaterialPageRoute(builder: (context) => const HomeScreen()), 
-                  (route) => false
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomeScreen()),
+                  (route) => false,
                 );
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
-              child: const Text('Alışverişe Başla', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              child: const Text(
+                'Alışverişe Başla',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         ),
       );
     }
-    
+
+    // Fixed GridView settings for Web Product Card
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 240,
-        childAspectRatio: 0.52, // Adjusted for ProductCard
-        crossAxisSpacing: 20,
-        mainAxisSpacing: 24,
+        maxCrossAxisExtent: 250, // Match Home Page
+        childAspectRatio: 0.65,
+        crossAxisSpacing: 16, // Match Home Page spacing
+        mainAxisSpacing: 16, // Match Home Page spacing
       ),
       itemCount: favorites.length,
       itemBuilder: (context, index) {
         final product = favorites[index];
-        return ProductCard(product: product);
+        // Use ProductCard widget with zero margin to match Home Page
+        return ProductCard(product: product, margin: EdgeInsets.zero);
       },
     );
   }
 
   Widget _buildWebListsView() {
-    // "Yeni Liste Oluştur" kartını veri listesine sanal olarak eklemek yerine
-    // GridView.builder'da index yönetimi ile halledeceğiz.
-    // Index 0 -> Yeni Liste Kartı
-    // Index > 0 -> userLists[index - 1]
-    
     final userLists = _appState.userLists;
-    
+    final displayLists = userLists;
+
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -350,12 +503,12 @@ class _FavoritesPageState extends State<FavoritesPage> {
         crossAxisSpacing: 24,
         mainAxisSpacing: 24,
       ),
-      itemCount: userLists.length + 1, // +1 for "Add New List" card
+      itemCount: displayLists.length + 1, // +1 for "Add New List" card
       itemBuilder: (context, index) {
         if (index == 0) {
           return _buildAddListCard();
         }
-        final list = userLists[index - 1];
+        final list = displayLists[index - 1];
         return _buildWebListCard(list);
       },
     );
@@ -368,7 +521,11 @@ class _FavoritesPageState extends State<FavoritesPage> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 2, style: BorderStyle.solid), // Dashed border is complex in Flutter without extra package, solid is fine or custom painter
+          border: Border.all(
+            color: AppColors.primary.withOpacity(0.3),
+            width: 2,
+            style: BorderStyle.solid,
+          ), // Dashed border is complex in Flutter without extra package, solid is fine or custom painter
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -394,10 +551,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
             const SizedBox(height: 8),
             Text(
               'Ürünlerini kategorize et',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey.shade500,
-              ),
+              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
             ),
           ],
         ),
@@ -407,8 +561,13 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   Widget _buildWebListCard(Map<String, dynamic> list) {
     final products = list['products'] as List<Product>? ?? [];
+    final coverImage = list['coverImage']?.toString() ?? '';
     // İlk 3 ürün görselini al (varsa)
-    final previewImages = products.take(3).map((p) => p.images.isNotEmpty ? p.images.first : '').where((img) => img.isNotEmpty).toList();
+    final previewImages = products
+        .take(3)
+        .map((p) => p.images.isNotEmpty ? p.images.first : '')
+        .where((img) => img.isNotEmpty)
+        .toList();
 
     return GestureDetector(
       onTap: () {
@@ -442,15 +601,19 @@ class _FavoritesPageState extends State<FavoritesPage> {
                 fit: StackFit.expand,
                 children: [
                   // Main Cover
-                  list['coverImage'].toString().startsWith('assets/')
-                      ? Image.asset(
-                          list['coverImage'],
-                          fit: BoxFit.cover,
+                  coverImage.isEmpty
+                      ? Container(
+                          color: const Color(0xFFF1EFF8),
+                          alignment: Alignment.center,
+                          child: const Icon(
+                            Icons.collections_bookmark_outlined,
+                            size: 40,
+                            color: AppColors.primary,
+                          ),
                         )
-                      : Image.network(
-                          list['coverImage'],
-                          fit: BoxFit.cover,
-                        ),
+                      : coverImage.startsWith('assets/')
+                      ? Image.asset(coverImage, fit: BoxFit.cover)
+                      : Image.network(coverImage, fit: BoxFit.cover),
                   // Gradient Overlay
                   Container(
                     decoration: BoxDecoration(
@@ -478,7 +641,13 @@ class _FavoritesPageState extends State<FavoritesPage> {
                             color: Colors.white,
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
-                            shadows: [Shadow(color: Colors.black45, blurRadius: 4, offset: Offset(0, 2))],
+                            shadows: [
+                              Shadow(
+                                color: Colors.black45,
+                                blurRadius: 4,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -486,18 +655,32 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         const SizedBox(height: 4),
                         Row(
                           children: [
-                            const Icon(Icons.person, color: Colors.white70, size: 14),
+                            const Icon(
+                              Icons.person,
+                              color: Colors.white70,
+                              size: 14,
+                            ),
                             const SizedBox(width: 4),
                             Text(
-                              '${list['memberCount']} Takipçi',
-                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              '${list['followerCount'] ?? list['memberCount'] ?? 0} Takipçi',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
                             ),
                             const SizedBox(width: 12),
-                            const Icon(Icons.bookmark, color: Colors.white70, size: 14),
+                            const Icon(
+                              Icons.bookmark,
+                              color: Colors.white70,
+                              size: 14,
+                            ),
                             const SizedBox(width: 4),
                             Text(
                               '${list['itemCount']} Ürün',
-                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
                             ),
                           ],
                         ),
@@ -507,7 +690,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                 ],
               ),
             ),
-            
+
             // Bottom Info Area (Product Previews)
             Expanded(
               flex: 1,
@@ -522,7 +705,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         child: SizedBox(
                           height: 40,
                           child: Stack(
-                            children: List.generate(previewImages.length, (index) {
+                            children: List.generate(previewImages.length, (
+                              index,
+                            ) {
                               return Positioned(
                                 left: index * 28.0,
                                 child: Container(
@@ -531,15 +716,28 @@ class _FavoritesPageState extends State<FavoritesPage> {
                                   decoration: BoxDecoration(
                                     color: Colors.white,
                                     shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white, width: 2),
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
                                     boxShadow: [
-                                      BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4),
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.1),
+                                        blurRadius: 4,
+                                      ),
                                     ],
                                   ),
                                   child: ClipOval(
-                                    child: previewImages[index].startsWith('http')
-                                        ? Image.network(previewImages[index], fit: BoxFit.cover)
-                                        : Image.asset(previewImages[index], fit: BoxFit.cover),
+                                    child:
+                                        previewImages[index].startsWith('http')
+                                        ? Image.network(
+                                            previewImages[index],
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Image.asset(
+                                            previewImages[index],
+                                            fit: BoxFit.cover,
+                                          ),
                                   ),
                                 ),
                               );
@@ -550,13 +748,16 @@ class _FavoritesPageState extends State<FavoritesPage> {
                     else
                       Expanded(
                         child: Text(
-                          list['description'],
-                          style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                          '${list['visibilityLabel'] ?? 'Sadece Ben'} • ${list['description']}',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 12,
+                          ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                    
+
                     // Go Button
                     Container(
                       width: 32,
@@ -565,7 +766,11 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         color: Colors.grey.shade100,
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.black54),
+                      child: const Icon(
+                        Icons.arrow_forward_ios,
+                        size: 14,
+                        color: Colors.black54,
+                      ),
                     ),
                   ],
                 ),
@@ -578,19 +783,37 @@ class _FavoritesPageState extends State<FavoritesPage> {
   }
 
   Widget _buildWebRecommendationsGrid() {
+    final communityLists = _appState.communityUserLists;
+    if (communityLists.isEmpty) {
+      return GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 250,
+          childAspectRatio: 0.65,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+        ),
+        itemCount: _recommendedProducts.length,
+        itemBuilder: (context, index) {
+          final product = _recommendedProducts[index];
+          return ProductCard(product: product, margin: EdgeInsets.zero);
+        },
+      );
+    }
+
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 240,
-        childAspectRatio: 0.52,
-        crossAxisSpacing: 20,
-        mainAxisSpacing: 24,
+        maxCrossAxisExtent: 320,
+        childAspectRatio: 0.82,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
       ),
-      itemCount: _recommendedProducts.length,
+      itemCount: communityLists.length,
       itemBuilder: (context, index) {
-        final product = _recommendedProducts[index];
-        return ProductCard(product: product);
+        return _buildWebListCard(communityLists[index]);
       },
     );
   }
@@ -633,8 +856,15 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       child: TextField(
                         decoration: InputDecoration(
                           hintText: 'Arama yap',
-                          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                          prefixIcon: Icon(Icons.search, color: AppColors.primary, size: 20),
+                          hintStyle: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade400,
+                          ),
+                          prefixIcon: Icon(
+                            Icons.search,
+                            color: AppColors.primary,
+                            size: 20,
+                          ),
                           border: InputBorder.none,
                         ),
                       ),
@@ -697,9 +927,14 @@ class _FavoritesPageState extends State<FavoritesPage> {
                   },
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primary : Colors.transparent,
+                      color: isSelected
+                          ? AppColors.primary
+                          : Colors.transparent,
                       border: Border.all(color: AppColors.primary),
                       borderRadius: BorderRadius.circular(20),
                     ),
@@ -725,8 +960,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
             child: _selectedTab == 'Beğeniler'
                 ? _buildFavoritesGrid()
                 : _selectedTab == 'Listelerim'
-                    ? _buildListsView()
-                    : _buildRecommendationsGrid(),
+                ? _buildListsView()
+                : _buildRecommendationsGrid(),
           ),
         ],
       ),
@@ -735,7 +970,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   Widget _buildFavoritesGrid() {
     final favorites = _appState.favorites;
-    
+
     if (favorites.isEmpty) {
       return Center(
         child: Column(
@@ -751,7 +986,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
         ),
       );
     }
-    
+
     return GridView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -769,23 +1004,50 @@ class _FavoritesPageState extends State<FavoritesPage> {
   }
 
   Widget _buildListsView() {
+    final displayLists = _appState.userLists;
+
+    if (displayLists.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.list_alt, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              'Henüz listeniz yok',
+              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _showCreateListDialog,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Yeni Liste Oluştur'),
+            ),
+          ],
+        ),
+      );
+    }
+
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: _appState.userLists.length,
+      itemCount: displayLists.length,
       itemBuilder: (context, index) {
-        final list = _appState.userLists[index];
+        final list = displayLists[index];
         return Card(
           margin: const EdgeInsets.only(bottom: 16),
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           child: InkWell(
             onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => ListDetailPage(
-                    listData: list,
-                  ),
+                  builder: (context) => ListDetailPage(listData: list),
                 ),
               );
             },
@@ -794,15 +1056,30 @@ class _FavoritesPageState extends State<FavoritesPage> {
               children: [
                 Container(
                   height: 150,
-                  decoration: BoxDecoration(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                    image: DecorationImage(
-                      image: list['coverImage'].startsWith('http')
-                          ? NetworkImage(list['coverImage'])
-                          : AssetImage(list['coverImage']) as ImageProvider,
-                      fit: BoxFit.cover,
+                  decoration: const BoxDecoration(
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(12),
                     ),
+                    color: Color(0xFFF2F0F8),
                   ),
+                  clipBehavior: Clip.antiAlias,
+                  child: (list['coverImage']?.toString().isNotEmpty ?? false)
+                      ? (list['coverImage'].toString().startsWith('http')
+                            ? Image.network(
+                                list['coverImage'],
+                                fit: BoxFit.cover,
+                              )
+                            : Image.asset(
+                                list['coverImage'],
+                                fit: BoxFit.cover,
+                              ))
+                      : const Center(
+                          child: Icon(
+                            Icons.collections_bookmark_outlined,
+                            size: 40,
+                            color: AppColors.primary,
+                          ),
+                        ),
                 ),
                 Padding(
                   padding: const EdgeInsets.all(12),
@@ -813,13 +1090,23 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         height: 40,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
-                          image: DecorationImage(
-                            image: list['logo'].startsWith('http')
-                                ? NetworkImage(list['logo'])
-                                : AssetImage(list['logo']) as ImageProvider,
-                            fit: BoxFit.cover,
-                          ),
+                          color: const Color(0xFFF2F0F8),
                         ),
+                        clipBehavior: Clip.antiAlias,
+                        child: (list['logo']?.toString().isNotEmpty ?? false)
+                            ? (list['logo'].toString().startsWith('http')
+                                  ? Image.network(
+                                      list['logo'],
+                                      fit: BoxFit.cover,
+                                    )
+                                  : Image.asset(
+                                      list['logo'],
+                                      fit: BoxFit.cover,
+                                    ))
+                            : const Icon(
+                                Icons.bookmark_border,
+                                color: AppColors.primary,
+                              ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -834,7 +1121,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                               ),
                             ),
                             Text(
-                              '${list['memberCount']} Takipçi • ${list['itemCount']} Ürün',
+                              '${list['visibilityLabel'] ?? 'Sadece Ben'} • ${list['itemCount']} Ürün',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey[600],
@@ -855,6 +1142,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
   }
 
   Widget _buildListCardNew(Map<String, dynamic> list) {
+    final coverImage = list['coverImage']?.toString() ?? '';
+    final logoImage = list['logo']?.toString() ?? '';
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -884,16 +1173,30 @@ class _FavoritesPageState extends State<FavoritesPage> {
             Stack(
               children: [
                 ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                  child: list['coverImage'].toString().startsWith('assets/')
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(12),
+                  ),
+                  child: coverImage.isEmpty
+                      ? Container(
+                          width: double.infinity,
+                          height: 120,
+                          color: const Color(0xFFF2F0F8),
+                          alignment: Alignment.center,
+                          child: const Icon(
+                            Icons.collections_bookmark_outlined,
+                            color: AppColors.primary,
+                            size: 36,
+                          ),
+                        )
+                      : coverImage.startsWith('assets/')
                       ? Image.asset(
-                          list['coverImage'],
+                          coverImage,
                           width: double.infinity,
                           height: 120,
                           fit: BoxFit.cover,
                         )
                       : Image.network(
-                          list['coverImage'],
+                          coverImage,
                           width: double.infinity,
                           height: 120,
                           fit: BoxFit.cover,
@@ -918,23 +1221,25 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       ],
                     ),
                     child: ClipOval(
-                      child: list['logo'].toString().startsWith('assets/')
-                          ? Image.asset(
-                              list['logo'],
-                              fit: BoxFit.cover,
+                      child: logoImage.isEmpty
+                          ? const ColoredBox(
+                              color: Color(0xFFF2F0F8),
+                              child: Icon(
+                                Icons.bookmark_border,
+                                color: AppColors.primary,
+                              ),
                             )
-                          : Image.network(
-                              list['logo'],
-                              fit: BoxFit.cover,
-                            ),
+                          : logoImage.startsWith('assets/')
+                          ? Image.asset(logoImage, fit: BoxFit.cover)
+                          : Image.network(logoImage, fit: BoxFit.cover),
                     ),
                   ),
                 ),
               ],
             ),
-            
+
             const SizedBox(height: 28),
-            
+
             // List Info
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -954,17 +1259,24 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: AppColors.primary.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.person, size: 14, color: AppColors.primary),
+                            const Icon(
+                              Icons.person,
+                              size: 14,
+                              color: AppColors.primary,
+                            ),
                             const SizedBox(width: 4),
                             Text(
-                              '${list['memberCount']} Kişi üye',
+                              '${list['followerCount'] ?? list['memberCount'] ?? 0} takipçi',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: AppColors.primary,
@@ -978,7 +1290,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    list['description'],
+                    '${list['visibilityLabel'] ?? 'Sadece Ben'} • ${list['description']}',
                     style: TextStyle(
                       fontSize: 13,
                       color: Colors.grey[600],
@@ -994,17 +1306,14 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       const SizedBox(width: 4),
                       Text(
                         '${list['itemCount']} Ürün',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                     ],
                   ),
                 ],
               ),
             ),
-            
+
             const SizedBox(height: 16),
           ],
         ),
@@ -1013,18 +1322,57 @@ class _FavoritesPageState extends State<FavoritesPage> {
   }
 
   Widget _buildRecommendationsGrid() {
+    final communityLists = _appState.communityUserLists;
+    if (communityLists.isEmpty) {
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: AppColors.primary, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Henüz herkese açık liste yok. İlk paylaşımı sen yap.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: GridView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 0.65,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: _recommendedProducts.length,
+              itemBuilder: (context, index) {
+                final product = _recommendedProducts[index];
+                return _buildProductCard(product);
+              },
+            ),
+          ),
+        ],
+      );
+    }
+
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
             children: [
-              Icon(Icons.info_outline, color: AppColors.primary, size: 18),
+              Icon(Icons.public, color: AppColors.primary, size: 18),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Sana Ve Tarzına Uygun öneriler Burada',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                  '${communityLists.length} herkese açık liste keşfet',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ),
             ],
@@ -1035,14 +1383,13 @@ class _FavoritesPageState extends State<FavoritesPage> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              childAspectRatio: 0.65,
+              childAspectRatio: 0.78,
               crossAxisSpacing: 10,
               mainAxisSpacing: 12,
             ),
-            itemCount: _recommendedProducts.length,
+            itemCount: communityLists.length,
             itemBuilder: (context, index) {
-              final product = _recommendedProducts[index];
-              return _buildProductCard(product);
+              return _buildListCardNew(communityLists[index]);
             },
           ),
         ),
@@ -1052,26 +1399,33 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   Widget _buildProductCard(Product product) {
     final isFavorite = _appState.isFavorite(product);
-    final isInCart = _appState.isInCart(product);
     final image = product.images.isNotEmpty ? product.images.first : null;
-    final primaryTag = product.tags.isNotEmpty ? product.tags.first : 'Önerilen';
+    final primaryTag = product.tags.isNotEmpty
+        ? product.tags.first
+        : 'Önerilen';
     final ratingValue = product.rating;
-    final int filledStars = ratingValue.isFinite ? ratingValue.clamp(0, 4).floor() : 0;
+    final int filledStars = ratingValue.isFinite
+        ? ratingValue.clamp(0, 4).floor()
+        : 0;
 
     return GestureDetector(
       onTap: () {
         Navigator.push(
           context,
           PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => ProductDetailPage(product: product),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              const begin = Offset(1.0, 0.0);
-              const end = Offset.zero;
-              const curve = Curves.easeOut;
-              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-              return SlideTransition(position: animation.drive(tween), child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 250),
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                ProductDetailPage(product: product),
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) {
+                  return FadeTransition(
+                    opacity: CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    ),
+                    child: child,
+                  );
+                },
+            transitionDuration: const Duration(milliseconds: 160),
           ),
         );
       },
@@ -1088,37 +1442,41 @@ class _FavoritesPageState extends State<FavoritesPage> {
             Stack(
               children: [
                 ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(8),
+                  ),
                   child: AspectRatio(
                     aspectRatio: 1.0,
                     child: Container(
                       color: Colors.grey[100],
                       child: image != null && image.isNotEmpty
                           ? (image.startsWith('http')
-                              ? Image.network(
-                                  image,
-                                  fit: BoxFit.contain,
-                                  cacheWidth: 200,
-                                  cacheHeight: 200,
-                                  filterQuality: FilterQuality.medium,
-                                  errorBuilder: (context, error, stackTrace) => Icon(
-                                    Icons.image_not_supported,
-                                    color: Colors.grey[400],
-                                    size: 30,
-                                  ),
-                                )
-                              : Image.asset(
-                                  image,
-                                  fit: BoxFit.contain,
-                                  cacheWidth: 200,
-                                  cacheHeight: 200,
-                                  filterQuality: FilterQuality.medium,
-                                  errorBuilder: (context, error, stackTrace) => Icon(
-                                    Icons.image_not_supported,
-                                    color: Colors.grey[400],
-                                    size: 30,
-                                  ),
-                                ))
+                                ? Image.network(
+                                    image,
+                                    fit: BoxFit.contain,
+                                    cacheWidth: 200,
+                                    cacheHeight: 200,
+                                    filterQuality: FilterQuality.medium,
+                                    errorBuilder:
+                                        (context, error, stackTrace) => Icon(
+                                          Icons.image_not_supported,
+                                          color: Colors.grey[400],
+                                          size: 30,
+                                        ),
+                                  )
+                                : Image.asset(
+                                    image,
+                                    fit: BoxFit.contain,
+                                    cacheWidth: 200,
+                                    cacheHeight: 200,
+                                    filterQuality: FilterQuality.medium,
+                                    errorBuilder:
+                                        (context, error, stackTrace) => Icon(
+                                          Icons.image_not_supported,
+                                          color: Colors.grey[400],
+                                          size: 30,
+                                        ),
+                                  ))
                           : Icon(
                               Icons.image_not_supported,
                               color: Colors.grey[400],
@@ -1132,6 +1490,10 @@ class _FavoritesPageState extends State<FavoritesPage> {
                   right: 6,
                   child: GestureDetector(
                     onTap: () {
+                      if (!_appState.isLoggedIn) {
+                        _showLoginRequiredDialog(context);
+                        return;
+                      }
                       setState(() {
                         _appState.toggleFavorite(product);
                       });
@@ -1171,7 +1533,10 @@ class _FavoritesPageState extends State<FavoritesPage> {
                     // Badges
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.primary,
                         borderRadius: BorderRadius.circular(8),
@@ -1193,7 +1558,11 @@ class _FavoritesPageState extends State<FavoritesPage> {
                     // Title
                     Text(
                       product.name,
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: Colors.black87),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black87,
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1205,7 +1574,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         ...List.generate(
                           4,
                           (index) => Icon(
-                            index < filledStars ? Icons.star : Icons.star_border,
+                            index < filledStars
+                                ? Icons.star
+                                : Icons.star_border,
                             color: Colors.orange,
                             size: 10,
                           ),
@@ -1214,7 +1585,10 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         Flexible(
                           child: Text(
                             '(${product.reviewCount})',
-                            style: const TextStyle(fontSize: 9, color: Colors.grey),
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.grey,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -1225,7 +1599,11 @@ class _FavoritesPageState extends State<FavoritesPage> {
                     // Price
                     Text(
                       product.price,
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1238,5 +1616,4 @@ class _FavoritesPageState extends State<FavoritesPage> {
       ),
     );
   }
-
 }

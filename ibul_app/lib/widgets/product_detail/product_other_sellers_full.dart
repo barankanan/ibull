@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/constants.dart';
 import '../../core/store_logo_helper.dart';
 import '../../screens/business_detail_page.dart';
+import '../../viewmodels/product_detail_viewmodel.dart';
+import '../../models/product_model.dart';
 
 class ProductOtherSellersFull extends StatefulWidget {
   const ProductOtherSellersFull({super.key});
@@ -37,66 +40,54 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
 
   @override
   Widget build(BuildContext context) {
-    // Mock seller data
-    final sellers = [
-      _SellerData(
-        name: 'MediaMarkt',
+    final viewModel = Provider.of<ProductDetailViewModel>(context);
+
+    if (viewModel.loadingOtherStores) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+
+    final items = viewModel.otherStoresWithProducts;
+    if (items.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final sellers = items.map<_SellerData>((item) {
+      final store = item['store'] as Map<String, dynamic>;
+      final product = item['product'];
+
+      final storeName = store['name']?.toString() ?? '';
+      final ratingStr = store['rating']?.toString() ?? '0';
+      final rating = double.tryParse(ratingStr) ?? 0;
+
+      Color ratingColor;
+      if (rating >= 9.0) {
+        ratingColor = const Color(0xFF4CAF50);
+      } else if (rating >= 8.0) {
+        ratingColor = const Color(0xFFFF8C00);
+      } else {
+        ratingColor = Colors.grey;
+      }
+
+      String price = '';
+      if (store['price'] != null) {
+        price = store['price'].toString();
+      } else if (product is Product) {
+        price = product.price;
+      }
+
+      return _SellerData(
+        name: storeName,
         isVerified: true,
-        rating: 9.1,
-        ratingColor: const Color(0xFFFF8C00),
+        rating: rating,
+        ratingColor: ratingColor,
         badge: null,
-        deliveryInfo: 'Tahmini Kargoya Teslim:  2 gün içinde',
-        urgentInfo: null,
-        perks: ['Kargo Bedava', 'Kurumsal Fatura'],
-        price: 50000,
-      ),
-      _SellerData(
-        name: 'Teknosa',
-        isVerified: true,
-        rating: 8.8,
-        ratingColor: const Color(0xFFFF8C00),
-        badge: null,
-        deliveryInfo: 'Tahmini Kargoya Teslim:  2 gün içinde',
-        urgentInfo: null,
-        perks: ['Kargo Bedava', 'Kurumsal Fatura'],
-        price: 49999,
-      ),
-      _SellerData(
-        name: 'ZübeyrTicaret',
-        isVerified: false,
-        rating: 9.2,
-        ratingColor: const Color(0xFF4CAF50),
-        badge: 'Hızlı Satıcı',
-        badgeColor: const Color(0xFF4CAF50),
+        badgeColor: null,
         deliveryInfo: null,
-        urgentInfo: '1 saat 18 dakika içinde sipariş verirsen en geç yarın kargoda!',
-        perks: ['Kargo Bedava', 'Kurumsal Fatura'],
-        price: 50269,
-      ),
-      _SellerData(
-        name: 'Gürgençler Apple Yetkili Satıcı',
-        isVerified: true,
-        rating: 0,
-        ratingColor: Colors.transparent,
-        badge: 'Yetkili Satıcı',
-        badgeColor: const Color(0xFFFF5722),
-        deliveryInfo: 'Tahmini Kargoya Teslim:  2 gün içinde',
         urgentInfo: null,
-        perks: ['Kargo Bedava'],
-        price: 51299,
-      ),
-      _SellerData(
-        name: 'TeknoFırsatlar',
-        isVerified: true,
-        rating: 8.5,
-        ratingColor: const Color(0xFFFF8C00),
-        badge: null,
-        deliveryInfo: 'Tahmini Kargoya Teslim:  3 gün içinde',
-        urgentInfo: null,
-        perks: ['Kargo Bedava', 'Kurumsal Fatura'],
-        price: 51499,
-      ),
-    ];
+        perks: const ['Kargo Bedava'],
+        price: price,
+      );
+    }).toList();
 
     return Container(
       width: double.infinity,
@@ -335,34 +326,33 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
           // Price + button
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(
-                '${_formatPrice(seller.price)} TL',
+                seller.price,
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: AppColors.primary,
                 ),
               ),
-              SizedBox(
-                height: 30,
-                child: ElevatedButton(
-                  onPressed: () {
-                    // TODO: Navigate to seller product page
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    elevation: 0,
+              ElevatedButton(
+                onPressed: () {
+                  // TODO: Navigate to seller product page
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
                   ),
-                  child: const Text(
-                    'Ürüne Git',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  minimumSize: const Size(0, 32),
+                  elevation: 0,
+                ),
+                child: const Text(
+                  'Ürüne Git',
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
                 ),
               ),
             ],
@@ -370,18 +360,6 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
         ],
       ),
     );
-  }
-
-  String _formatPrice(int price) {
-    final str = price.toString();
-    final buffer = StringBuffer();
-    for (var i = 0; i < str.length; i++) {
-      if (i > 0 && (str.length - i) % 3 == 0) {
-        buffer.write('.');
-      }
-      buffer.write(str[i]);
-    }
-    return buffer.toString();
   }
 }
 
@@ -395,7 +373,7 @@ class _SellerData {
   final String? deliveryInfo;
   final String? urgentInfo;
   final List<String> perks;
-  final int price;
+  final String price;
 
   _SellerData({
     required this.name,

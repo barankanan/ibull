@@ -1,9 +1,10 @@
 import 'package:flutter/gestures.dart'; // Scroll behavior için eklendi
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import '../core/constants.dart';
+import '../models/category_attribute_filter_group.dart';
 import '../models/product_model.dart';
+import '../services/category_attribute_service.dart';
 import '../widgets/product_card.dart';
 import '../widgets/custom_header.dart';
 import '../widgets/address_bar.dart';
@@ -25,12 +26,21 @@ class CategoryProductsPage extends StatefulWidget {
   State<CategoryProductsPage> createState() => _CategoryProductsPageState();
 }
 
-class _CategoryProductsPageState extends State<CategoryProductsPage> with SingleTickerProviderStateMixin {
+class _CategoryProductsPageState extends State<CategoryProductsPage>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final ScrollController _todayProductsScrollController = ScrollController();
+  final CategoryAttributeService _categoryAttributeService =
+      CategoryAttributeService.instance;
   List<Product> _filteredProducts = [];
   String _selectedFoodCategory = '';
-  
+  String _searchQuery = '';
+  bool _isLoadingAttributeFilters = false;
+  List<CategoryAttributeFilterGroup> _attributeFilterGroups =
+      const <CategoryAttributeFilterGroup>[];
+  final Map<String, Set<String>> _selectedAttributeFilters =
+      <String, Set<String>>{};
+
   // Yemek kategorileri - 12 adet
   final List<Map<String, dynamic>> _foodCategories = [
     {'name': 'Tavuk', 'icon': '🍗'},
@@ -48,7 +58,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
   ];
 
   final List<String> _allowedSubCategories = [
-    'Telefon', 
+    'Telefon',
     'Telefonlar',
     'Akıllı Telefonlar',
   ];
@@ -79,14 +89,18 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
         });
       }
     });
-    
+
     // Eğer yemek kategorisi ise ve ürün yoksa, örnek yemekler oluştur
     _filteredProducts = _getDisplayProducts();
-    
+    if (widget.subCategory != 'Yemek') {
+      _loadAttributeFilters();
+      _applyAllFilters();
+    }
+
     print('DEBUG: Toplam ürün sayısı: ${widget.products.length}');
     print('DEBUG: Filtrelenmiş ürün sayısı: ${_filteredProducts.length}');
   }
-  
+
   List<Product> _getDisplayProducts() {
     if (widget.products.isNotEmpty) {
       final selectedCategory = _normalize(widget.category);
@@ -103,7 +117,8 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
         }
 
         final subCategoryMatch =
-            productSubCategory.isNotEmpty && productSubCategory == selectedSubCategory;
+            productSubCategory.isNotEmpty &&
+            productSubCategory == selectedSubCategory;
 
         return categoryMatch && subCategoryMatch;
       }).toList();
@@ -117,7 +132,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
 
     return [];
   }
-  
+
   List<Product> _createSampleFoodProducts() {
     return [
       Product(
@@ -207,19 +222,28 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
           final productName = product.name.toLowerCase();
           final categoryLower = category.toLowerCase();
           final subCat = (product.subCategory ?? '').toLowerCase();
-          
+
           // Kategori ismini parçala ve her kelimeyi kontrol et
           return productName.contains(categoryLower) ||
-                 subCat.contains(categoryLower) ||
-                 categoryLower.contains(productName) ||
-                 (category == 'Tavuk' && (productName.contains('tavuk') || productName.contains('chicken'))) ||
-                 (category == 'Et' && (productName.contains('et') || productName.contains('kebap') || productName.contains('köfte'))) ||
-                 (category == 'Burger - pizza' && (productName.contains('burger') || productName.contains('pizza'))) ||
-                 (category == 'Börek' && productName.contains('börek')) ||
-                 (category == 'Salata - Diyet' && (productName.contains('salata') || productName.contains('diyet'))) ||
-                 (category == 'Dondurma' && productName.contains('dondurma'));
+              subCat.contains(categoryLower) ||
+              categoryLower.contains(productName) ||
+              (category == 'Tavuk' &&
+                  (productName.contains('tavuk') ||
+                      productName.contains('chicken'))) ||
+              (category == 'Et' &&
+                  (productName.contains('et') ||
+                      productName.contains('kebap') ||
+                      productName.contains('köfte'))) ||
+              (category == 'Burger - pizza' &&
+                  (productName.contains('burger') ||
+                      productName.contains('pizza'))) ||
+              (category == 'Börek' && productName.contains('börek')) ||
+              (category == 'Salata - Diyet' &&
+                  (productName.contains('salata') ||
+                      productName.contains('diyet'))) ||
+              (category == 'Dondurma' && productName.contains('dondurma'));
         }).toList();
-        
+
         // Eğer filtreleme sonucu boş ise, tüm ürünleri göster
         if (_filteredProducts.isEmpty) {
           _filteredProducts = baseProducts;
@@ -228,19 +252,117 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
     });
   }
 
-  void _onSearch(String query) {
+  Future<void> _loadAttributeFilters() async {
+    if (!mounted || widget.subCategory == 'Yemek') return;
+
     setState(() {
-      if (query.isEmpty) {
-        _filteredProducts = _getDisplayProducts();
-      } else {
-        final normalized = query.toLowerCase();
-        final baseProducts = _getDisplayProducts();
-        _filteredProducts = baseProducts.where((p) {
-          return p.name.toLowerCase().contains(normalized) ||
-              p.brand.toLowerCase().contains(normalized);
-        }).toList();
-      }
+      _isLoadingAttributeFilters = true;
     });
+
+    try {
+      final groups = await _categoryAttributeService
+          .buildFilterGroupsForProducts(
+            mainCategory: widget.category,
+            subCategory: widget.subCategory,
+            products: _getDisplayProducts(),
+          );
+      if (!mounted) return;
+      setState(() {
+        _attributeFilterGroups = groups;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _attributeFilterGroups = const <CategoryAttributeFilterGroup>[];
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingAttributeFilters = false;
+        });
+      }
+    }
+  }
+
+  void _applyAllFilters() {
+    if (widget.subCategory == 'Yemek') return;
+    final baseProducts = _getDisplayProducts();
+    final filtered = baseProducts.where((product) {
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase();
+        final searchMatch =
+            product.name.toLowerCase().contains(query) ||
+            product.brand.toLowerCase().contains(query);
+        if (!searchMatch) return false;
+      }
+
+      if (_selectedAttributeFilters.isEmpty) {
+        return true;
+      }
+
+      final specs = CategoryAttributeService.decodeProductSpecifications(
+        product.specifications,
+      );
+      for (final entry in _selectedAttributeFilters.entries) {
+        if (entry.value.isEmpty) continue;
+        final currentValue = (specs[entry.key] ?? '').trim();
+        if (!entry.value.contains(currentValue)) {
+          return false;
+        }
+      }
+      return true;
+    }).toList();
+
+    setState(() {
+      _filteredProducts = filtered;
+    });
+  }
+
+  void _toggleAttributeFilter(
+    String attributeName,
+    String value,
+    bool selected,
+  ) {
+    final current = _selectedAttributeFilters.putIfAbsent(
+      attributeName,
+      () => <String>{},
+    );
+    if (selected) {
+      current.add(value);
+    } else {
+      current.remove(value);
+      if (current.isEmpty) {
+        _selectedAttributeFilters.remove(attributeName);
+      }
+    }
+    _applyAllFilters();
+  }
+
+  void _clearAttributeFilters() {
+    setState(() {
+      _selectedAttributeFilters.clear();
+    });
+    _applyAllFilters();
+  }
+
+  void _onSearch(String query) {
+    _searchQuery = query.trim();
+    if (widget.subCategory == 'Yemek') {
+      setState(() {
+        if (_searchQuery.isEmpty) {
+          _filteredProducts = _getDisplayProducts();
+        } else {
+          final normalized = _searchQuery.toLowerCase();
+          final baseProducts = _getDisplayProducts();
+          _filteredProducts = baseProducts.where((p) {
+            return p.name.toLowerCase().contains(normalized) ||
+                p.brand.toLowerCase().contains(normalized);
+          }).toList();
+        }
+      });
+      return;
+    }
+    _applyAllFilters();
   }
 
   @override
@@ -249,7 +371,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
     if (widget.subCategory == 'Yemek') {
       return _buildFoodPage();
     }
-    
+
     // Diğer kategoriler için varsayılan tasarım
     return _buildDefaultPage();
   }
@@ -260,84 +382,9 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
       body: SafeArea(
         child: Column(
           children: [
-            // Custom Header with Back Button
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-              child: Row(
-                children: [
-                  // Back Button
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
-                      icon: const Icon(Icons.arrow_back, size: 20),
-                      onPressed: () => Navigator.pop(context),
-                      padding: EdgeInsets.zero,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // Search Bar
-                  Expanded(
-                    child: Container(
-                      height: 38,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.search, color: AppColors.primary),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              onSubmitted: (value) {
-                                final query = value.trim();
-                                if (query.isNotEmpty) _onSearch(query);
-                              },
-                              decoration: InputDecoration(
-                                hintText: 'Restoran veya yemek ara',
-                                hintStyle: TextStyle(color: Colors.grey[600], fontSize: 12),
-                                border: InputBorder.none,
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                              ),
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          const Icon(Icons.mic, color: AppColors.primary, size: 20),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // Filter Button
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
-                      icon: const Icon(Icons.tune, size: 20),
-                      onPressed: () {
-                        // Filter action
-                      },
-                      padding: EdgeInsets.zero,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
+            // Custom Header with Search
+            CustomHeader(onSearch: _onSearch),
+
             // Ana içerik
             Expanded(
               child: SingleChildScrollView(
@@ -346,23 +393,23 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                   children: [
                     // Address Bar
                     const AddressBar(),
-                    
+
                     const SizedBox(height: 8),
-                    
+
                     // Banner Carousel (Ana sayfadaki gibi)
                     CarouselSlider(
                       options: CarouselOptions(
                         height: 110,
                         autoPlay: true,
                         autoPlayInterval: const Duration(seconds: 4),
-                        autoPlayAnimationDuration: const Duration(milliseconds: 800),
+                        autoPlayAnimationDuration: const Duration(
+                          milliseconds: 800,
+                        ),
                         enlargeCenterPage: true,
                         viewportFraction: 0.9,
                         aspectRatio: 2.5,
                       ),
-                      items: [
-                        'assets/images/food_banner.png',
-                      ].map((imagePath) {
+                      items: ['assets/images/food_banner.png'].map((imagePath) {
                         return Builder(
                           builder: (BuildContext context) {
                             return Container(
@@ -371,7 +418,10 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(12),
                                 gradient: LinearGradient(
-                                  colors: [Colors.orange.shade400, Colors.red.shade400],
+                                  colors: [
+                                    Colors.orange.shade400,
+                                    Colors.red.shade400,
+                                  ],
                                 ),
                               ),
                               child: ClipRRect(
@@ -383,15 +433,23 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                                     return Container(
                                       decoration: BoxDecoration(
                                         gradient: LinearGradient(
-                                          colors: [Colors.orange.shade400, Colors.red.shade400],
+                                          colors: [
+                                            Colors.orange.shade400,
+                                            Colors.red.shade400,
+                                          ],
                                         ),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: const Center(
                                         child: Column(
-                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
                                           children: [
-                                            Icon(Icons.restaurant, size: 48, color: Colors.white),
+                                            Icon(
+                                              Icons.restaurant,
+                                              size: 48,
+                                              color: Colors.white,
+                                            ),
                                             SizedBox(height: 8),
                                             Text(
                                               'Özel KORE YEMEKLERİ',
@@ -427,9 +485,9 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                         );
                       }).toList(),
                     ),
-                    
+
                     const SizedBox(height: 16),
-                    
+
                     // Yemekler Başlığı
                     const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 16),
@@ -442,26 +500,26 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                         ),
                       ),
                     ),
-                    
+
                     const SizedBox(height: 12),
-                    
+
                     // Yemek Kategorileri Grid (4 sütun, 3 satır = 12 kare)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: GridView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 4,
-                          childAspectRatio: 0.85,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                        ),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 4,
+                              childAspectRatio: 0.85,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                            ),
                         itemCount: _foodCategories.length,
                         itemBuilder: (context, index) {
                           final category = _foodCategories[index];
-                          final isSelected = _selectedFoodCategory == category['name'];
-                          
+
                           return GestureDetector(
                             onTap: () {
                               // Kategori filtreleme devre dışı - her zaman tüm ürünler gösterilsin
@@ -502,31 +560,25 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                         },
                       ),
                     ),
-                    
+
                     const SizedBox(height: 20),
-                    
+
                     // Tab Bar (Menüler, Dükkanlar, İçecekler)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
                         children: [
-                          Expanded(
-                            child: _buildTabButton('Menüler', 0),
-                          ),
+                          Expanded(child: _buildTabButton('Menüler', 0)),
                           const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildTabButton('Dükkanlar', 1),
-                          ),
+                          Expanded(child: _buildTabButton('Dükkanlar', 1)),
                           const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildTabButton('İçecekler', 2),
-                          ),
+                          Expanded(child: _buildTabButton('İçecekler', 2)),
                         ],
                       ),
                     ),
-                    
+
                     const SizedBox(height: 16),
-                    
+
                     // Tab içerikleri
                     if (_tabController.index == 0) ...[
                       // Menüler - Yemek Listesi
@@ -537,11 +589,18 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.restaurant_menu, size: 64, color: Colors.grey[400]),
+                                    Icon(
+                                      Icons.restaurant_menu,
+                                      size: 64,
+                                      color: Colors.grey[400],
+                                    ),
                                     const SizedBox(height: 16),
                                     Text(
                                       'Henüz yemek eklenmemiş',
-                                      style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        color: Colors.grey[600],
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -564,11 +623,18 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.store, size: 64, color: Colors.grey[400]),
+                              Icon(
+                                Icons.store,
+                                size: 64,
+                                color: Colors.grey[400],
+                              ),
                               const SizedBox(height: 16),
                               Text(
                                 'Dükkanlar yakında eklenecek',
-                                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.grey[600],
+                                ),
                               ),
                             ],
                           ),
@@ -582,11 +648,18 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.local_drink, size: 64, color: Colors.grey[400]),
+                              Icon(
+                                Icons.local_drink,
+                                size: 64,
+                                color: Colors.grey[400],
+                              ),
                               const SizedBox(height: 16),
                               Text(
                                 'İçecekler yakında eklenecek',
-                                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.grey[600],
+                                ),
                               ),
                             ],
                           ),
@@ -605,7 +678,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
 
   Widget _buildTabButton(String text, int index) {
     final isSelected = _tabController.index == index;
-    
+
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -616,10 +689,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
         decoration: BoxDecoration(
           color: isSelected ? AppColors.primary : Colors.white,
-          border: Border.all(
-            color: AppColors.primary,
-            width: 2,
-          ),
+          border: Border.all(color: AppColors.primary, width: 2),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
@@ -637,13 +707,44 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
 
   Widget _buildFoodItem(Product product) {
     // Rastgele restoran isimleri
-    final restaurants = ['ABDO DÖNER', 'Baran DÖNER', 'CİA DÖNER', '2001 DÖNER', 'MISIRLI DÖNER'];
-    final randomRestaurant = restaurants[product.name.hashCode % restaurants.length];
-    final deliveryTime = ['25Dk', '25Dk', '15Dk', '55Dk', '5Dk'][product.name.hashCode % 5];
-    final minPrice = ['Min 140', 'Min 140', 'Min 140', 'Min 140', 'Min 140'][product.name.hashCode % 5];
-    final distance = ['25 KM', '25 KM', '30 KM', '65 KM', '2 KM'][product.name.hashCode % 5];
-    final oldPrice = ['58,00 TL', '69,00 TL', '68,00 TL', '68,00 TL', '68,00 TL'][product.name.hashCode % 5];
-    
+    final restaurants = [
+      'ABDO DÖNER',
+      'Baran DÖNER',
+      'CİA DÖNER',
+      '2001 DÖNER',
+      'MISIRLI DÖNER',
+    ];
+    final randomRestaurant =
+        restaurants[product.name.hashCode % restaurants.length];
+    final deliveryTime = [
+      '25Dk',
+      '25Dk',
+      '15Dk',
+      '55Dk',
+      '5Dk',
+    ][product.name.hashCode % 5];
+    final minPrice = [
+      'Min 140',
+      'Min 140',
+      'Min 140',
+      'Min 140',
+      'Min 140',
+    ][product.name.hashCode % 5];
+    final distance = [
+      '25 KM',
+      '25 KM',
+      '30 KM',
+      '65 KM',
+      '2 KM',
+    ][product.name.hashCode % 5];
+    final oldPrice = [
+      '58,00 TL',
+      '69,00 TL',
+      '68,00 TL',
+      '68,00 TL',
+      '68,00 TL',
+    ][product.name.hashCode % 5];
+
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -658,10 +759,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.white,
-          border: Border.all(
-            color: Colors.grey.shade300,
-            width: 1.5,
-          ),
+          border: Border.all(color: Colors.grey.shade300, width: 1.5),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -685,7 +783,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 6),
-                  
+
                   // Açıklama
                   Text(
                     'Ekmek Arası Döner + Ayran (18 cl.)',
@@ -698,7 +796,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 10),
-                  
+
                   // Restoran adı
                   Text(
                     randomRestaurant,
@@ -709,18 +807,19 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                     ),
                   ),
                   const SizedBox(height: 8),
-                  
+
                   // Teslimat bilgisi
                   Row(
                     children: [
-                      Icon(Icons.two_wheeler, size: 16, color: Colors.grey[700]),
+                      Icon(
+                        Icons.two_wheeler,
+                        size: 16,
+                        color: Colors.grey[700],
+                      ),
                       const SizedBox(width: 4),
                       Text(
                         '$deliveryTime - $minPrice',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[700],
-                        ),
+                        style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                       ),
                       const SizedBox(width: 16),
                       Text(
@@ -734,7 +833,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                     ],
                   ),
                   const SizedBox(height: 12),
-                  
+
                   // Fiyat satırı
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
@@ -778,9 +877,9 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                 ],
               ),
             ),
-            
+
             const SizedBox(width: 16),
-            
+
             // Sağ taraf: Ürün Görseli
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
@@ -829,11 +928,15 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
   // Diğer kategoriler için varsayılan sayfa
   Widget _buildDefaultPage() {
     // "Bugün Kapında" ürünlerini filtrele (Hızlı Teslimat, Hızlı Kargo, Yakın Lokasyon)
-    final sameDayProducts = _filteredProducts.where((p) => 
-      p.tags.contains('Hızlı Teslimat') || 
-      p.tags.contains('Hızlı Kargo') || 
-      p.tags.contains('Yakın Lokasyon')
-    ).take(10).toList();
+    final sameDayProducts = _filteredProducts
+        .where(
+          (p) =>
+              p.tags.contains('Hızlı Teslimat') ||
+              p.tags.contains('Hızlı Kargo') ||
+              p.tags.contains('Yakın Lokasyon'),
+        )
+        .take(10)
+        .toList();
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -857,10 +960,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
             ),
             Text(
               '${_filteredProducts.length}+ Ürün',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 12,
-              ),
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
             ),
           ],
         ),
@@ -871,9 +971,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
             decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: Colors.grey.shade200),
-              ),
+              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
             ),
             child: Row(
               children: [
@@ -899,20 +997,42 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                   ),
                 ),
                 // Dikey Ayırıcı
-                Container(
-                  height: 20,
-                  width: 1,
-                  color: Colors.grey.shade300,
-                ),
+                Container(height: 20, width: 1, color: Colors.grey.shade300),
                 // Filtrele
                 Expanded(
                   child: InkWell(
                     onTap: () {
-                      // Filtreleme işlemi
+                      _openAttributeFiltersSheet();
                     },
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
+                        if (_selectedAttributeFilters.isNotEmpty) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              _selectedAttributeFilters.values
+                                  .fold<int>(
+                                    0,
+                                    (sum, item) => sum + item.length,
+                                  )
+                                  .toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         const Text(
                           'Filtrele',
                           style: TextStyle(
@@ -929,32 +1049,23 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
               ],
             ),
           ),
-          
+
           // Yatay Filtreler (Modeller, Renk, Fiyat, Hızlı Teslimat)
           Container(
             height: 50,
             decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: Colors.grey.shade200),
-              ),
+              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
             ),
             child: ListView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              children: [
-                _buildQuickFilterChip('Modeller'),
-                const SizedBox(width: 8),
-                _buildQuickFilterChip('Renk'),
-                const SizedBox(width: 8),
-                _buildQuickFilterChip('Fiyat'),
-                const SizedBox(width: 8),
-                _buildQuickFilterChip('Hızlı Teslimat'),
-              ],
+              children: _buildQuickFilterChips(),
             ),
           ),
 
           // "Bugün Kapında" Alanı
-          if (sameDayProducts.isNotEmpty && _allowedSubCategories.contains(widget.subCategory))
+          if (sameDayProducts.isNotEmpty &&
+              _allowedSubCategories.contains(widget.subCategory))
             Container(
               padding: const EdgeInsets.all(24),
               margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -982,7 +1093,11 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                           color: Colors.blue.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.local_shipping_outlined, color: Colors.blue, size: 22),
+                        child: const Icon(
+                          Icons.local_shipping_outlined,
+                          color: Colors.blue,
+                          size: 22,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       const Column(
@@ -990,7 +1105,11 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                         children: [
                           Text(
                             'Bugün Kapında',
-                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF333333)),
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF333333),
+                            ),
                           ),
                           Text(
                             'Yakın Lokasyon ile çevrendeki mağazalardan alışveriş yapabilirsin',
@@ -1000,7 +1119,10 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                       ),
                       const Spacer(),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.blue,
                           borderRadius: BorderRadius.circular(20),
@@ -1008,9 +1130,20 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                         child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.location_on_outlined, color: Colors.white, size: 16),
+                            Icon(
+                              Icons.location_on_outlined,
+                              color: Colors.white,
+                              size: 16,
+                            ),
                             SizedBox(width: 6),
-                            Text('Hızlı Teslimat', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            Text(
+                              'Hızlı Teslimat',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -1032,15 +1165,16 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                           child: ListView.separated(
                             controller: _todayProductsScrollController,
                             scrollDirection: Axis.horizontal,
-                            itemCount: sameDayProducts.length > 10 ? 10 : sameDayProducts.length,
-                            separatorBuilder: (context, index) => const SizedBox(width: 20),
+                            itemCount: sameDayProducts.length > 10
+                                ? 10
+                                : sameDayProducts.length,
+                            separatorBuilder: (context, index) =>
+                                const SizedBox(width: 20),
                             itemBuilder: (context, index) {
                               final product = sameDayProducts[index];
                               return SizedBox(
                                 width: 220,
-                                child: ProductCard(
-                                  product: product,
-                                ),
+                                child: ProductCard(product: product),
                               );
                             },
                           ),
@@ -1066,7 +1200,11 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                                 ],
                               ),
                               child: IconButton(
-                                icon: const Icon(Icons.arrow_back_ios_new, size: 20, color: Colors.blue),
+                                icon: const Icon(
+                                  Icons.arrow_back_ios_new,
+                                  size: 20,
+                                  color: Colors.blue,
+                                ),
                                 onPressed: () {
                                   _todayProductsScrollController.animateTo(
                                     _todayProductsScrollController.offset - 300,
@@ -1100,7 +1238,11 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                                 ],
                               ),
                               child: IconButton(
-                                icon: const Icon(Icons.arrow_forward_ios, size: 20, color: Colors.blue),
+                                icon: const Icon(
+                                  Icons.arrow_forward_ios,
+                                  size: 20,
+                                  color: Colors.blue,
+                                ),
                                 onPressed: () {
                                   _todayProductsScrollController.animateTo(
                                     _todayProductsScrollController.offset + 300,
@@ -1119,13 +1261,13 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                 ],
               ),
             ),
-          
+
           // Ürün Listesi
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final isWeb = constraints.maxWidth > 1100;
-                
+
                 Widget grid = GridView.builder(
                   padding: const EdgeInsets.all(16),
                   gridDelegate: isWeb
@@ -1149,12 +1291,13 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => ProductDetailPage(product: product),
+                            builder: (context) =>
+                                ProductDetailPage(product: product),
                           ),
                         );
                       },
                       child: ProductCard(
-                        product: product, 
+                        product: product,
                         compact: false,
                         tight: true,
                       ),
@@ -1170,7 +1313,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
                     ),
                   );
                 }
-                
+
                 return grid;
               },
             ),
@@ -1180,27 +1323,171 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> with Single
     );
   }
 
-  Widget _buildQuickFilterChip(String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Center(
-        child: Row(
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: Colors.black87,
-              ),
+  List<Widget> _buildQuickFilterChips() {
+    if (_isLoadingAttributeFilters) {
+      return const [
+        Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            const SizedBox(width: 4),
-            const Icon(Icons.keyboard_arrow_down, size: 16, color: Colors.grey),
-          ],
+          ),
+        ),
+      ];
+    }
+
+    if (_attributeFilterGroups.isEmpty) {
+      return [_buildQuickFilterChip('Filtre bulunamadı', isActive: false)];
+    }
+
+    final items = <Widget>[];
+    for (final group in _attributeFilterGroups.take(4)) {
+      final selectedCount =
+          _selectedAttributeFilters[group.attributeName]?.length ?? 0;
+      items.add(
+        _buildQuickFilterChip(
+          selectedCount > 0
+              ? '${group.attributeName} ($selectedCount)'
+              : group.attributeName,
+          isActive: selectedCount > 0,
+        ),
+      );
+      items.add(const SizedBox(width: 8));
+    }
+    if (items.isNotEmpty) {
+      items.removeLast();
+    }
+    return items;
+  }
+
+  Future<void> _openAttributeFiltersSheet() async {
+    if (_attributeFilterGroups.isEmpty || !mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, modalSetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Ozellik Filtreleri',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              _clearAttributeFilters();
+                              modalSetState(() {});
+                            },
+                            child: const Text('Temizle'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      ..._attributeFilterGroups.map((group) {
+                        final selected =
+                            _selectedAttributeFilters[group.attributeName] ??
+                            <String>{};
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                group.attributeName,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: group.values.map((value) {
+                                  final isSelected = selected.contains(value);
+                                  return FilterChip(
+                                    label: Text(value),
+                                    selected: isSelected,
+                                    onSelected: (next) {
+                                      modalSetState(() {
+                                        _toggleAttributeFilter(
+                                          group.attributeName,
+                                          value,
+                                          next,
+                                        );
+                                      });
+                                    },
+                                  );
+                                }).toList(),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildQuickFilterChip(String label, {bool isActive = false}) {
+    return InkWell(
+      onTap: _attributeFilterGroups.isEmpty ? null : _openAttributeFiltersSheet,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        decoration: BoxDecoration(
+          color: isActive ? AppColors.primary.withOpacity(0.08) : Colors.white,
+          border: Border.all(
+            color: isActive ? AppColors.primary : Colors.grey.shade300,
+          ),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Center(
+          child: Row(
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: isActive ? AppColors.primary : Colors.black87,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.keyboard_arrow_down,
+                size: 16,
+                color: isActive ? AppColors.primary : Colors.grey,
+              ),
+            ],
+          ),
         ),
       ),
     );

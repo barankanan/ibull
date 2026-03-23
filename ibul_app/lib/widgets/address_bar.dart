@@ -110,13 +110,17 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
       builder: (context) => AddressEditSheet(
         initialData: address,
         type: _selectedTab == 0 ? 'Adres' : 'Fatura',
-        onSave: (Map<String, String> newAddress) {
+        onSave: (Map<String, String> newAddress) async {
           final appState = context.read<AppState>();
           if (_selectedTab == 0) {
             if (index != null) {
-              appState.updateDeliveryAddress(index, newAddress);
+              await appState.updateDeliveryAddress(index, newAddress);
             } else {
-              appState.addDeliveryAddress(newAddress);
+              await appState.addDeliveryAddress(newAddress);
+              // Yeni eklenen adresi otomatik seç
+              if (widget.onSelected != null && newAddress['detail'] != null) {
+                widget.onSelected!(newAddress['detail']!);
+              }
             }
           } else {
             if (index != null) {

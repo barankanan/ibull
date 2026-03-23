@@ -33,15 +33,16 @@ class DBBanner {
   }
   
   factory DBBanner.fromMap(Map<String, dynamic> map) {
+    final isActiveRaw = map['isActive'];
     return DBBanner(
       id: map['id'] as int?,
       imageUrl: map['imageUrl'] as String,
       link: map['link'] as String?,
-      orderIndex: map['orderIndex'] as int,
+      orderIndex: (map['orderIndex'] as num).toInt(),
       type: map['type'] as String,
       title: map['title'] as String?,
       description: map['description'] as String?,
-      isActive: map['isActive'] == 1,
+      isActive: isActiveRaw is bool ? isActiveRaw : isActiveRaw == 1,
     );
   }
   

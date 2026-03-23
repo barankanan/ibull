@@ -38,8 +38,15 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   intl: ^0.20.2
+  geolocator: ^13.0.2
+  provider: ^6.1.5+1
+  supabase_flutter: ^2.6.0
   ibul_app:
     path: ./ibul_app
+  video_player: ^2.11.0
+  chewie: ^1.13.0
+  image_cropper: ^11.0.0
+  cropperx: ^1.1.1
 
 dev_dependencies:
   flutter_test:

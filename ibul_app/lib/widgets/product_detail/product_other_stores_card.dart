@@ -13,19 +13,11 @@ class ProductOtherStoresCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewModel = Provider.of<ProductDetailViewModel>(context);
 
-    // Mock data for UI development if empty
-    final stores = viewModel.otherStoresWithProducts.isNotEmpty 
-        ? viewModel.otherStoresWithProducts 
-        : [
-            {
-              'store': {'name': 'Teknosa', 'rating': '9.0'},
-              'product': {'name': 'iPhone 15 Pro Max Mavi', 'price': '64999.00 TL'},
-            },
-            {
-              'store': {'name': 'Arçelik', 'rating': '8.7'},
-              'product': {'name': 'MacBook Pro M3 Pro', 'price': '72999.00 TL'},
-            },
-          ];
+    final stores = viewModel.otherStoresWithProducts;
+
+    if (stores.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     return Column(
       children: [

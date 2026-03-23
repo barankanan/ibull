@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
+import 'product_detail_content_helper.dart';
 
 class ProductFullDescription extends StatefulWidget {
   const ProductFullDescription({super.key});
@@ -13,23 +14,18 @@ class ProductFullDescription extends StatefulWidget {
 
 class _ProductFullDescriptionState extends State<ProductFullDescription> {
   bool _isExpanded = false;
+  static const int _collapsedAdditionalInfoLimit = 5;
 
   @override
   Widget build(BuildContext context) {
     final viewModel = Provider.of<ProductDetailViewModel>(context);
     final product = viewModel.initialProduct;
     final description = product.getDisplayDescription();
+    final additionalInfo = ProductDetailContentHelper.buildAdditionalInfo(
+      product,
+    );
     final screenWidth = MediaQuery.of(context).size.width;
     final isWide = screenWidth > 900;
-
-    // Additional info bullets
-    final additionalInfo = [
-      'Bu ürün ${product.store ?? "satıcı"} tarafından gönderilecektir.',
-      'Kampanya fiyatından satılmak üzere 5 adetten az stok bulunmaktadır.',
-      'Bir ürün, birden fazla satıcı tarafından satılabilir. Birden fazla satıcı tarafından satışa sunulan ürünler için belirledikleri fiyata, satıcı puanlarına, teslimat statülerine, ürünlerdeki promosyonlara ve kargonun bedava olup olmamasına göre sıralanmaktadır.',
-      'Bu üründen en fazla 1 adet sipariş verilebilir.',
-      '15 gün içinde ücretsiz iade.',
-    ];
 
     return Container(
       width: double.infinity,
@@ -63,7 +59,9 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                 end: Alignment.centerRight,
               ),
               border: Border(
-                bottom: BorderSide(color: AppColors.primary.withValues(alpha: 0.12)),
+                bottom: BorderSide(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                ),
               ),
             ),
             child: Row(
@@ -74,7 +72,11 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                     color: AppColors.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(Icons.description_outlined, size: 18, color: AppColors.primary),
+                  child: Icon(
+                    Icons.description_outlined,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 const Text(
@@ -91,11 +93,11 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
 
           // Content
           Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(16),
             child: Column(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
                     color: Colors.grey[50],
                     borderRadius: BorderRadius.circular(10),
@@ -103,21 +105,30 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                   ),
                   child: isWide
                       ? _buildWideContent(product, description, additionalInfo)
-                      : _buildNarrowContent(product, description, additionalInfo),
+                      : _buildNarrowContent(
+                          product,
+                          description,
+                          additionalInfo,
+                        ),
                 ),
 
                 // "DAHA FAZLA GÖSTER" button
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 Center(
                   child: SizedBox(
-                    width: 280,
-                    height: 42,
+                    width: 240,
+                    height: 40,
                     child: OutlinedButton(
-                      onPressed: () => setState(() => _isExpanded = !_isExpanded),
+                      onPressed: () =>
+                          setState(() => _isExpanded = !_isExpanded),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.primary,
-                        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
-                        backgroundColor: AppColors.primary.withValues(alpha: 0.04),
+                        side: BorderSide(
+                          color: AppColors.primary.withValues(alpha: 0.3),
+                        ),
+                        backgroundColor: AppColors.primary.withValues(
+                          alpha: 0.04,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(22),
                         ),
@@ -127,7 +138,9 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            _isExpanded ? 'DAHA AZ GÖSTER' : 'DAHA FAZLA GÖSTER',
+                            _isExpanded
+                                ? 'DAHA AZ GÖSTER'
+                                : 'DAHA FAZLA GÖSTER',
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -136,7 +149,9 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                           ),
                           const SizedBox(width: 4),
                           Icon(
-                            _isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                            _isExpanded
+                                ? Icons.keyboard_arrow_up
+                                : Icons.keyboard_arrow_down,
                             size: 18,
                           ),
                         ],
@@ -152,50 +167,81 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
     );
   }
 
-  Widget _buildRightColumn(List<String> additionalInfo) {
+  Widget _buildRightColumn(
+    List<String> additionalInfo, {
+    int? maxItems,
+  }) {
+    final visibleItems = maxItems == null
+        ? additionalInfo
+        : additionalInfo.take(maxItems).toList(growable: false);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         const Text(
           'Ek Bilgiler',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
         ),
         const SizedBox(height: 10),
-        ...additionalInfo.map((info) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 6),
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  shape: BoxShape.circle,
+        ...visibleItems.map(
+          (info) => Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 6),
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  info,
-                  style: const TextStyle(fontSize: 12, color: Colors.black54, height: 1.5),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    info,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.black54,
+                      height: 1.4,
+                    ),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        )),
+        ),
+        if (maxItems != null && additionalInfo.length > maxItems)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              '+${additionalInfo.length - maxItems} daha',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primary.withValues(alpha: 0.75),
+              ),
+            ),
+          ),
       ],
     );
   }
 
   Widget? _buildImageWidget(dynamic product) {
-    if (product.images != null && product.images!.isNotEmpty && product.images!.first.isNotEmpty) {
+    if (product.images != null &&
+        product.images!.isNotEmpty &&
+        product.images!.first.isNotEmpty) {
       return Container(
-        width: 140,
-        height: 180,
-        margin: const EdgeInsets.only(right: 20),
+        width: 112,
+        height: 150,
+        margin: const EdgeInsets.only(right: 16),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
           color: Colors.white,
@@ -205,7 +251,8 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
           child: Image.network(
             product.images!.first,
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => const Icon(Icons.image, size: 60, color: Colors.grey),
+            errorBuilder: (_, __, ___) =>
+                const Icon(Icons.image, size: 60, color: Colors.grey),
           ),
         ),
       );
@@ -213,8 +260,15 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
     return null;
   }
 
-  Widget _buildWideContent(dynamic product, String description, List<String> additionalInfo) {
-    final rightColumn = _buildRightColumn(additionalInfo);
+  Widget _buildWideContent(
+    dynamic product,
+    String description,
+    List<String> additionalInfo,
+  ) {
+    final rightColumn = _buildRightColumn(
+      additionalInfo,
+      maxItems: _isExpanded ? null : _collapsedAdditionalInfoLimit,
+    );
     final imageWidget = _buildImageWidget(product);
 
     if (_isExpanded) {
@@ -230,17 +284,25 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
               children: [
                 const Text(
                   'Ürün Açıklaması',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Text(
                   description,
-                  style: const TextStyle(fontSize: 13, color: Colors.black54, height: 1.6),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.black54,
+                    height: 1.6,
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 24),
+          const SizedBox(width: 18),
           Expanded(flex: 2, child: rightColumn),
         ],
       );
@@ -260,7 +322,11 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                 children: [
                   const Text(
                     'Ürün Açıklaması',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Expanded(
@@ -269,7 +335,11 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                         return const LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
-                          colors: [Colors.black, Colors.black, Colors.transparent],
+                          colors: [
+                            Colors.black,
+                            Colors.black,
+                            Colors.transparent,
+                          ],
                           stops: [0.0, 0.85, 1.0],
                         ).createShader(bounds);
                       },
@@ -278,7 +348,11 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                         physics: const NeverScrollableScrollPhysics(),
                         child: Text(
                           description,
-                          style: const TextStyle(fontSize: 13, color: Colors.black54, height: 1.6),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.black54,
+                            height: 1.6,
+                          ),
                         ),
                       ),
                     ),
@@ -287,67 +361,97 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
               ),
             ),
           ),
-          const SizedBox(width: 24),
+          const SizedBox(width: 18),
           Expanded(flex: 2, child: rightColumn),
         ],
       ),
     );
   }
 
-  Widget _buildNarrowContent(dynamic product, String description, List<String> additionalInfo) {
+  Widget _buildNarrowContent(
+    dynamic product,
+    String description,
+    List<String> additionalInfo,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
           'Ürün Açıklaması',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
         ),
         const SizedBox(height: 10),
         AnimatedCrossFade(
           firstChild: Text(
-            description.length > 150 ? '${description.substring(0, 150)}...' : description,
-            style: const TextStyle(fontSize: 13, color: Colors.black54, height: 1.6),
+            description.length > 150
+                ? '${description.substring(0, 150)}...'
+                : description,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Colors.black54,
+              height: 1.6,
+            ),
           ),
           secondChild: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 description,
-                style: const TextStyle(fontSize: 13, color: Colors.black54, height: 1.6),
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Colors.black54,
+                  height: 1.6,
+                ),
               ),
               const SizedBox(height: 16),
               const Text(
                 'Ek Bilgiler',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
               ),
               const SizedBox(height: 10),
-              ...additionalInfo.map((info) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      margin: const EdgeInsets.only(top: 6),
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
+              ...additionalInfo.map(
+                (info) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        margin: const EdgeInsets.only(top: 6),
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          shape: BoxShape.circle,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        info,
-                        style: const TextStyle(fontSize: 12, color: Colors.black54, height: 1.5),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          info,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black54,
+                            height: 1.5,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              )),
+              ),
             ],
           ),
-          crossFadeState: _isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          crossFadeState: _isExpanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
           duration: const Duration(milliseconds: 300),
         ),
       ],
@@ -360,7 +464,8 @@ class _ZeroIntrinsicHeight extends SingleChildRenderObjectWidget {
   const _ZeroIntrinsicHeight({required Widget child}) : super(child: child);
 
   @override
-  RenderObject createRenderObject(BuildContext context) => _RenderZeroIntrinsicHeight();
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderZeroIntrinsicHeight();
 }
 
 class _RenderZeroIntrinsicHeight extends RenderProxyBox {

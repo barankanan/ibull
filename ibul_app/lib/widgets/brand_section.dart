@@ -7,6 +7,9 @@ class BrandSection extends StatelessWidget {
   final Map<String, dynamic> brandData;
   final String selectedBrand;
   final Function(String) onBrandSelected;
+  final bool pinActionsBottom;
+  final bool tightCards;
+  final double listHeight;
 
   const BrandSection({
     super.key,
@@ -15,6 +18,9 @@ class BrandSection extends StatelessWidget {
     required this.onBrandSelected,
     required this.brands,
     required this.title,
+    this.pinActionsBottom = false,
+    this.tightCards = false,
+    this.listHeight = 312,
   });
 
   final List<String> brands;
@@ -23,7 +29,7 @@ class BrandSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedData = brandData[selectedBrand];
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -32,7 +38,7 @@ class BrandSection extends StatelessWidget {
         _buildBrandSelector(),
         const SizedBox(height: 16),
         if (selectedData != null)
-           _buildBrandBannerSlider(selectedData['adUrls']),
+          _buildBrandBannerSlider(selectedData['adUrls']),
         const SizedBox(height: 16),
         _buildProductList(selectedData),
       ],
@@ -41,33 +47,38 @@ class BrandSection extends StatelessWidget {
 
   Widget _buildBrandBannerSlider(List<dynamic>? adUrls) {
     if (adUrls == null || adUrls.isEmpty) return const SizedBox.shrink();
+    final urls = adUrls
+        .map((e) => e.toString())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (urls.isEmpty) return const SizedBox.shrink();
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Container(
-        height: 130,
-        decoration: BoxDecoration(
-          color: Colors.grey[100],
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey[300]!, width: 1),
-        ),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.image_outlined, size: 40, color: Colors.grey[400]),
-              const SizedBox(height: 8),
-              Text(
-                '$selectedBrand Reklam Alanı',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[500],
-                  fontWeight: FontWeight.w500,
+    return SizedBox(
+      height: 160,
+      width: double.infinity,
+      child: PageView.builder(
+        controller: PageController(viewportFraction: 0.92),
+        itemCount: urls.length,
+        itemBuilder: (context, index) {
+          final url = urls[index];
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                url,
+                width: double.infinity,
+                height: 160,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: Colors.grey[100],
+                  alignment: Alignment.center,
+                  child: Icon(Icons.image_outlined, color: Colors.grey[400]),
                 ),
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -101,51 +112,95 @@ class BrandSection extends StatelessWidget {
 
           return GestureDetector(
             onTap: () => onBrandSelected(brand),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              margin: const EdgeInsets.only(left: 16, right: 4, top: 2, bottom: 2),
-              width: 70,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(50), // pill shape
-                border: isSelected
-                    ? Border.all(color: AppColors.primary, width: 2)
-                    : Border.all(color: Colors.grey.shade200),
-                boxShadow: isSelected
-                    ? [
-                        BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.2),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        )
-                      ]
-                    : [],
+            child: Container(
+              margin: const EdgeInsets.only(
+                left: 16,
+                right: 4,
+                top: 2,
+                bottom: 2,
               ),
+              width: 70,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: Colors.grey[100],
-                    backgroundImage: logoUrl.isNotEmpty ? AssetImage(logoUrl) : null,
-                    onBackgroundImageError: logoUrl.isNotEmpty ? (_, __) {} : null,
-                    child: logoUrl.isEmpty
-                        ? Text(brand[0],
-                            style: TextStyle(
-                                color: Colors.grey[600],
-                                fontWeight: FontWeight.bold))
-                        : null,
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white,
+                      border: Border.all(
+                        color: isSelected
+                            ? AppColors.primary
+                            : Colors.grey.shade300,
+                        width: isSelected ? 2 : 1,
+                      ),
+                      boxShadow: isSelected
+                          ? [
+                              BoxShadow(
+                                color: AppColors.primary.withValues(
+                                  alpha: 0.15,
+                                ),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ]
+                          : [],
+                    ),
+                    child: ClipOval(
+                      child: logoUrl.isNotEmpty
+                          ? (logoUrl.startsWith('http')
+                                ? Image.network(
+                                    logoUrl,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Center(
+                                      child: Text(
+                                        brand.isNotEmpty ? brand[0] : '?',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : Image.asset(
+                                    logoUrl,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Center(
+                                      child: Text(
+                                        brand.isNotEmpty ? brand[0] : '?',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ))
+                          : Center(
+                              child: Text(
+                                brand.isNotEmpty ? brand[0] : '?',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                    ),
                   ),
                   const SizedBox(height: 6),
                   Text(
                     brand,
                     style: TextStyle(
                       fontSize: 10,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.normal,
                       color: isSelected ? AppColors.primary : Colors.grey[600],
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
@@ -159,22 +214,26 @@ class BrandSection extends StatelessWidget {
   Widget _buildProductList(Map<String, dynamic>? selectedData) {
     final products = selectedData?['products'] as List?;
     if (products == null || products.isEmpty) {
-       return Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text('Bu marka için ürün bulunamadı',
-                style: TextStyle(color: Colors.grey[600])),
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Text(
+            'Bu marka için ürün bulunamadı',
+            style: TextStyle(color: Colors.grey[600]),
           ),
-        );
+        ),
+      );
     }
 
     return SizedBox(
-      height: 340,
-      child: ListView.builder(
+      height: listHeight,
+      child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         cacheExtent: 500,
+        padding: const EdgeInsets.symmetric(horizontal: 4.0),
         itemCount: products.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final p = products[index];
           // Convert generic map to Product model
@@ -187,11 +246,18 @@ class BrandSection extends StatelessWidget {
             tags: List<String>.from(p['tags']),
             images: List<String>.from(p['images']),
           );
-          
-          return ProductCard(product: product, width: 200);
+
+          return SizedBox(
+            width: 198,
+            child: ProductCard(
+              product: product,
+              margin: EdgeInsets.zero,
+              pinActionsBottom: pinActionsBottom,
+              tight: tightCards,
+            ),
+          );
         },
       ),
     );
   }
 }
-
