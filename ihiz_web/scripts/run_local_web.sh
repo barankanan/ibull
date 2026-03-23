@@ -19,6 +19,24 @@ run_pub_get="false"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd -- "$PROJECT_DIR/.." && pwd)"
+
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+
+declare -a DART_DEFINES=()
+
+append_define() {
+  local name="$1"
+  local value="${!name:-}"
+  if [[ -n "$value" ]]; then
+    DART_DEFINES+=("--dart-define=$name=$value")
+  fi
+}
 
 print_usage() {
   cat <<'EOF'
@@ -94,6 +112,22 @@ if [[ "$run_pub_get" == "true" ]]; then
   (cd "$PROJECT_DIR" && flutter pub get)
 fi
 
+missing_env=()
+for required_name in IHIZ_SUPABASE_URL IHIZ_SUPABASE_ANON_KEY; do
+  if [[ -z "${!required_name:-}" ]]; then
+    missing_env+=("$required_name")
+  fi
+done
+
+if [[ ${#missing_env[@]} -gt 0 ]]; then
+  echo "Eksik env/değer: ${missing_env[*]}"
+  echo "Repo kökünde .env oluşturun veya komut öncesi değişkenleri export edin."
+  exit 1
+fi
+
+append_define "IHIZ_SUPABASE_URL"
+append_define "IHIZ_SUPABASE_ANON_KEY"
+
 if [[ -n "$fixed_port" ]]; then
   chosen_port="$fixed_port"
   if port_in_use "$chosen_port"; then
@@ -111,4 +145,4 @@ fi
 echo "Starting ihiz_web on http://$host:$chosen_port"
 echo "Keys: r=hot reload, R=hot restart, q=quit"
 cd "$PROJECT_DIR"
-exec flutter run -d web-server --web-port "$chosen_port" --web-hostname "$host"
+exec flutter run -d web-server --web-port "$chosen_port" --web-hostname "$host" "${DART_DEFINES[@]}"

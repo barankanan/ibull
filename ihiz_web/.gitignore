@@ -43,3 +43,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+.firebase/
+.vercel/

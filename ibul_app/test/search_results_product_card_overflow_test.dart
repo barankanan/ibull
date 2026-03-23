@@ -11,13 +11,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  const testSupabaseUrl = String.fromEnvironment(
+    'TEST_SUPABASE_URL',
+    defaultValue: 'https://example.supabase.co',
+  );
+  const testSupabaseAnonKey = String.fromEnvironment(
+    'TEST_SUPABASE_ANON_KEY',
+    defaultValue: 'test-anon-key',
+  );
+
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
     SharedPreferences.setMockInitialValues({});
     await Supabase.initialize(
-      url: 'https://ihmixxzqnpamcwmrfibx.supabase.co',
-      anonKey:
-          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlobWl4eHpxbnBhbWN3bXJmaWJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3MDE0NTEsImV4cCI6MjA4NzI3NzQ1MX0.EZkjZAq2mwg-gfBhwotAGp4stb1D-rmWHuzVsz2yzX0',
+      url: testSupabaseUrl,
+      anonKey: testSupabaseAnonKey,
     );
   });
 

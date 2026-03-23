@@ -12,8 +12,6 @@ import '../screens/map_page.dart';
 import '../screens/product_detail_page.dart';
 import '../screens/camera_page.dart';
 
-const bool _kDebugHeaderOverlayTint = true;
-
 class WebHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
   final ValueChanged<String>? onCategorySelected;
@@ -104,29 +102,24 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
           offset: const Offset(0, 50), // Height of bar (48) + spacing (2)
           child: IgnorePointer(
             ignoring: !_shouldOverlayReceivePointers,
-            child: ColoredBox(
-              color: _kDebugHeaderOverlayTint
-                  ? const Color(0x44FF0000)
-                  : Colors.transparent,
-              child: Material(
-                elevation: 8,
-                borderRadius: BorderRadius.circular(12),
-                child: SearchOverlay(
-                  queryListenable: _queryNotifier,
-                  onClose: _hideOverlay,
-                  onSearch: (query) => _submitSearch(query),
-                  onProductTap: (product) {
-                    context.read<AppState>().addRecentlyViewedProduct(product);
-                    _searchFocusNode.unfocus();
-                    _hideOverlay();
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ProductDetailPage(product: product),
-                      ),
-                    );
-                  },
-                  showFilters: showFilters,
-                ),
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(12),
+              child: SearchOverlay(
+                queryListenable: _queryNotifier,
+                onClose: _hideOverlay,
+                onSearch: (query) => _submitSearch(query),
+                onProductTap: (product) {
+                  context.read<AppState>().addRecentlyViewedProduct(product);
+                  _searchFocusNode.unfocus();
+                  _hideOverlay();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ProductDetailPage(product: product),
+                    ),
+                  );
+                },
+                showFilters: showFilters,
               ),
             ),
           ),

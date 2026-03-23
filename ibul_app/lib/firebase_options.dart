@@ -4,6 +4,52 @@ import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
+const String _kFirebaseWebApiKey = String.fromEnvironment(
+  'IBUL_FIREBASE_WEB_API_KEY',
+);
+const String _kFirebaseWebAppId = String.fromEnvironment(
+  'IBUL_FIREBASE_WEB_APP_ID',
+);
+const String _kFirebaseMessagingSenderId = String.fromEnvironment(
+  'IBUL_FIREBASE_MESSAGING_SENDER_ID',
+);
+const String _kFirebaseProjectId = String.fromEnvironment(
+  'IBUL_FIREBASE_PROJECT_ID',
+);
+const String _kFirebaseAuthDomain = String.fromEnvironment(
+  'IBUL_FIREBASE_AUTH_DOMAIN',
+);
+const String _kFirebaseStorageBucket = String.fromEnvironment(
+  'IBUL_FIREBASE_STORAGE_BUCKET',
+);
+const String _kFirebaseWebMeasurementId = String.fromEnvironment(
+  'IBUL_FIREBASE_WEB_MEASUREMENT_ID',
+);
+const String _kFirebaseAndroidApiKey = String.fromEnvironment(
+  'IBUL_FIREBASE_ANDROID_API_KEY',
+);
+const String _kFirebaseAndroidAppId = String.fromEnvironment(
+  'IBUL_FIREBASE_ANDROID_APP_ID',
+);
+const String _kFirebaseIosApiKey = String.fromEnvironment(
+  'IBUL_FIREBASE_IOS_API_KEY',
+);
+const String _kFirebaseIosAppId = String.fromEnvironment(
+  'IBUL_FIREBASE_IOS_APP_ID',
+);
+const String _kFirebaseIosBundleId = String.fromEnvironment(
+  'IBUL_FIREBASE_IOS_BUNDLE_ID',
+);
+const String _kFirebaseMacosApiKey = String.fromEnvironment(
+  'IBUL_FIREBASE_MACOS_API_KEY',
+);
+const String _kFirebaseMacosAppId = String.fromEnvironment(
+  'IBUL_FIREBASE_MACOS_APP_ID',
+);
+const String _kFirebaseMacosBundleId = String.fromEnvironment(
+  'IBUL_FIREBASE_MACOS_BUNDLE_ID',
+);
+
 /// Default [FirebaseOptions] for use with your Firebase apps.
 ///
 /// Example:
@@ -43,39 +89,102 @@ class DefaultFirebaseOptions {
     }
   }
 
-  static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyBOk7kLeb_K6J97XZUi5nx4H3VBXOLYp5o',
-    appId: '1:926056125070:web:717e3e1b56f678286cefdf',
-    messagingSenderId: '926056125070',
-    projectId: 'ibul-ecommerce',
-    authDomain: 'ibul-ecommerce.firebaseapp.com',
-    storageBucket: 'ibul-ecommerce.firebasestorage.app',
-    measurementId: 'G-Y7M1GD96GL',
+  static FirebaseOptions get web => FirebaseOptions(
+    apiKey: _requireValue('IBUL_FIREBASE_WEB_API_KEY', _kFirebaseWebApiKey),
+    appId: _requireValue('IBUL_FIREBASE_WEB_APP_ID', _kFirebaseWebAppId),
+    messagingSenderId: _requireValue(
+      'IBUL_FIREBASE_MESSAGING_SENDER_ID',
+      _kFirebaseMessagingSenderId,
+    ),
+    projectId: _requireValue('IBUL_FIREBASE_PROJECT_ID', _kFirebaseProjectId),
+    authDomain: _requireValue(
+      'IBUL_FIREBASE_AUTH_DOMAIN',
+      _kFirebaseAuthDomain,
+    ),
+    storageBucket: _requireValue(
+      'IBUL_FIREBASE_STORAGE_BUCKET',
+      _kFirebaseStorageBucket,
+    ),
+    measurementId: _requiredOrNull(
+      'IBUL_FIREBASE_WEB_MEASUREMENT_ID',
+      _kFirebaseWebMeasurementId,
+    ),
   );
 
-  static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyBir4mFOOwkTXj5ykRNFLkv_Gto9TyBT5M',
-    appId: '1:926056125070:android:5be2c001a895e7116cefdf',
-    messagingSenderId: '926056125070',
-    projectId: 'ibul-ecommerce',
-    storageBucket: 'ibul-ecommerce.firebasestorage.app',
+  static FirebaseOptions get android => FirebaseOptions(
+    apiKey: _requireValue(
+      'IBUL_FIREBASE_ANDROID_API_KEY',
+      _kFirebaseAndroidApiKey,
+    ),
+    appId: _requireValue(
+      'IBUL_FIREBASE_ANDROID_APP_ID',
+      _kFirebaseAndroidAppId,
+    ),
+    messagingSenderId: _requireValue(
+      'IBUL_FIREBASE_MESSAGING_SENDER_ID',
+      _kFirebaseMessagingSenderId,
+    ),
+    projectId: _requireValue('IBUL_FIREBASE_PROJECT_ID', _kFirebaseProjectId),
+    storageBucket: _requireValue(
+      'IBUL_FIREBASE_STORAGE_BUCKET',
+      _kFirebaseStorageBucket,
+    ),
   );
 
-  static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyDZcy4ycUb7Y4r0aLBis_lAuxVvJ7iJ00A',
-    appId: '1:926056125070:ios:1a75a9ffd685e2c96cefdf',
-    messagingSenderId: '926056125070',
-    projectId: 'ibul-ecommerce',
-    storageBucket: 'ibul-ecommerce.firebasestorage.app',
-    iosBundleId: 'com.ibul.app',
+  static FirebaseOptions get ios => FirebaseOptions(
+    apiKey: _requireValue('IBUL_FIREBASE_IOS_API_KEY', _kFirebaseIosApiKey),
+    appId: _requireValue('IBUL_FIREBASE_IOS_APP_ID', _kFirebaseIosAppId),
+    messagingSenderId: _requireValue(
+      'IBUL_FIREBASE_MESSAGING_SENDER_ID',
+      _kFirebaseMessagingSenderId,
+    ),
+    projectId: _requireValue('IBUL_FIREBASE_PROJECT_ID', _kFirebaseProjectId),
+    storageBucket: _requireValue(
+      'IBUL_FIREBASE_STORAGE_BUCKET',
+      _kFirebaseStorageBucket,
+    ),
+    iosBundleId: _requireValue(
+      'IBUL_FIREBASE_IOS_BUNDLE_ID',
+      _kFirebaseIosBundleId,
+    ),
   );
 
-  static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyDZcy4ycUb7Y4r0aLBis_lAuxVvJ7iJ00A',
-    appId: '1:926056125070:ios:1a75a9ffd685e2c96cefdf',
-    messagingSenderId: '926056125070',
-    projectId: 'ibul-ecommerce',
-    storageBucket: 'ibul-ecommerce.firebasestorage.app',
-    iosBundleId: 'com.ibul.app',
+  static FirebaseOptions get macos => FirebaseOptions(
+    apiKey: _requireValue('IBUL_FIREBASE_MACOS_API_KEY', _kFirebaseMacosApiKey),
+    appId: _requireValue('IBUL_FIREBASE_MACOS_APP_ID', _kFirebaseMacosAppId),
+    messagingSenderId: _requireValue(
+      'IBUL_FIREBASE_MESSAGING_SENDER_ID',
+      _kFirebaseMessagingSenderId,
+    ),
+    projectId: _requireValue('IBUL_FIREBASE_PROJECT_ID', _kFirebaseProjectId),
+    storageBucket: _requireValue(
+      'IBUL_FIREBASE_STORAGE_BUCKET',
+      _kFirebaseStorageBucket,
+    ),
+    iosBundleId: _requireValue(
+      'IBUL_FIREBASE_MACOS_BUNDLE_ID',
+      _kFirebaseMacosBundleId,
+    ),
   );
+
+  static String _requireValue(String name, String value) {
+    final normalized = _requiredOrNull(name, value);
+    if (normalized == null) {
+      throw StateError(
+        '$name dart-define is required. Add --dart-define=$name=...',
+      );
+    }
+    return normalized;
+  }
+
+  static String? _requiredOrNull(String name, String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      if (name == 'IBUL_FIREBASE_WEB_MEASUREMENT_ID') {
+        return null;
+      }
+      return null;
+    }
+    return normalized;
+  }
 }

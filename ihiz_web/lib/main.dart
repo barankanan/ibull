@@ -29,6 +29,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'src/config/ihiz_runtime_config.dart';
 import 'src/sections/ihiz_login_marketing_section.dart';
 import 'src/widgets/ihiz_landing_widgets.dart';
 import 'src/widgets/ihiz_marketing_chrome.dart';
@@ -41,9 +42,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Supabase.initialize(
-    url: 'https://ihmixxzqnpamcwmrfibx.supabase.co',
-    anonKey:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlobWl4eHpxbnBhbWN3bXJmaWJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3MDE0NTEsImV4cCI6MjA4NzI3NzQ1MX0.EZkjZAq2mwg-gfBhwotAGp4stb1D-rmWHuzVsz2yzX0',
+    url: IhizRuntimeConfig.supabaseUrl,
+    anonKey: IhizRuntimeConfig.supabaseAnonKey,
   );
 
   runApp(const IhizWebApp());

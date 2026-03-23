@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
+import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/favorite_state.dart';
 import '../core/providers/cart_provider.dart';
@@ -12,20 +13,10 @@ import '../core/providers/connectivity_provider.dart';
 import '../core/review_state.dart';
 import '../screens/home_screen.dart';
 
-const String kAppSupabaseUrl = 'https://ihmixxzqnpamcwmrfibx.supabase.co';
-const String kAppSupabaseAnonKey = String.fromEnvironment(
-  'APP_SUPABASE_ANON_KEY',
-);
-
 Future<void> initializeAppSupabase() {
-  if (kAppSupabaseAnonKey.isEmpty) {
-    throw StateError(
-      'APP_SUPABASE_ANON_KEY dart-define is required for Supabase initialization.',
-    );
-  }
   return Supabase.initialize(
-    url: kAppSupabaseUrl,
-    anonKey: kAppSupabaseAnonKey,
+    url: AppRuntimeConfig.supabaseUrl,
+    anonKey: AppRuntimeConfig.supabaseAnonKey,
   );
 }
 

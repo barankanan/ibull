@@ -6,8 +6,6 @@ import '../../models/ad_campaign.dart';
 import '../../models/ad_metrics.dart';
 import '../../models/ad_revenue_overview.dart';
 import '../../models/ads_dashboard_snapshot.dart';
-import '../../models/campaign_review.dart';
-import '../../models/campaign_target.dart';
 import '../../services/ad_metrics_service.dart';
 import '../../services/campaign_review_service.dart';
 import '../../services/campaign_service.dart';
@@ -39,36 +37,20 @@ const List<DropdownMenuItem<String>> _kReviewItems = [
   ),
 ];
 
-enum AdminAdsDebugIsolationStage {
-  live,
-  pure,
-  heroOnly,
-  heroAndStats,
-  heroStatsAndFilters,
-  heroStatsFiltersAndTable,
-}
-
 class AdminAdsManagerContent extends StatefulWidget {
-  const AdminAdsManagerContent({
-    this.embedded = false,
-    this.debugIsolationStage = AdminAdsDebugIsolationStage.live,
-    this.debugTapLogSink,
-    super.key,
-  });
+  const AdminAdsManagerContent({this.embedded = false, super.key});
 
   final bool embedded;
-  final AdminAdsDebugIsolationStage debugIsolationStage;
-  final ValueChanged<String>? debugTapLogSink;
 
   @override
   State<AdminAdsManagerContent> createState() => _AdminAdsManagerContentState();
 }
 
 class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
-  late final AdsService _adsService;
-  late final CampaignReviewService _reviewService;
-  late final CampaignService _campaignService;
-  late final AdMetricsService _metricsService;
+  final AdsService _adsService = AdsService();
+  final CampaignReviewService _reviewService = CampaignReviewService();
+  final CampaignService _campaignService = CampaignService();
+  final AdMetricsService _metricsService = AdMetricsService();
 
   final TextEditingController _searchController = TextEditingController();
   final Set<String> _processingCampaignIds = <String>{};
@@ -83,13 +65,7 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
   @override
   void initState() {
     super.initState();
-    if (widget.debugIsolationStage == AdminAdsDebugIsolationStage.live) {
-      _adsService = AdsService();
-      _reviewService = CampaignReviewService();
-      _campaignService = CampaignService();
-      _metricsService = AdMetricsService();
-      _future = _load();
-    }
+    _future = _load();
   }
 
   @override
@@ -430,9 +406,6 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.debugIsolationStage != AdminAdsDebugIsolationStage.live) {
-      return _buildDebugIsolationStage(widget.debugIsolationStage);
-    }
     if (_showCreditManagement) {
       if (!_creditScreenRenderLogged) {
         _creditScreenRenderLogged = true;
@@ -529,178 +502,6 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
       walletTransactions: const [],
       topPlacementResults: const [],
       generatedAt: DateTime.now(),
-    );
-  }
-
-  Widget _buildDebugIsolationStage(AdminAdsDebugIsolationStage stage) {
-    if (stage == AdminAdsDebugIsolationStage.pure) {
-      return Scaffold(
-        body: Center(
-          child: ElevatedButton(
-            onPressed: () => _emitDebugTap('PURE ADS BUTTON CLICKED'),
-            child: const Text('PURE ADS TEST'),
-          ),
-        ),
-      );
-    }
-
-    final data = _buildDebugViewData();
-    final filtered = _filteredCampaigns(data.snapshot);
-    final children = <Widget>[
-      _buildDebugTestButton(
-        label: 'PURE ADS TEST',
-        log: 'PURE ADS BUTTON CLICKED',
-      ),
-    ];
-
-    if (stage.index >= AdminAdsDebugIsolationStage.heroOnly.index) {
-      children.addAll([
-        const SizedBox(height: 16),
-        _buildDebugTestButton(label: 'HERO TEST', log: 'HERO TEST CLICKED'),
-        const SizedBox(height: 12),
-        _buildHero(_pendingReviewCount(data.snapshot)),
-      ]);
-    }
-
-    if (stage.index >= AdminAdsDebugIsolationStage.heroAndStats.index) {
-      children.addAll([
-        const SizedBox(height: 18),
-        _buildDebugTestButton(label: 'STATS TEST', log: 'STATS TEST CLICKED'),
-        const SizedBox(height: 12),
-        _buildRevenueOverview(data.snapshot.revenueOverview),
-        const SizedBox(height: 12),
-        _buildOperationsOverview(
-          data,
-          data.snapshot.revenueOverview,
-          _pendingReviewCount(data.snapshot),
-        ),
-      ]);
-    }
-
-    if (stage.index >= AdminAdsDebugIsolationStage.heroStatsAndFilters.index) {
-      children.addAll([
-        const SizedBox(height: 18),
-        _buildDebugTestButton(label: 'FILTER TEST', log: 'FILTER TEST CLICKED'),
-        const SizedBox(height: 12),
-        _buildFilterBar(),
-      ]);
-    }
-
-    if (stage.index >=
-        AdminAdsDebugIsolationStage.heroStatsFiltersAndTable.index) {
-      children.addAll([
-        const SizedBox(height: 18),
-        _buildDebugTestButton(label: 'TABLE TEST', log: 'TABLE TEST CLICKED'),
-        const SizedBox(height: 12),
-        _buildTable(data, filtered),
-      ]);
-    }
-
-    return Scaffold(
-      body: ListView(
-        physics: const ClampingScrollPhysics(),
-        padding: EdgeInsets.all(widget.embedded ? 0 : 20),
-        children: children,
-      ),
-    );
-  }
-
-  Widget _buildDebugTestButton({required String label, required String log}) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: ElevatedButton(
-        onPressed: () => _emitDebugTap(log),
-        child: Text(label),
-      ),
-    );
-  }
-
-  void _emitDebugTap(String log) {
-    widget.debugTapLogSink?.call(log);
-    debugPrint(log);
-  }
-
-  _AdminAdsViewData _buildDebugViewData() {
-    final now = DateTime.now();
-    final campaign = AdCampaign(
-      id: 'debug-campaign-1',
-      sellerId: 'seller-debug-1',
-      storeId: 'store-debug-1',
-      name: 'Debug kampanyasi',
-      type: AdCampaignType.banner,
-      objective: CampaignObjective.productViews,
-      status: CampaignStatus.pendingReview,
-      billingModel: BillingModel.cpc,
-      dailyBudget: 250,
-      totalBudget: 1800,
-      spentAmount: 420,
-      remainingBalance: 1380,
-      bidAmount: 8,
-      currency: 'TRY',
-      startsAt: now.subtract(const Duration(days: 2)),
-      endsAt: now.add(const Duration(days: 12)),
-      target: const CampaignTarget(
-        campaignId: 'debug-campaign-1',
-        objective: CampaignObjective.productViews,
-        categories: ['Elektronik', 'Aksesuar'],
-      ),
-    );
-    final revenue = AdRevenueOverview(
-      totalRevenue: 9200,
-      todayRevenue: 540,
-      weekRevenue: 3100,
-      monthRevenue: 9200,
-      pendingPayments: 640,
-      approvedPayments: 7300,
-      refundedPayments: 120,
-      walletTopUps: 1800,
-      currency: 'TRY',
-      generatedAt: now,
-      campaignRevenue: const {'debug-campaign-1': 1280},
-      sellerSpend: const {'seller-debug-1': 420},
-    );
-    final snapshot = AdsDashboardSnapshot(
-      role: AdRole.admin,
-      campaigns: <AdCampaign>[campaign],
-      aggregateMetrics: AdMetrics(
-        campaignId: 'all',
-        date: now,
-        impressions: 18000,
-        clicks: 540,
-        spend: 420,
-        revenue: 1280,
-      ),
-      insights: const [],
-      healthScores: const [],
-      revenueOverview: revenue,
-      reviews: <CampaignReview>[
-        CampaignReview(
-          id: 'debug-review-1',
-          campaignId: 'debug-campaign-1',
-          sellerId: 'seller-debug-1',
-          status: CampaignReviewStatus.pending,
-          createdAt: now.subtract(const Duration(days: 1)),
-        ),
-      ],
-      walletTransactions: const [],
-      topPlacementResults: const [],
-      generatedAt: now,
-    );
-    return _AdminAdsViewData(
-      snapshot: snapshot,
-      metricsByCampaign: <String, AdMetrics>{
-        'debug-campaign-1': AdMetrics(
-          campaignId: 'debug-campaign-1',
-          date: now,
-          impressions: 18000,
-          clicks: 540,
-          conversions: 38,
-          spend: 420,
-          revenue: 1280,
-        ),
-      },
-      topSeller: 'Seller debug 1',
-      topRevenueType: 'Banner',
     );
   }
 

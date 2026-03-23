@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/config/runtime_config.dart';
+
 class AuthService {
   final SupabaseClient _supabase = Supabase.instance.client;
   static const String _sellerSwitchSessionBackupKey =
@@ -63,17 +65,11 @@ class AuthService {
   }
 
   GoogleSignIn get _googleSignInClient {
+    final clientId = AppRuntimeConfig.googleClientId;
+    final serverClientId = AppRuntimeConfig.googleServerClientId;
     return _googleSignIn ??= kIsWeb
-        ? GoogleSignIn(
-            clientId:
-                '926056125070-vhmpff59pmeg9b917h39ug7ecqmi36da.apps.googleusercontent.com',
-          )
-        : GoogleSignIn(
-            clientId:
-                '926056125070-vhmpff59pmeg9b917h39ug7ecqmi36da.apps.googleusercontent.com',
-            serverClientId:
-                '926056125070-vhmpff59pmeg9b917h39ug7ecqmi36da.apps.googleusercontent.com',
-          );
+        ? GoogleSignIn(clientId: clientId)
+        : GoogleSignIn(clientId: clientId, serverClientId: serverClientId);
   }
 
   String _mapFieldNameToDb(String fieldName) {

@@ -10,8 +10,6 @@ import '../services/auth_service.dart';
 import '../services/order_service.dart';
 import 'search_overlay.dart';
 
-const bool _kDebugHeaderOverlayTint = true;
-
 class CustomHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
 
@@ -130,44 +128,39 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
           offset: Offset(overlayOffsetX, size.height + 4),
           child: IgnorePointer(
             ignoring: !_shouldOverlayReceivePointers,
-            child: ColoredBox(
-              color: _kDebugHeaderOverlayTint
-                  ? const Color(0x44FF0000)
-                  : Colors.transparent,
-              child: Material(
-                elevation: 8,
-                borderRadius: BorderRadius.circular(12),
-                child: SearchOverlay(
-                  queryListenable: _queryNotifier,
-                  onClose: _hideOverlay,
-                  onSearch: (query) {
-                    final trimmed = query.trim();
-                    if (trimmed.isEmpty) return;
-                    context.read<AppState>().addSearchHistory(trimmed);
-                    _searchController.text = trimmed;
-                    _searchFocusNode.unfocus();
-                    _hideOverlay();
-                    Future.microtask(() {
-                      if (!mounted) return;
-                      try {
-                        widget.onSearch(trimmed);
-                      } catch (error, stackTrace) {
-                        debugPrint('CustomHeader search submit failed: $error');
-                        debugPrintStack(stackTrace: stackTrace);
-                      }
-                    });
-                  },
-                  onProductTap: (product) {
-                    context.read<AppState>().addRecentlyViewedProduct(product);
-                    _searchFocusNode.unfocus();
-                    _hideOverlay();
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ProductDetailPage(product: product),
-                      ),
-                    );
-                  },
-                ),
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(12),
+              child: SearchOverlay(
+                queryListenable: _queryNotifier,
+                onClose: _hideOverlay,
+                onSearch: (query) {
+                  final trimmed = query.trim();
+                  if (trimmed.isEmpty) return;
+                  context.read<AppState>().addSearchHistory(trimmed);
+                  _searchController.text = trimmed;
+                  _searchFocusNode.unfocus();
+                  _hideOverlay();
+                  Future.microtask(() {
+                    if (!mounted) return;
+                    try {
+                      widget.onSearch(trimmed);
+                    } catch (error, stackTrace) {
+                      debugPrint('CustomHeader search submit failed: $error');
+                      debugPrintStack(stackTrace: stackTrace);
+                    }
+                  });
+                },
+                onProductTap: (product) {
+                  context.read<AppState>().addRecentlyViewedProduct(product);
+                  _searchFocusNode.unfocus();
+                  _hideOverlay();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ProductDetailPage(product: product),
+                    ),
+                  );
+                },
               ),
             ),
           ),

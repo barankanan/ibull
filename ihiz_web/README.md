@@ -11,6 +11,10 @@ cd ihiz_web
 ./scripts/run_local_web.sh
 ```
 
+Bu uygulama artık `IHIZ_SUPABASE_URL` ve `IHIZ_SUPABASE_ANON_KEY`
+değerlerini `--dart-define` ile bekler. Detaylar için `../SECURITY_HARDENING.md`
+ve repo kökündeki `.env.example` dosyasına bakın.
+
 Notlar:
 
 - Script, `8083`'ten başlayarak boş portu otomatik seçer (port dolu hatası vermez).
