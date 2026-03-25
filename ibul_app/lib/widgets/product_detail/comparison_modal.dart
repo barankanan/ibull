@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
+import '../../core/app_image_cdn.dart';
 import '../../models/product_model.dart';
 import '../../core/constants.dart';
 
@@ -110,7 +112,12 @@ class _ComparisonModalState extends State<ComparisonModal> {
                 aspectRatio: 1,
                 child: product.images.isNotEmpty
                     ? (product.images.first.startsWith('http')
-                        ? Image.network(product.images.first, fit: BoxFit.contain)
+                        ? OptimizedImage(
+                            imageUrlOrPath: product.imageFor(AppImageVariant.card),
+                            fit: BoxFit.contain,
+                            cacheWidth: 420,
+                            cacheHeight: 420,
+                          )
                         : Image.asset(product.images.first, fit: BoxFit.contain))
                     : const Icon(Icons.image, color: Colors.grey),
               ),
@@ -260,7 +267,12 @@ class _ComparisonModalState extends State<ComparisonModal> {
                         ),
                         child: product.images.isNotEmpty
                             ? (product.images.first.startsWith('http')
-                                ? Image.network(product.images.first, fit: BoxFit.contain)
+                                ? OptimizedImage(
+                                    imageUrlOrPath: product.imageFor(AppImageVariant.thumb),
+                                    fit: BoxFit.contain,
+                                    cacheWidth: 160,
+                                    cacheHeight: 160,
+                                  )
                                 : Image.asset(product.images.first, fit: BoxFit.contain))
                             : const Icon(Icons.image),
                       ),

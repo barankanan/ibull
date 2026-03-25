@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../models/product_model.dart';
@@ -613,7 +614,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         )
                       : coverImage.startsWith('assets/')
                       ? Image.asset(coverImage, fit: BoxFit.cover)
-                      : Image.network(coverImage, fit: BoxFit.cover),
+                      : OptimizedImage(imageUrlOrPath: coverImage, fit: BoxFit.cover),
                   // Gradient Overlay
                   Container(
                     decoration: BoxDecoration(
@@ -730,7 +731,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                                   child: ClipOval(
                                     child:
                                         previewImages[index].startsWith('http')
-                                        ? Image.network(
+                                        ? OptimizedImage(imageUrlOrPath: 
                                             previewImages[index],
                                             fit: BoxFit.cover,
                                           )
@@ -1065,7 +1066,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                   clipBehavior: Clip.antiAlias,
                   child: (list['coverImage']?.toString().isNotEmpty ?? false)
                       ? (list['coverImage'].toString().startsWith('http')
-                            ? Image.network(
+                            ? OptimizedImage(imageUrlOrPath: 
                                 list['coverImage'],
                                 fit: BoxFit.cover,
                               )
@@ -1095,7 +1096,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         clipBehavior: Clip.antiAlias,
                         child: (list['logo']?.toString().isNotEmpty ?? false)
                             ? (list['logo'].toString().startsWith('http')
-                                  ? Image.network(
+                                  ? OptimizedImage(imageUrlOrPath: 
                                       list['logo'],
                                       fit: BoxFit.cover,
                                     )
@@ -1195,7 +1196,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                           height: 120,
                           fit: BoxFit.cover,
                         )
-                      : Image.network(
+                      : OptimizedImage(imageUrlOrPath: 
                           coverImage,
                           width: double.infinity,
                           height: 120,
@@ -1231,7 +1232,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                             )
                           : logoImage.startsWith('assets/')
                           ? Image.asset(logoImage, fit: BoxFit.cover)
-                          : Image.network(logoImage, fit: BoxFit.cover),
+                          : OptimizedImage(imageUrlOrPath: logoImage, fit: BoxFit.cover),
                     ),
                   ),
                 ),
@@ -1451,7 +1452,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       color: Colors.grey[100],
                       child: image != null && image.isNotEmpty
                           ? (image.startsWith('http')
-                                ? Image.network(
+                                ? OptimizedImage(imageUrlOrPath: 
                                     image,
                                     fit: BoxFit.contain,
                                     cacheWidth: 200,

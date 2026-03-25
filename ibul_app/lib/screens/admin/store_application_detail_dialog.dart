@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class StoreApplicationDetailDialog extends StatefulWidget {
@@ -485,7 +486,7 @@ class _StoreApplicationDetailDialogState
                   ],
                 ),
                 Expanded(
-                  child: Image.network(
+                  child: OptimizedImage(imageUrlOrPath: 
                     url,
                     fit: BoxFit.contain,
                     errorBuilder: (context, error, stackTrace) => Center(

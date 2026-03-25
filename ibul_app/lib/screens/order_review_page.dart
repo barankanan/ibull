@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../core/app_state.dart';
@@ -687,7 +688,7 @@ class _ReviewImage extends StatelessWidget {
       return Image.memory(bytes, fit: BoxFit.cover);
     }
     if (url.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         url,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) => Container(

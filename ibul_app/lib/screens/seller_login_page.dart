@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../core/app_motion.dart';
 import '../core/constants.dart';
 import 'become_seller_page.dart';
 import '../services/auth_service.dart';
@@ -63,11 +64,8 @@ class _SellerLoginPageState extends State<SellerLoginPage> {
           if (AuthService.isAdminRole(role?.toString())) {
             Navigator.pushReplacement(
               context,
-              PageRouteBuilder(
-                pageBuilder: (context, animation, secondaryAnimation) =>
-                    const AdminPanelPage(),
-                transitionDuration: Duration.zero,
-                reverseTransitionDuration: Duration.zero,
+              buildAppPageRoute<void>(
+                builder: (context) => const AdminPanelPage(),
               ),
             );
             return;

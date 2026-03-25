@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
+import '../../core/app_motion.dart';
+import '../../core/app_image_cdn.dart';
 import '../../core/constants.dart';
 import '../../core/app_state.dart';
+import '../../core/interaction_feedback.dart';
 import '../../screens/product_features_page.dart';
 import '../../screens/login_page.dart';
 import '../common/video_player_widget.dart'; // Added
@@ -23,6 +26,7 @@ class ProductImageSlider extends StatefulWidget {
 class _ProductImageSliderState extends State<ProductImageSlider> {
   late PageController _pageController;
   bool _show360 = false; // final kaldırıldı
+  bool _hasSettledHeroLayout = true;
 
   void _showLoginRequiredDialog(BuildContext context) {
     showDialog(
@@ -54,6 +58,64 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
   void initState() {
     super.initState();
     _pageController = PageController();
+    _hasSettledHeroLayout = widget.heroTag == null;
+    if (!_hasSettledHeroLayout) {
+      _scheduleHeroLayoutSettle();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _precacheProductImages();
+  }
+
+  /// Precaches all product images at the bounded decode resolution so that
+  /// swiping between slides is synchronous (no raster spike on first decode).
+  void _precacheProductImages() {
+    final viewModel = Provider.of<ProductDetailViewModel>(context, listen: false);
+    final images = viewModel.images;
+    if (images.isEmpty) return;
+
+    // Main (first) image: detail variant (960×960); rest: card variant (420×420).
+    for (var i = 0; i < images.length; i++) {
+      final url = images[i];
+      if (url.isEmpty) continue;
+      final variant = i == 0 ? AppImageVariant.detail : AppImageVariant.card;
+      final cdnUrl = AppImageCdn.buildUrl(url, variant);
+      final spec = AppImageCdn.cacheSize(variant);
+      final provider = OptimizedImage.buildProvider(
+        imageUrlOrPath: cdnUrl,
+        cacheWidth: spec.width,
+        cacheHeight: spec.height,
+      );
+      if (provider != null) {
+        precacheImage(provider, context).ignore();
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ProductImageSlider oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.heroTag != widget.heroTag && widget.heroTag != null) {
+      _hasSettledHeroLayout = false;
+      _scheduleHeroLayoutSettle();
+    }
+  }
+
+  void _scheduleHeroLayoutSettle() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(
+        AppMotion.routeDuration + const Duration(milliseconds: 40),
+        () {
+          if (!mounted) return;
+          setState(() {
+            _hasSettledHeroLayout = true;
+          });
+        },
+      );
+    });
   }
 
   @override
@@ -119,40 +181,18 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                         itemCount: images.length,
                         itemBuilder: (context, index) {
                           final imageUrl = images[index];
-                          Widget imageWidget = Container(
-                            color: Colors.white,
-                            padding: const EdgeInsets.all(16.0),
-                            child: imageUrl.startsWith('http')
-                                ? CachedNetworkImage(
-                                    imageUrl: imageUrl,
-                                    fit: BoxFit.contain,
-                                    memCacheWidth: 800,
-                                    memCacheHeight: 800,
-                                    placeholder: (_, __) => const Center(
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                    errorWidget: (_, __, ___) =>
-                                        _buildPlaceholder(),
-                                  )
-                                : Image.asset(
-                                    imageUrl,
-                                    fit: BoxFit.contain,
-                                    cacheWidth: 800,
-                                    cacheHeight: 800,
-                                    filterQuality: FilterQuality.medium,
-                                    errorBuilder: (_, __, ___) =>
-                                        _buildPlaceholder(),
-                                  ),
-                          );
+                          final isHeroImage = index == 0;
+                          final imageWidget = isHeroImage
+                              ? _buildHeroImage(imageUrl, viewModel)
+                              : _buildSettledImage(imageUrl);
 
                           // Only wrap the first image with Hero to match ProductCard
-                          if (index == 0) {
-                            final fallbackTag =
-                                'product-image-${viewModel.initialProduct.productId ?? viewModel.initialProduct.name}';
+                          if (isHeroImage) {
+                            final fallbackTag = 'product-image-${viewModel.initialProduct.productId ?? viewModel.initialProduct.name}';
                             return Hero(
                               tag: widget.heroTag ?? fallbackTag,
+                              transitionOnUserGestures: true,
+                              placeholderBuilder: (_, __, child) => child,
                               child: imageWidget,
                             );
                           }
@@ -261,7 +301,12 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                       iconColor: viewModel.isFavorite
                           ? Colors.red
                           : const Color(0xFF673AB7),
-                      onPressed: viewModel.toggleFavorite,
+                      onPressed: () {
+                        InteractionFeedback.forInteraction(
+                          InteractionFeedbackType.favorite,
+                        );
+                        viewModel.toggleFavorite();
+                      },
                     ),
                   ],
                 ),
@@ -377,14 +422,17 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(6),
                         child: imageUrl.startsWith('http')
-                            ? CachedNetworkImage(
-                                imageUrl: imageUrl,
+                            ? OptimizedImage(
+                                // Thumbnail strip: thumb variant 160×160 @ q70.
+                                imageUrlOrPath: AppImageCdn.buildUrl(
+                                  imageUrl,
+                                  AppImageVariant.thumb,
+                                ),
                                 fit: BoxFit.cover,
-                                memCacheWidth: 200,
-                                memCacheHeight: 200,
-                                placeholder: (_, __) =>
-                                    Container(color: Colors.grey[100]),
-                                errorWidget: (_, __, ___) => const Icon(
+                                cacheWidth: 160,
+                                cacheHeight: 160,
+                                placeholder: Container(color: Colors.grey[100]),
+                                errorWidget: const Icon(
                                   Icons.error,
                                   color: Colors.grey,
                                   size: 20,
@@ -416,6 +464,87 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
   bool _show360Button(ProductDetailViewModel viewModel) {
     return viewModel.initialProduct.threeSixtyImages != null &&
         viewModel.initialProduct.threeSixtyImages!.isNotEmpty;
+  }
+
+  Widget _buildHeroImage(
+    String imageUrl,
+    ProductDetailViewModel viewModel,
+  ) {
+    final hasSettledLayout =
+        _hasSettledHeroLayout && viewModel.currentImageIndex == 0;
+
+    return AnimatedSwitcher(
+      duration: AppMotion.normalTransitionDuration,
+      reverseDuration: AppMotion.normalTransitionReverseDuration,
+      switchInCurve: AppMotion.pageTransitionCurve,
+      switchOutCurve: AppMotion.pageTransitionReverseCurve,
+      child: hasSettledLayout
+          ? KeyedSubtree(
+              key: const ValueKey('product-detail-image-settled'),
+              child: _buildImageFrame(
+                imageUrl,
+                fit: BoxFit.contain,
+                padding: const EdgeInsets.all(16),
+              ),
+            )
+          : KeyedSubtree(
+              key: const ValueKey('product-detail-image-hero'),
+              child: _buildImageFrame(
+                imageUrl,
+                fit: BoxFit.cover,
+                padding: EdgeInsets.zero,
+              ),
+            ),
+    );
+  }
+
+  Widget _buildSettledImage(String imageUrl) {
+    return _buildImageFrame(
+      imageUrl,
+      fit: BoxFit.contain,
+      padding: const EdgeInsets.all(16),
+    );
+  }
+
+  Widget _buildImageFrame(
+    String imageUrl, {
+    required BoxFit fit,
+    required EdgeInsets padding,
+  }) {
+    return ColoredBox(
+      color: Colors.white,
+      child: Padding(
+        padding: padding,
+        child: _buildProductImage(imageUrl, fit: fit),
+      ),
+    );
+  }
+
+  Widget _buildProductImage(String imageUrl, {required BoxFit fit}) {
+    if (imageUrl.startsWith('http')) {
+      // Apply detail variant (960×960 @ q82) for the main product detail image.
+      final cdnUrl = AppImageCdn.buildUrl(imageUrl, AppImageVariant.detail);
+      final spec = AppImageCdn.cacheSize(AppImageVariant.detail);
+      return OptimizedImage(
+        imageUrlOrPath: cdnUrl,
+        fit: fit,
+        cacheWidth: spec.width,
+        cacheHeight: spec.height,
+        placeholder: const Center(
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        errorWidget: _buildPlaceholder(),
+      );
+    }
+
+    return Image.asset(
+      imageUrl,
+      fit: fit,
+      cacheWidth: 800,
+      cacheHeight: 800,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (_, __, ___) => _buildPlaceholder(),
+    );
   }
 
   void _showVideoDialog(

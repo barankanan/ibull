@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/app_state.dart';
@@ -371,7 +372,7 @@ class OrderDetailPage extends StatelessWidget {
             radius: 20,
             backgroundColor: const Color(0xFFF3F0FF),
             backgroundImage: (storeLogo != null && storeLogo.isNotEmpty)
-                ? NetworkImage(storeLogo)
+                ? ResizeImage.resizeIfNeeded(80, 80, NetworkImage(storeLogo))
                 : null,
             child: (storeLogo != null && storeLogo.isNotEmpty)
                 ? null
@@ -844,7 +845,7 @@ class OrderDetailPage extends StatelessWidget {
     }
 
     if (path.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         path,
         fit: BoxFit.cover,
         errorBuilder: (_, _, _) => Container(

@@ -364,7 +364,11 @@ class _ChatPageState extends State<ChatPage> {
                 borderRadius: BorderRadius.circular(8),
                 image: widget.product!['image'] != null
                     ? DecorationImage(
-                        image: NetworkImage(widget.product!['image']),
+                        image: ResizeImage.resizeIfNeeded(
+                          210,
+                          270,
+                          NetworkImage(widget.product!['image']),
+                        ),
                         fit: BoxFit.cover,
                       )
                     : null,
@@ -488,7 +492,11 @@ class _ChatPageState extends State<ChatPage> {
                 borderRadius: BorderRadius.circular(8),
                 image: widget.product!['image'] != null
                     ? DecorationImage(
-                        image: NetworkImage(widget.product!['image']),
+                        image: ResizeImage.resizeIfNeeded(
+                          210,
+                          270,
+                          NetworkImage(widget.product!['image']),
+                        ),
                         fit: BoxFit.cover,
                       )
                     : null,

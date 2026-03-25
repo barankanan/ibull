@@ -5,7 +5,10 @@ import '../ads/ads.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../models/product_list_model.dart';
+import 'optimized_image.dart';
+import 'premium_interactions.dart';
 import '../screens/list_detail_page.dart';
+import 'skeleton_loading.dart';
 import '../services/product_list_service.dart';
 
 class SponsoredProductListsSection extends StatefulWidget {
@@ -96,7 +99,10 @@ class _SponsoredProductListsSectionState
         final lists = snapshot.data ?? const <ProductList>[];
         if (snapshot.connectionState == ConnectionState.waiting &&
             lists.isEmpty) {
-          return const SizedBox.shrink();
+          return _SponsoredProductListsSkeleton(
+            title: widget.title,
+            hasSubtitle: (widget.subtitle ?? '').trim().isNotEmpty,
+          );
         }
         if (lists.isEmpty) return const SizedBox.shrink();
 
@@ -167,7 +173,8 @@ class _SponsoredProductListsSectionState
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   itemCount: lists.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 14),
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(width: 14),
                   itemBuilder: (context, index) => SizedBox(
                     width: 250,
                     child: _SponsoredListCard(
@@ -175,7 +182,7 @@ class _SponsoredProductListsSectionState
                       onTap: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => ListDetailPage(
+                            builder: (routeContext) => ListDetailPage(
                               listData: _appState.productListToMap(
                                 lists[index],
                               ),
@@ -206,127 +213,141 @@ class _SponsoredListCard extends StatelessWidget {
     final cover = (list.iconUrl ?? '').trim();
     final previewProducts = list.products.take(3).toList(growable: false);
 
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(22),
-      child: InkWell(
-        onTap: onTap,
+    return RepaintBoundary(
+      child: Material(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(22),
-        child: Ink(
-          decoration: BoxDecoration(
-            color: Colors.white,
+        child: PremiumPressable(
+          hoverLift: 2,
+          hoverScale: 1.008,
+          pressedScale: 0.982,
+          child: InkWell(
+            onTap: onTap,
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x0D0F172A),
-                blurRadius: 18,
-                offset: Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                height: 120,
-                decoration: const BoxDecoration(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-                  color: Color(0xFFF8FAFC),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: cover.isNotEmpty
-                    ? Image.network(
-                        cover,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _buildCoverFallback(),
-                      )
-                    : _buildCoverFallback(),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        list.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        (list.description ?? '').trim().isEmpty
-                            ? '${list.productCount} ürün'
-                            : list.description!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF64748B),
-                          fontSize: 12,
-                          height: 1.45,
-                        ),
-                      ),
-                      const Spacer(),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _MetaChip(
-                            icon: Icons.inventory_2_outlined,
-                            label: '${list.productCount} ürün',
-                          ),
-                          if ((list.category ?? '').trim().isNotEmpty)
-                            _MetaChip(
-                              icon: Icons.category_outlined,
-                              label: list.category!,
-                            ),
-                        ],
-                      ),
-                      if (previewProducts.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          previewProducts
-                              .map((product) => product.name)
-                              .join(' • '),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFF334155),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      Row(
-                        children: const [
-                          Text(
-                            'Listeyi aç',
-                            style: TextStyle(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          SizedBox(width: 6),
-                          Icon(
-                            Icons.arrow_forward_rounded,
-                            color: AppColors.primary,
-                            size: 18,
-                          ),
-                        ],
-                      ),
-                    ],
+            child: Ink(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x0D0F172A),
+                    blurRadius: 18,
+                    offset: Offset(0, 8),
                   ),
-                ),
+                ],
               ),
-            ],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  RepaintBoundary(
+                    child: Container(
+                      height: 120,
+                      decoration: const BoxDecoration(
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(22),
+                        ),
+                        color: Color(0xFFF8FAFC),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: cover.isNotEmpty
+                          ? OptimizedImage(
+                              imageUrlOrPath: cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              fit: BoxFit.cover,
+                              cacheWidth: 640,
+                              cacheHeight: 320,
+                              errorWidget: _buildCoverFallback(),
+                            )
+                          : _buildCoverFallback(),
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            list.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            (list.description ?? '').trim().isEmpty
+                                ? '${list.productCount} ürün'
+                                : list.description!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 12,
+                              height: 1.45,
+                            ),
+                          ),
+                          const Spacer(),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _MetaChip(
+                                icon: Icons.inventory_2_outlined,
+                                label: '${list.productCount} ürün',
+                              ),
+                              if ((list.category ?? '').trim().isNotEmpty)
+                                _MetaChip(
+                                  icon: Icons.category_outlined,
+                                  label: list.category!,
+                                ),
+                            ],
+                          ),
+                          if (previewProducts.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              previewProducts
+                                  .map((product) => product.name)
+                                  .join(' • '),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF334155),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          Row(
+                            children: const [
+                              Text(
+                                'Listeyi aç',
+                                style: TextStyle(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              SizedBox(width: 6),
+                              Icon(
+                                Icons.arrow_forward_rounded,
+                                color: AppColors.primary,
+                                size: 18,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -342,6 +363,133 @@ class _SponsoredListCard extends StatelessWidget {
           Icons.collections_bookmark_outlined,
           color: Color(0xFF64748B),
           size: 36,
+        ),
+      ),
+    );
+  }
+}
+
+class _SponsoredProductListsSkeleton extends StatelessWidget {
+  const _SponsoredProductListsSkeleton({
+    required this.title,
+    required this.hasSubtitle,
+  });
+
+  final String title;
+  final bool hasSubtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final cardWidth = width >= 1100 ? 250.0 : 232.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SkeletonLoading(
+                      width: title.length > 20 ? 210 : 170,
+                      height: 20,
+                      borderRadius: 8,
+                    ),
+                    if (hasSubtitle) ...[
+                      const SizedBox(height: 6),
+                      const SkeletonLoading(
+                        width: 240,
+                        height: 12,
+                        borderRadius: 6,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SkeletonLoading(width: 76, height: 28, borderRadius: 999),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 252,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: width >= 1100 ? 4 : 3,
+            separatorBuilder: (context, index) => const SizedBox(width: 14),
+            itemBuilder: (context, index) =>
+                _SponsoredListCardSkeleton(width: cardWidth),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SponsoredListCardSkeleton extends StatelessWidget {
+  const _SponsoredListCardSkeleton({required this.width});
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D0F172A),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            SkeletonLoading(
+              width: double.infinity,
+              height: 106,
+              borderRadius: 16,
+            ),
+            SizedBox(height: 14),
+            SkeletonLoading(width: 150, height: 16, borderRadius: 8),
+            SizedBox(height: 8),
+            SkeletonLoading(
+              width: double.infinity,
+              height: 12,
+              borderRadius: 6,
+            ),
+            SizedBox(height: 6),
+            SkeletonLoading(width: 132, height: 12, borderRadius: 6),
+            Spacer(),
+            Row(
+              children: [
+                SkeletonLoading(width: 82, height: 26, borderRadius: 999),
+                SizedBox(width: 8),
+                SkeletonLoading(width: 92, height: 26, borderRadius: 999),
+              ],
+            ),
+            SizedBox(height: 12),
+            SkeletonLoading(
+              width: double.infinity,
+              height: 12,
+              borderRadius: 6,
+            ),
+            SizedBox(height: 6),
+            SkeletonLoading(width: 112, height: 12, borderRadius: 6),
+          ],
         ),
       ),
     );

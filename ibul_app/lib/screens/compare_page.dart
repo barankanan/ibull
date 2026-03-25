@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../models/product_model.dart';
 import '../core/constants.dart';
 
@@ -91,7 +92,7 @@ class ComparePage extends StatelessWidget {
                                 padding: const EdgeInsets.all(8.0),
                                 child: p.images.isNotEmpty
                                     ? (p.images.first.startsWith('http')
-                                        ? Image.network(p.images.first, fit: BoxFit.contain)
+                                        ? OptimizedImage(imageUrlOrPath: p.images.first, fit: BoxFit.contain)
                                         : Image.asset(p.images.first, fit: BoxFit.contain))
                                     : const Icon(Icons.image, color: Colors.grey),
                               ),

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:async';
@@ -17,8 +18,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:video_player/video_player.dart';
 import '../widgets/image_cropper_widget.dart';
 import '../core/app_state.dart';
+import '../core/app_motion.dart';
 import '../core/constants.dart';
 import '../core/web_seo.dart';
+import '../widgets/premium_interactions.dart';
 import '../services/store_service.dart';
 import '../services/auth_service.dart';
 import '../services/support_service.dart';
@@ -49,6 +52,11 @@ import '../ads/presentation/pages/seller_ads_manager_content.dart';
 
 // Satıcı Admin Paneli
 // Satıcıların mağazalarını yönettikleri panel
+part 'seller_panel_dashboard_modules.dart';
+part 'seller_panel_orders_modules.dart';
+part 'seller_panel_finance_modules.dart';
+part 'seller_panel_support_modules.dart';
+
 class SellerPanelPage extends StatefulWidget {
   const SellerPanelPage({super.key});
 
@@ -139,8 +147,10 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       TextEditingController();
   Timer? _sellerOrderSearchDebounce;
   Timer? _feedbackSearchDebounce;
+  Timer? _supportSearchDebounce;
   String _debouncedSellerOrderQuery = '';
   String _debouncedFeedbackQuery = '';
+  String _debouncedSupportQuery = '';
   String _selectedSellerOrderFilter = 'all';
   final Set<String> _highlightedSellerOrderIds = <String>{};
   String? _selectedSellerOrderItemId;
@@ -224,6 +234,8 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   Map<String, dynamic>? _financeSummaryCache;
   String? _feedbackDataCacheKey;
   Map<String, dynamic>? _feedbackDataCache;
+  String? _tableOrdersStreamSellerId;
+  Stream<List<Map<String, dynamic>>>? _tableOrdersStream;
   double _storeRating = 0.0;
   bool _isStoreVerified = false;
 
@@ -615,6 +627,11 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     });
   }
 
+  void _handleSellerOrderSearchChanged(String value) {
+    setState(() {});
+    _scheduleSellerOrderSearch(value);
+  }
+
   void _scheduleFeedbackSearch(String value) {
     _feedbackSearchDebounce?.cancel();
     _feedbackSearchDebounce = Timer(const Duration(milliseconds: 250), () {
@@ -623,6 +640,56 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
         _debouncedFeedbackQuery = value.trim().toLowerCase();
       });
     });
+  }
+
+  void _scheduleSupportSearch(String value) {
+    _supportSearchDebounce?.cancel();
+    _supportSearchDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      final normalized = value.trim().toLowerCase();
+      if (_debouncedSupportQuery == normalized) return;
+      setState(() {
+        _debouncedSupportQuery = normalized;
+      });
+    });
+  }
+
+  void _setSelectedSupportTab(String value) {
+    if (_selectedSupportTab == value) return;
+    setState(() {
+      _selectedSupportTab = value;
+    });
+  }
+
+  void _setSelectedFeedbackTab(String value) {
+    if (_selectedFeedbackTab == value) return;
+    setState(() {
+      _selectedFeedbackTab = value;
+    });
+  }
+
+  void _setSelectedFeedbackRatingFilter(String value) {
+    if (_selectedFeedbackRatingFilter == value) return;
+    setState(() {
+      _selectedFeedbackRatingFilter = value;
+    });
+  }
+
+  void _setFinanceTransactionTypeFilter(String value) {
+    if (_financeTransactionTypeFilter == value) return;
+    setState(() {
+      _financeTransactionTypeFilter = value;
+    });
+  }
+
+  Stream<List<Map<String, dynamic>>> _getSellerTableOrdersStream(
+    String sellerId,
+  ) {
+    if (_tableOrdersStream == null || _tableOrdersStreamSellerId != sellerId) {
+      _tableOrdersStreamSellerId = sellerId;
+      _tableOrdersStream = _storeService.getTableOrdersStream(sellerId);
+    }
+    return _tableOrdersStream!;
   }
 
   Map<String, int> _sellerOrderStatusCounts() {
@@ -1112,6 +1179,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     _cancelAppealNotificationsSubscription?.cancel();
     _sellerOrderSearchDebounce?.cancel();
     _feedbackSearchDebounce?.cancel();
+    _supportSearchDebounce?.cancel();
     _storeNameController.dispose();
     _storeUrlController.dispose();
     _storeDescController.dispose();
@@ -2116,7 +2184,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   Widget _buildMobileContentArea() {
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 200),
+      duration: AppMotion.normalTransitionDuration,
+      reverseDuration: AppMotion.normalTransitionReverseDuration,
+      switchInCurve: AppMotion.revealCurve,
+      switchOutCurve: AppMotion.revealReverseCurve,
+      transitionBuilder: (child, animation) =>
+          AppMotion.buildFadeSlideTransition(animation, child),
       child: KeyedSubtree(
         key: ValueKey<String>(_moduleStorageKey(_selectedModule)),
         child: _buildMobileContent(),
@@ -2396,151 +2469,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  Widget _buildMobileDashboardModule() {
-    final metrics = _dashboardMetrics;
-    final statusCounts = _dashboardStatusCounts();
-    final topProducts = _dashboardTopProducts();
-    final pendingTasks = _dashboardPendingTasks(metrics, statusCounts);
-    final totalOrderCount = _sellerOrders.length;
-    final deliveredCount = statusCounts['delivered'] ?? 0;
-    final completionRate = totalOrderCount == 0
-        ? 0.0
-        : (deliveredCount / totalOrderCount) * 100;
-    return RefreshIndicator(
-      onRefresh: _refreshDashboardData,
-      child: ListView(
-        padding: const EdgeInsets.only(bottom: 8),
-        physics: const AlwaysScrollableScrollPhysics(
-          parent: BouncingScrollPhysics(),
-        ),
-        children: [
-          _buildMobileDashboardHero(metrics),
-          const SizedBox(height: 14),
-          _buildMobileSectionTitle(
-            'Canlı KPI Kartları',
-            icon: Icons.dashboard_rounded,
-          ),
-          const SizedBox(height: 8),
-          _buildMobileDashboardTopCards(metrics),
-          const SizedBox(height: 12),
-          _buildMobileSectionTitle('Gelir Ve Sipariş', icon: Icons.show_chart),
-          const SizedBox(height: 8),
-          _buildMobileDashboardChartCard(metrics),
-          const SizedBox(height: 12),
-          _buildMobileSectionTitle(
-            'Son Siparişler',
-            icon: Icons.receipt_long_outlined,
-          ),
-          const SizedBox(height: 8),
-          _buildMobileDashboardRecentOrdersCard(metrics),
-          const SizedBox(height: 12),
-          _buildMobileSectionTitle(
-            'En Çok Satanlar',
-            icon: Icons.whatshot_rounded,
-          ),
-          const SizedBox(height: 8),
-          _buildMobileDashboardTopProductsCard(topProducts),
-          const SizedBox(height: 12),
-          _buildMobileSectionTitle(
-            'Performans',
-            icon: Icons.auto_graph_rounded,
-          ),
-          const SizedBox(height: 8),
-          _buildMobileDashboardPerformanceCard(
-            metrics: metrics,
-            statusCounts: statusCounts,
-            totalOrderCount: totalOrderCount,
-            completionRate: completionRate,
-          ),
-          const SizedBox(height: 12),
-          _mobileSurfaceCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildMobileSectionTitle('Sipariş Durumu'),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _mobileBadge('Yeni', '${statusCounts['new'] ?? 0}'),
-                    _mobileBadge(
-                      'Hazırlanıyor',
-                      '${statusCounts['preparing'] ?? 0}',
-                    ),
-                    _mobileBadge(
-                      'Kargoya Hazır',
-                      '${statusCounts['ready_to_ship'] ?? 0}',
-                    ),
-                    _mobileBadge('Kargoda', '${statusCounts['shipped'] ?? 0}'),
-                    _mobileBadge(
-                      'Tamamlandı',
-                      '${statusCounts['delivered'] ?? 0}',
-                    ),
-                    _mobileBadge('İade', '${statusCounts['returns'] ?? 0}'),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          _mobileSurfaceCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildMobileSectionTitle('Bekleyen İşler'),
-                const SizedBox(height: 8),
-                ...pendingTasks.map((task) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: InkWell(
-                      onTap: task['onTap'] as VoidCallback?,
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: task['background'] as Color,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              task['icon'] as IconData,
-                              color: task['accent'] as Color,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                task['title']?.toString() ?? '',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              task['actionLabel']?.toString() ?? 'Aç',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: task['accent'] as Color,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-        ],
-      ),
-    );
-  }
+  Widget _buildMobileDashboardModule() => _buildMobileDashboardModuleImpl();
 
   Widget _buildMobileDashboardTopCards(SellerDashboardMetrics metrics) {
     return _mobileSurfaceCard(
@@ -3182,10 +3111,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     height: 74,
                     color: Colors.grey.shade100,
                     child: (image != null && image.isNotEmpty)
-                        ? CachedNetworkImage(
-                            imageUrl: image,
+                        ? OptimizedImage(
+                            imageUrlOrPath: image,
                             fit: BoxFit.cover,
-                            errorWidget: (_, __, ___) => const Icon(
+                            cacheWidth: 148,
+                            cacheHeight: 148,
+                            errorWidget: const Icon(
                               Icons.image_not_supported,
                               color: Colors.grey,
                             ),
@@ -3306,68 +3237,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  Widget _buildMobileOrdersModule() {
-    final filteredOrders = _getFilteredSellerOrders();
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 8),
-      physics: const BouncingScrollPhysics(),
-      children: [
-        _buildMobileModuleHero(
-          title: 'Sipariş Yönetimi',
-          subtitle: 'Sipariş akışı, filtreleme ve hızlı aksiyonlar',
-          icon: Icons.receipt_long_rounded,
-          primary: const Color(0xFF1E3A8A),
-          secondary: const Color(0xFF2563EB),
-        ),
-        const SizedBox(height: 12),
-        _buildMobileSectionTitle('Sipariş Arama', icon: Icons.search_rounded),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _sellerOrderSearchController,
-          onChanged: (value) {
-            setState(() {});
-            _scheduleSellerOrderSearch(value);
-          },
-          decoration: InputDecoration(
-            hintText: 'Sipariş no, ürün adı veya müşteri ara...',
-            prefixIcon: const Icon(Icons.search_rounded),
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              _buildMobileOrderFilterChip('all', 'Tümü'),
-              _buildMobileOrderFilterChip('new', 'Yeni'),
-              _buildMobileOrderFilterChip('preparing', 'Hazırlanıyor'),
-              _buildMobileOrderFilterChip('ready_to_ship', 'Hazır'),
-              _buildMobileOrderFilterChip('shipped', 'Kargoda'),
-              _buildMobileOrderFilterChip('returns', 'İade'),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        if (filteredOrders.isEmpty)
-          _mobileSurfaceCard(
-            child: Center(
-              child: Text(
-                'Bu filtreye uygun sipariş bulunamadı.',
-                style: TextStyle(color: Colors.grey.shade600),
-              ),
-            ),
-          )
-        else
-          ...filteredOrders.map(_buildMobileOrderCard),
-      ],
-    );
-  }
+  Widget _buildMobileOrdersModule() => _buildMobileOrdersModuleImpl();
 
   Widget _buildMobileOrderFilterChip(String value, String label) {
     final isSelected = _selectedSellerOrderFilter == value;
@@ -4502,7 +4372,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             const SizedBox(height: 6),
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Image.network(
+              child: OptimizedImage(imageUrlOrPath: 
                 qrImageUrl,
                 width: double.infinity,
                 height: 86,
@@ -4614,7 +4484,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.network(
+            child: OptimizedImage(imageUrlOrPath: 
               qrImageUrl,
               width: double.infinity,
               height: 210,
@@ -4732,7 +4602,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           )
         else
           StreamBuilder<List<Map<String, dynamic>>>(
-            stream: StoreService().getTableOrdersStream(sellerId),
+            stream: _getSellerTableOrdersStream(sellerId),
             builder: (ctx, snapshot) {
               if (snapshot.hasError) {
                 return _mobileSurfaceCard(
@@ -5997,14 +5867,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     if (_isLoading && !_hasLoadedStoreProfile) {
       return ListView(
         padding: const EdgeInsets.only(bottom: 8),
-        children: [
-          _buildStoreStateCard(
-            icon: Icons.store_mall_directory_outlined,
-            title: 'Magaza profili yukleniyor',
-            message:
-                'Magaza bilgileri hazirlaniyor. Bu ilk acilista bir kac saniye surebilir.',
-          ),
-        ],
+        children: const [SellerStoreLoadingSkeleton(isMobile: true)],
       );
     }
     if (_storeProfileLoadError != null && !_hasLoadedStoreProfile) {
@@ -6255,346 +6118,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return const SellerCollectionsManagementContent(embedded: true);
   }
 
-  Widget _buildMobileFinanceModule() {
-    final finance = _buildFinanceSummary();
-    final chartPoints =
-        finance['chartPoints'] as List<SellerDashboardSeriesPoint>;
-    final transactions = finance['transactions'] as List<Map<String, dynamic>>;
-    final availableBalance = finance['availableBalance'] as double;
-    final pendingBalance = finance['pendingBalance'] as double;
-    final monthNetRevenue = finance['monthNetRevenue'] as double;
-    final monthOrderCount = finance['monthOrderCount'] as int;
-    final totalGrossRevenue = finance['totalGrossRevenue'] as double;
-
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 8),
-      physics: const BouncingScrollPhysics(),
-      children: [
-        _buildMobileModuleHero(
-          title: 'Finans Merkezi',
-          subtitle: 'Bakiye, ödeme özeti ve işlem hareketleri',
-          icon: Icons.account_balance_wallet_rounded,
-          primary: const Color(0xFF065F46),
-          secondary: const Color(0xFF10B981),
-        ),
-        const SizedBox(height: 12),
-        _mobileSurfaceCard(
-          backgroundColor: const Color(0xFFF8FAFC),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildMobileStatCard(
-                      width: double.infinity,
-                      icon: Icons.account_balance_wallet_outlined,
-                      color: const Color(0xFF3B82F6),
-                      title: 'Kullanılabilir Bakiye',
-                      value: _formatDashboardCurrency(availableBalance),
-                      subtitle: 'Ödemeye hazır',
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _buildMobileStatCard(
-                      width: double.infinity,
-                      icon: Icons.schedule_outlined,
-                      color: const Color(0xFFF59E0B),
-                      title: 'Bekleyen Tahsilat',
-                      value: _formatDashboardCurrency(pendingBalance),
-                      subtitle: '${finance['pendingOrders']} sipariş',
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildMobileStatCard(
-                      width: double.infinity,
-                      icon: Icons.trending_up_rounded,
-                      color: const Color(0xFF16A34A),
-                      title: 'Bu Ay Net',
-                      value: _formatDashboardCurrency(monthNetRevenue),
-                      subtitle: '$monthOrderCount sipariş',
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _buildMobileStatCard(
-                      width: double.infinity,
-                      icon: Icons.shopping_cart_checkout_rounded,
-                      color: const Color(0xFF8B5CF6),
-                      title: 'Toplam Ciro',
-                      value: _formatDashboardCurrency(totalGrossRevenue),
-                      subtitle: '${finance['totalOrders']} satış',
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        _mobileSurfaceCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Kazanç Performansı',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF1E293B),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _formatDashboardRangeCaption(
-                  _financeDateRange.start,
-                  _financeDateRange.end,
-                ),
-                style: const TextStyle(
-                  color: Color(0xFF94A3B8),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _buildDashboardRangeChip(
-                    label: '7 Gün',
-                    selected:
-                        _financeRangePreset ==
-                        SellerDashboardRangePreset.last7Days,
-                    onTap: () => _setFinanceRangePreset(
-                      SellerDashboardRangePreset.last7Days,
-                    ),
-                  ),
-                  _buildDashboardRangeChip(
-                    label: '30 Gün',
-                    selected:
-                        _financeRangePreset ==
-                        SellerDashboardRangePreset.last30Days,
-                    onTap: () => _setFinanceRangePreset(
-                      SellerDashboardRangePreset.last30Days,
-                    ),
-                  ),
-                  _buildDashboardRangeChip(
-                    label: '3 Ay',
-                    selected: _isFinanceRollingRangeSelected(90),
-                    onTap: () => _setFinanceRollingRange(90),
-                  ),
-                  _buildDashboardRangeChip(
-                    label: '6 Ay',
-                    selected: _isFinanceRollingRangeSelected(180),
-                    onTap: () => _setFinanceRollingRange(180),
-                  ),
-                  _buildDashboardRangeChip(
-                    label: 'Tarih',
-                    icon: Icons.calendar_month_outlined,
-                    selected:
-                        _financeRangePreset ==
-                            SellerDashboardRangePreset.custom &&
-                        !_isFinanceRollingRangeSelected(90) &&
-                        !_isFinanceRollingRangeSelected(180),
-                    onTap: _showFinanceRangeDialog,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _mobileBadge(
-                    'Brüt',
-                    _formatDashboardCurrency(
-                      finance['periodGrossRevenue'] as double,
-                    ),
-                  ),
-                  _mobileBadge(
-                    'Net',
-                    _formatDashboardCurrency(
-                      finance['periodNetRevenue'] as double,
-                    ),
-                  ),
-                  _mobileBadge(
-                    'Komisyon',
-                    _formatDashboardCurrency(
-                      finance['periodCommission'] as double,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _buildFinancePerformanceChart(chartPoints),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        _mobileSurfaceCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildMobileSectionTitle(
-                'Ödeme Özeti',
-                icon: Icons.payments_outlined,
-              ),
-              const SizedBox(height: 10),
-              _buildFinanceInfoRow(
-                'Tahsilat oranı',
-                '%${(finance['collectionRate'] as double).toStringAsFixed(0)}',
-              ),
-              _buildFinanceInfoRow(
-                'Ortalama sepet',
-                _formatDashboardCurrency(
-                  finance['averageOrderValue'] as double,
-                ),
-              ),
-              _buildFinanceInfoRow(
-                'Sonraki ödeme günü',
-                finance['nextPayoutDate'] as String,
-              ),
-              _buildFinanceInfoRow(
-                'Komisyon',
-                _formatDashboardCurrency(finance['periodCommission'] as double),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        _mobileSurfaceCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildMobileSectionTitle(
-                'İşlem Geçmişi',
-                icon: Icons.history_toggle_off_rounded,
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                initialValue: _financeTransactionTypeFilter,
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'Tum Islemler',
-                    child: Text('Tüm İşlemler'),
-                  ),
-                  DropdownMenuItem(value: 'Satis', child: Text('Satışlar')),
-                  DropdownMenuItem(value: 'Bekleyen', child: Text('Bekleyen')),
-                  DropdownMenuItem(value: 'Komisyon', child: Text('Komisyon')),
-                  DropdownMenuItem(value: 'Iade', child: Text('İade')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() {
-                    _financeTransactionTypeFilter = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 10),
-              if (transactions.isEmpty)
-                Text(
-                  'Bu aralıkta işlem kaydı bulunmuyor.',
-                  style: TextStyle(color: Colors.grey.shade600),
-                )
-              else
-                ...transactions.take(60).map((row) {
-                  final date = row['date'];
-                  final parsedDate = date is DateTime
-                      ? date
-                      : DateTime.tryParse(date?.toString() ?? '');
-                  final amount = (row['amount'] as num?)?.toDouble() ?? 0;
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: (row['color'] as Color).withValues(
-                              alpha: 0.12,
-                            ),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            row['icon'] as IconData,
-                            color: row['color'] as Color,
-                            size: 18,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                row['title']?.toString() ?? '-',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              Text(
-                                row['subtitle']?.toString() ?? '-',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                              if (parsedDate != null)
-                                Text(
-                                  _formatDateShort(parsedDate),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey.shade500,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          '${amount >= 0 ? '+' : '-'}${_formatDashboardCurrency(amount.abs())}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: amount >= 0
-                                ? const Color(0xFF16A34A)
-                                : const Color(0xFFEF4444),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _buildMobileFinanceModule() => _buildMobileFinanceModuleImpl();
 
   Widget _buildMobileReviewsModule() {
     final feedback = _buildSellerFeedbackData();
@@ -6642,10 +6166,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         const SizedBox(height: 10),
         TextField(
           controller: _feedbackSearchController,
-          onChanged: (value) {
-            setState(() {});
-            _scheduleFeedbackSearch(value);
-          },
+          onChanged: _scheduleFeedbackSearch,
           decoration: InputDecoration(
             hintText: 'Yorum, soru veya kullanıcı ara...',
             prefixIcon: const Icon(Icons.search_rounded),
@@ -6704,129 +6225,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  Widget _buildMobileSupportModule() {
-    final tickets = List<SupportTicket>.from(_supportTickets)
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    final filteredTickets = _filterSupportTickets(tickets);
-    final openCount = tickets
-        .where(
-          (ticket) =>
-              ticket.status == TicketStatus.open ||
-              ticket.status == TicketStatus.in_progress,
-        )
-        .length;
-    final resolvedCount = tickets
-        .where(
-          (ticket) =>
-              ticket.status == TicketStatus.closed ||
-              ticket.status == TicketStatus.resolved,
-        )
-        .length;
-
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 8),
-      physics: const BouncingScrollPhysics(),
-      children: [
-        _buildMobileModuleHero(
-          title: 'Destek Merkezi',
-          subtitle: 'Destek taleplerini hızlı şekilde oluştur ve yanıtla',
-          icon: Icons.support_agent_rounded,
-          primary: const Color(0xFF0F172A),
-          secondary: const Color(0xFF334155),
-        ),
-        const SizedBox(height: 10),
-        _mobileSurfaceCard(
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _mobileBadge('Açık Talep', '$openCount'),
-              _mobileBadge('Çözülen', '$resolvedCount'),
-              _mobileBadge('Toplam', '${tickets.length}'),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        _mobileSurfaceCard(
-          child: Column(
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _showNewSupportTicketDialog,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Yeni Destek Talebi'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6C63FF),
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _supportSearchController,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  hintText: 'Talep no, konu veya kategori ara...',
-                  prefixIcon: const Icon(Icons.search, size: 18),
-                  isDense: true,
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _buildSupportTabButton(
-                    'Tümü',
-                    _selectedSupportTab == 'Tümü',
-                    () => setState(() => _selectedSupportTab = 'Tümü'),
-                  ),
-                  _buildSupportTabButton(
-                    'Açık',
-                    _selectedSupportTab == 'Açık',
-                    () => setState(() => _selectedSupportTab = 'Açık'),
-                  ),
-                  _buildSupportTabButton(
-                    'Kapalı',
-                    _selectedSupportTab == 'Kapalı',
-                    () => setState(() => _selectedSupportTab = 'Kapalı'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        if (filteredTickets.isEmpty)
-          _mobileSurfaceCard(
-            child: Center(
-              child: Text(
-                tickets.isEmpty
-                    ? 'Henüz destek talebi bulunmuyor.'
-                    : 'Bu filtrede kayıt bulunamadı.',
-                style: TextStyle(color: Colors.grey.shade600),
-              ),
-            ),
-          )
-        else
-          ...filteredTickets
-              .map(
-                (ticket) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _buildSupportTicketCard(ticket),
-                ),
-              )
-              .toList(growable: false),
-      ],
-    );
-  }
+  Widget _buildMobileSupportModule() => _buildMobileSupportModuleImpl();
 
   List<SellerPanelMenuEntry> _buildPanelMenuEntries({
     VoidCallback? beforeSelect,
@@ -7270,433 +6669,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         .toList(growable: false);
   }
 
-  Widget _buildDashboard() {
-    final metrics = _dashboardMetrics;
-    final statusCounts = _dashboardStatusCounts();
-    final weeklyStats = _dashboardRollingPeriodStats(7);
-    final monthlyStats = _dashboardMonthStats();
-    final totalOrderCount = _sellerOrders.length;
-    final deliveredCount = statusCounts['delivered'] ?? 0;
-    final completionRate = totalOrderCount == 0
-        ? 0.0
-        : (deliveredCount / totalOrderCount) * 100;
-    final topProducts = _dashboardTopProducts();
-    final cargoSummary = _dashboardCargoSummary();
-    final pendingTasks = _dashboardPendingTasks(metrics, statusCounts);
-    final today = DateTime.now();
-    final operationCards = [
-      {
-        'icon': Icons.notifications_active_outlined,
-        'iconColor': const Color(0xFF2563EB),
-        'iconBackground': const Color(0xFFE8F0FF),
-        'title': 'Yeni Sipariş',
-        'value': '${statusCounts['new'] ?? 0}',
-        'subtitle': 'Aksiyon gerekli',
-        'trend': '+${_dashboardTodayStatusCount(const ['new', 'confirmed'])}',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.schedule_outlined,
-        'iconColor': const Color(0xFFF59E0B),
-        'iconBackground': const Color(0xFFFFF4DB),
-        'title': 'Hazırlanıyor',
-        'value': '${statusCounts['preparing'] ?? 0}',
-        'subtitle': 'Devam ediyor',
-        'trend':
-            '+${_dashboardTodayStatusCount(const ['preparing', 'ready_to_ship'])}',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.inventory_2_outlined,
-        'iconColor': const Color(0xFF22C55E),
-        'iconBackground': const Color(0xFFDCFCE7),
-        'title': 'Kargoya Hazır',
-        'value': '${statusCounts['ready_to_ship'] ?? 0}',
-        'subtitle': 'Gönderilmeli',
-        'trend': '${metrics.lowStockProducts} risk',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.local_shipping_outlined,
-        'iconColor': const Color(0xFF7C3AED),
-        'iconBackground': const Color(0xFFF1E8FF),
-        'title': 'Kargoda',
-        'value': '${statusCounts['shipped'] ?? 0}',
-        'subtitle': 'Takipte',
-        'trend':
-            '+${_dashboardTodayStatusCount(const ['shipped', 'transfer', 'branch', 'out_for_delivery'])}',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.verified_outlined,
-        'iconColor': const Color(0xFF10B981),
-        'iconBackground': const Color(0xFFDCFCE7),
-        'title': 'Bugün Teslim',
-        'value': '${_dashboardTodayStatusCount(const ['delivered'])}',
-        'subtitle': 'Tamamlandı',
-        'trend':
-            '+${math.max(0, _dashboardTodayStatusCount(const ['delivered']) - 1)}',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.replay_circle_filled_outlined,
-        'iconColor': const Color(0xFFEF4444),
-        'iconBackground': const Color(0xFFFFE5E5),
-        'title': 'İade / İptal',
-        'value': '${statusCounts['returns'] ?? 0}',
-        'subtitle': 'İnceleniyor',
-        'trend': '-${statusCounts['returns'] ?? 0}',
-        'trendColor': const Color(0xFFEF4444),
-      },
-    ];
-    final revenueCards = [
-      {
-        'icon': Icons.trending_up_rounded,
-        'iconColor': const Color(0xFF4F46E5),
-        'iconBackground': const Color(0xFFE8EBFF),
-        'title': 'Bugünkü Gelir',
-        'value': _formatDashboardCurrency(metrics.todayRevenue),
-        'subtitle': '${_dashboardTodayOrderCount()} sipariş',
-        'trend': _formatChangeLabel(metrics.todayRevenueChangePercent),
-        'trendColor': metrics.todayRevenueChangePercent >= 0
-            ? const Color(0xFF16A34A)
-            : const Color(0xFFEF4444),
-      },
-      {
-        'icon': Icons.bar_chart_rounded,
-        'iconColor': const Color(0xFF6366F1),
-        'iconBackground': const Color(0xFFE9EAFE),
-        'title': 'Bu Haftaki Gelir',
-        'value': _formatDashboardCurrency(weeklyStats.$1),
-        'subtitle': '${weeklyStats.$2} sipariş',
-        'trend': _formatChangeLabel(weeklyStats.$3),
-        'trendColor': weeklyStats.$3 >= 0
-            ? const Color(0xFF16A34A)
-            : const Color(0xFFEF4444),
-      },
-      {
-        'icon': Icons.workspace_premium_outlined,
-        'iconColor': const Color(0xFF4F46E5),
-        'iconBackground': const Color(0xFFEDE9FE),
-        'title': 'Bu Ayki Gelir',
-        'value': _formatDashboardCurrency(metrics.monthRevenue),
-        'subtitle': '${monthlyStats.$2} sipariş',
-        'trend': _formatChangeLabel(metrics.monthRevenueChangePercent),
-        'trendColor': metrics.monthRevenueChangePercent >= 0
-            ? const Color(0xFF16A34A)
-            : const Color(0xFFEF4444),
-      },
-      {
-        'icon': Icons.receipt_long_outlined,
-        'iconColor': const Color(0xFF4F46E5),
-        'iconBackground': const Color(0xFFE8EBFF),
-        'title': 'Ort. Sipariş',
-        'value': _formatDashboardCurrency(metrics.averageOrderValue),
-        'subtitle': 'Sepet değeri',
-        'trend': _formatChangeLabel(_dashboardAverageOrderChange()),
-        'trendColor': _dashboardAverageOrderChange() >= 0
-            ? const Color(0xFF16A34A)
-            : const Color(0xFFEF4444),
-      },
-    ];
-
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _formatDashboardLongDate(today),
-                      style: const TextStyle(
-                        color: Color(0xFF94A3B8),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Genel Bakış',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: _refreshDashboardData,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: const Text('Yenile'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF64748B),
-                  backgroundColor: Colors.white,
-                  side: BorderSide(color: Colors.grey.shade200),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          _buildDashboardSectionLabel('OPERASYON DURUMU'),
-          const SizedBox(height: 12),
-          _buildDashboardGrid(
-            operationCards
-                .map((card) => _buildOverviewStatusCard(card))
-                .toList(growable: false),
-            minItemWidth: 190,
-          ),
-          const SizedBox(height: 22),
-          _buildDashboardSectionLabel('GELİR ÖZETİ'),
-          const SizedBox(height: 12),
-          _buildDashboardGrid(
-            revenueCards
-                .map((card) => _buildOverviewRevenueCard(card))
-                .toList(growable: false),
-            minItemWidth: 250,
-          ),
-          const SizedBox(height: 24),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 2,
-                child: _buildOverviewCardShell(
-                  padding: EdgeInsets.zero,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'Gelir & Sipariş Grafiği',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF1E293B),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _formatDashboardRangeCaption(
-                                      metrics.rangeStart,
-                                      metrics.rangeEnd,
-                                    ),
-                                    style: const TextStyle(
-                                      color: Color(0xFF94A3B8),
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                _buildDashboardRangeChip(
-                                  label: '7 Gün',
-                                  selected:
-                                      _dashboardRangePreset ==
-                                      SellerDashboardRangePreset.last7Days,
-                                  onTap: () => _setDashboardRangePreset(
-                                    SellerDashboardRangePreset.last7Days,
-                                  ),
-                                ),
-                                _buildDashboardRangeChip(
-                                  label: '30 Gün',
-                                  selected:
-                                      _dashboardRangePreset ==
-                                      SellerDashboardRangePreset.last30Days,
-                                  onTap: () => _setDashboardRangePreset(
-                                    SellerDashboardRangePreset.last30Days,
-                                  ),
-                                ),
-                                _buildDashboardRangeChip(
-                                  label: '3 Ay',
-                                  selected: _isDashboardRollingRangeSelected(
-                                    90,
-                                  ),
-                                  onTap: () => _setDashboardRollingRange(90),
-                                ),
-                                _buildDashboardRangeChip(
-                                  label: '6 Ay',
-                                  selected: _isDashboardRollingRangeSelected(
-                                    180,
-                                  ),
-                                  onTap: () => _setDashboardRollingRange(180),
-                                ),
-                                _buildDashboardRangeChip(
-                                  label: 'Tarih',
-                                  icon: Icons.calendar_month_outlined,
-                                  selected:
-                                      _dashboardRangePreset ==
-                                          SellerDashboardRangePreset.custom &&
-                                      !_isDashboardRollingRangeSelected(90) &&
-                                      !_isDashboardRollingRangeSelected(180),
-                                  onTap: _showDashboardRangeDialog,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-                        child: Row(
-                          children: [
-                            _buildOverviewMetricInline(
-                              'Toplam Gelir',
-                              _formatDashboardCurrency(metrics.selectedRevenue),
-                              const Color(0xFF4F46E5),
-                            ),
-                            _buildOverviewInlineDivider(),
-                            _buildOverviewMetricInline(
-                              'Toplam Sipariş',
-                              _formatDashboardNumber(
-                                metrics.selectedOrderCount,
-                              ),
-                              const Color(0xFF0F9D8A),
-                            ),
-                            _buildOverviewInlineDivider(),
-                            _buildOverviewMetricInline(
-                              'Dönem Ort.',
-                              _formatDashboardCurrency(
-                                metrics.averageOrderValue,
-                              ),
-                              const Color(0xFF334155),
-                            ),
-                            const Spacer(),
-                            _buildLegendPill(
-                              label: 'Gelir',
-                              color: const Color(0xFF7C3AED),
-                            ),
-                            const SizedBox(width: 10),
-                            _buildLegendPill(
-                              label: 'Sipariş',
-                              color: const Color(0xFF14B8A6),
-                              outlined: true,
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(height: 1, color: const Color(0xFFE5E7EB)),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
-                        child: _buildEnhancedSalesChart(metrics),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildOverviewDistributionCard(
-                  statusCounts: statusCounts,
-                  totalOrderCount: totalOrderCount,
-                  completionRate: completionRate,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 2, child: _buildOverviewRecentOrdersCard(metrics)),
-              const SizedBox(width: 16),
-              Expanded(child: _buildOverviewPendingTasksCard(pendingTasks)),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 2,
-                child: _buildOverviewTopProductsCard(topProducts),
-              ),
-              const SizedBox(width: 16),
-              Expanded(child: _buildOverviewCargoSummaryCard(cargoSummary)),
-            ],
-          ),
-          const SizedBox(height: 24),
-          _buildDashboardSectionLabel('PERFORMANS METRİKLERİ'),
-          const SizedBox(height: 12),
-          _buildDashboardGrid([
-            _buildOverviewPerformanceCard(
-              icon: Icons.alarm_on_rounded,
-              iconColor: const Color(0xFF6366F1),
-              iconBackground: const Color(0xFFEDE9FE),
-              title: 'Zamanında Gönderim',
-              value:
-                  '${_dashboardShippingPerformance(statusCounts).toStringAsFixed(0)}%',
-              valueSuffix: '',
-              progress: _dashboardShippingPerformance(statusCounts) / 100,
-              progressColor: const Color(0xFF6366F1),
-            ),
-            _buildOverviewPerformanceCard(
-              icon: Icons.shield_outlined,
-              iconColor: const Color(0xFF10B981),
-              iconBackground: const Color(0xFFDCFCE7),
-              title: 'Sipariş Tamamlama',
-              value: '${completionRate.toStringAsFixed(0)}%',
-              valueSuffix: '',
-              progress: completionRate / 100,
-              progressColor: const Color(0xFF10B981),
-            ),
-            _buildOverviewPerformanceCard(
-              icon: Icons.star_border_rounded,
-              iconColor: const Color(0xFFEAB308),
-              iconBackground: const Color(0xFFFEF3C7),
-              title: 'Müşteri Puanı',
-              value: metrics.storeRating <= 0
-                  ? '0.0'
-                  : metrics.storeRating.toStringAsFixed(1),
-              valueSuffix: '/5',
-              progress:
-                  (metrics.storeRating <= 0 ? 0 : metrics.storeRating) / 5,
-              progressColor: const Color(0xFFEAB308),
-            ),
-            _buildOverviewPerformanceCard(
-              icon: Icons.replay_circle_filled_outlined,
-              iconColor: const Color(0xFFEF4444),
-              iconBackground: const Color(0xFFFFE5E5),
-              title: 'İade Oranı',
-              value:
-                  '${_dashboardReturnRate(statusCounts, totalOrderCount).toStringAsFixed(1)}%',
-              valueSuffix: '',
-              progress:
-                  _dashboardReturnRate(statusCounts, totalOrderCount) / 100,
-              progressColor: const Color(0xFFEF4444),
-            ),
-          ], minItemWidth: 240),
-        ],
-      ),
-    );
-  }
+  Widget _buildDashboard() => _buildDashboardImpl();
 
   Future<void> _refreshDashboardData() async {
     await Future.wait([
@@ -8951,27 +7924,31 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     VoidCallback onTap,
   ) {
     return Expanded(
-      child: Material(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: onTap,
+      child: PremiumPressable(
+        hoverLift: 1.5,
+        hoverScale: 1.01,
+        child: Material(
+          color: color.withOpacity(0.1),
           borderRadius: BorderRadius.circular(12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Column(
-              children: [
-                Icon(icon, color: color, size: 28),
-                const SizedBox(height: 8),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: color,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Column(
+                children: [
+                  Icon(icon, color: color, size: 28),
+                  const SizedBox(height: 8),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: color,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -9460,17 +8437,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             child: (displayImage != null && displayImage.isNotEmpty)
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(7),
-                    child: CachedNetworkImage(
-                      imageUrl: displayImage,
+                    child: OptimizedImage(
+                      imageUrlOrPath: displayImage,
                       fit: BoxFit.cover,
-                      placeholder: (context, url) => const Center(
+                      cacheWidth: 120,
+                      cacheHeight: 120,
+                      placeholder: const Center(
                         child: SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       ),
-                      errorWidget: (context, url, error) => const Icon(
+                      errorWidget: const Icon(
                         Icons.image_not_supported,
                         color: Colors.grey,
                         size: 24,
@@ -10041,252 +9020,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  Widget _buildOrdersModule() {
-    final selectedId = _selectedSellerOrderItemId;
-    if (selectedId != null) {
-      final resolved =
-          _sellerOrderById[selectedId] ?? _selectedSellerOrderDetail;
-      if (resolved != null) {
-        return _buildSellerOrderDetailPage(resolved);
-      }
-      if (_selectedSellerOrderDetail != null) {
-        return _buildSellerOrderDetailPage(_selectedSellerOrderDetail!);
-      }
-    } else if (_selectedSellerOrderDetail != null) {
-      return _buildSellerOrderDetailPage(_selectedSellerOrderDetail!);
-    }
-
-    final statusCounts = _sellerOrderStatusCounts();
-    final filteredOrders = _getFilteredSellerOrders();
-    final query = _debouncedSellerOrderQuery;
-    return SingleChildScrollView(
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1180),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _sellerOrderSearchController,
-                      onChanged: (value) {
-                        setState(() {});
-                        _scheduleSellerOrderSearch(value);
-                      },
-                      decoration: InputDecoration(
-                        hintText: 'Sipariş no, ürün adı veya müşteri ara...',
-                        prefixIcon: const Icon(Icons.search_rounded),
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: const BorderSide(
-                            color: Color(0xFFE4E7EC),
-                          ),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: const BorderSide(
-                            color: Color(0xFFE4E7EC),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      await _loadSellerOrders();
-                      await _loadSellerQuestions();
-                    },
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: const Text('Yenile'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(0, 44),
-                      foregroundColor: const Color(0xFF4A5568),
-                      side: const BorderSide(color: Color(0xFFE4E7EC)),
-                      backgroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              const Padding(
-                padding: EdgeInsets.only(left: 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Sipariş Yönetimi',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF182032),
-                      ),
-                    ),
-                    SizedBox(height: 6),
-                    Text(
-                      'Siparişleri hazırlayın, paketleyin ve kargoya verin',
-                      style: TextStyle(fontSize: 12, color: Color(0xFF667085)),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              _buildSellerExternalCargoEntryArea(),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 14,
-                runSpacing: 14,
-                children: [
-                  SizedBox(
-                    width: 220,
-                    child: _buildSellerOrderKpiCard(
-                      title: 'Yeni Sipariş',
-                      value: '${statusCounts['new'] ?? 0}',
-                      caption: '',
-                      icon: Icons.error_outline_rounded,
-                      accent: const Color(0xFF2D64F1),
-                      background: const Color(0xFFF1F6FF),
-                      border: const Color(0xFFD6E5FF),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 220,
-                    child: _buildSellerOrderKpiCard(
-                      title: 'Hazırlanıyor',
-                      value: '${statusCounts['preparing'] ?? 0}',
-                      caption: '',
-                      icon: Icons.schedule_rounded,
-                      accent: const Color(0xFFDE7A00),
-                      background: const Color(0xFFFFF8EA),
-                      border: const Color(0xFFFFE3A7),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 220,
-                    child: _buildSellerOrderKpiCard(
-                      title: 'Gönderime Hazır',
-                      value: '${statusCounts['ready_to_ship'] ?? 0}',
-                      caption: '',
-                      icon: Icons.check_circle_outline_rounded,
-                      accent: const Color(0xFF159B67),
-                      background: const Color(0xFFEFFAF5),
-                      border: const Color(0xFFB7E8D1),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 220,
-                    child: _buildSellerOrderKpiCard(
-                      title: 'Ayrı Sipariş',
-                      value: '${statusCounts['external'] ?? 0}',
-                      caption: '',
-                      icon: Icons.widgets_outlined,
-                      accent: const Color(0xFF4C6FFF),
-                      background: const Color(0xFFF3F6FF),
-                      border: const Color(0xFFD9E2FF),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 220,
-                    child: _buildSellerOrderKpiCard(
-                      title: 'Toplam Sipariş',
-                      value: '${statusCounts['all'] ?? 0}',
-                      caption: '',
-                      icon: Icons.inventory_2_outlined,
-                      accent: const Color(0xFF5B4CF0),
-                      background: const Color(0xFFF2F3FF),
-                      border: const Color(0xFFD9DFFF),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF2F4F7),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildSellerOrderFilterChip(
-                        keyName: 'all',
-                        label: 'Tümü',
-                        count: statusCounts['all'] ?? 0,
-                        color: AppColors.primary,
-                      ),
-                      _buildSellerOrderFilterChip(
-                        keyName: 'new',
-                        label: 'Yeni',
-                        count: statusCounts['new'] ?? 0,
-                        color: const Color(0xFF2D64F1),
-                      ),
-                      _buildSellerOrderFilterChip(
-                        keyName: 'preparing',
-                        label: 'Hazırlıyor',
-                        count: statusCounts['preparing'] ?? 0,
-                        color: const Color(0xFFDE7A00),
-                      ),
-                      _buildSellerOrderFilterChip(
-                        keyName: 'ready_to_ship',
-                        label: 'Hazır',
-                        count: statusCounts['ready_to_ship'] ?? 0,
-                        color: const Color(0xFF159B67),
-                      ),
-                      _buildSellerOrderFilterChip(
-                        keyName: 'returns',
-                        label: 'İade Talepleri',
-                        count: statusCounts['returns'] ?? 0,
-                        color: const Color(0xFFB45309),
-                      ),
-                      _buildSellerOrderFilterChip(
-                        keyName: 'external',
-                        label: 'Ayrı Sipariş',
-                        count: statusCounts['external'] ?? 0,
-                        color: const Color(0xFF4C6FFF),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (_isLoadingSellerOrders)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 80),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (filteredOrders.isEmpty)
-                _buildSellerOrdersEmptyState(query: query)
-              else
-                Column(
-                  children: [
-                    for (var i = 0; i < filteredOrders.length; i++) ...[
-                      _buildSellerOrderCard(filteredOrders[i]),
-                      if (i != filteredOrders.length - 1)
-                        const SizedBox(height: 12),
-                    ],
-                  ],
-                ),
-              const SizedBox(height: 24),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget _buildOrdersModule() => _buildOrdersModuleImpl();
 
   Widget _buildSellerExternalCargoEntryArea() {
     final walletText = _isLoadingSellerWallet
@@ -17382,7 +16116,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
       }
     }
-    return Image.network(
+    return OptimizedImage(imageUrlOrPath: 
       url,
       fit: BoxFit.cover,
       errorBuilder: (_, __, ___) => Container(
@@ -17412,15 +16146,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required Color color,
     required VoidCallback onTap,
   }) {
-    return ElevatedButton.icon(
-      onPressed: onTap,
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: color.withOpacity(0.12),
-        foregroundColor: color,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    return PremiumPressable(
+      child: ElevatedButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+        style: premiumButtonInteractionStyle(
+          ElevatedButton.styleFrom(
+            backgroundColor: color.withOpacity(0.12),
+            foregroundColor: color,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          overlayColor: color,
+        ),
       ),
     );
   }
@@ -18444,7 +17185,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           Center(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: Image.network(
+              child: OptimizedImage(imageUrlOrPath: 
                 qrImageUrl,
                 width: 170,
                 height: 170,
@@ -18539,7 +17280,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   const SizedBox(height: 12),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: Image.network(
+                    child: OptimizedImage(imageUrlOrPath: 
                       qrImageUrl,
                       width: 250,
                       height: 250,
@@ -18659,7 +17400,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   ),
                 )
               : StreamBuilder<List<Map<String, dynamic>>>(
-                  stream: StoreService().getTableOrdersStream(sellerId),
+                  stream: _getSellerTableOrdersStream(sellerId),
                   builder: (ctx, snapshot) {
                     if (snapshot.hasError) {
                       return Center(child: Text('Hata: ${snapshot.error}'));
@@ -20795,12 +19536,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   Widget _buildStoreModule() {
     if (_isLoading && !_hasLoadedStoreProfile) {
-      return _buildStoreStateCard(
-        icon: Icons.store_mall_directory_outlined,
-        title: 'Magaza profili yukleniyor',
-        message:
-            'Magaza bilgileri hazirlaniyor. Bu ilk acilista bir kac saniye surebilir.',
-      );
+      return const SingleChildScrollView(child: SellerStoreLoadingSkeleton());
     }
     if (_storeProfileLoadError != null && !_hasLoadedStoreProfile) {
       return _buildStoreStateCard(
@@ -20853,38 +19589,39 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         top: Radius.circular(12),
                       ),
                       child: _storeCoverUrl != null
-                          ? CachedNetworkImage(
-                              imageUrl: _storeCoverUrl!,
+                          ? OptimizedImage(
+                              imageUrlOrPath: _storeCoverUrl!,
                               fit: BoxFit.cover,
                               width: double.infinity,
                               height: 150,
-                              placeholder: (context, url) => const Center(
+                              cacheWidth: OptimizedImage.maxDecodeDimension(),
+                              cacheHeight: 300,
+                              placeholder: const Center(
                                 child: CircularProgressIndicator(
                                   color: Colors.white,
                                 ),
                               ),
-                              errorWidget: (context, url, error) =>
-                                  const Center(
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.broken_image,
-                                          color: Colors.white,
-                                          size: 32,
-                                        ),
-                                        SizedBox(height: 8),
-                                        Text(
-                                          'Görsel Yüklenemedi',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
+                              errorWidget: const Center(
+                                child: Column(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.broken_image,
+                                      color: Colors.white,
+                                      size: 32,
                                     ),
-                                  ),
+                                    SizedBox(height: 8),
+                                    Text(
+                                      'Görsel Yüklenemedi',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             )
                           : Center(
                               child: Column(
@@ -20954,50 +19691,50 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                     fit: BoxFit.cover,
                                   )
                                 : (_storeLogoUrl != null
-                                      ? CachedNetworkImage(
-                                          imageUrl: _storeLogoUrl!,
+                                      ? OptimizedImage(
+                                          imageUrlOrPath: _storeLogoUrl!,
                                           fit: BoxFit.cover,
-                                          placeholder: (context, url) =>
+                                          cacheWidth: 200,
+                                          cacheHeight: 200,
+                                          placeholder: const Center(
+                                            child: SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child:
+                                                  CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                            ),
+                                          ),
+                                          errorWidget: Stack(
+                                            children: [
                                               const Center(
-                                                child: SizedBox(
-                                                  width: 20,
-                                                  height: 20,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                      ),
+                                                child: Icon(
+                                                  Icons.store,
+                                                  size: 40,
+                                                  color: Colors.grey,
                                                 ),
                                               ),
-                                          errorWidget: (context, url, error) =>
-                                              Stack(
-                                                children: [
-                                                  const Center(
-                                                    child: Icon(
-                                                      Icons.store,
-                                                      size: 40,
-                                                      color: Colors.grey,
-                                                    ),
+                                              Positioned(
+                                                right: 4,
+                                                bottom: 4,
+                                                child: Container(
+                                                  width: 28,
+                                                  height: 28,
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        AppColors.primary,
+                                                    shape: BoxShape.circle,
                                                   ),
-                                                  Positioned(
-                                                    right: 4,
-                                                    bottom: 4,
-                                                    child: Container(
-                                                      width: 28,
-                                                      height: 28,
-                                                      decoration: BoxDecoration(
-                                                        color:
-                                                            AppColors.primary,
-                                                        shape: BoxShape.circle,
-                                                      ),
-                                                      child: const Icon(
-                                                        Icons.warning,
-                                                        size: 14,
-                                                        color: Colors.white,
-                                                      ),
-                                                    ),
+                                                  child: const Icon(
+                                                    Icons.warning,
+                                                    size: 14,
+                                                    color: Colors.white,
                                                   ),
-                                                ],
+                                                ),
                                               ),
+                                            ],
+                                          ),
                                         )
                                       : Stack(
                                           children: [
@@ -21850,13 +20587,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       )
                     : Stack(
                         children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.network(
-                              _storeImages[index]!,
-                              width: double.infinity,
-                              height: double.infinity,
-                              fit: BoxFit.cover,
+                          IgnorePointer(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: OptimizedImage(imageUrlOrPath: 
+                                _storeImages[index]!,
+                                width: double.infinity,
+                                height: double.infinity,
+                                fit: BoxFit.cover,
+                              ),
                             ),
                           ),
                           Positioned(
@@ -21981,13 +20720,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         )
                       : Stack(
                           children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.network(
-                                _announcementBanners[index]!,
-                                width: double.infinity,
-                                height: double.infinity,
-                                fit: BoxFit.cover,
+                            IgnorePointer(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: OptimizedImage(imageUrlOrPath: 
+                                  _announcementBanners[index]!,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  fit: BoxFit.cover,
+                                ),
                               ),
                             ),
                             Positioned(
@@ -22205,16 +20946,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   final url = _sellerVideos[index];
                   return Stack(
                     children: [
-                      Container(
-                        width: 160,
-                        height: 220,
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: VideoPlayerWidget(videoUrl: url),
+                      IgnorePointer(
+                        child: Container(
+                          width: 160,
+                          height: 220,
+                          decoration: BoxDecoration(
+                            color: Colors.black,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: VideoPlayerWidget(videoUrl: url),
+                          ),
                         ),
                       ),
                       Positioned(
@@ -22364,8 +21107,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             borderRadius: BorderRadius.circular(8),
                             image: product.imageUrl != null
                                 ? DecorationImage(
-                                    image: CachedNetworkImageProvider(
-                                      product.imageUrl!,
+                                    image: ResizeImage.resizeIfNeeded(
+                                      200,
+                                      200,
+                                      CachedNetworkImageProvider(
+                                        product.imageUrl!,
+                                      ),
                                     ),
                                     fit: BoxFit.cover,
                                   )
@@ -23319,631 +22066,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  Widget _buildFinanceModule() {
-    final finance = _buildFinanceSummary();
-    final transactions = finance['transactions'] as List<Map<String, dynamic>>;
-    final chartPoints =
-        finance['chartPoints'] as List<SellerDashboardSeriesPoint>;
-    final totalOrders = finance['totalOrders'] as int;
-    final deliveredOrders = finance['deliveredOrders'] as int;
-    final availableBalance = finance['availableBalance'] as double;
-
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildDashboardSectionLabel('FİNANS MERKEZİ'),
-          const SizedBox(height: 12),
-          _buildDashboardGrid([
-            _buildFinanceSummaryCard(
-              title: 'Kullanılabilir Bakiye',
-              value: _formatDashboardCurrency(availableBalance),
-              subtitle: 'Ödemeye hazır net bakiye',
-              icon: Icons.account_balance_wallet_outlined,
-              accent: const Color(0xFF3B82F6),
-              accentSoft: const Color(0xFFE8F0FF),
-              trend: finance['availableTrend'] as String,
-              trendColor: finance['availableTrendColor'] as Color,
-            ),
-            _buildFinanceSummaryCard(
-              title: 'Bekleyen Tahsilat',
-              value: _formatDashboardCurrency(
-                finance['pendingBalance'] as double,
-              ),
-              subtitle: 'Teslimat ve mutabakat bekliyor',
-              icon: Icons.schedule_outlined,
-              accent: const Color(0xFFF59E0B),
-              accentSoft: const Color(0xFFFFF4DB),
-              trend: '${finance['pendingOrders']} sipariş',
-              trendColor: const Color(0xFFF59E0B),
-            ),
-            _buildFinanceSummaryCard(
-              title: 'Bu Ay Net Kazanç',
-              value: _formatDashboardCurrency(
-                finance['monthNetRevenue'] as double,
-              ),
-              subtitle: '${finance['monthOrderCount']} sipariş',
-              icon: Icons.trending_up_rounded,
-              accent: const Color(0xFF16A34A),
-              accentSoft: const Color(0xFFDCFCE7),
-              trend: finance['monthTrend'] as String,
-              trendColor: finance['monthTrendColor'] as Color,
-            ),
-            _buildFinanceSummaryCard(
-              title: 'Toplam Ciro',
-              value: _formatDashboardCurrency(
-                finance['totalGrossRevenue'] as double,
-              ),
-              subtitle: '$totalOrders satış kaydı',
-              icon: Icons.shopping_cart_checkout_rounded,
-              accent: const Color(0xFF8B5CF6),
-              accentSoft: const Color(0xFFF1E8FF),
-              trend:
-                  '%${(finance['collectionRate'] as double).toStringAsFixed(0)} tahsilat',
-              trendColor: const Color(0xFF8B5CF6),
-            ),
-            _buildFinanceSummaryCard(
-              title: 'Kesilen Komisyon',
-              value: _formatDashboardCurrency(
-                finance['periodCommission'] as double,
-              ),
-              subtitle: '%15 platform komisyonu',
-              icon: Icons.percent_rounded,
-              accent: const Color(0xFFEC4899),
-              accentSoft: const Color(0xFFFCE7F3),
-              trend: _formatChangeLabel(finance['commissionChange'] as double),
-              trendColor: (finance['commissionChange'] as double) >= 0
-                  ? const Color(0xFF16A34A)
-                  : const Color(0xFFEF4444),
-            ),
-          ], minItemWidth: 220),
-          const SizedBox(height: 20),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 2,
-                child: _buildOverviewCardShell(
-                  padding: EdgeInsets.zero,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'Kazanç Performansı',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF1E293B),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _formatDashboardRangeCaption(
-                                      _financeDateRange.start,
-                                      _financeDateRange.end,
-                                    ),
-                                    style: const TextStyle(
-                                      color: Color(0xFF94A3B8),
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                _buildDashboardRangeChip(
-                                  label: '7 Gün',
-                                  selected:
-                                      _financeRangePreset ==
-                                      SellerDashboardRangePreset.last7Days,
-                                  onTap: () => _setFinanceRangePreset(
-                                    SellerDashboardRangePreset.last7Days,
-                                  ),
-                                ),
-                                _buildDashboardRangeChip(
-                                  label: '30 Gün',
-                                  selected:
-                                      _financeRangePreset ==
-                                      SellerDashboardRangePreset.last30Days,
-                                  onTap: () => _setFinanceRangePreset(
-                                    SellerDashboardRangePreset.last30Days,
-                                  ),
-                                ),
-                                _buildDashboardRangeChip(
-                                  label: '3 Ay',
-                                  selected: _isFinanceRollingRangeSelected(90),
-                                  onTap: () => _setFinanceRollingRange(90),
-                                ),
-                                _buildDashboardRangeChip(
-                                  label: '6 Ay',
-                                  selected: _isFinanceRollingRangeSelected(180),
-                                  onTap: () => _setFinanceRollingRange(180),
-                                ),
-                                _buildDashboardRangeChip(
-                                  label: 'Tarih',
-                                  icon: Icons.calendar_month_outlined,
-                                  selected:
-                                      _financeRangePreset ==
-                                          SellerDashboardRangePreset.custom &&
-                                      !_isFinanceRollingRangeSelected(90) &&
-                                      !_isFinanceRollingRangeSelected(180),
-                                  onTap: _showFinanceRangeDialog,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-                        child: Row(
-                          children: [
-                            _buildOverviewMetricInline(
-                              'Brüt Gelir',
-                              _formatDashboardCurrency(
-                                finance['periodGrossRevenue'] as double,
-                              ),
-                              const Color(0xFF7C3AED),
-                            ),
-                            _buildOverviewInlineDivider(),
-                            _buildOverviewMetricInline(
-                              'Net Kazanç',
-                              _formatDashboardCurrency(
-                                finance['periodNetRevenue'] as double,
-                              ),
-                              const Color(0xFF10B981),
-                            ),
-                            _buildOverviewInlineDivider(),
-                            _buildOverviewMetricInline(
-                              'İadeler',
-                              _formatDashboardCurrency(
-                                finance['periodRefunds'] as double,
-                              ),
-                              const Color(0xFFEF4444),
-                            ),
-                            const Spacer(),
-                            _buildLegendPill(
-                              label: 'Net Kazanç',
-                              color: const Color(0xFF7C3AED),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(height: 1, color: const Color(0xFFE5E7EB)),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
-                        child: _buildFinancePerformanceChart(chartPoints),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  children: [
-                    _buildOverviewCardShell(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Ödeme Özeti',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1E293B),
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          _buildFinanceInfoRow(
-                            'Teslim edilen sipariş',
-                            '$deliveredOrders',
-                          ),
-                          _buildFinanceInfoRow(
-                            'Tahsilat oranı',
-                            '%${(finance['collectionRate'] as double).toStringAsFixed(0)}',
-                          ),
-                          _buildFinanceInfoRow(
-                            'Bekleyen sipariş',
-                            '${finance['pendingOrders']}',
-                          ),
-                          _buildFinanceInfoRow(
-                            'Ortalama sepet',
-                            _formatDashboardCurrency(
-                              finance['averageOrderValue'] as double,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(999),
-                            child: LinearProgressIndicator(
-                              value:
-                                  (finance['collectionRate'] as double) / 100,
-                              minHeight: 8,
-                              backgroundColor: const Color(0xFFE5E7EB),
-                              valueColor: const AlwaysStoppedAnimation<Color>(
-                                Color(0xFF7C3AED),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildOverviewCardShell(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Row(
-                            children: [
-                              Icon(
-                                Icons.calendar_month_rounded,
-                                color: Color(0xFF7C3AED),
-                                size: 18,
-                              ),
-                              SizedBox(width: 8),
-                              Text(
-                                'Ödeme Takvimi',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF1E293B),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          _buildFinanceInfoRow(
-                            'Sonraki ödeme günü',
-                            finance['nextPayoutDate'] as String,
-                          ),
-                          _buildFinanceInfoRow(
-                            'Planlanan ödeme',
-                            _formatDashboardCurrency(availableBalance),
-                          ),
-                          _buildFinanceInfoRow(
-                            'Mutabakat modeli',
-                            'T+7 çalışma günü',
-                          ),
-                          _buildFinanceInfoRow('Komisyon oranı', '%15'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildOverviewCardShell(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.account_balance_outlined,
-                                color: Color(0xFF7C3AED),
-                                size: 18,
-                              ),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  'Banka / Kurumsal Bilgi',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF1E293B),
-                                  ),
-                                ),
-                              ),
-                              TextButton(
-                                onPressed: () =>
-                                    _setSelectedModule(SellerModule.store),
-                                child: const Text('Düzenle'),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          _buildFinanceInfoRow(
-                            'Şirket',
-                            _companyNameController.text.trim().isEmpty
-                                ? 'Tanımlanmadı'
-                                : _companyNameController.text.trim(),
-                          ),
-                          _buildFinanceInfoRow(
-                            'Ünvan',
-                            _companyTitleController.text.trim().isEmpty
-                                ? _companyType
-                                : _companyTitleController.text.trim(),
-                          ),
-                          _buildFinanceInfoRow(
-                            'Vergi Dairesi',
-                            _taxOfficeController.text.trim().isEmpty
-                                ? '-'
-                                : _taxOfficeController.text.trim(),
-                          ),
-                          _buildFinanceInfoRow(
-                            'Vergi No',
-                            _taxNumberController.text.trim().isEmpty
-                                ? '-'
-                                : _taxNumberController.text.trim(),
-                          ),
-                          _buildFinanceInfoRow(
-                            'İletişim',
-                            _emailController.text.trim().isEmpty
-                                ? _phoneController.text.trim().isEmpty
-                                      ? '-'
-                                      : _phoneController.text.trim()
-                                : _emailController.text.trim(),
-                          ),
-                          if (_companyNameController.text.trim().isEmpty &&
-                              _taxNumberController.text.trim().isEmpty) ...[
-                            const SizedBox(height: 14),
-                            Text(
-                              'Banka hesabı alanı projede henüz ayrı tutulmuyor. Mağaza profili üzerinden kurumsal/ödeme bilgilerinizi tamamlayabilirsiniz.',
-                              style: TextStyle(
-                                color: Colors.grey.shade500,
-                                fontSize: 12,
-                                height: 1.45,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 2,
-                child: _buildOverviewCardShell(
-                  padding: EdgeInsets.zero,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.receipt_long_rounded,
-                              color: Color(0xFF7C3AED),
-                              size: 18,
-                            ),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Text(
-                                'İşlem Geçmişi',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF1E293B),
-                                ),
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: () =>
-                                  _downloadFinanceReport(transactions),
-                              icon: const Icon(
-                                Icons.download_rounded,
-                                size: 16,
-                              ),
-                              label: const Text('Rapor İndir'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFF7C3AED),
-                                side: const BorderSide(
-                                  color: Color(0xFFD8C8FF),
-                                ),
-                                backgroundColor: const Color(0xFFF8F5FF),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: _buildFinanceFilterDropdown(
-                                value: _financeTransactionTypeFilter,
-                                items: const [
-                                  'Tum Islemler',
-                                  'Satis',
-                                  'Bekleyen',
-                                  'Komisyon',
-                                  'Iade',
-                                ],
-                                onChanged: (value) {
-                                  if (value == null) return;
-                                  setState(() {
-                                    _financeTransactionTypeFilter = value;
-                                  });
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: InkWell(
-                                onTap: _showFinanceRangeDialog,
-                                borderRadius: BorderRadius.circular(12),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 14,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF8FAFC),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: const Color(0xFFE2E8F0),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.date_range_rounded,
-                                        size: 18,
-                                        color: Color(0xFF7C3AED),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          _financeRangeLabel(),
-                                          style: const TextStyle(
-                                            color: Color(0xFF334155),
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                      const Icon(
-                                        Icons.expand_more_rounded,
-                                        size: 18,
-                                        color: Color(0xFF64748B),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Container(height: 1, color: const Color(0xFFE5E7EB)),
-                      if (transactions.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.all(36),
-                          child: Column(
-                            children: [
-                              Icon(
-                                Icons.account_balance_wallet_outlined,
-                                size: 44,
-                                color: Colors.grey.shade300,
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Seçili filtrelerde finans işlemi bulunmuyor',
-                                style: TextStyle(color: Colors.grey.shade500),
-                              ),
-                            ],
-                          ),
-                        )
-                      else
-                        ...transactions
-                            .take(12)
-                            .map(
-                              (transaction) =>
-                                  _buildFinanceTransactionRow(transaction),
-                            ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  children: [
-                    _buildOverviewCardShell(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Finans Sağlığı',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1E293B),
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          _buildFinanceHealthMetric(
-                            'Net marj',
-                            finance['marginRate'] as double,
-                            const Color(0xFF10B981),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildFinanceHealthMetric(
-                            'Komisyon etkisi',
-                            finance['commissionRatePercent'] as double,
-                            const Color(0xFFF59E0B),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildFinanceHealthMetric(
-                            'İade oranı',
-                            finance['refundRate'] as double,
-                            const Color(0xFFEF4444),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildOverviewCardShell(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Mutabakat Notları',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1E293B),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildFinanceNoteTile(
-                            color: const Color(0xFFE8F0FF),
-                            accent: const Color(0xFF3B82F6),
-                            icon: Icons.payments_outlined,
-                            title: 'Ödeme için hazır',
-                            subtitle:
-                                '${_formatDashboardCurrency(availableBalance)} tutar bir sonraki ödeme döngüsüne uygun.',
-                          ),
-                          const SizedBox(height: 12),
-                          _buildFinanceNoteTile(
-                            color: const Color(0xFFFFF7ED),
-                            accent: const Color(0xFFF97316),
-                            icon: Icons.schedule_send_outlined,
-                            title: 'Bekleyen tahsilat',
-                            subtitle:
-                                '${_formatDashboardCurrency(finance['pendingBalance'] as double)} teslimat veya T+7 mutabakat sürecinde.',
-                          ),
-                          const SizedBox(height: 12),
-                          _buildFinanceNoteTile(
-                            color: const Color(0xFFF8FAFC),
-                            accent: const Color(0xFF64748B),
-                            icon: Icons.info_outline_rounded,
-                            title: 'Raporlama',
-                            subtitle:
-                                'İşlem geçmişi ve kazanç özetini CSV olarak dışa aktarabilirsiniz.',
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildFinanceModule() => _buildFinanceModuleImpl();
 
   DateTimeRange get _financeDateRange {
     final now = DateTime.now();
@@ -25397,10 +23520,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         Expanded(
                           child: TextField(
                             controller: _feedbackSearchController,
-                            onChanged: (value) {
-                              setState(() {});
-                              _scheduleFeedbackSearch(value);
-                            },
+                            onChanged: _scheduleFeedbackSearch,
                             decoration: InputDecoration(
                               hintText:
                                   'Kullanıcı, ürün, yorum veya soru ara...',
@@ -25476,9 +23596,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 .toList(),
                             onChanged: (value) {
                               if (value == null) return;
-                              setState(() {
-                                _selectedFeedbackRatingFilter = value;
-                              });
+                              _setSelectedFeedbackRatingFilter(value);
                             },
                           ),
                         ),
@@ -26488,11 +24606,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final selected = _selectedFeedbackTab == value;
     return InkWell(
       borderRadius: BorderRadius.circular(999),
-      onTap: () {
-        setState(() {
-          _selectedFeedbackTab = value;
-        });
-      },
+      onTap: () => _setSelectedFeedbackTab(value),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -27579,33 +25693,38 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildTabButton(String label, bool isActive, VoidCallback onTap) {
-    return Material(
-      color: isActive ? Colors.white : Colors.transparent,
-      borderRadius: BorderRadius.circular(6),
-      child: InkWell(
-        onTap: onTap,
+    return PremiumPressable(
+      hoverLift: isActive ? 0.5 : 1,
+      child: Material(
+        color: isActive ? Colors.white : Colors.transparent,
         borderRadius: BorderRadius.circular(6),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: isActive ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            boxShadow: isActive
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-              color: isActive ? const Color(0xFF6C63FF) : Colors.grey.shade600,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: isActive ? Colors.white : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+              boxShadow: isActive
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                color: isActive
+                    ? const Color(0xFF6C63FF)
+                    : Colors.grey.shade600,
+              ),
             ),
           ),
         ),
@@ -27863,217 +25982,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  Widget _buildSupportModule() {
-    final tickets = List<SupportTicket>.from(_supportTickets)
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    final filteredTickets = _filterSupportTickets(tickets);
-    final openCount = tickets
-        .where(
-          (ticket) =>
-              ticket.status == TicketStatus.open ||
-              ticket.status == TicketStatus.in_progress,
-        )
-        .length;
-    final resolvedThisMonth = tickets.where((ticket) {
-      final now = DateTime.now();
-      final isResolved =
-          ticket.status == TicketStatus.closed ||
-          ticket.status == TicketStatus.resolved;
-      return isResolved &&
-          ticket.updatedAt != null &&
-          ticket.updatedAt!.year == now.year &&
-          ticket.updatedAt!.month == now.month;
-    }).length;
-    final responseHours = tickets
-        .where(
-          (ticket) =>
-              ticket.updatedAt != null &&
-              ticket.updatedAt!.isAfter(ticket.createdAt),
-        )
-        .map(
-          (ticket) =>
-              ticket.updatedAt!.difference(ticket.createdAt).inMinutes / 60,
-        )
-        .toList();
-    final avgResponseHours = responseHours.isEmpty
-        ? null
-        : responseHours.reduce((a, b) => a + b) / responseHours.length;
-    final resolutionRate = tickets.isEmpty
-        ? 0
-        : ((tickets
-                          .where(
-                            (ticket) =>
-                                ticket.status == TicketStatus.closed ||
-                                ticket.status == TicketStatus.resolved,
-                          )
-                          .length /
-                      tickets.length) *
-                  100)
-              .round();
-
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _buildSupportSummaryCard(
-                'Açık Talepler',
-                '$openCount',
-                Icons.support_agent,
-                Colors.orange,
-                subtitle: 'Yanıt veya aksiyon bekliyor',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildSupportSummaryCard(
-                'Çözülen',
-                '$resolvedThisMonth',
-                Icons.check_circle,
-                Colors.green,
-                subtitle: 'Bu ay çözülen kayıt',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildSupportSummaryCard(
-                'Ortalama Yanıt',
-                avgResponseHours == null
-                    ? '-'
-                    : '${avgResponseHours.toStringAsFixed(1)}s',
-                Icons.timer,
-                Colors.blue,
-                subtitle: 'Güncelleme süresine göre',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildSupportSummaryCard(
-                'Çözüm Oranı',
-                '%$resolutionRate',
-                Icons.insights_rounded,
-                Colors.purple,
-                subtitle: 'Kapalı + çözülen talepler',
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(flex: 3, child: _buildSupportTrendCard(tickets)),
-            const SizedBox(width: 16),
-            Expanded(flex: 2, child: _buildSupportCategoryCard(tickets)),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Row(
-            children: [
-              ElevatedButton.icon(
-                onPressed: _showNewSupportTicketDialog,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Yeni Destek Talebi'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6C63FF),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _supportSearchController,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'Talep no, konu veya kategori ara...',
-                    prefixIcon: const Icon(Icons.search, size: 18),
-                    isDense: true,
-                    filled: true,
-                    fillColor: const Color(0xFFF8FAFC),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    _buildSupportTabButton(
-                      'Tümü',
-                      _selectedSupportTab == 'Tümü',
-                      () => setState(() => _selectedSupportTab = 'Tümü'),
-                    ),
-                    _buildSupportTabButton(
-                      'Açık',
-                      _selectedSupportTab == 'Açık',
-                      () => setState(() => _selectedSupportTab = 'Açık'),
-                    ),
-                    _buildSupportTabButton(
-                      'Kapalı',
-                      _selectedSupportTab == 'Kapalı',
-                      () => setState(() => _selectedSupportTab = 'Kapalı'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: filteredTickets.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.headset_mic_outlined,
-                        size: 48,
-                        color: Colors.grey.shade300,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        tickets.isEmpty
-                            ? 'Henüz destek talebi bulunmuyor'
-                            : 'Bu filtreye uygun destek talebi bulunamadı',
-                        style: TextStyle(color: Colors.grey.shade500),
-                      ),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  itemCount: filteredTickets.length,
-                  itemBuilder: (context, index) =>
-                      _buildSupportTicketCard(filteredTickets[index]),
-                ),
-        ),
-      ],
-    );
-  }
+  Widget _buildSupportModule() => _buildSupportModuleImpl();
 
   List<SupportTicket> _filterSupportTickets(List<SupportTicket> tickets) {
-    final query = _supportSearchController.text.trim().toLowerCase();
+    final query = _debouncedSupportQuery;
     return tickets.where((ticket) {
       if (_selectedSupportTab == 'Açık' &&
           ticket.status != TicketStatus.open &&
@@ -30277,6 +28189,7 @@ class _MobileGarsonTableFlowPageState
   final StoreService _storeService = StoreService();
   final OrderPrintJobService _orderPrintJobService = OrderPrintJobService();
   final List<Map<String, dynamic>> _draftItems = <Map<String, dynamic>>[];
+  late final Stream<List<Map<String, dynamic>>> _tableOrdersStream;
   bool _isSubmitting = false;
   late int _bottomIndex;
   String _selectedCategory = 'Tümü';
@@ -30286,6 +28199,7 @@ class _MobileGarsonTableFlowPageState
   @override
   void initState() {
     super.initState();
+    _tableOrdersStream = _storeService.getTableOrdersStream(widget.sellerId);
     _bottomIndex = widget.initialTabIndex.clamp(0, 2);
     _pendingInitialOrderId = widget.initialOrderId;
     if (widget.initialDraftItems.isNotEmpty) {
@@ -31086,7 +29000,7 @@ class _MobileGarsonTableFlowPageState
                                       color: Color(0xFF9CA3AF),
                                     ),
                                   )
-                                : Image.network(
+                                : OptimizedImage(imageUrlOrPath: 
                                     imageUrl,
                                     width: 56,
                                     height: 56,
@@ -31725,7 +29639,7 @@ class _MobileGarsonTableFlowPageState
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _storeService.getTableOrdersStream(widget.sellerId),
+      stream: _tableOrdersStream,
       builder: (context, snapshot) {
         var tableOrders = const <Map<String, dynamic>>[];
         Widget body;
@@ -31773,7 +29687,15 @@ class _MobileGarsonTableFlowPageState
                 ),
             ],
           ),
-          body: body,
+          body: AnimatedSwitcher(
+            duration: AppMotion.normalTransitionDuration,
+            reverseDuration: AppMotion.normalTransitionReverseDuration,
+            switchInCurve: AppMotion.revealCurve,
+            switchOutCurve: AppMotion.revealReverseCurve,
+            transitionBuilder: (child, animation) =>
+                AppMotion.buildFadeSlideTransition(animation, child),
+            child: KeyedSubtree(key: ValueKey<int>(_bottomIndex), child: body),
+          ),
           bottomNavigationBar: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

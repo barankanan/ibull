@@ -10,6 +10,7 @@ import '../core/auth/user_identity.dart';
 import '../ads/enums/ad_enums.dart';
 import '../core/mobile_category_catalog.dart';
 import '../core/constants.dart';
+import '../core/app_motion.dart';
 import '../models/product_model.dart';
 import '../models/db_product.dart';
 import '../core/app_state.dart';
@@ -25,7 +26,9 @@ import '../widgets/product_card.dart';
 import '../widgets/brand_section.dart';
 import '../widgets/optimized_image.dart';
 import '../widgets/skeleton_loading.dart';
+import '../widgets/staggered_reveal.dart';
 import '../widgets/common/custom_error_view.dart';
+import '../core/app_image_cdn.dart';
 import '../widgets/sponsored_product_lists_section.dart';
 import '../services/supabase_service.dart';
 import '../services/database_helper.dart';
@@ -43,6 +46,7 @@ import 'product_detail_page.dart';
 import 'business_detail_page.dart';
 import 'ai_chat_page.dart';
 import '../widgets/dynamic_brand_section.dart';
+part 'home_screen_sections.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
@@ -60,9 +64,8 @@ class _HomeScreenState extends State<HomeScreen>
   static const String _homeBannersCacheKey = 'home_banners_cache_v1';
   static const String _homeAppCategoriesCacheKey =
       'home_app_categories_cache_v1';
-  late int _selectedIndex;
-  String _selectedBrand = 'Urban';
-  String _selectedTechBrand = 'Apple'; // Teknoloji için seçili marka
+  static const double _homeBannerAspectRatio = 1920 / 600;
+  late final ValueNotifier<int> _selectedIndexNotifier;
   late String _selectedCategory; // Seçili kategori
   String? _selectedSubCategory; // Seçili alt kategori
   final AppState _appState = AppState();
@@ -71,9 +74,11 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isLoadingProducts = true;
   bool _isLoadingHeroContent = true;
   bool _isLoadingHomeSections = true;
+  bool _deferredHomeSectionsEnabled = false;
+  bool _deferredHomeSectionsScheduled = false;
   String? _errorMessage;
   late AnimationController _spinController;
-  bool _hasSpunWheel = false; // Çark çevrildi mi kontrolü
+  late final ValueNotifier<bool> _hasSpunWheelNotifier;
   final ScrollController _popularProductsScrollController = ScrollController();
   final ScrollController _subCategoryScrollController = ScrollController();
   final ScrollController _flashProductsScrollController = ScrollController();
@@ -93,7 +98,34 @@ class _HomeScreenState extends State<HomeScreen>
   List<Map<String, dynamic>> _appFeatureCategories = [];
   List<Map<String, dynamic>> _storesForFastDelivery = [];
   final Map<String, Product> _productConversionCache = {};
+  int _productDataVersion = 0;
+  int _bannerDataVersion = 0;
+  int _fastDeliveryStoreVersion = 0;
+  String? _cachedResolvedBannerImagesKey;
+  List<String>? _cachedResolvedBannerImages;
+  String? _cachedResolvedMobileBannerImagesKey;
+  List<String>? _cachedResolvedMobileBannerImages;
+  String? _cachedFeaturedHomeProductsKey;
+  List<DBProduct>? _cachedFeaturedHomeProducts;
+  String? _cachedRecentHomeProductsKey;
+  List<DBProduct>? _cachedRecentHomeProducts;
+  String? _cachedPopularProductsKey;
+  List<DBProduct>? _cachedPopularProducts;
+  String? _cachedSubCategoryProductsKey;
+  List<DBProduct>? _cachedSubCategoryProducts;
+  String? _cachedFastDeliveryProductsKey;
+  List<DBProduct>? _cachedFastDeliveryProducts;
+  String? _cachedOpportunityProductsKey;
+  List<DBProduct>? _cachedOpportunityProducts;
+  String? _scheduledAboveFoldPrecacheKey;
   bool _tableQrHandled = false;
+  int _homeLoadGeneration = 0;
+
+  int get _selectedIndex => _selectedIndexNotifier.value;
+  set _selectedIndex(int value) => _selectedIndexNotifier.value = value;
+
+  bool get _hasSpunWheel => _hasSpunWheelNotifier.value;
+  set _hasSpunWheel(bool value) => _hasSpunWheelNotifier.value = value;
 
   // _addresses is now managed by AppState
 
@@ -175,12 +207,13 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    _selectedIndexNotifier = ValueNotifier(widget.initialIndex);
+    _hasSpunWheelNotifier = ValueNotifier(false);
     _spinController = AnimationController(
       duration: const Duration(seconds: 10),
       vsync: this,
     )..repeat(); // Sürekli dön
 
-    _selectedIndex = widget.initialIndex;
     _selectedCategory = widget.initialCategory ?? 'Ana Sayfa';
     _appState.cartCountNotifier.value = _appState.cart.length;
     _loadProducts();
@@ -195,12 +228,310 @@ class _HomeScreenState extends State<HomeScreen>
     _popularProductsScrollController.dispose();
     _flashProductsScrollController.dispose();
     _todayProductsScrollController.dispose();
+    _selectedIndexNotifier.dispose();
+    _hasSpunWheelNotifier.dispose();
     super.dispose();
+  }
+
+  List<String> _resolvedBannerImages({required bool preferMobile}) {
+    final cacheKey = '$_bannerDataVersion|$preferMobile';
+    if (preferMobile) {
+      if (_cachedResolvedMobileBannerImagesKey == cacheKey &&
+          _cachedResolvedMobileBannerImages != null) {
+        return _cachedResolvedMobileBannerImages!;
+      }
+    } else {
+      if (_cachedResolvedBannerImagesKey == cacheKey &&
+          _cachedResolvedBannerImages != null) {
+        return _cachedResolvedBannerImages!;
+      }
+    }
+
+    final resolved = _mainBannerImages
+        .map(
+          (banner) =>
+              _resolveBannerImagePath(banner, preferMobile: preferMobile),
+        )
+        .whereType<String>()
+        .toList(growable: false);
+
+    if (preferMobile) {
+      _cachedResolvedMobileBannerImagesKey = cacheKey;
+      _cachedResolvedMobileBannerImages = resolved;
+    } else {
+      _cachedResolvedBannerImagesKey = cacheKey;
+      _cachedResolvedBannerImages = resolved;
+    }
+
+    return resolved;
+  }
+
+  String? _resolvePrimaryHomeProductImagePath(DBProduct product) {
+    // Resolve raw URL then apply CDN card variant (420×420 @ q75) for precache.
+    String raw = '';
+    final rawImageUrls = product.imageUrls?.trim();
+    if (rawImageUrls != null && rawImageUrls.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawImageUrls);
+        if (decoded is List) {
+          for (final item in decoded) {
+            final imagePath = item.toString().trim();
+            if (imagePath.isNotEmpty) {
+              raw = imagePath;
+              break;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (raw.isEmpty) raw = product.imageUrl.trim();
+    if (raw.isEmpty) raw = product.thumbnailPublicUrl?.trim() ?? '';
+    if (raw.isEmpty) return null;
+
+    return AppImageCdn.buildUrl(raw, AppImageVariant.card);
+  }
+
+  ImageProvider<Object>? _buildSizedPrecacheProvider(
+    String imagePath, {
+    required int cacheWidth,
+    required int cacheHeight,
+  }) {
+    final normalizedPath = imagePath.trim();
+    if (normalizedPath.isEmpty) return null;
+    return OptimizedImage.buildProvider(
+      imageUrlOrPath: normalizedPath,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+    );
+  }
+
+  Future<void> _precacheAboveFoldImages({
+    required String? bannerImagePath,
+    required int bannerCacheWidth,
+    required int bannerCacheHeight,
+    required List<String> productImagePaths,
+    required int productCacheWidth,
+    required int productCacheHeight,
+  }) async {
+    if (!mounted) return;
+
+    Future<void> precachePath(
+      String imagePath, {
+      required int cacheWidth,
+      required int cacheHeight,
+    }) async {
+      final provider = _buildSizedPrecacheProvider(
+        imagePath,
+        cacheWidth: cacheWidth,
+        cacheHeight: cacheHeight,
+      );
+      if (provider == null || !mounted) return;
+
+      try {
+        await precacheImage(provider, context);
+      } catch (error) {
+        debugPrint('Ana sayfa görsel preload başarısız: $error');
+      }
+    }
+
+    if (bannerImagePath != null && bannerImagePath.trim().isNotEmpty) {
+      await precachePath(
+        bannerImagePath,
+        cacheWidth: bannerCacheWidth,
+        cacheHeight: bannerCacheHeight,
+      );
+    }
+
+    for (final imagePath in productImagePaths) {
+      if (!mounted) return;
+      await precachePath(
+        imagePath,
+        cacheWidth: productCacheWidth,
+        cacheHeight: productCacheHeight,
+      );
+    }
+  }
+
+  void _scheduleAboveFoldImagePrecache({
+    required bool isWeb,
+    required List<String> bannerImages,
+    required List<DBProduct> firstRailProducts,
+  }) {
+    if (!mounted || _selectedIndex != 0) return;
+
+    final mediaQuery = MediaQuery.maybeOf(context);
+    if (mediaQuery == null) return;
+
+    final firstBannerImage = bannerImages.isEmpty
+        ? null
+        : AppImageCdn.buildUrl(bannerImages.first, AppImageVariant.hero);
+    final visibleProductImagePaths = firstRailProducts
+        .map(_resolvePrimaryHomeProductImagePath)
+        .whereType<String>()
+        .take(isWeb ? 4 : 3)
+        .toList(growable: false);
+
+    if ((firstBannerImage == null || firstBannerImage.trim().isEmpty) &&
+        visibleProductImagePaths.isEmpty) {
+      return;
+    }
+
+    final cacheKey = [
+      isWeb ? 'web' : 'mobile',
+      ...?(firstBannerImage == null ? null : <String>[firstBannerImage]),
+      ...visibleProductImagePaths,
+    ].join('|');
+    if (_scheduledAboveFoldPrecacheKey == cacheKey) return;
+    _scheduledAboveFoldPrecacheKey = cacheKey;
+
+    final devicePixelRatio = mediaQuery.devicePixelRatio;
+    final bannerLogicalWidth = isWeb
+        ? math.min(mediaQuery.size.width, 1400.0) * 0.72
+        : mediaQuery.size.width * 0.95;
+    final bannerCacheWidth = (bannerLogicalWidth * devicePixelRatio)
+        .round()
+        .clamp(640, 1200);
+    final bannerCacheHeight = (bannerCacheWidth / _homeBannerAspectRatio)
+        .round()
+        .clamp(120, 600);
+    final productCacheWidth = (198 * devicePixelRatio).round().clamp(160, 520);
+    final productCacheHeight = (155 * devicePixelRatio).round().clamp(160, 520);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _scheduledAboveFoldPrecacheKey != cacheKey) return;
+      unawaited(
+        _precacheAboveFoldImages(
+          bannerImagePath: firstBannerImage,
+          bannerCacheWidth: bannerCacheWidth,
+          bannerCacheHeight: bannerCacheHeight,
+          productImagePaths: visibleProductImagePaths,
+          productCacheWidth: productCacheWidth,
+          productCacheHeight: productCacheHeight,
+        ),
+      );
+    });
+  }
+
+  String _productRevealTokenFromDb(DBProduct product) {
+    final productId = product.id?.trim();
+    if (productId != null && productId.isNotEmpty) {
+      return productId;
+    }
+
+    final store = product.store?.trim() ?? '';
+    return '${product.name.trim()}|$store';
+  }
+
+  Widget _wrapProductReveal({
+    required String scope,
+    required int index,
+    required String token,
+    required Widget child,
+  }) {
+    return StaggeredReveal(
+      revealId: '$scope|$token',
+      index: index,
+      enabled: index < 8,
+      child: child,
+    );
+  }
+
+  List<DBProduct> _featuredHomeProducts() {
+    final cacheKey = '$_productDataVersion';
+    if (_cachedFeaturedHomeProductsKey == cacheKey &&
+        _cachedFeaturedHomeProducts != null) {
+      return _cachedFeaturedHomeProducts!;
+    }
+
+    var productsWithImages = _dbProducts
+        .where((p) => p.imageUrl.isNotEmpty)
+        .toList(growable: false);
+
+    productsWithImages = productsWithImages
+        .where((p) {
+          final nameLower = p.name.toLowerCase();
+          final brandLower = p.brand.toLowerCase();
+          final isArcelikVacuum =
+              brandLower.contains('arçelik') &&
+              (nameLower.contains('ct-z3') ||
+                  nameLower.contains('infinity') ||
+                  nameLower.contains('2300'));
+          return !isArcelikVacuum;
+        })
+        .toList(growable: false);
+
+    final reordered = List<DBProduct>.from(productsWithImages);
+    final haylouIndex = reordered.indexWhere((p) {
+      final nameLower = p.name.toLowerCase();
+      final brandLower = p.brand.toLowerCase();
+      return brandLower.contains('haylou') && nameLower.contains('solar');
+    });
+
+    if (haylouIndex != -1) {
+      final haylouProduct = reordered.removeAt(haylouIndex);
+      reordered.add(haylouProduct);
+    }
+
+    final resolved = reordered.take(10).toList(growable: false);
+    _cachedFeaturedHomeProductsKey = cacheKey;
+    _cachedFeaturedHomeProducts = resolved;
+    return resolved;
+  }
+
+  List<DBProduct> _recentHomeProducts() {
+    if (!_deferredHomeSectionsEnabled) {
+      return const <DBProduct>[];
+    }
+
+    final cacheKey = '$_productDataVersion';
+    if (_cachedRecentHomeProductsKey == cacheKey &&
+        _cachedRecentHomeProducts != null) {
+      return _cachedRecentHomeProducts!;
+    }
+
+    final resolved = _dbProducts
+        .where((p) => p.imageUrl.isNotEmpty)
+        .skip(10)
+        .take(10)
+        .toList(growable: false);
+    _cachedRecentHomeProductsKey = cacheKey;
+    _cachedRecentHomeProducts = resolved;
+    return resolved;
+  }
+
+  List<DBProduct> _popularProductsForSelectedCategory() {
+    final cacheKey = '$_productDataVersion|$_selectedCategory';
+    if (_cachedPopularProductsKey == cacheKey &&
+        _cachedPopularProducts != null) {
+      return _cachedPopularProducts!;
+    }
+
+    final resolved = _selectedCategory == 'Ana Sayfa'
+        ? List<DBProduct>.unmodifiable(_dbProducts)
+        : _dbProducts
+              .where(
+                (p) =>
+                    p.category == _selectedCategory ||
+                    p.category.contains(_selectedCategory),
+              )
+              .toList(growable: false);
+
+    _cachedPopularProductsKey = cacheKey;
+    _cachedPopularProducts = resolved;
+    return resolved;
   }
 
   List<DBProduct> _getProductsForCurrentSubCategory() {
     if (_selectedSubCategory == null) {
       return [];
+    }
+
+    final cacheKey =
+        '$_productDataVersion|$_selectedCategory|${_selectedSubCategory ?? ''}';
+    if (_cachedSubCategoryProductsKey == cacheKey &&
+        _cachedSubCategoryProducts != null) {
+      return _cachedSubCategoryProducts!;
     }
 
     final selectedMainCategory = _normalizeText(_selectedCategory);
@@ -211,63 +542,71 @@ class _HomeScreenState extends State<HomeScreen>
       return category == selectedMainCategory;
     }).toList();
 
-    return baseProducts.where((p) {
-      final subCat = _normalizeText(p.subCategory ?? '');
-      final name = _normalizeText(p.name);
+    final resolved = baseProducts
+        .where((p) {
+          final subCat = _normalizeText(p.subCategory ?? '');
+          final name = _normalizeText(p.name);
 
-      if (selectedMainCategory == _normalizeText('Elektronik')) {
-        if (selectedSub.contains('telefonlar') ||
-            selectedSub == _normalizeText('telefon')) {
-          return subCat.contains('telefon') ||
-              name.contains('telefon') ||
-              name.contains('iphone') ||
-              name.contains('galaxy');
-        }
+          if (selectedMainCategory == _normalizeText('Elektronik')) {
+            if (selectedSub.contains('telefonlar') ||
+                selectedSub == _normalizeText('telefon')) {
+              return subCat.contains('telefon') ||
+                  name.contains('telefon') ||
+                  name.contains('iphone') ||
+                  name.contains('galaxy');
+            }
 
-        if (selectedSub.contains('laptop') || selectedSub.contains('tablet')) {
-          return subCat.contains('bilgisayar') ||
-              subCat.contains('tablet') ||
-              name.contains('laptop') ||
-              name.contains('macbook') ||
-              name.contains('bilgisayar');
-        }
+            if (selectedSub.contains('laptop') ||
+                selectedSub.contains('tablet')) {
+              return subCat.contains('bilgisayar') ||
+                  subCat.contains('tablet') ||
+                  name.contains('laptop') ||
+                  name.contains('macbook') ||
+                  name.contains('bilgisayar');
+            }
 
-        if (selectedSub.contains('televizyon')) {
-          return subCat.contains('tv') ||
-              subCat.contains('televizyon') ||
-              name.contains('tv') ||
-              name.contains('televizyon');
-        }
+            if (selectedSub.contains('televizyon')) {
+              return subCat.contains('tv') ||
+                  subCat.contains('televizyon') ||
+                  name.contains('tv') ||
+                  name.contains('televizyon');
+            }
 
-        if (selectedSub.contains('beyaz esya')) {
-          return subCat.contains('beyaz esya');
-        }
+            if (selectedSub.contains('beyaz esya')) {
+              return subCat.contains('beyaz esya');
+            }
 
-        if (selectedSub.contains('isitma') || selectedSub.contains('sogutma')) {
-          return subCat.contains('klima') ||
-              subCat.contains('isitici') ||
-              name.contains('klima') ||
-              name.contains('isitici');
-        }
+            if (selectedSub.contains('isitma') ||
+                selectedSub.contains('sogutma')) {
+              return subCat.contains('klima') ||
+                  subCat.contains('isitici') ||
+                  name.contains('klima') ||
+                  name.contains('isitici');
+            }
 
-        if (selectedSub.contains('sinema') ||
-            selectedSub.contains('ses sistemleri')) {
-          return subCat.contains('tv & ses sistemleri') ||
-              subCat.contains('ses') ||
-              name.contains('ses sistemi');
-        }
+            if (selectedSub.contains('sinema') ||
+                selectedSub.contains('ses sistemleri')) {
+              return subCat.contains('tv & ses sistemleri') ||
+                  subCat.contains('ses') ||
+                  name.contains('ses sistemi');
+            }
 
-        if (selectedSub.contains('telefon aksesuar')) {
-          return subCat.contains('telefon & aksesuar') ||
-              name.contains('kılıf') ||
-              name.contains('kulaklık') ||
-              name.contains('sarj') ||
-              name.contains('şarj');
-        }
-      }
+            if (selectedSub.contains('telefon aksesuar')) {
+              return subCat.contains('telefon & aksesuar') ||
+                  name.contains('kılıf') ||
+                  name.contains('kulaklık') ||
+                  name.contains('sarj') ||
+                  name.contains('şarj');
+            }
+          }
 
-      return subCat == selectedSub;
-    }).toList();
+          return subCat == selectedSub;
+        })
+        .toList(growable: false);
+
+    _cachedSubCategoryProductsKey = cacheKey;
+    _cachedSubCategoryProducts = resolved;
+    return resolved;
   }
 
   Future<void> _handleTableQrLaunch() async {
@@ -388,25 +727,31 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _loadProducts() async {
     if (!mounted) return;
+    final loadGeneration = ++_homeLoadGeneration;
 
     setState(() {
       _isLoadingProducts = true;
       _isLoadingHeroContent = true;
       _isLoadingHomeSections = true;
+      _deferredHomeSectionsEnabled = false;
+      _deferredHomeSectionsScheduled = false;
       _errorMessage = null;
       _productConversionCache.clear();
     });
 
-    await _loadCachedHomeProducts();
-    await _loadCachedHomeHeroContent();
+    final cachedProductsFuture = _loadCachedHomeProducts();
+    final cachedHeroFuture = _loadCachedHomeHeroContent();
+    unawaited(_loadImmediateHomeContent());
+    await Future.wait<void>([cachedProductsFuture, cachedHeroFuture]);
+    _scheduleDeferredHomeContentLoad(loadGeneration);
 
     try {
-      unawaited(_loadImmediateHomeContent());
       final supabaseProducts = await SupabaseService.instance
           .getInitialHomeProducts();
 
       if (supabaseProducts.isNotEmpty) {
         _dbProducts = supabaseProducts;
+        _productDataVersion++;
         _warmHomeProductRatings(_dbProducts);
         unawaited(_saveHomeProductsToCache(_dbProducts));
         debugPrint('✅ Supabase: ${_dbProducts.length} ürün yüklendi');
@@ -415,6 +760,7 @@ class _HomeScreenState extends State<HomeScreen>
         _dbProducts = await _dbHelper.getProductsPage(
           limit: SupabaseService.homePageSize,
         );
+        _productDataVersion++;
         _warmHomeProductRatings(_dbProducts);
         debugPrint('✅ Local DB: ${_dbProducts.length} ürün yüklendi');
       }
@@ -423,8 +769,6 @@ class _HomeScreenState extends State<HomeScreen>
       debugPrint(
         '📸 Görseli olan ürün sayısı: $withImages/${_dbProducts.length}',
       );
-
-      unawaited(_loadDeferredHomeContent());
     } catch (e) {
       debugPrint('Ürün yükleme hatası: $e');
       if (mounted) {
@@ -439,6 +783,23 @@ class _HomeScreenState extends State<HomeScreen>
         });
       }
     }
+  }
+
+  void _scheduleDeferredHomeContentLoad(int loadGeneration) {
+    if (_deferredHomeSectionsScheduled) return;
+    _deferredHomeSectionsScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(milliseconds: 180), () async {
+        if (!mounted || loadGeneration != _homeLoadGeneration) return;
+        if (!_deferredHomeSectionsEnabled) {
+          setState(() {
+            _deferredHomeSectionsEnabled = true;
+          });
+        }
+        await _loadDeferredHomeContent();
+      });
+    });
   }
 
   Future<void> _loadImmediateHomeContent() async {
@@ -494,6 +855,7 @@ class _HomeScreenState extends State<HomeScreen>
         _dbProducts = cachedProducts;
         _isLoadingProducts = false;
         _productConversionCache.clear();
+        _productDataVersion++;
       });
       _warmHomeProductRatings(cachedProducts);
     } catch (e) {
@@ -528,6 +890,7 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() {
         if (cachedBanners.isNotEmpty) {
           _mainBannerImages = cachedBanners;
+          _bannerDataVersion++;
         }
         if (cachedCategories.isNotEmpty) {
           _appFeatureCategories = cachedCategories;
@@ -614,6 +977,7 @@ class _HomeScreenState extends State<HomeScreen>
       if (!mounted) return;
       setState(() {
         _storesForFastDelivery = stores;
+        _fastDeliveryStoreVersion++;
       });
     } catch (e) {
       debugPrint('Hızlı teslimat mağaza listesi alınamadı: $e');
@@ -770,6 +1134,18 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   List<DBProduct> _getFastDeliveryProducts({int limit = 10}) {
+    if (!_deferredHomeSectionsEnabled) {
+      return const <DBProduct>[];
+    }
+
+    final currentAddress = _appState.currentDeliveryAddress ?? '';
+    final cacheKey =
+        '$_productDataVersion|$_fastDeliveryStoreVersion|$currentAddress|$limit';
+    if (_cachedFastDeliveryProductsKey == cacheKey &&
+        _cachedFastDeliveryProducts != null) {
+      return _cachedFastDeliveryProducts!;
+    }
+
     final products = _dbProducts
         .where((p) => p.imageUrl.isNotEmpty && p.isActive)
         .toList();
@@ -778,7 +1154,12 @@ class _HomeScreenState extends State<HomeScreen>
     final userLocation = _resolveCurrentUserLocation();
     if (userLocation == null || _storesForFastDelivery.isEmpty) {
       final tagged = products.where(_hasFastDeliveryTag).toList();
-      return (tagged.isNotEmpty ? tagged : products).take(limit).toList();
+      final resolved = (tagged.isNotEmpty ? tagged : products)
+          .take(limit)
+          .toList();
+      _cachedFastDeliveryProductsKey = cacheKey;
+      _cachedFastDeliveryProducts = resolved;
+      return resolved;
     }
 
     final storeBySellerId = <String, Map<String, dynamic>>{};
@@ -814,7 +1195,12 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (scored.isEmpty) {
       final tagged = products.where(_hasFastDeliveryTag).toList();
-      return (tagged.isNotEmpty ? tagged : products).take(limit).toList();
+      final resolved = (tagged.isNotEmpty ? tagged : products)
+          .take(limit)
+          .toList();
+      _cachedFastDeliveryProductsKey = cacheKey;
+      _cachedFastDeliveryProducts = resolved;
+      return resolved;
     }
 
     const nearbyRadiusKm = 20.0;
@@ -829,10 +1215,26 @@ class _HomeScreenState extends State<HomeScreen>
       return a.distanceKm.compareTo(b.distanceKm);
     });
 
-    return source.map((item) => item.product).take(limit).toList();
+    final resolved = source
+        .map((item) => item.product)
+        .take(limit)
+        .toList(growable: false);
+    _cachedFastDeliveryProductsKey = cacheKey;
+    _cachedFastDeliveryProducts = resolved;
+    return resolved;
   }
 
   List<DBProduct> _getOpportunityProducts({int limit = 10}) {
+    if (!_deferredHomeSectionsEnabled) {
+      return const <DBProduct>[];
+    }
+
+    final cacheKey = '$_productDataVersion|$limit';
+    if (_cachedOpportunityProductsKey == cacheKey &&
+        _cachedOpportunityProducts != null) {
+      return _cachedOpportunityProducts!;
+    }
+
     final products = _dbProducts
         .where((p) => p.imageUrl.isNotEmpty && p.isActive)
         .toList();
@@ -858,14 +1260,23 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     if (scored.isEmpty) {
-      return products
+      final resolved = products
           .where((p) => p.oldPrice?.isNotEmpty == true)
           .take(limit)
-          .toList();
+          .toList(growable: false);
+      _cachedOpportunityProductsKey = cacheKey;
+      _cachedOpportunityProducts = resolved;
+      return resolved;
     }
 
     scored.sort((a, b) => b.score.compareTo(a.score));
-    return scored.map((item) => item.product).take(limit).toList();
+    final resolved = scored
+        .map((item) => item.product)
+        .take(limit)
+        .toList(growable: false);
+    _cachedOpportunityProductsKey = cacheKey;
+    _cachedOpportunityProducts = resolved;
+    return resolved;
   }
 
   Future<void> _loadMainBanners() async {
@@ -877,6 +1288,7 @@ class _HomeScreenState extends State<HomeScreen>
           .toList(growable: false);
       setState(() {
         _mainBannerImages = activeBanners;
+        _bannerDataVersion++;
       });
       unawaited(_saveHomeBannersToCache(activeBanners));
     } catch (_) {}
@@ -1132,22 +1544,16 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _onItemTapped(int index) {
     if (_selectedIndex == index) return; // Prevent unnecessary rebuild
-    setState(() {
-      _selectedIndex = index;
-    });
+    _selectedIndex = index;
   }
 
-  void _onBrandSelected(String brand) {
-    if (_selectedBrand == brand) return; // Prevent unnecessary rebuild
+  void _setSelectedCategory(String category) {
+    if (_selectedCategory == category && _selectedSubCategory == null) {
+      return;
+    }
     setState(() {
-      _selectedBrand = brand;
-    });
-  }
-
-  void _onTechBrandSelected(String brand) {
-    if (_selectedTechBrand == brand) return; // Prevent unnecessary rebuild
-    setState(() {
-      _selectedTechBrand = brand;
+      _selectedCategory = category;
+      _selectedSubCategory = null;
     });
   }
 
@@ -1329,47 +1735,52 @@ class _HomeScreenState extends State<HomeScreen>
                 splashColor: Colors.transparent,
                 highlightColor: Colors.transparent,
               ),
-              child: BottomNavigationBar(
-                currentIndex: _selectedIndex,
-                onTap: _onItemTapped,
-                selectedItemColor: AppColors.primary, // Mor when selected
-                unselectedItemColor: Colors.black, // Black when unselected
-                type: BottomNavigationBarType.fixed,
-                showUnselectedLabels: true,
-                selectedLabelStyle: const TextStyle(
-                  fontWeight: FontWeight.w500,
-                  fontSize: 12,
-                ),
-                unselectedLabelStyle: const TextStyle(
-                  fontWeight: FontWeight.w500,
-                  fontSize: 12,
-                ),
-                items: [
-                  BottomNavigationBarItem(
-                    icon: const Icon(Icons.home_outlined),
-                    activeIcon: const Icon(Icons.home),
-                    label: l10n?.home ?? 'Ana Sayfa',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: const Icon(Icons.segment), // Icons.list or similar
-                    label: l10n?.categories ?? 'Kategori',
-                  ),
-                  const BottomNavigationBarItem(
-                    icon: Icon(Icons.map_outlined),
-                    activeIcon: Icon(Icons.map),
-                    label: 'Harita',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: _buildCartIcon(isActive: false),
-                    activeIcon: _buildCartIcon(isActive: true),
-                    label: l10n?.cart ?? 'Sepet',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: const Icon(Icons.person_outline),
-                    activeIcon: const Icon(Icons.person),
-                    label: l10n?.profile ?? 'Hesap',
-                  ),
-                ],
+              child: ValueListenableBuilder<int>(
+                valueListenable: _selectedIndexNotifier,
+                builder: (context, selectedIndex, _) {
+                  return BottomNavigationBar(
+                    currentIndex: selectedIndex,
+                    onTap: _onItemTapped,
+                    selectedItemColor: AppColors.primary, // Mor when selected
+                    unselectedItemColor: Colors.black, // Black when unselected
+                    type: BottomNavigationBarType.fixed,
+                    showUnselectedLabels: true,
+                    selectedLabelStyle: const TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: 12,
+                    ),
+                    unselectedLabelStyle: const TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: 12,
+                    ),
+                    items: [
+                      BottomNavigationBarItem(
+                        icon: const Icon(Icons.home_outlined),
+                        activeIcon: const Icon(Icons.home),
+                        label: l10n?.home ?? 'Ana Sayfa',
+                      ),
+                      BottomNavigationBarItem(
+                        icon: const Icon(Icons.segment),
+                        label: l10n?.categories ?? 'Kategori',
+                      ),
+                      const BottomNavigationBarItem(
+                        icon: Icon(Icons.map_outlined),
+                        activeIcon: Icon(Icons.map),
+                        label: 'Harita',
+                      ),
+                      BottomNavigationBarItem(
+                        icon: _buildCartIcon(isActive: false),
+                        activeIcon: _buildCartIcon(isActive: true),
+                        label: l10n?.cart ?? 'Sepet',
+                      ),
+                      BottomNavigationBarItem(
+                        icon: const Icon(Icons.person_outline),
+                        activeIcon: const Icon(Icons.person),
+                        label: l10n?.profile ?? 'Hesap',
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
     );
@@ -1385,7 +1796,7 @@ class _HomeScreenState extends State<HomeScreen>
         height: 60,
         child: FloatingActionButton(
           onPressed: () {
-            showDialog(
+            showAppDialog<void>(
               context: context,
               barrierColor: Colors.black54, // Yarı saydam arka plan
               builder: (context) => const AIChatPage(),
@@ -1400,44 +1811,50 @@ class _HomeScreenState extends State<HomeScreen>
       );
     }
 
-    // Mobil için Çark (Sadece Ana Sayfada ve henüz çevrilmediyse)
-    if (_selectedIndex == 0 && !_hasSpunWheel) {
-      return AnimatedBuilder(
-        animation: _spinController,
-        builder: (context, child) {
-          return Transform.rotate(
-            angle: _spinController.value * 2 * math.pi,
-            child: child,
-          );
-        },
-        child: FloatingActionButton(
-          onPressed: () {
-            showDialog(
-              context: context,
-              barrierColor: Colors.black54,
-              builder: (context) => FortuneWheelDialog(
-                onSpinComplete: () {
-                  setState(() {
-                    _hasSpunWheel = true;
-                  });
-                },
-              ),
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _selectedIndexNotifier,
+        _hasSpunWheelNotifier,
+      ]),
+      builder: (context, _) {
+        // Mobil için Çark (Sadece Ana Sayfada ve henüz çevrilmediyse)
+        if (_selectedIndex != 0 || _hasSpunWheel) {
+          return const SizedBox.shrink();
+        }
+
+        return AnimatedBuilder(
+          animation: _spinController,
+          builder: (context, child) {
+            return Transform.rotate(
+              angle: _spinController.value * 2 * math.pi,
+              child: child,
             );
           },
-          backgroundColor: Colors.white,
-          shape: const CircleBorder(
-            side: BorderSide(color: AppColors.primary, width: 2),
+          child: FloatingActionButton(
+            onPressed: () {
+              showAppDialog<void>(
+                context: context,
+                barrierColor: Colors.black54,
+                builder: (context) => FortuneWheelDialog(
+                  onSpinComplete: () {
+                    _hasSpunWheel = true;
+                  },
+                ),
+              );
+            },
+            backgroundColor: Colors.white,
+            shape: const CircleBorder(
+              side: BorderSide(color: AppColors.primary, width: 2),
+            ),
+            child: const Icon(Icons.casino, color: AppColors.primary, size: 28),
           ),
-          child: const Icon(Icons.casino, color: AppColors.primary, size: 28),
-        ),
-      );
-    }
-
-    return null;
+        );
+      },
+    );
   }
 
-  Widget _buildCurrentPage() {
-    switch (_selectedIndex) {
+  Widget _buildCurrentPageForIndex(int selectedIndex) {
+    switch (selectedIndex) {
       case 0:
         return _buildHomeView();
       case 1:
@@ -1451,6 +1868,18 @@ class _HomeScreenState extends State<HomeScreen>
       default:
         return _buildHomeView();
     }
+  }
+
+  Widget _buildCurrentPage() {
+    return ValueListenableBuilder<int>(
+      valueListenable: _selectedIndexNotifier,
+      builder: (context, selectedIndex, _) {
+        return AppAnimatedIndexedStack(
+          index: selectedIndex,
+          children: List<Widget>.generate(5, _buildCurrentPageForIndex),
+        );
+      },
+    );
   }
 
   Widget _buildHorizontalProductSkeletons({
@@ -1488,562 +1917,16 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildHomeView() {
-    if (_errorMessage != null) {
-      return CustomErrorView(message: _errorMessage, onRetry: _loadProducts);
-    }
-
-    // Breakpoint increased to 1100 to prevent WebHeader overflow on smaller screens (tablets, small laptops)
-    final isWeb = MediaQuery.of(context).size.width >= 1100;
-
-    return SafeArea(
-      child: Column(
-        children: [
-          // Header: Web için WebHeader, Mobil için CustomHeader
-          isWeb
-              ? WebHeader(
-                  onSearch: _onSearch,
-                  selectedCategory: _selectedCategory,
-                  onCategorySelected: (category) {
-                    setState(() {
-                      _selectedCategory = category;
-                      _selectedSubCategory =
-                          null; // Reset subcategory when main category changes
-                    });
-                  },
-                )
-              : CustomHeader(onSearch: _onSearch),
-
-          Expanded(
-            child: SingleChildScrollView(
-              child: isWeb
-                  ? _buildWebHomeContent() // Web İçeriği
-                  : _buildMobileHomeContent(), // Mobil İçerik (Eski)
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildHomeView() => _buildHomeViewImpl();
 
   // --- MOBİL GÖRÜNÜM (Eski Kod) ---
-  Widget _buildMobileHomeContent() {
-    final mobileBannerImages = _mainBannerImages
-        .map((banner) => _resolveBannerImagePath(banner, preferMobile: true))
-        .whereType<String>()
-        .toList(growable: false);
+  Widget _buildMobileHomeContent() => _buildMobileHomeContentImpl();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Consumer<AppState>(
-          builder: (context, appState, _) {
-            return AddressBar(
-              currentAddress: appState.currentDeliveryAddress ?? 'Adres Seçin',
-              onAddressChanged: (newAddress) {
-                appState.setCurrentDeliveryAddress(newAddress);
-              },
-            );
-          },
-        ),
-        FeatureMenu(remoteCategories: _appFeatureCategories),
-
-        const SizedBox(height: 8),
-        // Banner Carousel
-        if (_isLoadingHeroContent)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12.0),
-            child: SizedBox(
-              height: 130,
-              child: _buildHomeBannerSkeleton(isWeb: false),
-            ),
-          )
-        else if (mobileBannerImages.isNotEmpty)
-          CarouselSlider(
-            options: CarouselOptions(
-              aspectRatio:
-                  1920 /
-                  600, // 3.2 aspect ratio based on your uploaded image dimensions
-              autoPlay: true,
-              autoPlayInterval: const Duration(seconds: 4),
-              autoPlayAnimationDuration: const Duration(milliseconds: 800),
-              enlargeCenterPage: true,
-              viewportFraction:
-                  0.95, // Increased fraction to show more of the banner
-            ),
-            items: mobileBannerImages.map((imagePath) {
-              return Builder(
-                builder: (BuildContext context) {
-                  return Container(
-                    width: MediaQuery.of(context).size.width,
-                    margin: const EdgeInsets.symmetric(horizontal: 5.0),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withOpacity(0.2),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: _buildScaledHomeBannerImage(
-                        imagePath,
-                        errorWidget: Container(
-                          color: Colors.grey.shade200,
-                          child: const Center(
-                            child: Icon(
-                              Icons.image_not_supported,
-                              color: Colors.grey,
-                              size: 40,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              );
-            }).toList(),
-          ),
-
-        if (_isLoadingHeroContent || mobileBannerImages.isNotEmpty)
-          const SizedBox(height: 12),
-
-        const SponsoredProductListsSection(
-          title: 'Öne Çıkan Listeler',
-          subtitle: 'Ana sayfada sponsorlu olarak gösterilen ürün listeleri',
-          placement: AdPlacement.homeFeed,
-        ),
-
-        const SizedBox(height: 20),
-
-        // "Sana özel ürünler" section
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Consumer<AppState>(
-                builder: (context, appState, _) {
-                  final user = appState.currentUser;
-                  final fullName = UserIdentity.resolveDisplayName(
-                    currentUser: user,
-                  );
-                  final firstName = fullName.split(' ').first;
-
-                  return RichText(
-                    text: TextSpan(
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black, // Default color for text spans
-                        fontFamily: 'Poppins',
-                      ),
-                      children: [
-                        TextSpan(
-                          text: firstName,
-                          style: const TextStyle(color: AppColors.primary),
-                        ),
-                        TextSpan(
-                          text: ', Sana Özel Ürünler',
-                          style: TextStyle(color: Colors.grey[800]),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
-              _isLoadingProducts
-                  ? _buildHorizontalProductSkeletons()
-                  : _dbProducts.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(32.0),
-                        child: Text(
-                          'Henüz ürün yok',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                    )
-                  : SizedBox(
-                      height: 312,
-                      child: Builder(
-                        builder: (context) {
-                          // Görseli olan ürünleri filtrele
-                          var productsWithImages = _dbProducts
-                              .where((p) => p.imageUrl.isNotEmpty)
-                              .toList();
-
-                          // Arçelik CT-Z3 ürününü kaldır (brand: Arçelik ve name: CT-Z3)
-                          productsWithImages = productsWithImages.where((p) {
-                            final nameLower = p.name.toLowerCase();
-                            final brandLower = p.brand.toLowerCase();
-                            // Brand Arçelik VE name CT-Z3/Infinity içeriyorsa filtrele
-                            final isArcelikVacuum =
-                                brandLower.contains('arçelik') &&
-                                (nameLower.contains('ct-z3') ||
-                                    nameLower.contains('infinity') ||
-                                    nameLower.contains('2300'));
-                            if (isArcelikVacuum) {}
-                            return !isArcelikVacuum;
-                          }).toList();
-
-                          // Haylou Solar RT3 ürününü bul ve en sona taşı (brand: Haylou ve name: Solar)
-                          final haylouIndex = productsWithImages.indexWhere((
-                            p,
-                          ) {
-                            final nameLower = p.name.toLowerCase();
-                            final brandLower = p.brand.toLowerCase();
-                            return brandLower.contains('haylou') &&
-                                nameLower.contains('solar');
-                          });
-
-                          if (haylouIndex != -1) {
-                            final haylouProduct = productsWithImages.removeAt(
-                              haylouIndex,
-                            );
-                            productsWithImages.add(haylouProduct);
-                          }
-
-                          // İlk 10 ürünü al
-                          final displayProducts = productsWithImages
-                              .take(10)
-                              .toList();
-
-                          return ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            physics: const BouncingScrollPhysics(),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4.0,
-                            ),
-                            cacheExtent: 500,
-                            itemCount: displayProducts.length,
-                            separatorBuilder: (context, index) =>
-                                const SizedBox(width: 12),
-                            itemBuilder: (context, index) {
-                              final dbProduct = displayProducts[index];
-                              return SizedBox(
-                                width: 198,
-                                child: ProductCard(
-                                  product: _convertToProduct(dbProduct),
-                                  margin: EdgeInsets.zero,
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 24),
-
-        // "Hızlı Teslimat" section (Mobil)
-        _buildFastDeliverySection(),
-
-        const SizedBox(height: 24),
-
-        // Sistem Düzeni kartları (Yemekler, Teknoloji vb.) mobilde de alt alta
-        if (_hairCareLayoutsForHome.isNotEmpty) ...[
-          Column(
-            children: _hairCareLayoutsForHome
-                .map(
-                  (layout) => Padding(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    child: DynamicBrandSection(
-                      layout: layout,
-                      allProducts: _dbProducts,
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
-        ],
-
-        // "Fırsat Ürünler" section (Mobil)
-        _buildOpportunityProductsSection(),
-
-        const SizedBox(height: 24),
-
-        // "Daha Önce Gezdiklerin" section
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Daha Önce Gezdiklerin',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[800],
-                ),
-              ),
-              const SizedBox(height: 10),
-              _isLoadingProducts
-                  ? _buildHorizontalProductSkeletons()
-                  : _dbProducts.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(32.0),
-                        child: Text(
-                          'Henüz ürün yok',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                    )
-                  : SizedBox(
-                      height: 312,
-                      child: Builder(
-                        builder: (context) {
-                          // Görseli olan 11-20 arası ürünleri filtrele
-                          final productsWithImages = _dbProducts
-                              .where((p) => p.imageUrl.isNotEmpty)
-                              .skip(10)
-                              .take(10)
-                              .toList();
-
-                          return ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            physics: const BouncingScrollPhysics(),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4.0,
-                            ),
-                            cacheExtent: 500,
-                            itemCount: productsWithImages.length,
-                            separatorBuilder: (context, index) =>
-                                const SizedBox(width: 12),
-                            itemBuilder: (context, index) {
-                              final dbProduct = productsWithImages[index];
-                              return SizedBox(
-                                width: 198,
-                                child: ProductCard(
-                                  product: _convertToProduct(dbProduct),
-                                  margin: EdgeInsets.zero,
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 96), // Bottom spacing
-      ],
-    );
-  }
-
-  Widget _buildSubCategoryView() {
-    final displayProducts = _getProductsForCurrentSubCategory();
-
-    final sameDayProducts = displayProducts
-        .where(
-          (p) =>
-              p.tags.contains('Hızlı Teslimat') ||
-              p.tags.contains('Hızlı Kargo') ||
-              p.tags.contains('Yakın Lokasyon'),
-        )
-        .take(10)
-        .toList();
-
-    final Map<String, List<String>> displayFilters = {};
-    _standardFilters.forEach((key, value) {
-      // "Telefonlar" dışındaki kategorilerde "Kategori" ve "Marka" altı boş olsun
-      if ((key == 'Kategori' || key == 'Marka') &&
-          _selectedSubCategory != 'Telefonlar') {
-        displayFilters[key] = [];
-      } else {
-        displayFilters[key] = value;
-      }
-    });
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Sidebar
-        // Use ConstrainedBox or SizedBox to ensure width, but let height be determined by content
-        // Since FilterSidebar now uses shrinkWrap ListView, it will take the height of its content.
-        // And since it's in a Row with CrossAxisAlignment.start, it won't stretch vertically unless we tell it to.
-        ConstrainedBox(
-          constraints: const BoxConstraints(
-            minHeight: 500,
-          ), // Min height to match grid roughly
-          child: FilterSidebar(
-            key: ValueKey(
-              _selectedSubCategory,
-            ), // Force rebuild when subcategory changes
-            filters: displayFilters,
-            onFilterChanged: (category, option, isSelected) {},
-          ),
-        ),
-
-        const SizedBox(width: 24),
-
-        // Product Grid
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '$_selectedSubCategory',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Row(
-                      children: [
-                        Text(
-                          'Önerilen Sıralama',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                        Icon(Icons.keyboard_arrow_down, size: 20),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // "Bugün Kapında" Alanı
-              if (sameDayProducts.isNotEmpty &&
-                  (_selectedSubCategory == 'Telefonlar' ||
-                      _selectedSubCategory == 'Telefon'))
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50, // Mavi arka plan
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.blue.shade200,
-                    ), // Mavi kenarlık
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.local_shipping,
-                            color: Colors.blue,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Bugün Kapında',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue, // Mavi metin
-                            ),
-                          ),
-                          const Spacer(),
-                          Text(
-                            '${sameDayProducts.length} ürün',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.blue.shade800,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        height: 290,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: sameDayProducts.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(width: 12),
-                          itemBuilder: (context, index) {
-                            return SizedBox(
-                              width: 160,
-                              child: ProductCard(
-                                product: _convertToProduct(
-                                  sameDayProducts[index],
-                                ),
-                                compact: true,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-              displayProducts.isEmpty
-                  ? _isLoadingProducts
-                        ? _buildHorizontalProductSkeletons(
-                            height: 312,
-                            itemWidth: 198,
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                          )
-                        : const Center(
-                            child: Text("Bu kategoride ürün bulunamadı."),
-                          )
-                  : GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent:
-                            250, // Kartların aşırı genişlemesini önlemek için max genişlik
-                        childAspectRatio:
-                            0.65, // Oranı artırarak kart yüksekliğini azalttık (Boşlukları kapatmak için)
-                        crossAxisSpacing: 16,
-                        mainAxisSpacing: 16,
-                      ),
-                      itemCount: displayProducts.length > 8
-                          ? 8
-                          : displayProducts.length, // Limit for demo
-                      itemBuilder: (context, index) {
-                        return ProductCard(
-                          product: _convertToProduct(displayProducts[index]),
-                          margin: EdgeInsets.zero,
-                        );
-                      },
-                    ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _buildSubCategoryView() => _buildSubCategoryViewImpl();
 
   // --- WEB GÖRÜNÜM (Yeni Tasarım) ---
   void _showAddressSelectionDialog() {
-    showDialog(
+    showAppDialog<void>(
       context: context,
       builder: (context) {
         return Consumer<AppState>(
@@ -2100,7 +1983,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showAddAddressDialog() {
-    showDialog(
+    showAppDialog<void>(
       context: context,
       builder: (context) => Dialog(
         backgroundColor: Colors.white,
@@ -2138,1040 +2021,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildWebHomeContent() {
-    final isElectronics = _selectedCategory == 'Elektronik';
-    final isHomePage = _selectedCategory == 'Ana Sayfa';
-    final isCategorySelected = !isHomePage; // Herhangi bir kategori seçili mi?
-
-    // Popüler ürünleri kategoriye göre filtrele
-    final popularProducts = isHomePage
-        ? _dbProducts
-        : _dbProducts
-              .where(
-                (p) =>
-                    p.category == _selectedCategory ||
-                    p.category.contains(_selectedCategory),
-              )
-              .toList();
-    final fastDeliveryProducts = isHomePage
-        ? _getFastDeliveryProducts(limit: 10)
-        : <DBProduct>[];
-    final opportunityProducts = isHomePage
-        ? _getOpportunityProducts(limit: 10)
-        : <DBProduct>[];
-
-    final bannerImages = _mainBannerImages
-        .map((banner) => _resolveBannerImagePath(banner))
-        .whereType<String>()
-        .toList(growable: false);
-
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1400),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 24.0,
-          ), // Increased horizontal padding
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // KATEGORİ SEÇİLİYSE (Elektronik veya Diğerleri)
-              if (isCategorySelected) ...[
-                const SizedBox(height: 24),
-
-                // 1. Kategoriler (En üstte) - Sadece seçili kategoriye özgü ikonları göster
-                _buildOpportunityCards(),
-
-                const SizedBox(height: 16),
-
-                // 2. Alt Kategori Filtreleme veya Teknoloji Dünyası
-                if (_selectedSubCategory != null) ...[
-                  _buildSubCategoryView(),
-                ] else if (isElectronics) ...[
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.02),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: _buildTechSection(),
-                  ),
-                ] else ...[
-                  // DİĞER KATEGORİLER İÇİN SADECE ÜRÜN LİSTESİ
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '$_selectedCategory Ürünleri',
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF333333),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  _isLoadingProducts
-                      ? GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 5,
-                                childAspectRatio: 0.58,
-                                crossAxisSpacing: 16,
-                                mainAxisSpacing: 16,
-                              ),
-                          itemCount: 10,
-                          itemBuilder: (context, index) {
-                            return const ProductCardSkeleton();
-                          },
-                        )
-                      : popularProducts.isEmpty
-                      ? SizedBox(
-                          height: 200,
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.category_outlined,
-                                  size: 48,
-                                  color: Colors.grey[300],
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'Bu kategoride henüz ürün bulunamadı',
-                                  style: TextStyle(color: Colors.grey[600]),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                      : GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 5,
-                                childAspectRatio: 0.58,
-                                crossAxisSpacing: 16,
-                                mainAxisSpacing: 16,
-                              ),
-                          itemCount: popularProducts.length,
-                          itemBuilder: (context, index) {
-                            final dbProduct = popularProducts[index];
-                            return ProductCard(
-                              product: _convertToProduct(dbProduct),
-                              margin: EdgeInsets.zero,
-                            );
-                          },
-                        ),
-                ],
-
-                const SizedBox(height: 80),
-                const WebFooter(),
-              ] else ...[
-                // NORMAL ANA SAYFA GÖRÜNÜMÜ
-
-                // 0. Adres Çubuğu
-                Consumer<AppState>(
-                  builder: (context, appState, _) {
-                    final currentAddress =
-                        appState.currentDeliveryAddress ??
-                        'Teslimat Adresi Seçin';
-                    return Container(
-                      width: double.infinity,
-                      height: 50,
-                      margin: const EdgeInsets.symmetric(vertical: 16),
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.location_on,
-                            color: AppColors.primary,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Teslimat Adresi:',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              currentAddress,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.black87,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          TextButton.icon(
-                            onPressed: _showAddressSelectionDialog,
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppColors.primary,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                              backgroundColor: AppColors.primary.withOpacity(
-                                0.08,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            icon: const Icon(
-                              Icons.edit_location_alt_outlined,
-                              size: 18,
-                            ),
-                            label: const Text(
-                              'Değiştir',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-
-                // 1. Kategoriler / Fırsat İkonları
-                _buildOpportunityCards(),
-
-                const SizedBox(height: 24),
-
-                // 2. İkili Büyük Banner Alanı
-                SizedBox(
-                  height: 412,
-                  child: Row(
-                    children: [
-                      // Sol: Kampanya Slider
-                      Expanded(
-                        flex: 3,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Stack(
-                            children: [
-                              // Use _isLoadingHeroContent (banners+categories done) not
-                              // _isLoadingHomeSections (stores+layouts done).  The banner
-                              // has no dependency on stores or hair-care layouts, and those
-                              // deferred queries finish 300-600 ms later — holding the
-                              // biggest above-fold element as a skeleton for no reason.
-                              if (_isLoadingHeroContent)
-                                _buildHomeBannerSkeleton(isWeb: true)
-                              else if (bannerImages.isNotEmpty)
-                                CarouselSlider(
-                                  options: CarouselOptions(
-                                    aspectRatio:
-                                        1920 /
-                                        600, // Correct aspect ratio for web banners
-                                    height:
-                                        412, // Reduced height to align with right column (250 + 12 + 150)
-                                    viewportFraction: 1.0,
-                                    autoPlay: true,
-                                    autoPlayInterval: const Duration(
-                                      seconds: 6,
-                                    ),
-                                    autoPlayAnimationDuration: const Duration(
-                                      milliseconds: 1000,
-                                    ),
-                                  ),
-                                  items: bannerImages.map((i) {
-                                    return Builder(
-                                      builder: (BuildContext context) {
-                                        return Container(
-                                          width: MediaQuery.of(
-                                            context,
-                                          ).size.width,
-                                          decoration: const BoxDecoration(
-                                            color: Color(0xFFF0F0F0),
-                                          ),
-                                          child: _buildScaledHomeBannerImage(
-                                            i,
-                                            errorWidget: Container(
-                                              color: Colors.grey.shade200,
-                                              child: Center(
-                                                child: Column(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.center,
-                                                  children: [
-                                                    Icon(
-                                                      Icons.image_not_supported,
-                                                      size: 64,
-                                                      color:
-                                                          Colors.grey.shade400,
-                                                    ),
-                                                    const SizedBox(height: 16),
-                                                    Text(
-                                                      'Kampanya Görseli',
-                                                      style: TextStyle(
-                                                        fontSize: 18,
-                                                        color: Colors
-                                                            .grey
-                                                            .shade500,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    );
-                                  }).toList(),
-                                )
-                              else
-                                Container(
-                                  color: Colors.grey.shade100,
-                                  child: Center(
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.campaign_outlined,
-                                          size: 64,
-                                          color: Colors.grey.shade300,
-                                        ),
-                                        const SizedBox(height: 16),
-                                        Text(
-                                          'Henüz kampanya bulunmuyor',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            color: Colors.grey.shade500,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(width: 24),
-
-                      // Sağ: Günün Fırsatı ve Kuponlar
-                      Expanded(
-                        flex: 1,
-                        child: Column(
-                          children: [
-                            // Günün Fırsatı
-                            SizedBox(
-                              height: 250, // Reverted to original height
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                    colors: [
-                                      AppColors.primary.withOpacity(0.06),
-                                      Colors.white,
-                                    ],
-                                  ),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: AppColors.primary.withOpacity(0.15),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: AppColors.primary.withOpacity(
-                                        0.08,
-                                      ),
-                                      blurRadius: 10,
-                                    ),
-                                  ],
-                                ),
-                                clipBehavior: Clip.antiAlias,
-                                child: Stack(
-                                  children: [
-                                    Center(
-                                      child: _isLoadingProducts
-                                          ? const ProductCardSkeleton()
-                                          : popularProducts.isNotEmpty
-                                          ? DealOfTheDaySlider(
-                                              products: popularProducts,
-                                            )
-                                          : const SizedBox(),
-                                    ),
-                                    Positioned(
-                                      top: 16,
-                                      left: 16,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 6,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          gradient: const LinearGradient(
-                                            colors: [
-                                              Color(0xFFFF9800),
-                                              AppColors.primary,
-                                            ],
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: AppColors.primary
-                                                  .withOpacity(0.3),
-                                              blurRadius: 8,
-                                              offset: const Offset(0, 4),
-                                            ),
-                                          ],
-                                        ),
-                                        child: const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.flash_on,
-                                              color: Colors.white,
-                                              size: 16,
-                                            ),
-                                            SizedBox(width: 4),
-                                            Text(
-                                              'Günün Fırsatı',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.bold,
-                                                letterSpacing: 0.5,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12), // Consistent spacing
-                            // Kuponlar
-                            SizedBox(
-                              height: 150, // Reduced height as requested
-                              child: CouponSlider(
-                                isLoading: _isLoadingHomeSections,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 32),
-
-                // 2.5 Yakın Lokasyon Alanı
-                Container(
-                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFDDF0FF),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: const Color(0xFFB9DFFF)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFC9E7FF),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(
-                              Icons.near_me_outlined,
-                              color: Color(0xFF2891F1),
-                              size: 18,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          const Expanded(
-                            child: Text(
-                              'Yakın Lokasyon ile çevrendeki mağazalardan alışveriş yapabilirsin',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: Color(0xFF7A8A99),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF2891F1),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.location_on_outlined,
-                                  color: Colors.white,
-                                  size: 16,
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Yakın Lokasyon',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 18),
-                      // Yatay Liste
-                      (_isLoadingProducts || _isLoadingHomeSections)
-                          ? _buildHorizontalProductSkeletons(
-                              height: 312,
-                              itemWidth: 198,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 18,
-                              ),
-                            )
-                          : fastDeliveryProducts.isNotEmpty
-                          ? SizedBox(
-                              height: 312,
-                              child: Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  ScrollConfiguration(
-                                    behavior: ScrollConfiguration.of(context)
-                                        .copyWith(
-                                          dragDevices: {
-                                            PointerDeviceKind.touch,
-                                            PointerDeviceKind.mouse,
-                                          },
-                                        ),
-                                    child: ListView.separated(
-                                      controller:
-                                          _todayProductsScrollController,
-                                      scrollDirection: Axis.horizontal,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                      ),
-                                      itemCount: fastDeliveryProducts.length,
-                                      separatorBuilder: (context, index) =>
-                                          const SizedBox(width: 20),
-                                      itemBuilder: (context, index) {
-                                        final dbProduct =
-                                            fastDeliveryProducts[index];
-                                        return SizedBox(
-                                          width: 198,
-                                          child: ProductCard(
-                                            product: _convertToProduct(
-                                              dbProduct,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                  // Sol Ok
-                                  Positioned(
-                                    left: -6,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Center(
-                                      child: _buildCarouselArrowButton(
-                                        icon: Icons.arrow_back_ios_new,
-                                        color: const Color(0xFF2891F1),
-                                        onTap: () => _scrollCarousel(
-                                          _todayProductsScrollController,
-                                          -300,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  // Sağ Ok
-                                  Positioned(
-                                    right: -6,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Center(
-                                      child: _buildCarouselArrowButton(
-                                        icon: Icons.arrow_forward_ios,
-                                        color: const Color(0xFF2891F1),
-                                        onTap: () => _scrollCarousel(
-                                          _todayProductsScrollController,
-                                          300,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : const SizedBox.shrink(),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 32),
-
-                const SponsoredProductListsSection(
-                  title: 'Ana Sayfada Öne Çıkan Listeler',
-                  subtitle:
-                      'Liste reklamı verilen koleksiyonlar burada sponsorlu gösterilir.',
-                  placement: AdPlacement.homeFeed,
-                ),
-
-                const SizedBox(height: 32),
-
-                // 3. Popüler Ürünler Başlığı
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Popüler Ürünler',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF333333),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () {},
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                        ),
-                        child: const Text(
-                          'Tümünü Gör',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // 4. Popüler Ürünler Listesi (Yatay Kaydırılabilir)
-                _isLoadingProducts
-                    ? _buildHorizontalProductSkeletons(
-                        height: 312,
-                        itemWidth: 198,
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                      )
-                    : popularProducts.isEmpty
-                    ? SizedBox(
-                        height: 200,
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.category_outlined,
-                                size: 48,
-                                color: Colors.grey[300],
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Bu kategoride ürün bulunamadı',
-                                style: TextStyle(color: Colors.grey[600]),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : SizedBox(
-                        height: 312,
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            ScrollConfiguration(
-                              behavior: ScrollConfiguration.of(context)
-                                  .copyWith(
-                                    dragDevices: {
-                                      PointerDeviceKind.touch,
-                                      PointerDeviceKind.mouse,
-                                    },
-                                  ),
-                              child: ListView.separated(
-                                controller: _popularProductsScrollController,
-                                scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                ),
-                                itemCount: popularProducts.length,
-                                separatorBuilder: (context, index) =>
-                                    const SizedBox(width: 20),
-                                itemBuilder: (context, index) {
-                                  final dbProduct = popularProducts[index];
-                                  return SizedBox(
-                                    width: 198,
-                                    child: ProductCard(
-                                      product: _convertToProduct(dbProduct),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            // Sol Ok
-                            Positioned(
-                              left: -6,
-                              top: 0,
-                              bottom: 0,
-                              child: Center(
-                                child: _buildCarouselArrowButton(
-                                  icon: Icons.arrow_back_ios_new,
-                                  color: AppColors.primary,
-                                  onTap: () => _scrollCarousel(
-                                    _popularProductsScrollController,
-                                    -300,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            // Sağ Ok
-                            Positioned(
-                              right: -6,
-                              top: 0,
-                              bottom: 0,
-                              child: Center(
-                                child: _buildCarouselArrowButton(
-                                  icon: Icons.arrow_forward_ios,
-                                  color: AppColors.primary,
-                                  onTap: () => _scrollCarousel(
-                                    _popularProductsScrollController,
-                                    300,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                const SizedBox(height: 40),
-
-                // 4.5 Flaş Ürünler - Grid Bölümü
-                Container(
-                  padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        const Color(0xFFFFF0EE),
-                        const Color(0xFFFFF8F7),
-                        const Color(0xFFFFF0EE),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: const Color(0xFFF4D2CE)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.red.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Icon(
-                              Icons.flash_on,
-                              color: Colors.red,
-                              size: 22,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Flaş Ürünler',
-                                style: TextStyle(
-                                  fontSize: 21,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF333333),
-                                ),
-                              ),
-                              Text(
-                                'Kaçırılmayacak fırsatlar',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const Spacer(),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.red.withOpacity(0.3),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.timer_outlined,
-                                  color: Colors.white,
-                                  size: 16,
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Sınırlı Süre',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      // Grid yerine Yatay Liste
-                      _isLoadingProducts
-                          ? _buildHorizontalProductSkeletons(
-                              height: 312,
-                              itemWidth: 198,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                            )
-                          : opportunityProducts.isNotEmpty
-                          ? SizedBox(
-                              height: 312,
-                              child: Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  ScrollConfiguration(
-                                    behavior: ScrollConfiguration.of(context)
-                                        .copyWith(
-                                          dragDevices: {
-                                            PointerDeviceKind.touch,
-                                            PointerDeviceKind.mouse,
-                                          },
-                                        ),
-                                    child: ListView.separated(
-                                      controller:
-                                          _flashProductsScrollController,
-                                      scrollDirection: Axis.horizontal,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                      ),
-                                      itemCount: opportunityProducts.length,
-                                      separatorBuilder: (context, index) =>
-                                          const SizedBox(width: 20),
-                                      itemBuilder: (context, index) {
-                                        final dbProduct =
-                                            opportunityProducts[index];
-                                        return SizedBox(
-                                          width: 198,
-                                          child: ProductCard(
-                                            product: _convertToProduct(
-                                              dbProduct,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                  // Sol Ok
-                                  Positioned(
-                                    left: -6,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Center(
-                                      child: _buildCarouselArrowButton(
-                                        icon: Icons.arrow_back_ios_new,
-                                        color: AppColors.primary,
-                                        onTap: () => _scrollCarousel(
-                                          _flashProductsScrollController,
-                                          -300,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  // Sağ Ok
-                                  Positioned(
-                                    right: -6,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Center(
-                                      child: _buildCarouselArrowButton(
-                                        icon: Icons.arrow_forward_ios,
-                                        color: AppColors.primary,
-                                        onTap: () => _scrollCarousel(
-                                          _flashProductsScrollController,
-                                          300,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : const SizedBox.shrink(),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 40),
-
-                // Neden iBul? Bölümü
-                _buildWhyIbulSection(),
-
-                // Sistem Düzeni kartları: Neden iBul'un altında alt alta
-                if (_hairCareLayoutsForHome.isNotEmpty) ...[
-                  const SizedBox(height: 40),
-                  Column(
-                    children: _hairCareLayoutsForHome
-                        .map(
-                          (layout) => Padding(
-                            padding: const EdgeInsets.only(bottom: 40),
-                            child: DynamicBrandSection(
-                              layout: layout,
-                              allProducts: _dbProducts,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ] else ...[
-                  const SizedBox(height: 40),
-                ],
-
-                // Avantaj Çubuğu (En Alta Taşındı)
-                Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 40),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 20,
-                  ),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        AppColors.primary.withOpacity(0.05),
-                        Colors.white,
-                        AppColors.primary.withOpacity(0.05),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: AppColors.primary.withOpacity(0.1),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _buildTrustItem(
-                        Icons.local_shipping_outlined,
-                        'Ücretsiz Kargo',
-                        '150 TL üzeri',
-                      ),
-                      _buildTrustDivider(),
-                      _buildTrustItem(
-                        Icons.verified_user_outlined,
-                        'Güvenli Ödeme',
-                        '256-bit SSL',
-                      ),
-                      _buildTrustDivider(),
-                      _buildTrustItem(
-                        Icons.replay_outlined,
-                        '14 Gün İade',
-                        'Koşulsuz iade',
-                      ),
-                      _buildTrustDivider(),
-                      _buildTrustItem(
-                        Icons.support_agent_outlined,
-                        '7/24 Destek',
-                        'Canlı yardım',
-                      ),
-                      _buildTrustDivider(),
-                      _buildTrustItem(
-                        Icons.workspace_premium_outlined,
-                        'Orijinal Ürün',
-                        'Garantili',
-                      ),
-                    ],
-                  ),
-                ),
-
-                // 7. Footer
-                const WebFooter(),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget _buildWebHomeContent() => _buildWebHomeContentImpl();
 
   Widget _buildScaledHomeBannerImage(
     String imagePath, {
@@ -3192,7 +2042,7 @@ class _HomeScreenState extends State<HomeScreen>
         );
 
         return OptimizedImage(
-          imageUrlOrPath: imagePath,
+          imageUrlOrPath: AppImageCdn.buildUrl(imagePath, AppImageVariant.hero),
           width: double.infinity,
           height: double.infinity,
           fit: BoxFit.cover,
@@ -3245,6 +2095,14 @@ class _HomeScreenState extends State<HomeScreen>
       subCategory: dbProduct.subCategory,
       store: dbProduct.store,
       sellerId: dbProduct.sellerId,
+      thumbnailPath: dbProduct.thumbnailPath,
+      thumbnailPublicUrl: dbProduct.thumbnailPublicUrl,
+      thumbnailSizeBytes: dbProduct.thumbnailSizeBytes,
+      videoPath: dbProduct.videoPath,
+      videoPublicUrl: dbProduct.videoPublicUrl,
+      videoDurationSeconds: dbProduct.videoDurationSeconds,
+      videoSizeBytes: dbProduct.videoSizeBytes,
+      videoStatus: dbProduct.videoStatus,
     );
 
     if (cacheKey != null && cacheKey.isNotEmpty) {
@@ -3303,198 +2161,12 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // Hızlı Teslimat Section (Mobil)
-  Widget _buildFastDeliverySection() {
-    final fastDeliveryProducts = _getFastDeliveryProducts(limit: 10);
-    final isLoading = _isLoadingProducts || _isLoadingHomeSections;
-
-    return Container(
-      color: const Color(0xFFE3F2FD), // Mavi arka plan
-      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Hızlı Teslimat',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF333333),
-                    ),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Çevrenizdeki mağazalardan hızlı alışveriş',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.blue,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.location_on_outlined,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    SizedBox(width: 4),
-                    Text(
-                      'Hızlı Teslimat',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 312,
-            child: isLoading
-                ? _buildHorizontalProductSkeletons()
-                : fastDeliveryProducts.isEmpty
-                ? const Center(child: Text('Hızlı teslimat ürünü bulunamadı'))
-                : ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    itemCount: fastDeliveryProducts.length,
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(width: 12),
-                    itemBuilder: (context, index) {
-                      final dbProduct = fastDeliveryProducts[index];
-                      return SizedBox(
-                        width: 198,
-                        child: ProductCard(
-                          product: _convertToProduct(dbProduct),
-                          margin: EdgeInsets.zero,
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Fırsat Ürünler Section (Mobil)
-  Widget _buildOpportunityProductsSection() {
-    final opportunityProducts = _getOpportunityProducts(limit: 10);
-
-    return Container(
-      color: const Color(0xFFFFEBEE), // Kırmızı arka plan
-      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Fırsat Ürünler',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF333333),
-                    ),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Kaçırılmayacak fırsatlar',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFF9800), Color(0xFFFF5722)],
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.local_offer, color: Colors.white, size: 14),
-                    SizedBox(width: 4),
-                    Text(
-                      'Fırsat',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 312,
-            child: _isLoadingProducts
-                ? _buildHorizontalProductSkeletons()
-                : opportunityProducts.isEmpty
-                ? const Center(child: Text('Fırsat ürünü bulunamadı'))
-                : ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    itemCount: opportunityProducts.length,
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(width: 12),
-                    itemBuilder: (context, index) {
-                      final dbProduct = opportunityProducts[index];
-                      return SizedBox(
-                        width: 198,
-                        child: ProductCard(
-                          product: _convertToProduct(dbProduct),
-                          margin: EdgeInsets.zero,
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildTechSection() {
-    return BrandSection(
+    return _LocalBrandSection(
       title: 'Teknoloji Dünyası',
-      selectedBrand: _selectedTechBrand,
+      initialBrand: 'Apple',
       brands: _techBrandData.keys.toList(),
       brandData: _techBrandData,
-      onBrandSelected: _onTechBrandSelected,
     );
   }
 
@@ -4168,6 +2840,57 @@ class _HomeScreenState extends State<HomeScreen>
   }
 }
 
+class _LocalBrandSection extends StatefulWidget {
+  const _LocalBrandSection({
+    required this.title,
+    required this.initialBrand,
+    required this.brands,
+    required this.brandData,
+  });
+
+  final String title;
+  final String initialBrand;
+  final List<String> brands;
+  final Map<String, dynamic> brandData;
+
+  @override
+  State<_LocalBrandSection> createState() => _LocalBrandSectionState();
+}
+
+class _LocalBrandSectionState extends State<_LocalBrandSection> {
+  late String _selectedBrand;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedBrand = widget.initialBrand;
+  }
+
+  @override
+  void didUpdateWidget(covariant _LocalBrandSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.brands.contains(_selectedBrand) && widget.brands.isNotEmpty) {
+      _selectedBrand = widget.brands.first;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BrandSection(
+      title: widget.title,
+      selectedBrand: _selectedBrand,
+      brands: widget.brands,
+      brandData: widget.brandData,
+      onBrandSelected: (brand) {
+        if (_selectedBrand == brand) return;
+        setState(() {
+          _selectedBrand = brand;
+        });
+      },
+    );
+  }
+}
+
 class _GeoPoint {
   const _GeoPoint({required this.lat, required this.lng});
 
@@ -4644,7 +3367,10 @@ class _DealOfTheDaySliderState extends State<DealOfTheDaySlider> {
                         padding: const EdgeInsets.all(16.0),
                         child: Center(
                           child: OptimizedImage(
-                            imageUrlOrPath: product.imageUrl,
+                            imageUrlOrPath: AppImageCdn.buildUrl(
+                              product.imageUrl,
+                              AppImageVariant.card,
+                            ),
                             fit: BoxFit.contain,
                             cacheWidth: 300,
                             cacheHeight: 200,

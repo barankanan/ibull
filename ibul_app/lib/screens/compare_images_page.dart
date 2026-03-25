@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
 
@@ -204,7 +205,7 @@ class CompareImagesPage extends StatelessWidget {
                                   ? ClipRRect(
                                       borderRadius: BorderRadius.circular(8),
                                       child: imagePath.startsWith('http')
-                                          ? Image.network(imagePath, fit: BoxFit.cover)
+                                          ? OptimizedImage(imageUrlOrPath: imagePath, fit: BoxFit.cover)
                                           : Image.asset(imagePath, fit: BoxFit.cover),
                                     )
                                   : const Icon(Icons.image, size: 35, color: Colors.grey),
@@ -303,7 +304,7 @@ class CompareImagesPage extends StatelessWidget {
             child: imageData['image'] != null
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(6),
-                    child: Image.network(
+                    child: OptimizedImage(imageUrlOrPath: 
                       imageData['image'],
                       fit: BoxFit.cover,
                     ),

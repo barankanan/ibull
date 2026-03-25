@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import '../widgets/web_footer.dart';
 import '../widgets/web_header.dart';
@@ -324,7 +325,7 @@ class OrderConfirmationPage extends StatelessWidget {
       );
     }
     if (path.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         path,
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) {

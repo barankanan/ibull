@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
+import '../core/app_motion.dart';
 import '../core/auth/user_identity.dart';
 import '../core/config/app_feature_flags.dart';
 import '../core/constants.dart';
@@ -81,11 +82,8 @@ class _LoginPageState extends State<LoginPage> {
         if (!mounted) return;
         Navigator.pushReplacement(
           context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                const HomeScreen(initialIndex: 4),
-            transitionDuration: Duration.zero,
-            reverseTransitionDuration: Duration.zero,
+          buildAppPageRoute<void>(
+            builder: (context) => const HomeScreen(initialIndex: 4),
           ),
         );
       } catch (e) {
@@ -291,7 +289,9 @@ class _LoginPageState extends State<LoginPage> {
                               borderRadius: BorderRadius.circular(buttonRadius),
                             ),
                             elevation: 2,
-                            shadowColor: AppColors.primary.withValues(alpha: 0.4),
+                            shadowColor: AppColors.primary.withValues(
+                              alpha: 0.4,
+                            ),
                           ),
                           child: _isLoading
                               ? const SizedBox(
@@ -395,18 +395,9 @@ class _LoginPageState extends State<LoginPage> {
                                     await appState.loginWithGoogle();
                                     if (!mounted) return;
                                     navigator.pushReplacement(
-                                      PageRouteBuilder(
-                                        pageBuilder:
-                                            (
-                                              context,
-                                              animation,
-                                              secondaryAnimation,
-                                            ) => const HomeScreen(
-                                              initialIndex: 4,
-                                            ),
-                                        transitionDuration: Duration.zero,
-                                        reverseTransitionDuration:
-                                            Duration.zero,
+                                      buildAppPageRoute<void>(
+                                        builder: (context) =>
+                                            const HomeScreen(initialIndex: 4),
                                       ),
                                     );
                                   } catch (e) {

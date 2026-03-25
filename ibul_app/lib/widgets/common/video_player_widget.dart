@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:chewie/chewie.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 
@@ -274,10 +275,10 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   Widget _buildThumbnailBackground() {
     final thumb = widget.thumbnailUrl?.trim();
     if (thumb != null && thumb.isNotEmpty) {
-      return Image.network(
-        thumb,
+      return OptimizedImage(
+        imageUrlOrPath: thumb,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(color: Colors.black),
+        errorWidget: Container(color: Colors.black),
       );
     }
     return Container(color: Colors.black);

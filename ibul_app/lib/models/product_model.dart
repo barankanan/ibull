@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../core/app_image_cdn.dart';
+
 class Product {
   final String? productId;
   final String name;
@@ -752,5 +754,20 @@ class Product {
       return specifications ??
           'Detaylı özellikler için mağazamızı ziyaret edin.';
     }
+  }
+}
+
+/// Convenience extension for CDN-transformed image URLs on [Product].
+extension ProductImageX on Product {
+  /// Returns a CDN-transformed URL for this product's primary image.
+  ///
+  /// Falls back to [thumbnailPublicUrl] when [images] is empty, then returns
+  /// an empty string. The variant controls the size/quality applied by the CDN.
+  String imageFor(AppImageVariant variant) {
+    final raw = images.isNotEmpty
+        ? images.first.trim()
+        : (thumbnailPublicUrl?.trim() ?? '');
+    if (raw.isEmpty) return '';
+    return AppImageCdn.buildUrl(raw, variant);
   }
 }

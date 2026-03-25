@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../../models/product_model.dart';
 import '../../models/product_list_model.dart';
+import '../../core/interaction_feedback.dart';
 
 class AddToListModal extends StatefulWidget {
   final Product product;
@@ -231,6 +233,10 @@ class _AddToListModalState extends State<AddToListModal> {
                                     _selectedVisibility,
                                   );
                                   if (!added) {
+                                    InteractionFeedback.forInteraction(
+                                      InteractionFeedbackType.errorState,
+                                      channel: 'create_list_error',
+                                    );
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text(
@@ -240,6 +246,10 @@ class _AddToListModalState extends State<AddToListModal> {
                                     );
                                     return;
                                   }
+                                  InteractionFeedback.forInteraction(
+                                    InteractionFeedbackType.successState,
+                                    channel: 'create_list_success',
+                                  );
                                   Navigator.pop(context);
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
@@ -292,7 +302,10 @@ class _AddToListModalState extends State<AddToListModal> {
             ? ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: list.iconUrl!.startsWith('http')
-                    ? Image.network(list.iconUrl!, fit: BoxFit.cover)
+                    ? OptimizedImage(
+                        imageUrlOrPath: list.iconUrl!,
+                        fit: BoxFit.cover,
+                      )
                     : Image.asset(list.iconUrl!, fit: BoxFit.cover),
               )
             : Icon(Icons.list, color: Colors.grey[600]),
@@ -311,6 +324,10 @@ class _AddToListModalState extends State<AddToListModal> {
       onTap: () {
         final added = widget.onAddToList(list.id);
         if (!added) {
+          InteractionFeedback.forInteraction(
+            InteractionFeedbackType.errorState,
+            channel: 'add_to_list_error',
+          );
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
@@ -320,6 +337,10 @@ class _AddToListModalState extends State<AddToListModal> {
           );
           return;
         }
+        InteractionFeedback.forInteraction(
+          InteractionFeedbackType.successState,
+          channel: 'add_to_list_success',
+        );
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../models/product_model.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
@@ -157,7 +158,7 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage>
             ),
             padding: const EdgeInsets.all(8),
             child: widget.product.images.isNotEmpty
-                ? Image.network(
+                ? OptimizedImage(imageUrlOrPath: 
                     widget.product.images.first,
                     fit: BoxFit.contain,
                     errorBuilder: (context, error, stackTrace) =>

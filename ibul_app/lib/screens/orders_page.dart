@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/user_identity.dart';
 import '../core/constants.dart';
@@ -812,7 +813,7 @@ class _OrdersPageState extends State<OrdersPage> {
                     child: productImage != null
                         ? ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.network(
+                            child: OptimizedImage(imageUrlOrPath: 
                               productImage,
                               fit: BoxFit.cover,
                             ),

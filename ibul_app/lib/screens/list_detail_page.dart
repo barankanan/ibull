@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 
 import '../core/app_state.dart';
@@ -1320,7 +1321,7 @@ class _FlexibleImage extends StatelessWidget {
       return Image.memory(bytes, fit: fit);
     }
     if (image.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         image,
         fit: fit,
         errorBuilder: (_, __, ___) => Container(

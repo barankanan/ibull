@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../core/app_motion.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import 'address_edit_sheet.dart';
@@ -35,7 +36,11 @@ class AddressBar extends StatelessWidget {
             ),
             child: Row(
               children: [
-                const Icon(Icons.location_on, color: AppColors.primary, size: 18),
+                const Icon(
+                  Icons.location_on,
+                  color: AppColors.primary,
+                  size: 18,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -48,19 +53,23 @@ class AddressBar extends StatelessWidget {
                 const SizedBox(width: 8),
                 GestureDetector(
                   onTap: () {
-                    showModalBottomSheet(
+                    showAppModalBottomSheet<void>(
                       context: context,
                       isScrollControlled: true,
                       shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(20),
+                        ),
                       ),
-                      builder: (context) => AddressSelectionSheet(
-                        onSelected: onAddressChanged,
-                      ),
+                      builder: (context) =>
+                          AddressSelectionSheet(onSelected: onAddressChanged),
                     );
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       border: Border.all(color: AppColors.primary),
                       borderRadius: BorderRadius.circular(12),
@@ -72,7 +81,10 @@ class AddressBar extends StatelessWidget {
                         SizedBox(width: 4),
                         Text(
                           'Değiştir',
-                          style: TextStyle(fontSize: 10, color: AppColors.primary),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.primary,
+                          ),
                         ),
                       ],
                     ),
@@ -101,7 +113,7 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
 
   void _openEditScreen({Map<String, String>? address, int? index}) {
     Navigator.pop(context); // Close selection sheet first
-    showModalBottomSheet(
+    showAppModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -133,14 +145,14 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
           // showModalBottomSheet(...) // Optional, might be annoying if it pops up again
         },
         onDelete: () {
-             if (index != null) {
-               final appState = context.read<AppState>();
-               if (_selectedTab == 0) {
-                 appState.removeDeliveryAddress(index);
-               } else {
-                 appState.removeBillingInfo(index);
-               }
-             }
+          if (index != null) {
+            final appState = context.read<AppState>();
+            if (_selectedTab == 0) {
+              appState.removeDeliveryAddress(index);
+            } else {
+              appState.removeBillingInfo(index);
+            }
+          }
         },
       ),
     );
@@ -150,10 +162,17 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
   Widget build(BuildContext context) {
     return Consumer<AppState>(
       builder: (context, appState, _) {
-        final list = _selectedTab == 0 ? appState.deliveryAddresses : appState.billingInfos;
-        
+        final list = _selectedTab == 0
+            ? appState.deliveryAddresses
+            : appState.billingInfos;
+
         return Container(
-          padding: const EdgeInsets.only(top: 20, left: 16, right: 16, bottom: 40),
+          padding: const EdgeInsets.only(
+            top: 20,
+            left: 16,
+            right: 16,
+            bottom: 40,
+          ),
           height: MediaQuery.of(context).size.height * 0.6,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -191,19 +210,35 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
                           size: 20,
                         ),
                       ),
-                      title: Text(item['title']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      subtitle: Text(item['detail']!, style: const TextStyle(fontSize: 12), maxLines: 2, overflow: TextOverflow.ellipsis),
+                      title: Text(
+                        item['title']!,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      subtitle: Text(
+                        item['detail']!,
+                        style: const TextStyle(fontSize: 12),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       trailing: IconButton(
-                        icon: const Icon(Icons.edit_outlined, size: 20, color: Colors.grey),
-                        onPressed: () => _openEditScreen(address: item, index: index),
+                        icon: const Icon(
+                          Icons.edit_outlined,
+                          size: 20,
+                          color: Colors.grey,
+                        ),
+                        onPressed: () =>
+                            _openEditScreen(address: item, index: index),
                       ),
                       onTap: () {
-                         if (widget.onSelected != null) {
-                           widget.onSelected!(item['detail']!); 
-                           Navigator.pop(context);
-                         } else {
-                           _openEditScreen(address: item, index: index);
-                         }
+                        if (widget.onSelected != null) {
+                          widget.onSelected!(item['detail']!);
+                          Navigator.pop(context);
+                        } else {
+                          _openEditScreen(address: item, index: index);
+                        }
                       },
                     );
                   },
@@ -215,11 +250,15 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
                 child: ElevatedButton.icon(
                   onPressed: () => _openEditScreen(),
                   icon: const Icon(Icons.add),
-                  label: Text(_selectedTab == 0 ? 'Yeni Adres Ekle' : 'Yeni Fatura Ekle'),
+                  label: Text(
+                    _selectedTab == 0 ? 'Yeni Adres Ekle' : 'Yeni Fatura Ekle',
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ),
@@ -252,7 +291,11 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
     );
   }
 
-  Widget _buildTabButton({required String label, required bool isActive, required VoidCallback onTap}) {
+  Widget _buildTabButton({
+    required String label,
+    required bool isActive,
+    required VoidCallback onTap,
+  }) {
     return SizedBox(
       height: 36, // Reduced height as requested
       child: isActive
@@ -262,20 +305,36 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
                 backgroundColor: const Color(0xFF6200EE),
                 foregroundColor: Colors.white,
                 elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
                 padding: EdgeInsets.zero,
               ),
-              child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             )
           : OutlinedButton(
               onPressed: onTap,
               style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xFF6200EE),
                 side: const BorderSide(color: Color(0xFF6200EE)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
                 padding: EdgeInsets.zero,
               ),
-              child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
     );
   }

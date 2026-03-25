@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import 'package:latlong2/latlong.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
@@ -95,7 +96,11 @@ class ProductStoreInfo extends StatelessWidget {
                             if (snap.hasData && snap.data != null && snap.data!.isNotEmpty) {
                               return Padding(
                                 padding: const EdgeInsets.all(6.0),
-                                child: Image.network(snap.data!, fit: BoxFit.contain, errorBuilder: (_, __, ___) => _storeLetter(storeName)),
+                                child: OptimizedImage(
+                                  imageUrlOrPath: snap.data!,
+                                  fit: BoxFit.contain,
+                                  errorWidget: _storeLetter(storeName),
+                                ),
                               );
                             }
                             return _storeLetter(storeName);
@@ -295,7 +300,20 @@ class ProductStoreInfo extends StatelessWidget {
                             if (snap.hasData && snap.data != null && snap.data!.isNotEmpty) {
                               return Padding(
                                 padding: const EdgeInsets.all(4.0),
-                                child: Image.network(snap.data!, fit: BoxFit.contain, errorBuilder: (_, __, ___) => Text(storeName.isNotEmpty ? storeName[0].toUpperCase() : 'T', style: const TextStyle(color: Color(0xFF673AB7), fontSize: 20, fontWeight: FontWeight.bold))),
+                                child: OptimizedImage(
+                                  imageUrlOrPath: snap.data!,
+                                  fit: BoxFit.contain,
+                                  errorWidget: Text(
+                                    storeName.isNotEmpty
+                                        ? storeName[0].toUpperCase()
+                                        : 'T',
+                                    style: const TextStyle(
+                                      color: Color(0xFF673AB7),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
                               );
                             }
                             return Text(storeName.isNotEmpty ? storeName[0].toUpperCase() : 'T', style: const TextStyle(color: Color(0xFF673AB7), fontSize: 20, fontWeight: FontWeight.bold));

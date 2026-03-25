@@ -10,6 +10,10 @@ const String _kIbulGoogleServerClientId = String.fromEnvironment(
 );
 
 class AppRuntimeConfig {
+  static String get rawSupabaseUrl => _kIbulSupabaseUrl;
+
+  static String get rawSupabaseAnonKey => _kIbulSupabaseAnonKey;
+
   static String get supabaseUrl =>
       _requireEnv('IBUL_SUPABASE_URL', _kIbulSupabaseUrl);
 

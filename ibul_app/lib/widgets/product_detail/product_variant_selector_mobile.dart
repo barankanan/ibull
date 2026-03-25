@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 
@@ -901,10 +902,10 @@ class _PreviewImage extends StatelessWidget {
       return Container(color: Colors.grey.shade100);
     }
     if (v.startsWith('http')) {
-      return Image.network(
-        v,
+      return OptimizedImage(
+        imageUrlOrPath: v,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade100),
+        errorWidget: Container(color: Colors.grey.shade100),
       );
     }
     return Image.asset(

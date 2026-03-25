@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'auth/user_identity.dart';
 import 'cart_state.dart';
@@ -17,6 +18,10 @@ import '../models/product_list_price_change.dart';
 
 /// Global uygulama state'i - favoriler ve sepet
 /// Provider pattern ile yönetilmektedir.
+part 'app_state_auth.dart';
+part 'app_state_profile.dart';
+part 'app_state_cart_favorites.dart';
+
 class AppState extends ChangeNotifier {
   static final AppState _instance = AppState._internal();
   factory AppState() => _instance;
@@ -24,13 +29,16 @@ class AppState extends ChangeNotifier {
   final FavoriteState _favoriteState = FavoriteState();
   final ReviewState _reviewState = ReviewState();
   final ProductListService _productListService = ProductListService.instance;
+  Future<SharedPreferences>? _prefsFuture;
+  bool _notifyScheduled = false;
+  bool _pendingNotifyAfterBatch = false;
+  int _batchedMutationDepth = 0;
+  bool _startupHydrationScheduled = false;
 
   AppState._internal() {
     _initAuth();
     _loadLocalCollections(requestVersion: _authStateVersion);
-    _loadSearchHistory();
-    _loadPersistedProductQuestions();
-    _loadPersistedProductLists();
+    _scheduleStartupHydration();
     _cartState.addListener(_handleCartStateChanged);
     _favoriteState.addListener(notifyListeners);
     _reviewState.addListener(notifyListeners);
@@ -50,13 +58,72 @@ class AppState extends ChangeNotifier {
   // Kullanıcı bilgileri
   Map<String, dynamic>? _currentUser;
 
+  Future<SharedPreferences> _getPrefs() =>
+      _prefsFuture ??= SharedPreferences.getInstance();
+
+  Future<T> _runBatchedAsync<T>(Future<T> Function() action) async {
+    _batchedMutationDepth++;
+    try {
+      return await action();
+    } finally {
+      _batchedMutationDepth--;
+      if (_batchedMutationDepth == 0 && _pendingNotifyAfterBatch) {
+        _pendingNotifyAfterBatch = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void _scheduleStartupHydration() {
+    if (_startupHydrationScheduled) return;
+    _startupHydrationScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_hydrateStartupState());
+    });
+  }
+
+  Future<void> _hydrateStartupState() async {
+    try {
+      await _runBatchedAsync(() async {
+        await Future.wait<void>([
+          _loadSearchHistory(),
+          _loadPersistedProductQuestions(),
+          _loadPersistedProductLists(),
+        ]);
+      });
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('AppState deferred startup hydration failed: $error');
+      }
+    }
+  }
+
+  @override
+  void notifyListeners() {
+    if (_batchedMutationDepth > 0) {
+      _pendingNotifyAfterBatch = true;
+      return;
+    }
+    if (_notifyScheduled) {
+      return;
+    }
+    _notifyScheduled = true;
+    scheduleMicrotask(() {
+      _notifyScheduled = false;
+      if (hasListeners) {
+        super.notifyListeners();
+      }
+    });
+  }
+
   Map<String, dynamic>? get currentUser => _currentUser;
   bool get isLoggedIn => _currentUser != null;
 
   // Search History Persistence
   Future<void> _loadSearchHistory() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       final history = prefs.getStringList('search_history');
       if (history != null) {
         _searchHistory.clear();
@@ -72,7 +139,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _saveSearchHistory() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       await prefs.setStringList('search_history', _searchHistory);
     } catch (e) {
       if (kDebugMode) {
@@ -130,7 +197,7 @@ class AppState extends ChangeNotifier {
   Future<dynamic> _loadUserCachedField(String field) async {
     final key = _userCacheKey(field);
     if (key == null) return null;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     final raw = prefs.getString(key);
     if (raw == null || raw.isEmpty) return null;
     try {
@@ -143,7 +210,7 @@ class AppState extends ChangeNotifier {
   Future<void> _persistUserCachedField(String field, dynamic value) async {
     final key = _userCacheKey(field);
     if (key == null) return;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(key, jsonEncode(value));
   }
 
@@ -167,7 +234,7 @@ class AppState extends ChangeNotifier {
   Future<dynamic> _loadDeviceCachedField(String field) async {
     final key = _deviceCacheKey(field);
     if (key == null) return null;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     final raw = prefs.getString(key);
     if (raw == null || raw.isEmpty) return null;
     try {
@@ -180,12 +247,12 @@ class AppState extends ChangeNotifier {
   Future<void> _persistDeviceCachedField(String field, dynamic value) async {
     final key = _deviceCacheKey(field);
     if (key == null) return;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.setString(key, jsonEncode(value));
   }
 
   Future<void> _persistCurrentDeliveryAddressLocal() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     if ((_currentDeliveryAddress ?? '').trim().isEmpty) {
       await prefs.remove(_deviceCurrentDeliveryAddressKey);
       return;
@@ -213,83 +280,8 @@ class AppState extends ChangeNotifier {
     ]);
   }
 
-  Future<void> _loadLocalCollections({int? requestVersion}) async {
-    try {
-      final localFavorites = await _loadDeviceCachedField('favorites');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (localFavorites is List) {
-        _favoriteState.replaceFavorites(
-          localFavorites.whereType<Map>().map(
-            (e) => Product.fromJson(Map<String, dynamic>.from(e)),
-          ),
-          notify: false,
-        );
-      }
-
-      final localCart = await _loadDeviceCachedField('cart');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (localCart is List) {
-        _cartState.replaceCart(
-          localCart.whereType<Map>().map(
-            (e) => Product.fromJson(Map<String, dynamic>.from(e)),
-          ),
-          notify: false,
-        );
-        await _resolveLegacyCartProductIds(requestVersion: requestVersion);
-      }
-
-      final localAddresses = await _loadDeviceCachedField('addresses');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (localAddresses is List) {
-        _deliveryAddresses
-          ..clear()
-          ..addAll(
-            localAddresses.whereType<Map>().map(
-              (e) => Map<String, String>.from(e),
-            ),
-          );
-      }
-
-      final localCards = await _loadDeviceCachedField('savedCards');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (localCards is List) {
-        _savedCards
-          ..clear()
-          ..addAll(
-            localCards.whereType<Map>().map((e) => Map<String, String>.from(e)),
-          );
-      }
-
-      final localFollowed = await _loadDeviceCachedField('followedStores');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (localFollowed is List) {
-        _followedStores
-          ..clear()
-          ..addAll(
-            localFollowed.whereType<Map>().map(
-              (e) => Map<String, dynamic>.from(e),
-            ),
-          );
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      final persistedCurrentAddress = prefs.getString(
-        _deviceCurrentDeliveryAddressKey,
-      );
-      if ((persistedCurrentAddress ?? '').trim().isNotEmpty) {
-        _currentDeliveryAddress = persistedCurrentAddress!.trim();
-      } else if (_deliveryAddresses.isNotEmpty) {
-        _currentDeliveryAddress = _deliveryAddresses.first['detail'];
-      }
-
-      followedStoresNotifier.value = List<Map<String, dynamic>>.from(
-        _followedStores,
-      );
-      _handleCartStateChanged();
-    } catch (e) {
-      debugPrint('AppState local collections load warn: $e');
-    }
-  }
+  Future<void> _loadLocalCollections({int? requestVersion}) =>
+      _loadLocalCollectionsImpl(requestVersion: requestVersion);
 
   bool _hasMeaningfulData(dynamic value) {
     if (value is List) return value.isNotEmpty;
@@ -328,7 +320,7 @@ class AppState extends ChangeNotifier {
   Future<void> _restoreCurrentDeliveryAddressFromLocal({
     int? requestVersion,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
 
     final persistedCurrentAddress = prefs.getString(
@@ -351,182 +343,14 @@ class AppState extends ChangeNotifier {
   }
 
   // Kullanıcı verilerini Firestore'dan yükle
-  Future<void> _loadUserData({int? requestVersion}) async {
-    _clearUserData(); // Önce temizle
+  Future<void> _loadUserData({int? requestVersion}) =>
+      _loadUserDataImpl(requestVersion: requestVersion);
 
-    try {
-      // 1. Favoriler
-      final favoritesData = await _authService.getUserDataField('favorites');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      final resolvedFavorites = await _resolveUserCollectionValue(
-        'favorites',
-        favoritesData,
-        requestVersion: requestVersion,
-      );
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (resolvedFavorites != null && resolvedFavorites is List) {
-        _favoriteState.replaceFavorites(
-          resolvedFavorites.map(
-            (e) => Product.fromJson(Map<String, dynamic>.from(e)),
-          ),
-        );
-      }
+  Future<void> loginWithGoogle() => _loginWithGoogleImpl();
 
-      // 2. Sepet
-      final cartData = await _authService.getUserDataField('cart');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      final resolvedCart = await _resolveUserCollectionValue(
-        'cart',
-        cartData,
-        requestVersion: requestVersion,
-      );
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (resolvedCart != null && resolvedCart is List) {
-        _cartState.replaceCart(
-          resolvedCart.map(
-            (e) => Product.fromJson(Map<String, dynamic>.from(e)),
-          ),
-        );
-        await _resolveLegacyCartProductIds(requestVersion: requestVersion);
-        if (requestVersion != null && _isStaleAuthRequest(requestVersion)) {
-          return;
-        }
-      }
+  Future<void> logout() => _logoutImpl();
 
-      // 3. Adresler
-      final addressesData = await _authService.getUserDataField('addresses');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      final resolvedAddresses = await _resolveUserCollectionValue(
-        'addresses',
-        addressesData,
-        requestVersion: requestVersion,
-      );
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (resolvedAddresses != null && resolvedAddresses is List) {
-        _deliveryAddresses.addAll(
-          resolvedAddresses.map((e) => Map<String, String>.from(e)),
-        );
-      }
-
-      // 4. Takip Edilen Mağazalar
-      final followedData = await _authService.getUserDataField(
-        'followedStores',
-      );
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      final resolvedFollowed = await _resolveUserCollectionValue(
-        'followedStores',
-        followedData,
-        requestVersion: requestVersion,
-      );
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (resolvedFollowed != null && resolvedFollowed is List) {
-        _followedStores.addAll(
-          resolvedFollowed.map((e) => Map<String, dynamic>.from(e)),
-        );
-      }
-
-      // 5. Kayıtlı Kartlar
-      final cardsData = await _authService.getUserDataField('savedCards');
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      final resolvedCards = await _resolveUserCollectionValue(
-        'savedCards',
-        cardsData,
-        requestVersion: requestVersion,
-      );
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-      if (resolvedCards != null && resolvedCards is List) {
-        _savedCards.addAll(
-          resolvedCards.map((e) => Map<String, String>.from(e)),
-        );
-      }
-
-      await _restoreCurrentDeliveryAddressFromLocal(
-        requestVersion: requestVersion,
-      );
-      if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
-
-      var productListsLoadedFromSocialTables = false;
-      try {
-        final remoteLists = await _productListService.getOwnedLists();
-        if (requestVersion != null && _isStaleAuthRequest(requestVersion)) {
-          return;
-        }
-        if (remoteLists.isNotEmpty) {
-          _productLists
-            ..clear()
-            ..addAll(remoteLists.map(_decorateProductList));
-          productListsLoadedFromSocialTables = true;
-        }
-      } catch (_) {}
-
-      if (!productListsLoadedFromSocialTables) {
-        final productListsData = await _authService.getUserDataField(
-          'product_lists',
-        );
-        if (requestVersion != null && _isStaleAuthRequest(requestVersion)) {
-          return;
-        }
-        if (productListsData != null && productListsData is List) {
-          _productLists
-            ..clear()
-            ..addAll(
-              productListsData
-                  .whereType<Map>()
-                  .map(
-                    (e) => _decorateProductList(
-                      ProductList.fromJson(Map<String, dynamic>.from(e)),
-                    ),
-                  )
-                  .toList(),
-            );
-          unawaited(_syncAllProductListsToRemote());
-        } else {
-          await _loadPersistedProductLists();
-          if (requestVersion != null && _isStaleAuthRequest(requestVersion)) {
-            return;
-          }
-          unawaited(_syncAllProductListsToRemote());
-        }
-      }
-
-      unawaited(refreshCommunityLists());
-
-      notifyListeners();
-      await Future.wait([
-        _persistUserCachedField(
-          'favorites',
-          favorites.map((e) => e.toJson()).toList(),
-        ),
-        _persistUserCachedField('cart', cart.map((e) => e.toJson()).toList()),
-        _persistUserCachedField('addresses', _deliveryAddresses),
-        _persistUserCachedField('followedStores', _followedStores),
-        _persistUserCachedField('savedCards', _savedCards),
-        _persistAllCollectionsLocal(),
-      ]);
-    } catch (e) {
-      debugPrint('Veri yükleme hatası: $e');
-    }
-  }
-
-  Future<void> loginWithGoogle() async {
-    await _authService.signInWithGoogle();
-  }
-
-  Future<void> logout() async {
-    await _authService.signOut();
-    _currentUser = null;
-    _productLists.clear();
-    _communityProductLists.clear();
-    notifyListeners();
-  }
-
-  Future<void> deleteAccount() async {
-    await _authService.deleteAccount();
-    _currentUser = null;
-    _productLists.clear();
-    _communityProductLists.clear();
-    notifyListeners();
-  }
+  Future<void> deleteAccount() => _deleteAccountImpl();
 
   Future<void> updateUserProfile({
     String? displayName,
@@ -537,33 +361,16 @@ class AppState extends ChangeNotifier {
     String? style,
     String? phone,
     String? address,
-  }) async {
-    await _authService.updateUserProfile(
-      displayName: displayName,
-      weight: weight,
-      height: height,
-      gender: gender,
-      birthDate: birthDate,
-      style: style,
-      phone: phone,
-      address: address,
-    );
-    // Refresh user data locally
-    if (_currentUser != null) {
-      if (displayName != null) {
-        _currentUser!['displayName'] = displayName;
-        _currentUser!['name'] = displayName;
-      }
-      if (weight != null) _currentUser!['weight'] = weight;
-      if (height != null) _currentUser!['height'] = height;
-      if (gender != null) _currentUser!['gender'] = gender;
-      if (birthDate != null) _currentUser!['birthDate'] = birthDate;
-      if (style != null) _currentUser!['style'] = style;
-      if (phone != null) _currentUser!['phone'] = phone;
-      if (address != null) _currentUser!['address'] = address;
-      notifyListeners();
-    }
-  }
+  }) => _updateUserProfileImpl(
+    displayName: displayName,
+    weight: weight,
+    height: height,
+    gender: gender,
+    birthDate: birthDate,
+    style: style,
+    phone: phone,
+    address: address,
+  );
 
   // Deprecated: used for mock login previously
   void login(String name, String email) {
@@ -591,11 +398,8 @@ class AppState extends ChangeNotifier {
   String? _currentDeliveryAddress;
   String? get currentDeliveryAddress => _currentDeliveryAddress;
 
-  void setCurrentDeliveryAddress(String address) {
-    _currentDeliveryAddress = address;
-    unawaited(_persistCurrentDeliveryAddressLocal());
-    notifyListeners();
-  }
+  void setCurrentDeliveryAddress(String address) =>
+      _setCurrentDeliveryAddressImpl(address);
 
   // Kayıtlı Adresler (Varsayılan olarak boş, misafir için doldurulacak)
   final List<Map<String, String>> _deliveryAddresses = [];
@@ -614,7 +418,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _loadPersistedProductQuestions() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       final rawQuestions = prefs.getString('product_questions_v1');
       _productQuestions
         ..clear()
@@ -643,7 +447,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _persistProductQuestions() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       await prefs.setString(
         'product_questions_v1',
         jsonEncode(_productQuestions),
@@ -657,7 +461,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _loadPersistedProductLists() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       final raw = prefs.getString('product_lists_v1');
       if (raw == null || raw.isEmpty) return;
       final decoded = jsonDecode(raw);
@@ -691,7 +495,7 @@ class AppState extends ChangeNotifier {
       _productLists.map((list) => list.toJson()).toList(),
     );
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       await prefs.setString('product_lists_v1', encoded);
     } catch (e) {
       if (kDebugMode) {
@@ -1532,13 +1336,7 @@ class AppState extends ChangeNotifier {
     return _favoriteState.isFavorite(product);
   }
 
-  void toggleFavorite(Product product) {
-    _favoriteState.toggleFavorite(product);
-
-    final payload = favorites.map((p) => p.toJson()).toList();
-    unawaited(_persistUserCollection('favorites', payload));
-    _syncPushInterests();
-  }
+  void toggleFavorite(Product product) => _toggleFavoriteImpl(product);
 
   void _syncPushInterests() {
     final favoriteTerms = favorites.map((p) => p.name).toList();
@@ -1573,17 +1371,7 @@ class AppState extends ChangeNotifier {
     return _cartState.isInCart(product);
   }
 
-  void addToCart(Product product) {
-    final resolvedProduct = product.copyWith(
-      productId: (product.productId ?? '').trim().isEmpty
-          ? null
-          : product.productId,
-    );
-    _cartState.addOrReplace(resolvedProduct);
-    _clearCartAttention(resolvedProduct);
-    _persistCartState();
-    _syncPushInterests();
-  }
+  void addToCart(Product product) => _addToCartImpl(product);
 
   void updateProductServices(Product product, List<String> services) {
     _cartState.updateProductServices(product, services);
@@ -1591,12 +1379,7 @@ class AppState extends ChangeNotifier {
     _syncPushInterests();
   }
 
-  void removeFromCart(Product product) {
-    _cartState.remove(product);
-    _clearCartAttention(product);
-    _persistCartState();
-    _syncPushInterests();
-  }
+  void removeFromCart(Product product) => _removeFromCartImpl(product);
 
   void clearCart() {
     _cartState.clear();

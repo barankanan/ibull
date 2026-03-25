@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/mobile_category_catalog.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
@@ -79,7 +80,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     );
 
     if (category.imageUrl != null && category.imageUrl!.isNotEmpty) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         category.imageUrl!,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) =>
@@ -98,7 +99,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     );
 
     if (category.imageUrl != null && category.imageUrl!.isNotEmpty) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         category.imageUrl!,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) =>

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/app_state.dart';
@@ -820,10 +821,10 @@ class _ReviewImage extends StatelessWidget {
       return Image.memory(bytes, fit: BoxFit.cover);
     }
     if (url.startsWith('http')) {
-      return Image.network(
-        url,
+      return OptimizedImage(
+        imageUrlOrPath: url,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _fallback(),
+        errorWidget: _fallback(),
       );
     }
     return Image.asset(

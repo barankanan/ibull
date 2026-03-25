@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../../constants/ads_defaults.dart';
 import '../../enums/ad_enums.dart';
@@ -2405,7 +2406,7 @@ class _CampaignWizardPageState extends State<CampaignWizardPage> {
                 if ((option.imageUrl ?? '').isNotEmpty)
                   ClipRRect(
                     borderRadius: BorderRadius.circular(14),
-                    child: Image.network(
+                    child: OptimizedImage(imageUrlOrPath: 
                       option.imageUrl!,
                       width: 52,
                       height: 52,

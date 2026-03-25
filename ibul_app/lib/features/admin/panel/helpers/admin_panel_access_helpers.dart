@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/admin_menu_registry.dart';
 import '../models/admin_panel_definitions.dart';
 import '../widgets/admin_sidebar.dart';
 

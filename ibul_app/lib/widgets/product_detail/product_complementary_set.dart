@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
@@ -188,8 +189,8 @@ class ProductComplementarySet extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                   child: product.images.isNotEmpty
                       ? (product.images.first.startsWith('http')
-                            ? Image.network(
-                                product.images.first,
+                            ? OptimizedImage(
+                                imageUrlOrPath: product.images.first,
                                 fit: BoxFit.contain,
                               )
                             : Image.asset(
@@ -402,8 +403,8 @@ class ProductComplementarySet extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                   child: product.images.isNotEmpty
                       ? (product.images.first.startsWith('http')
-                            ? Image.network(
-                                product.images.first,
+                            ? OptimizedImage(
+                                imageUrlOrPath: product.images.first,
                                 fit: BoxFit.contain,
                               )
                             : Image.asset(

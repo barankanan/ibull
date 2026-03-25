@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../../core/constants.dart';
 import '../../models/db_product.dart';
 import '../../services/database_helper.dart';
@@ -696,7 +697,7 @@ class _ProductAnalyticsViewState extends State<ProductAnalyticsView> {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
-                  child: Image.network(
+                  child: OptimizedImage(imageUrlOrPath: 
                     product.imageUrl,
                     width: 32,
                     height: 32,

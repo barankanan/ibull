@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -2207,7 +2208,7 @@ class _NotificationsPageState extends State<NotificationsPage>
                 ),
               )
             : (logoUrl?.isNotEmpty ?? false)
-            ? Image.network(
+            ? OptimizedImage(imageUrlOrPath: 
                 logoUrl!,
                 fit: BoxFit.cover,
                 errorBuilder: (_, error, stackTrace) => Center(
@@ -2929,7 +2930,7 @@ class _NotificationsPageState extends State<NotificationsPage>
       );
     }
     if (imageUrl.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         imageUrl,
         fit: BoxFit.cover,
         errorBuilder: (_, _, _) => Container(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
@@ -347,7 +348,7 @@ class _AskProductQuestionPageState extends State<AskProductQuestionPage> {
       );
     }
     if (path.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         path,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) => _placeholder(),

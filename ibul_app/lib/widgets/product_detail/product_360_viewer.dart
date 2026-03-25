@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 
 class Product360Viewer extends StatefulWidget {
   final List<String> imageUrls;
@@ -36,7 +37,13 @@ class _Product360ViewerState extends State<Product360Viewer> {
     // Basic precaching logic
     for (var url in widget.imageUrls) {
       if (url.startsWith('http')) {
-        precacheImage(NetworkImage(url), context);
+        final provider = OptimizedImage.buildContextAwareProvider(
+          context: context,
+          imageUrlOrPath: url,
+        );
+        if (provider != null) {
+          precacheImage(provider, context);
+        }
       } else {
         precacheImage(AssetImage(url), context);
       }
@@ -117,10 +124,11 @@ class _Product360ViewerState extends State<Product360Viewer> {
   Widget _buildImage(String url) {
     // Keep aspect ratio or fit logic consistent with your app
     if (url.startsWith('http')) {
-      return Image.network(
-        url,
+      return OptimizedImage(
+        imageUrlOrPath: url,
         gaplessPlayback: true, // Important for smooth transitions
         fit: BoxFit.contain,
+        priority: OptimizedImagePriority.lazy,
       );
     } else {
       return Image.asset(

@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../../widgets/premium_interactions.dart';
+import 'admin_panel_section_label.dart';
+import 'admin_profile_footer.dart';
+
 class AdminPanelMenuEntry {
   const AdminPanelMenuEntry({
     required this.icon,
@@ -24,6 +28,75 @@ class AdminPanelMenuSectionEntry {
   final String label;
   final IconData icon;
   final List<AdminPanelMenuEntry> items;
+}
+
+class AdminSidebar extends StatelessWidget {
+  const AdminSidebar({
+    super.key,
+    required this.panelTitle,
+    required this.menuSections,
+    required this.operationSelector,
+    required this.adminName,
+    required this.adminEmail,
+    required this.onLogoutTap,
+  });
+
+  final String panelTitle;
+  final List<AdminPanelMenuSectionEntry> menuSections;
+  final Widget operationSelector;
+  final String adminName;
+  final String adminEmail;
+  final VoidCallback onLogoutTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 280,
+      color: const Color(0xFF111827),
+      child: Column(
+        children: [
+          AdminSidebarHeader(panelTitle: panelTitle),
+          operationSelector,
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: menuSections
+                  .expand(
+                    (section) => [
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          left: 4,
+                          right: 4,
+                          bottom: 10,
+                          top: 8,
+                        ),
+                        child: AdminPanelSectionLabel(
+                          label: section.label,
+                          icon: section.icon,
+                          iconColor: Colors.white70,
+                          textColor: Colors.white70,
+                          fontSize: 11,
+                        ),
+                      ),
+                      ...section.items.map(
+                        (entry) => AdminSidebarMenuItem(entry: entry),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  )
+                  .toList(growable: false),
+            ),
+          ),
+          AdminProfileFooter(
+            adminName: adminName,
+            adminEmail: adminEmail,
+            onLogoutTap: onLogoutTap,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class AdminSidebarHeader extends StatelessWidget {
@@ -78,39 +151,10 @@ class AdminSidebarFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Row(
-        children: [
-          const CircleAvatar(
-            backgroundColor: Color(0xFF8B5CF6),
-            radius: 16,
-            child: Text(
-              'BK',
-              style: TextStyle(color: Colors.white, fontSize: 12),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                adminName,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-              ),
-              Text(
-                adminEmail,
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
-              ),
-            ],
-          ),
-          const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white54, size: 20),
-            onPressed: onLogoutTap,
-          ),
-        ],
-      ),
+    return AdminProfileFooter(
+      adminName: adminName,
+      adminEmail: adminEmail,
+      onLogoutTap: onLogoutTap,
     );
   }
 }
@@ -122,34 +166,41 @@ class AdminSidebarMenuItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: entry.onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: entry.isActive ? const Color(0xFF8B5CF6) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              entry.icon,
-              color: entry.isActive ? Colors.white : Colors.grey.shade400,
-              size: 20,
-            ),
-            const SizedBox(width: 12),
-            Text(
-              entry.title,
-              style: TextStyle(
+    return PremiumPressable(
+      hoverLift: 1,
+      hoverScale: 1.008,
+      child: InkWell(
+        onTap: entry.onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: entry.isActive
+                ? const Color(0xFF8B5CF6)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                entry.icon,
                 color: entry.isActive ? Colors.white : Colors.grey.shade400,
-                fontSize: 14,
-                fontWeight: entry.isActive
-                    ? FontWeight.w600
-                    : FontWeight.normal,
+                size: 20,
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Text(
+                entry.title,
+                style: TextStyle(
+                  color: entry.isActive ? Colors.white : Colors.grey.shade400,
+                  fontSize: 14,
+                  fontWeight: entry.isActive
+                      ? FontWeight.w600
+                      : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

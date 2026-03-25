@@ -5,6 +5,7 @@ import '../../screens/home_screen.dart';
 import '../../screens/checkout_page.dart';
 import '../../screens/business_detail_page.dart';
 import '../../core/app_state.dart';
+import '../../core/interaction_feedback.dart';
 import '../../screens/login_page.dart';
 
 class ProductBottomBar extends StatefulWidget {
@@ -192,8 +193,15 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                               _showLoginRequiredDialog(context);
                               return;
                             }
+                            InteractionFeedback.forInteraction(
+                              InteractionFeedbackType.addToCart,
+                            );
                             if (viewModel.isAddedToCart) {
                               viewModel.removeFromCart();
+                              InteractionFeedback.forInteraction(
+                                InteractionFeedbackType.successState,
+                                channel: 'cart_remove_success',
+                              );
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text('Ürün sepetten çıkarıldı'),
@@ -202,6 +210,10 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                               );
                             } else {
                               viewModel.addToCart();
+                              InteractionFeedback.forInteraction(
+                                InteractionFeedbackType.successState,
+                                channel: 'cart_add_success',
+                              );
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text('Ürün sepete eklendi'),
@@ -242,6 +254,9 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                               _showLoginRequiredDialog(context);
                               return;
                             }
+                            InteractionFeedback.forInteraction(
+                              InteractionFeedbackType.mainCta,
+                            );
                             viewModel.addToCart();
                             double price = _parsePrice(viewModel.totalPrice);
                             final selectedProducts = [
@@ -334,6 +349,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
   }
 
   void _onDiningMode(BuildContext context, ProductDetailViewModel viewModel) {
+    InteractionFeedback.forInteraction(InteractionFeedbackType.mainCta);
     final product = viewModel.displayProduct;
     final storeName = (product.store ?? product.brand).toString();
     final business = {
@@ -362,6 +378,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
       _showLoginRequiredDialog(context);
       return;
     }
+    InteractionFeedback.forInteraction(InteractionFeedbackType.mainCta);
     viewModel.addToCart();
     Navigator.pushAndRemoveUntil(
       context,

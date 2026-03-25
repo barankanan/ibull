@@ -13,7 +13,7 @@ import '../../../../screens/admin/permission_system_page.dart';
 import '../../../../screens/admin/product_approval/product_approval_page.dart';
 import '../../../../screens/admin/store_management_page.dart';
 import '../../../../screens/admin/support_complaints_page.dart';
-import 'admin_panel_state_widgets.dart';
+import '../widgets/admin_panel_state_widgets.dart';
 
 Widget buildAdminPanelContent({
   required String selectedMenu,

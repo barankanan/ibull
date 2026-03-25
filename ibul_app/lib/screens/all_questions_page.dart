@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
@@ -374,7 +375,7 @@ class _AllQuestionsPageState extends State<AllQuestionsPage> {
   Widget _buildImage(String path) {
     if (path.isEmpty) return _placeholder();
     if (path.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         path,
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _placeholder(),

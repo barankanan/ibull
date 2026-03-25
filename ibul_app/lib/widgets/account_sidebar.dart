@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../core/app_motion.dart';
 import '../core/constants.dart';
 import '../screens/orders_page.dart';
 import '../screens/favorites_page.dart';
@@ -7,10 +10,7 @@ import '../screens/reviews_page.dart';
 import '../screens/settings_page.dart';
 import '../screens/account_page.dart';
 import '../screens/followed_stores_page.dart';
-
 import '../screens/addresses_page.dart';
-
-import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 import '../core/auth/user_identity.dart';
 
@@ -18,6 +18,13 @@ class AccountSidebar extends StatelessWidget {
   final String activePage;
 
   const AccountSidebar({super.key, required this.activePage});
+
+  void _pushReplacementPage(BuildContext context, Widget page) {
+    Navigator.pushReplacement(
+      context,
+      buildAppPageRoute<void>(builder: (_) => page),
+    );
+  }
 
   Future<void> _logout(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -125,15 +132,7 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Hesap Özeti',
             onTap: () {
               if (activePage != 'Hesap Özeti') {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) =>
-                        const AccountPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
+                _pushReplacementPage(context, const AccountPage());
               }
             },
           ),
@@ -144,15 +143,7 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Siparişlerim',
             onTap: () {
               if (activePage != 'Siparişlerim') {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) =>
-                        const OrdersPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
+                _pushReplacementPage(context, const OrdersPage());
               }
             },
           ),
@@ -164,15 +155,7 @@ class AccountSidebar extends StatelessWidget {
             onTap: () {
               // Navigation logic here
               if (activePage != 'Favorilerim') {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) =>
-                        const FavoritesPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
+                _pushReplacementPage(context, const FavoritesPage());
               }
             },
           ),
@@ -183,15 +166,7 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Kuponlarım',
             onTap: () {
               if (activePage != 'Kuponlarım') {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) =>
-                        const CouponsPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
+                _pushReplacementPage(context, const CouponsPage());
               }
             },
           ),
@@ -202,15 +177,7 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Takip Ettiklerim',
             onTap: () {
               if (activePage != 'Takip Ettiklerim') {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) =>
-                        const FollowedStoresPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
+                _pushReplacementPage(context, const FollowedStoresPage());
               }
             },
           ),
@@ -221,15 +188,7 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Adreslerim',
             onTap: () {
               if (activePage != 'Adreslerim') {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) =>
-                        const AddressesPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
+                _pushReplacementPage(context, const AddressesPage());
               }
             },
           ),
@@ -246,15 +205,7 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Değerlendirmelerim',
             onTap: () {
               if (activePage != 'Değerlendirmelerim') {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) =>
-                        const ReviewsPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
+                _pushReplacementPage(context, const ReviewsPage());
               }
             },
           ),
@@ -265,15 +216,7 @@ class AccountSidebar extends StatelessWidget {
             isActive: activePage == 'Ayarlar',
             onTap: () {
               if (activePage != 'Ayarlar') {
-                Navigator.pushReplacement(
-                  context,
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation1, animation2) =>
-                        const SettingsPage(),
-                    transitionDuration: Duration.zero,
-                    reverseTransitionDuration: Duration.zero,
-                  ),
-                );
+                _pushReplacementPage(context, const SettingsPage());
               }
             },
           ),

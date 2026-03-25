@@ -68,6 +68,10 @@ dependencies:
   timezone: ^0.9.4
 
 dev_dependencies:
+  flutter_driver:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 

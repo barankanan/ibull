@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
@@ -197,7 +198,7 @@ class _ListsPageState extends State<ListsPage> {
                         top: Radius.circular(18),
                       ),
                       child: coverImage.startsWith('http')
-                          ? Image.network(coverImage, fit: BoxFit.cover)
+                          ? OptimizedImage(imageUrlOrPath: coverImage, fit: BoxFit.cover)
                           : Image.asset(coverImage, fit: BoxFit.cover),
                     ),
             ),

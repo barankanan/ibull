@@ -1,15 +1,19 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/product_model.dart';
 import '../core/app_state.dart';
+import '../core/app_motion.dart';
 import '../services/auth_service.dart';
 import '../services/search_telemetry_service.dart';
 import '../services/supabase_service.dart';
 import '../widgets/product_card.dart';
 import '../widgets/filter_bottom_sheet.dart';
 import '../widgets/filter_sidebar.dart';
+import '../widgets/optimized_image.dart';
+import '../widgets/staggered_reveal.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../core/constants.dart';
@@ -23,6 +27,16 @@ class SearchResultsPage extends StatefulWidget {
 
   @override
   State<SearchResultsPage> createState() => _SearchResultsPageState();
+}
+
+class _SearchGridMetrics {
+  const _SearchGridMetrics({
+    required this.crossAxisCount,
+    required this.rowExtent,
+  });
+
+  final int crossAxisCount;
+  final double rowExtent;
 }
 
 class _SearchResultsPageState extends State<SearchResultsPage> {
@@ -39,6 +53,8 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
   late List<Product> _filteredResults;
   Map<String, dynamic> _activeFilters = {};
   int _visibleCount = 0;
+  double _lastScrollOffset = 0;
+  final Set<String> _prefetchedImageKeys = <String>{};
 
   // Standard Filters for Sidebar
   final Map<String, List<String>> _standardFilters = {
@@ -136,6 +152,8 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     if (!_scrollController.hasClients) return;
     if (_visibleCount >= _filteredResults.length && _nextCursor == null) return;
 
+    _prefetchDirectionalImages();
+
     final threshold = 300.0;
     if (_scrollController.position.extentAfter < threshold) {
       if (_visibleCount < _filteredResults.length) {
@@ -155,56 +173,200 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     return TextNormalizer.normalize(value);
   }
 
-  List<String> _splitWords(String normalizedText) {
-    return normalizedText
-        .split(RegExp(r'[^a-z0-9]+'))
-        .where((w) => w.isNotEmpty)
+  String _productRevealToken(Product product) {
+    final productId = product.productId?.trim();
+    if (productId != null && productId.isNotEmpty) {
+      return productId;
+    }
+
+    final store = product.store?.trim() ?? '';
+    return '${product.name.trim()}|$store';
+  }
+
+  String? _productPrimaryImageUrl(Product product) {
+    if (product.images.isNotEmpty && product.images.first.trim().isNotEmpty) {
+      return product.images.first.trim();
+    }
+
+    final thumb = product.thumbnailPublicUrl?.trim();
+    if (thumb != null && thumb.isNotEmpty) {
+      return thumb;
+    }
+
+    return null;
+  }
+
+  List<Product> _sameDayProducts() {
+    return _filteredResults
+        .where(
+          (p) =>
+              p.tags.contains('Hızlı Teslimat') ||
+              p.tags.contains('Hızlı Kargo'),
+        )
+        .take(4)
         .toList(growable: false);
   }
 
-  bool _isEditDistanceAtMost1(String a, String b) {
-    final la = a.length;
-    final lb = b.length;
-    final diff = (la - lb).abs();
-    if (diff > 1) return false;
-    if (a == b) return true;
-
-    var i = 0;
-    var j = 0;
-    var edits = 0;
-
-    while (i < la && j < lb) {
-      if (a.codeUnitAt(i) == b.codeUnitAt(j)) {
-        i++;
-        j++;
-        continue;
-      }
-      edits++;
-      if (edits > 1) return false;
-
-      if (la == lb) {
-        i++;
-        j++;
-      } else if (la > lb) {
-        i++;
-      } else {
-        j++;
-      }
-    }
-
-    if (i < la || j < lb) edits++;
-    return edits <= 1;
+  bool _isWebLayout(BuildContext context) {
+    return MediaQuery.of(context).size.width > 900;
   }
 
-  bool _tokenMatchesAnyWord(String token, List<String> words) {
-    for (final w in words) {
-      if (w.contains(token) || token.contains(w)) return true;
-      if (token.length >= 4 &&
-          w.length >= 4 &&
-          _isEditDistanceAtMost1(token, w))
-        return true;
+  _SearchGridMetrics _gridMetricsForContext(BuildContext context) {
+    const webMaxContentWidth = 1400.0;
+    const webHorizontalPadding = 24.0;
+    const webSidebarWidth = 280.0;
+    const webSidebarGap = 24.0;
+    const webSpacing = 16.0;
+    const webMaxCrossAxisExtent = 250.0;
+    const mobileSpacing = 10.0;
+    const gridAspectRatio = 0.65;
+
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (_isWebLayout(context)) {
+      final constrainedWidth = math.min(screenWidth, webMaxContentWidth);
+      final rowWidth =
+          constrainedWidth -
+          (webHorizontalPadding * 2) -
+          webSidebarWidth -
+          webSidebarGap;
+      final safeWidth = math.max(webMaxCrossAxisExtent, rowWidth);
+      final crossAxisCount = math.max(
+        1,
+        ((safeWidth + webSpacing) / (webMaxCrossAxisExtent + webSpacing))
+            .ceil(),
+      );
+      final itemWidth =
+          (safeWidth - (crossAxisCount - 1) * webSpacing) / crossAxisCount;
+
+      return _SearchGridMetrics(
+        crossAxisCount: crossAxisCount,
+        rowExtent: (itemWidth / gridAspectRatio) + webSpacing,
+      );
     }
-    return false;
+
+    final safeWidth = math.max(220.0, screenWidth - 24.0);
+    final itemWidth = (safeWidth - mobileSpacing) / 2;
+    return _SearchGridMetrics(
+      crossAxisCount: 2,
+      rowExtent: (itemWidth / gridAspectRatio) + 12.0,
+    );
+  }
+
+  int _aboveTheFoldResultCount(BuildContext context) {
+    final metrics = _gridMetricsForContext(context);
+    final rows = _isWebLayout(context) ? 2 : 3;
+    return math.min(_filteredResults.length, metrics.crossAxisCount * rows);
+  }
+
+  (int cacheWidth, int cacheHeight) _searchImageCacheSize(
+    BuildContext context,
+  ) {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final isWeb = _isWebLayout(context);
+    final logicalWidth = isWeb ? 198.0 : 188.0;
+    final logicalHeight = isWeb ? 155.0 : 145.0;
+    return (
+      (logicalWidth * dpr).round().clamp(160, 520),
+      (logicalHeight * dpr).round().clamp(160, 520),
+    );
+  }
+
+  void _scheduleInitialImageWarmup() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _filteredResults.isEmpty) {
+        return;
+      }
+
+      final aboveFoldCount = _aboveTheFoldResultCount(context);
+      final metrics = _gridMetricsForContext(context);
+      final sameDayProducts = _sameDayProducts();
+      _prefetchProducts(sameDayProducts);
+      _prefetchProductRange(
+        start: 0,
+        count: aboveFoldCount + (metrics.crossAxisCount * 2),
+      );
+    });
+  }
+
+  void _prefetchDirectionalImages() {
+    if (!mounted || !_scrollController.hasClients || _filteredResults.isEmpty) {
+      return;
+    }
+
+    final position = _scrollController.position;
+    final metrics = _gridMetricsForContext(context);
+    final viewportRows = math.max(
+      1,
+      (position.viewportDimension / metrics.rowExtent).ceil(),
+    );
+    final currentOffset = position.pixels;
+    final firstVisibleRow = math.max(
+      0,
+      (currentOffset / metrics.rowExtent).floor(),
+    );
+    final firstVisibleIndex = firstVisibleRow * metrics.crossAxisCount;
+    final windowItemCount = viewportRows * metrics.crossAxisCount;
+    final prefetchItemCount = metrics.crossAxisCount * 2;
+    final isScrollingDown = currentOffset >= _lastScrollOffset;
+
+    final start = isScrollingDown
+        ? firstVisibleIndex + windowItemCount
+        : math.max(0, firstVisibleIndex - prefetchItemCount);
+
+    _prefetchProductRange(start: start, count: prefetchItemCount);
+    _lastScrollOffset = currentOffset;
+  }
+
+  void _prefetchProductRange({required int start, required int count}) {
+    if (_filteredResults.isEmpty || count <= 0) {
+      return;
+    }
+
+    final safeStart = start.clamp(0, _filteredResults.length);
+    final safeEnd = math.min(_filteredResults.length, safeStart + count);
+    if (safeStart >= safeEnd) {
+      return;
+    }
+
+    _prefetchProducts(_filteredResults.sublist(safeStart, safeEnd));
+  }
+
+  void _prefetchProducts(Iterable<Product> products) {
+    if (!mounted) {
+      return;
+    }
+
+    final (cacheWidth, cacheHeight) = _searchImageCacheSize(context);
+    for (final product in products) {
+      final imageUrl = _productPrimaryImageUrl(product);
+      if (imageUrl == null || !_prefetchedImageKeys.add(imageUrl)) {
+        continue;
+      }
+
+      unawaited(
+        OptimizedImage.prefetch(
+          context: context,
+          imageUrlOrPath: imageUrl,
+          cacheWidth: cacheWidth,
+          cacheHeight: cacheHeight,
+        ),
+      );
+    }
+  }
+
+  Widget _wrapSearchProductReveal({
+    required String scope,
+    required int index,
+    required Product product,
+    required Widget child,
+  }) {
+    return StaggeredReveal(
+      revealId:
+          'search|${widget.query.trim()}|$scope|${_productRevealToken(product)}',
+      index: index,
+      enabled: index < 8,
+      child: child,
+    );
   }
 
   Future<void> _loadAndSearch({bool loadMore = false}) async {
@@ -213,6 +375,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
       if (_nextCursor == null) return;
       setState(() => _isLoadingMore = true);
     } else {
+      _prefetchedImageKeys.clear();
       setState(() {
         _isLoading = true;
         _errorMessage = null;
@@ -224,6 +387,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
         _sidebarSelectedOptions.clear();
         _sidebarPriceRange = const RangeValues(0, double.infinity);
       });
+      _lastScrollOffset = 0;
     }
 
     final rawQuery = widget.query.trim();
@@ -278,6 +442,8 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
       if (_activeFilters.isNotEmpty ||
           _sidebarSelectedOptions.values.any((v) => v.isNotEmpty)) {
         _filterResults();
+      } else {
+        _scheduleInitialImageWarmup();
       }
     } catch (e) {
       setState(() {
@@ -344,11 +510,13 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
         // 3. Mobile BottomSheet Filters (_activeFilters)
         if (_activeFilters.isNotEmpty) {
           if (_activeFilters['minPrice'] != null &&
-              price < _activeFilters['minPrice'])
+              price < _activeFilters['minPrice']) {
             return false;
+          }
           if (_activeFilters['maxPrice'] != null &&
-              price > _activeFilters['maxPrice'])
+              price > _activeFilters['maxPrice']) {
             return false;
+          }
 
           if (_activeFilters['brands'] != null &&
               (_activeFilters['brands'] as List).isNotEmpty &&
@@ -357,21 +525,25 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
           }
 
           if (_activeFilters['minRating'] != null &&
-              product.rating < _activeFilters['minRating'])
+              product.rating < _activeFilters['minRating']) {
             return false;
+          }
 
           if (_activeFilters['freeShipping'] == true &&
-              !product.tags.contains('Ücretsiz Kargo'))
+              !product.tags.contains('Ücretsiz Kargo')) {
             return false;
+          }
           if (_activeFilters['fastShipping'] == true &&
-              !product.tags.contains('Hızlı Kargo'))
+              !product.tags.contains('Hızlı Kargo')) {
             return false;
+          }
         }
 
         return true;
       }).toList();
       _visibleCount = (_filteredResults.length).clamp(0, 20);
     });
+    _scheduleInitialImageWarmup();
   }
 
   void _applyFilters(Map<String, dynamic> filters) {
@@ -442,9 +614,8 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
             onSearch: (q) {
               Navigator.pushReplacement(
                 context,
-                PageRouteBuilder(
-                  pageBuilder: (_, __, ___) => SearchResultsPage(query: q),
-                  transitionDuration: Duration.zero,
+                buildAppPageRoute<void>(
+                  builder: (_) => SearchResultsPage(query: q),
                 ),
               );
             },
@@ -471,9 +642,8 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
             onSearch: (q) {
               Navigator.pushReplacement(
                 context,
-                PageRouteBuilder(
-                  pageBuilder: (_, __, ___) => SearchResultsPage(query: q),
-                  transitionDuration: Duration.zero,
+                buildAppPageRoute<void>(
+                  builder: (_) => SearchResultsPage(query: q),
                 ),
               );
             },
@@ -503,240 +673,262 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     }
 
     // Filter products for "Bugün Kapında" (mock logic: products with "Hızlı Teslimat" tag)
-    final sameDayProducts = _filteredResults
-        .where(
-          (p) =>
-              p.tags.contains('Hızlı Teslimat') ||
-              p.tags.contains('Hızlı Kargo'),
-        )
-        .take(4)
-        .toList();
+    final sameDayProducts = _sameDayProducts();
+    final aboveFoldCount = _aboveTheFoldResultCount(context);
 
-    return Column(
-      children: [
-        WebHeader(
-          initialQuery: widget.query,
-          onSearch: (q) {
-            // Navigate to new search or update current
-            Navigator.pushReplacement(
-              context,
-              PageRouteBuilder(
-                pageBuilder: (_, __, ___) => SearchResultsPage(query: q),
-                transitionDuration: Duration.zero,
-              ),
-            );
-          },
-          onCategorySelected: (category) {
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(
-                builder: (context) => HomeScreen(initialCategory: category),
-              ),
-              (route) => false,
-            );
-          },
-        ),
-        Expanded(
-          child: SingleChildScrollView(
-            controller: _scrollController,
-            child: Column(
-              children: [
-                const SizedBox(height: 24),
+    const maxContentWidth = 1400.0;
+    const horizontalPadding = 24.0;
+    const sidebarWidth = 280.0;
+    const sidebarGap = 24.0;
 
-                // Main Content
-                Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1400),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Left Sidebar
-                          SizedBox(
-                            width: 280,
-                            child: FilterSidebar(
-                              filters: _standardFilters,
-                              onFilterChanged: (key, value, isSelected) {
-                                setState(() {
-                                  if (_sidebarSelectedOptions[key] == null) {
-                                    _sidebarSelectedOptions[key] = {};
-                                  }
-                                  if (isSelected) {
-                                    _sidebarSelectedOptions[key]!.add(value);
-                                  } else {
-                                    _sidebarSelectedOptions[key]!.remove(value);
-                                  }
-                                  _filterResults();
-                                });
-                              },
-                              onPriceRangeChanged: (range) {
-                                setState(() {
-                                  _sidebarPriceRange = range;
-                                  _filterResults();
-                                });
-                              },
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final sideInset = constraints.maxWidth > maxContentWidth
+            ? (constraints.maxWidth - maxContentWidth) / 2
+            : 0.0;
+
+        return Column(
+          children: [
+            WebHeader(
+              initialQuery: widget.query,
+              onSearch: (q) {
+                // Navigate to new search or update current
+                Navigator.pushReplacement(
+                  context,
+                  buildAppPageRoute<void>(
+                    builder: (_) => SearchResultsPage(query: q),
+                  ),
+                );
+              },
+              onCategorySelected: (category) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => HomeScreen(initialCategory: category),
+                  ),
+                  (route) => false,
+                );
+              },
+            ),
+            Expanded(
+              child: CustomScrollView(
+                controller: _scrollController,
+                slivers: [
+                  const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                  SliverPadding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: sideInset + horizontalPadding,
+                    ),
+                    sliver: SliverCrossAxisGroup(
+                      slivers: [
+                        SliverConstrainedCrossAxis(
+                          maxExtent: sidebarWidth + sidebarGap,
+                          sliver: SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: sidebarGap),
+                              child: FilterSidebar(
+                                filters: _standardFilters,
+                                onFilterChanged: (key, value, isSelected) {
+                                  setState(() {
+                                    if (_sidebarSelectedOptions[key] == null) {
+                                      _sidebarSelectedOptions[key] = {};
+                                    }
+                                    if (isSelected) {
+                                      _sidebarSelectedOptions[key]!.add(value);
+                                    } else {
+                                      _sidebarSelectedOptions[key]!.remove(
+                                        value,
+                                      );
+                                    }
+                                    _filterResults();
+                                  });
+                                },
+                                onPriceRangeChanged: (range) {
+                                  setState(() {
+                                    _sidebarPriceRange = range;
+                                    _filterResults();
+                                  });
+                                },
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 24),
-
-                          // Right Content
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // "Bugün Kapında" Section
-                                if (sameDayProducts.isNotEmpty) ...[
-                                  Container(
-                                    padding: const EdgeInsets.all(16),
-                                    decoration: BoxDecoration(
-                                      color: Colors.blue.shade50,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: Colors.blue.shade200,
-                                      ),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.local_shipping,
-                                              color: Colors.blue,
-                                              size: 24,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            const Text(
-                                              'Bugün Kapında',
-                                              style: TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.blue,
-                                              ),
-                                            ),
-                                            const Spacer(),
-                                            Text(
-                                              '${sameDayProducts.length} ürün',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.blue.shade800,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 16),
-                                        GridView.builder(
-                                          shrinkWrap: true,
-                                          physics:
-                                              const NeverScrollableScrollPhysics(),
-                                          gridDelegate:
-                                              const SliverGridDelegateWithMaxCrossAxisExtent(
-                                                maxCrossAxisExtent: 250,
-                                                childAspectRatio: 0.65,
-                                                mainAxisSpacing: 16,
-                                                crossAxisSpacing: 16,
-                                              ),
-                                          itemCount: sameDayProducts.length,
-                                          itemBuilder: (context, index) {
-                                            return ProductCard(
-                                              product: sameDayProducts[index],
-                                              compact: false,
-                                              margin: EdgeInsets.zero,
-                                            );
-                                          },
-                                        ),
-                                      ],
-                                    ),
+                        ),
+                        SliverCrossAxisExpanded(
+                          flex: 1,
+                          sliver: SliverMainAxisGroup(
+                            slivers: [
+                              if (sameDayProducts.isNotEmpty)
+                                SliverToBoxAdapter(
+                                  child: _buildWebSameDaySection(
+                                    sameDayProducts,
                                   ),
-                                  const SizedBox(height: 32),
-                                ],
-
-                                // Header: Title + Sort
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      widget.query.isEmpty
-                                          ? 'Tüm Ürünler'
-                                          : widget.query,
-                                      style: const TextStyle(
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.black87,
-                                      ),
-                                    ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        border: Border.all(
-                                          color: Colors.grey.shade300,
-                                        ),
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Row(
-                                        children: const [
-                                          Text(
-                                            'Önerilen Sıralama',
-                                            style: TextStyle(fontSize: 14),
-                                          ),
-                                          SizedBox(width: 8),
-                                          Icon(
-                                            Icons.keyboard_arrow_down,
-                                            size: 20,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
                                 ),
-                                const SizedBox(height: 24),
-
-                                // Product Grid
-                                _filteredResults.isEmpty
-                                    ? _buildEmptyState()
-                                    : GridView.builder(
-                                        shrinkWrap: true,
-                                        physics:
-                                            const NeverScrollableScrollPhysics(),
-                                        gridDelegate:
-                                            const SliverGridDelegateWithMaxCrossAxisExtent(
-                                              maxCrossAxisExtent: 250,
-                                              childAspectRatio: 0.65,
-                                              mainAxisSpacing: 16,
-                                              crossAxisSpacing: 16,
-                                            ),
-                                        itemCount: _visibleCount,
-                                        itemBuilder: (context, index) {
-                                          return ProductCard(
-                                            product: _filteredResults[index],
-                                            compact: false,
-                                            margin: EdgeInsets.zero,
-                                          );
-                                        },
+                              if (sameDayProducts.isNotEmpty)
+                                const SliverToBoxAdapter(
+                                  child: SizedBox(height: 32),
+                                ),
+                              SliverToBoxAdapter(
+                                child: _buildWebResultsHeader(),
+                              ),
+                              const SliverToBoxAdapter(
+                                child: SizedBox(height: 24),
+                              ),
+                              if (_filteredResults.isEmpty)
+                                SliverToBoxAdapter(child: _buildEmptyState())
+                              else
+                                SliverGrid(
+                                  gridDelegate:
+                                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                                        maxCrossAxisExtent: 250,
+                                        childAspectRatio: 0.65,
+                                        mainAxisSpacing: 16,
+                                        crossAxisSpacing: 16,
                                       ),
-                              ],
-                            ),
+                                  delegate: SliverChildBuilderDelegate((
+                                    context,
+                                    index,
+                                  ) {
+                                    final product = _filteredResults[index];
+                                    return _wrapSearchProductReveal(
+                                      scope: 'web-results',
+                                      index: index,
+                                      product: product,
+                                      child: ProductCard(
+                                        product: product,
+                                        compact: false,
+                                        margin: EdgeInsets.zero,
+                                        imagePriority: index < aboveFoldCount
+                                            ? OptimizedImagePriority.high
+                                            : OptimizedImagePriority.lazy,
+                                      ),
+                                    );
+                                  }, childCount: _visibleCount),
+                                ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                const SizedBox(height: 48),
-                const WebFooter(),
-              ],
+                  const SliverToBoxAdapter(child: SizedBox(height: 48)),
+                  const SliverToBoxAdapter(child: WebFooter()),
+                ],
+              ),
             ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildWebResultsHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          widget.query.isEmpty ? 'Tüm Ürünler' : widget.query,
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: const [
+              Text('Önerilen Sıralama', style: TextStyle(fontSize: 14)),
+              SizedBox(width: 8),
+              Icon(Icons.keyboard_arrow_down, size: 20),
+            ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildWebSameDaySection(List<Product> sameDayProducts) {
+    const maxCrossAxisExtent = 250.0;
+    const spacing = 16.0;
+    const childAspectRatio = 0.65;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.local_shipping, color: Colors.blue, size: 24),
+              const SizedBox(width: 8),
+              const Text(
+                'Bugün Kapında',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${sameDayProducts.length} ürün',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.blue.shade800,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final crossAxisCount =
+                  ((constraints.maxWidth + spacing) /
+                          (maxCrossAxisExtent + spacing))
+                      .ceil()
+                      .clamp(1, sameDayProducts.length);
+              final itemWidth =
+                  (constraints.maxWidth - (crossAxisCount - 1) * spacing) /
+                  crossAxisCount;
+
+              return Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: List.generate(sameDayProducts.length, (index) {
+                  final product = sameDayProducts[index];
+                  return SizedBox(
+                    width: itemWidth,
+                    child: AspectRatio(
+                      aspectRatio: childAspectRatio,
+                      child: _wrapSearchProductReveal(
+                        scope: 'web-same-day',
+                        index: index,
+                        product: product,
+                        child: ProductCard(
+                          product: product,
+                          compact: false,
+                          margin: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -896,11 +1088,21 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
               ),
               itemCount: _visibleCount,
               itemBuilder: (context, index) {
-                return ProductCard(
-                  product: _filteredResults[index],
-                  compact: false,
-                  tight: true,
-                  margin: EdgeInsets.zero,
+                final aboveFoldCount = _aboveTheFoldResultCount(context);
+                final product = _filteredResults[index];
+                return _wrapSearchProductReveal(
+                  scope: 'mobile-results',
+                  index: index,
+                  product: product,
+                  child: ProductCard(
+                    product: product,
+                    compact: false,
+                    tight: true,
+                    margin: EdgeInsets.zero,
+                    imagePriority: index < aboveFoldCount
+                        ? OptimizedImagePriority.high
+                        : OptimizedImagePriority.lazy,
+                  ),
                 );
               },
             ),

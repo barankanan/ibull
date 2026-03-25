@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -1341,7 +1342,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                         ),
                         clipBehavior: Clip.antiAlias,
                         child: (logoUrl != null && logoUrl.isNotEmpty)
-                            ? Image.network(
+                            ? OptimizedImage(imageUrlOrPath: 
                                 logoUrl,
                                 width: 55,
                                 height: 55,
@@ -1462,7 +1463,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                     ),
                                   ),
                                   clipBehavior: Clip.antiAlias,
-                                  child: Image.network(
+                                  child: OptimizedImage(imageUrlOrPath: 
                                     url,
                                     fit: BoxFit.cover,
                                     width: double.infinity,
@@ -1660,7 +1661,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           ),
           child: ClipOval(
             child: hasLogo
-                ? Image.network(
+                ? OptimizedImage(imageUrlOrPath: 
                     logoUrl,
                     fit: BoxFit.cover,
                     width: double.infinity,

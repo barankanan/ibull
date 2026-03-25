@@ -6,6 +6,7 @@ import '../models/category_attribute_filter_group.dart';
 import '../models/product_model.dart';
 import '../services/category_attribute_service.dart';
 import '../widgets/product_card.dart';
+import '../widgets/staggered_reveal.dart';
 import '../widgets/custom_header.dart';
 import '../widgets/address_bar.dart';
 import 'product_detail_page.dart';
@@ -73,6 +74,31 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
     t = t.replaceAll('ç', 'c').replaceAll('Ç', 'c');
     t = t.replaceAll(RegExp(r'\s+'), ' ');
     return t;
+  }
+
+  String _productRevealToken(Product product) {
+    final productId = product.productId?.trim();
+    if (productId != null && productId.isNotEmpty) {
+      return productId;
+    }
+
+    final store = product.store?.trim() ?? '';
+    return '${product.name.trim()}|$store';
+  }
+
+  Widget _wrapCategoryProductReveal({
+    required String scope,
+    required int index,
+    required Product product,
+    required Widget child,
+  }) {
+    return StaggeredReveal(
+      revealId:
+          'category|${widget.category}|${widget.subCategory}|$scope|${_productRevealToken(product)}',
+      index: index,
+      enabled: index < 8,
+      child: child,
+    );
   }
 
   @override
@@ -1174,7 +1200,12 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                               final product = sameDayProducts[index];
                               return SizedBox(
                                 width: 220,
-                                child: ProductCard(product: product),
+                                child: _wrapCategoryProductReveal(
+                                  scope: 'same-day-rail',
+                                  index: index,
+                                  product: product,
+                                  child: ProductCard(product: product),
+                                ),
                               );
                             },
                           ),
@@ -1296,10 +1327,15 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                           ),
                         );
                       },
-                      child: ProductCard(
+                      child: _wrapCategoryProductReveal(
+                        scope: 'product-grid',
+                        index: index,
                         product: product,
-                        compact: false,
-                        tight: true,
+                        child: ProductCard(
+                          product: product,
+                          compact: false,
+                          tight: true,
+                        ),
                       ),
                     );
                   },

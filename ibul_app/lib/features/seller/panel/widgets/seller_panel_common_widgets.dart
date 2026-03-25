@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/constants.dart';
+import '../../../../widgets/premium_interactions.dart';
+import '../../../../widgets/skeleton_loading.dart';
 
 class SellerMobileSectionTitle extends StatelessWidget {
-  const SellerMobileSectionTitle({
-    super.key,
-    required this.title,
-    this.icon,
-  });
+  const SellerMobileSectionTitle({super.key, required this.title, this.icon});
 
   final String title;
   final IconData? icon;
@@ -112,6 +110,161 @@ class SellerPanelPlaceholder extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class SellerStoreLoadingSkeleton extends StatelessWidget {
+  const SellerStoreLoadingSkeleton({super.key, this.isMobile = false});
+
+  final bool isMobile;
+
+  @override
+  Widget build(BuildContext context) {
+    final cardSpacing = isMobile ? 10.0 : 16.0;
+    final metricsCardWidth = isMobile
+        ? (MediaQuery.sizeOf(context).width - 32).clamp(220.0, 420.0)
+        : MediaQuery.sizeOf(context).width > 1180
+        ? 220.0
+        : 180.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(isMobile ? 16 : 20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1D4ED8), Color(0xFF0EA5E9)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(isMobile ? 18 : 20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF1D4ED8).withValues(alpha: 0.18),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: const Row(
+            children: [
+              SkeletonLoading(width: 42, height: 42, borderRadius: 14),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SkeletonLoading(width: 168, height: 18, borderRadius: 8),
+                    SizedBox(height: 8),
+                    SkeletonLoading(
+                      width: double.infinity,
+                      height: 12,
+                      borderRadius: 6,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: cardSpacing + 2),
+        _SellerLoadingPanelCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              SkeletonLoading(width: 190, height: 18, borderRadius: 8),
+              SizedBox(height: 16),
+              SkeletonLoading(
+                width: double.infinity,
+                height: 150,
+                borderRadius: 18,
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: cardSpacing),
+        _SellerLoadingPanelCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SkeletonLoading(width: 144, height: 18, borderRadius: 8),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 14,
+                runSpacing: 14,
+                children: List.generate(
+                  4,
+                  (index) => SizedBox(
+                    width: metricsCardWidth,
+                    child: const SkeletonLoading(
+                      width: double.infinity,
+                      height: 92,
+                      borderRadius: 18,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: cardSpacing),
+        _SellerLoadingPanelCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              SkeletonLoading(width: 176, height: 18, borderRadius: 8),
+              SizedBox(height: 16),
+              SkeletonLoading(
+                width: double.infinity,
+                height: 56,
+                borderRadius: 14,
+              ),
+              SizedBox(height: 12),
+              SkeletonLoading(
+                width: double.infinity,
+                height: 56,
+                borderRadius: 14,
+              ),
+              SizedBox(height: 12),
+              SkeletonLoading(
+                width: double.infinity,
+                height: 56,
+                borderRadius: 14,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SellerLoadingPanelCard extends StatelessWidget {
+  const _SellerLoadingPanelCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }
@@ -388,32 +541,35 @@ class SellerOperationChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFFF1E9FF) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected ? AppColors.primary : const Color(0xFFE4DDF6),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 18, color: AppColors.primary),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Color(0xFF332B4D),
-                fontWeight: FontWeight.w700,
-              ),
+    return PremiumPressable(
+      hoverLift: 1,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFF1E9FF) : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? AppColors.primary : const Color(0xFFE4DDF6),
             ),
-          ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Color(0xFF332B4D),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

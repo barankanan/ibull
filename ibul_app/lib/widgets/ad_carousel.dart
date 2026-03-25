@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:carousel_slider/carousel_slider.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 
 class AdCarousel extends StatelessWidget {
   final List<String>? imageUrls;
@@ -52,16 +52,14 @@ class AdCarousel extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            CachedNetworkImage(
-              imageUrl: imageUrl,
+            OptimizedImage(
+              imageUrlOrPath: imageUrl,
               fit: BoxFit.cover,
-              memCacheWidth: 800,
-              memCacheHeight: 200,
-              placeholder: (context, url) => Container(
+              placeholder: Container(
                 color: Colors.grey[200],
                 child: const Center(child: CircularProgressIndicator()),
               ),
-              errorWidget: (context, url, error) => Container(
+              errorWidget: Container(
                 color: Colors.grey[200],
                 child: const Icon(Icons.error_outline, color: Colors.grey),
               ),

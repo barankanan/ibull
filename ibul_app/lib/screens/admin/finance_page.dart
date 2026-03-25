@@ -59,6 +59,32 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
   String? _investmentDataError;
   String? _editingInvestmentId;
   String? _editingAllocationId;
+  int _operationsDataVersion = 0;
+  int _investmentDataVersion = 0;
+  String? _allFinanceDataCacheKey;
+  List<_FinanceMonthData>? _allFinanceDataCache;
+  String? _dailyFinanceSeriesCacheKey;
+  List<_FinanceChartPoint>? _dailyFinanceSeriesCache;
+  String? _visibleMonthsCacheKey;
+  List<_FinanceMonthData>? _visibleMonthsCache;
+  String? _previousVisibleMonthsCacheKey;
+  List<_FinanceMonthData>? _previousVisibleMonthsCache;
+  String? _visibleAllocationsCacheKey;
+  List<AdminInvestmentAllocation>? _visibleAllocationsCache;
+  String? _investmentTimelinePointsCacheKey;
+  List<_InvestmentTimelinePoint>? _investmentTimelinePointsCache;
+  String? _investmentAllocationBreakdownCacheKey;
+  List<_InvestmentBreakdownRow>? _investmentAllocationBreakdownCache;
+  String? _operationCardsCacheKey;
+  List<_FinanceSummaryCard>? _operationCardsCache;
+  String? _revenueSourcesCacheKey;
+  List<_FinanceBreakdownRow>? _revenueSourcesCache;
+  String? _expenseSourcesCacheKey;
+  List<_FinanceBreakdownRow>? _expenseSourcesCache;
+  String? _payoutTimelineCacheKey;
+  List<_FinanceTimelineItem>? _payoutTimelineCache;
+  String? _operationalInsightsCacheKey;
+  List<_FinanceInsightItem>? _operationalInsightsCache;
 
   @override
   void initState() {
@@ -79,23 +105,47 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
   }
 
   List<_FinanceMonthData> get _visibleMonths {
+    final cacheKey =
+        '$_operationsDataVersion|$_investmentDataVersion|$_selectedPeriodMonths';
+    if (_visibleMonthsCacheKey == cacheKey && _visibleMonthsCache != null) {
+      return _visibleMonthsCache!;
+    }
+
+    final allFinanceData = _allFinanceData;
     final startIndex = math.max(
       0,
-      _allFinanceData.length - _selectedPeriodMonths,
+      allFinanceData.length - _selectedPeriodMonths,
     );
-    return _allFinanceData.sublist(startIndex);
+    final resolved = allFinanceData.sublist(startIndex);
+    _visibleMonthsCacheKey = cacheKey;
+    _visibleMonthsCache = resolved;
+    return resolved;
   }
 
   List<_FinanceMonthData> get _previousVisibleMonths {
+    final cacheKey =
+        '$_operationsDataVersion|$_investmentDataVersion|$_selectedPeriodMonths';
+    if (_previousVisibleMonthsCacheKey == cacheKey &&
+        _previousVisibleMonthsCache != null) {
+      return _previousVisibleMonthsCache!;
+    }
+
+    final allFinanceData = _allFinanceData;
     final currentStartIndex = math.max(
       0,
-      _allFinanceData.length - _selectedPeriodMonths,
+      allFinanceData.length - _selectedPeriodMonths,
     );
     final previousStartIndex = math.max(
       0,
       currentStartIndex - _selectedPeriodMonths,
     );
-    return _allFinanceData.sublist(previousStartIndex, currentStartIndex);
+    final resolved = allFinanceData.sublist(
+      previousStartIndex,
+      currentStartIndex,
+    );
+    _previousVisibleMonthsCacheKey = cacheKey;
+    _previousVisibleMonthsCache = resolved;
+    return resolved;
   }
 
   double _sumBy(double Function(_FinanceMonthData item) selector) {
@@ -176,6 +226,11 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
   }
 
   List<_FinanceMonthData> get _allFinanceData {
+    final cacheKey = '$_operationsDataVersion|$_investmentDataVersion';
+    if (_allFinanceDataCacheKey == cacheKey && _allFinanceDataCache != null) {
+      return _allFinanceDataCache!;
+    }
+
     final now = DateTime.now();
     final monthStarts = List.generate(
       12,
@@ -219,7 +274,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
       );
     }
 
-    return monthStarts
+    final resolved = monthStarts
         .map((monthStart) {
           final key = _bucketKey(monthStart);
           final items =
@@ -257,9 +312,18 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
           );
         })
         .toList(growable: false);
+    _allFinanceDataCacheKey = cacheKey;
+    _allFinanceDataCache = resolved;
+    return resolved;
   }
 
   List<_FinanceChartPoint> _buildDailyFinanceSeries() {
+    final cacheKey = '$_operationsDataVersion|$_investmentDataVersion';
+    if (_dailyFinanceSeriesCacheKey == cacheKey &&
+        _dailyFinanceSeriesCache != null) {
+      return _dailyFinanceSeriesCache!;
+    }
+
     final now = DateTime.now();
     final startDate = _dayStart(now.subtract(const Duration(days: 29)));
 
@@ -302,7 +366,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
       );
     }
 
-    return List.generate(30, (index) {
+    final resolved = List.generate(30, (index) {
       final date = startDate.add(Duration(days: index));
       final key = _dayBucketKey(date);
       final grossOrderFlow = deliveredByDay[key] ?? 0;
@@ -318,6 +382,9 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         courierEarnings: courierRevenue,
       );
     });
+    _dailyFinanceSeriesCacheKey = cacheKey;
+    _dailyFinanceSeriesCache = resolved;
+    return resolved;
   }
 
   List<_FinanceChartPoint> get _dailyFinanceSeries =>
@@ -433,12 +500,18 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
   }
 
   List<_InvestmentTimelinePoint> get _investmentTimelinePoints {
+    final cacheKey = '$_investmentDataVersion|$_selectedInvestmentFilterMonths';
+    if (_investmentTimelinePointsCacheKey == cacheKey &&
+        _investmentTimelinePointsCache != null) {
+      return _investmentTimelinePointsCache!;
+    }
+
     final entries = [..._investmentEntries].where((entry) {
       final cutoff = _investmentFilterCutoff;
       return cutoff == null || !entry.investmentDate.isBefore(cutoff);
     }).toList()..sort((a, b) => a.investmentDate.compareTo(b.investmentDate));
     var runningTotal = 0.0;
-    return entries
+    final resolved = entries
         .map((entry) {
           runningTotal += entry.amount;
           return _InvestmentTimelinePoint(
@@ -447,9 +520,18 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
           );
         })
         .toList(growable: false);
+    _investmentTimelinePointsCacheKey = cacheKey;
+    _investmentTimelinePointsCache = resolved;
+    return resolved;
   }
 
   List<_InvestmentBreakdownRow> get _investmentAllocationBreakdown {
+    final cacheKey = '$_investmentDataVersion';
+    if (_investmentAllocationBreakdownCacheKey == cacheKey &&
+        _investmentAllocationBreakdownCache != null) {
+      return _investmentAllocationBreakdownCache!;
+    }
+
     final totals = <String, double>{};
     for (final allocation in _investmentAllocations) {
       totals.update(
@@ -469,7 +551,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
     ];
     final rows = totals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    return List.generate(rows.length, (index) {
+    final resolved = List.generate(rows.length, (index) {
       final row = rows[index];
       return _InvestmentBreakdownRow(
         label: row.key,
@@ -478,17 +560,30 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         color: colors[index % colors.length],
       );
     });
+    _investmentAllocationBreakdownCacheKey = cacheKey;
+    _investmentAllocationBreakdownCache = resolved;
+    return resolved;
   }
 
   List<AdminInvestmentAllocation> get _visibleAllocations {
+    final cacheKey =
+        '$_operationsDataVersion|$_investmentDataVersion|$_selectedPeriodMonths';
+    if (_visibleAllocationsCacheKey == cacheKey &&
+        _visibleAllocationsCache != null) {
+      return _visibleAllocationsCache!;
+    }
+
     final visibleKeys = _visibleMonths
         .map((item) => _bucketKey(item.periodStart))
         .toSet();
-    return _investmentAllocations
+    final resolved = _investmentAllocations
         .where((allocation) {
           return visibleKeys.contains(_bucketKey(allocation.spentAt));
         })
         .toList(growable: false);
+    _visibleAllocationsCacheKey = cacheKey;
+    _visibleAllocationsCache = resolved;
+    return resolved;
   }
 
   Future<void> _loadOperationsData() async {
@@ -507,6 +602,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         _financeOrderItems = results[0] as List<AdminFinanceOrderItem>;
         _financeOrders = results[1] as List<AdminFinanceOrder>;
         _openStoreCount = results[2] as int;
+        _operationsDataVersion++;
       });
     } catch (error) {
       if (!mounted) return;
@@ -534,6 +630,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
       setState(() {
         _investmentEntries = results[0] as List<AdminInvestmentEntry>;
         _investmentAllocations = results[1] as List<AdminInvestmentAllocation>;
+        _investmentDataVersion++;
       });
     } catch (error) {
       if (!mounted) return;
@@ -800,6 +897,12 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
   }
 
   List<_FinanceSummaryCard> _buildOperationCards() {
+    final cacheKey =
+        '$_operationsDataVersion|$_investmentDataVersion|$_selectedPeriodMonths|$_openStoreCount';
+    if (_operationCardsCacheKey == cacheKey && _operationCardsCache != null) {
+      return _operationCardsCache!;
+    }
+
     final cashIn = _sumBy((item) => item.cashIn);
     final platformRevenue = _sumBy((item) => item.platformRevenue);
     final sellerPayouts = _sumBy((item) => item.sellerPayouts);
@@ -812,7 +915,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
       (item) => item.courierRevenue,
     );
 
-    return [
+    final resolved = [
       _FinanceSummaryCard(
         title: 'Kasaya Giren Toplam',
         value: _formatCompactCurrency(cashIn),
@@ -878,9 +981,17 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         accent: const Color(0xFF2563EB),
       ),
     ];
+    _operationCardsCacheKey = cacheKey;
+    _operationCardsCache = resolved;
+    return resolved;
   }
 
   List<_FinanceBreakdownRow> _buildRevenueSources() {
+    final cacheKey =
+        '$_operationsDataVersion|$_investmentDataVersion|$_selectedPeriodMonths';
+    if (_revenueSourcesCacheKey == cacheKey && _revenueSourcesCache != null) {
+      return _revenueSourcesCache!;
+    }
     if (_visibleMonths.isEmpty) return const [];
     final start = _visibleMonths.first.periodStart;
     final end = DateTime(
@@ -915,7 +1026,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
     ];
     final rows = totals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    return List.generate(math.min(rows.length, 5), (index) {
+    final resolved = List.generate(math.min(rows.length, 5), (index) {
       final row = rows[index];
       final orderCount = counts[row.key] ?? 0;
       return _FinanceBreakdownRow(
@@ -926,9 +1037,17 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         color: colors[index % colors.length],
       );
     });
+    _revenueSourcesCacheKey = cacheKey;
+    _revenueSourcesCache = resolved;
+    return resolved;
   }
 
   List<_FinanceBreakdownRow> _buildExpenseSources() {
+    final cacheKey =
+        '$_investmentDataVersion|$_selectedPeriodMonths|${_visibleAllocations.length}';
+    if (_expenseSourcesCacheKey == cacheKey && _expenseSourcesCache != null) {
+      return _expenseSourcesCache!;
+    }
     final totals = <String, double>{};
     for (final allocation in _visibleAllocations) {
       final label = allocation.category.trim().isEmpty
@@ -951,7 +1070,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
     ];
     final rows = totals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    return List.generate(rows.length, (index) {
+    final resolved = List.generate(rows.length, (index) {
       final row = rows[index];
       return _FinanceBreakdownRow(
         label: row.key,
@@ -961,15 +1080,23 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         color: colors[index % colors.length],
       );
     });
+    _expenseSourcesCacheKey = cacheKey;
+    _expenseSourcesCache = resolved;
+    return resolved;
   }
 
   List<_FinanceTimelineItem> _buildPayoutTimeline() {
+    final cacheKey =
+        '$_operationsDataVersion|$_investmentDataVersion|$_selectedPeriodMonths';
+    if (_payoutTimelineCacheKey == cacheKey && _payoutTimelineCache != null) {
+      return _payoutTimelineCache!;
+    }
     final totalCommission = _sumBy((item) => item.commissionRevenue);
     final totalPayout = _sumBy((item) => item.sellerPayouts);
     final totalExpenses = _sumBy((item) => item.totalExpenses);
     final courierRevenue = _sumBy((item) => item.courierRevenue);
     final deliveredOrders = _sumIntBy((item) => item.completedOrders);
-    return [
+    final resolved = [
       _FinanceTimelineItem(
         title: 'Gerçekleşen satıcı hakedişi',
         subtitle: '$deliveredOrders teslim siparişten hesaplandı',
@@ -1003,9 +1130,18 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         icon: Icons.local_shipping_outlined,
       ),
     ];
+    _payoutTimelineCacheKey = cacheKey;
+    _payoutTimelineCache = resolved;
+    return resolved;
   }
 
   List<_FinanceInsightItem> _buildOperationalInsights() {
+    final cacheKey =
+        '$_operationsDataVersion|$_investmentDataVersion|$_selectedPeriodMonths|$_openStoreCount';
+    if (_operationalInsightsCacheKey == cacheKey &&
+        _operationalInsightsCache != null) {
+      return _operationalInsightsCache!;
+    }
     final totalOrders = _sumIntBy((item) => item.completedOrders);
     final totalGmv = _sumBy((item) => item.gmvCollected);
     final averageOrder = totalOrders == 0 ? 0.0 : totalGmv / totalOrders;
@@ -1025,7 +1161,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         )
         .length;
 
-    return [
+    final resolved = [
       _FinanceInsightItem(
         title: 'Açık mağaza',
         value: '$_openStoreCount',
@@ -1052,6 +1188,9 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         note: 'Sipariş kayıtlarındaki shipping amount toplamı',
       ),
     ];
+    _operationalInsightsCacheKey = cacheKey;
+    _operationalInsightsCache = resolved;
+    return resolved;
   }
 
   @override
@@ -1223,7 +1362,10 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
         final isActive = _selectedPeriodMonths == months;
         return InkWell(
           borderRadius: BorderRadius.circular(999),
-          onTap: () => setState(() => _selectedPeriodMonths = months),
+          onTap: () {
+            if (_selectedPeriodMonths == months) return;
+            setState(() => _selectedPeriodMonths = months);
+          },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1284,7 +1426,10 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
     final isActive = _viewMode == mode;
     return InkWell(
       borderRadius: BorderRadius.circular(999),
-      onTap: () => setState(() => _viewMode = mode),
+      onTap: () {
+        if (_viewMode == mode) return;
+        setState(() => _viewMode = mode);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -2043,7 +2188,10 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
     final isSelected = _selectedChartRange == preset;
     return InkWell(
       borderRadius: BorderRadius.circular(18),
-      onTap: () => setState(() => _selectedChartRange = preset),
+      onTap: () {
+        if (_selectedChartRange == preset) return;
+        setState(() => _selectedChartRange = preset);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2633,6 +2781,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
                   return InkWell(
                     borderRadius: BorderRadius.circular(999),
                     onTap: () {
+                      if (_selectedInvestmentFilterMonths == months) return;
                       setState(() => _selectedInvestmentFilterMonths = months);
                     },
                     child: AnimatedContainer(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/db_product.dart';
 import '../models/product_model.dart';
 import '../services/store_service.dart';
+import 'optimized_image.dart';
 import 'product_card.dart';
 
 class DynamicBrandSection extends StatefulWidget {
@@ -50,15 +51,17 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
     if (sellerId == null) {
       final adImageUrl = widget.layout['ad_image_url'] as String?;
       if (mounted) {
+        final urls = adImageUrl != null && adImageUrl.isNotEmpty
+            ? adImageUrl
+                  .split(',')
+                  .map((e) => e.trim())
+                  .where((e) => e.isNotEmpty)
+                  .toList()
+            : <String>[];
         setState(() {
-          _bannerUrls = adImageUrl != null && adImageUrl.isNotEmpty
-              ? adImageUrl
-                    .split(',')
-                    .map((e) => e.trim())
-                    .where((e) => e.isNotEmpty)
-                    .toList()
-              : [];
+          _bannerUrls = urls;
         });
+        _precacheBanners(urls);
       }
       return;
     }
@@ -70,28 +73,46 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
       final info = await service.getStorePublicInfoById(sellerId);
 
       if (mounted) {
+        final List<String> urls;
+        if (info != null &&
+            info['banners'] != null &&
+            (info['banners'] as List).isNotEmpty) {
+          urls = (info['banners'] as List).map((e) => e.toString()).toList();
+        } else {
+          final adImageUrl = widget.layout['ad_image_url'] as String?;
+          urls = adImageUrl != null && adImageUrl.isNotEmpty
+              ? adImageUrl
+                    .split(',')
+                    .map((e) => e.trim())
+                    .where((e) => e.isNotEmpty)
+                    .toList()
+              : [];
+        }
         setState(() {
-          if (info != null &&
-              info['banners'] != null &&
-              (info['banners'] as List).isNotEmpty) {
-            _bannerUrls = (info['banners'] as List)
-                .map((e) => e.toString())
-                .toList();
-          } else {
-            final adImageUrl = widget.layout['ad_image_url'] as String?;
-            _bannerUrls = adImageUrl != null && adImageUrl.isNotEmpty
-                ? adImageUrl
-                      .split(',')
-                      .map((e) => e.trim())
-                      .where((e) => e.isNotEmpty)
-                      .toList()
-                : [];
-          }
+          _bannerUrls = urls;
         });
+        _precacheBanners(urls);
       }
     } catch (_) {
     } finally {
       if (mounted) setState(() => _isLoadingBanners = false);
+    }
+  }
+
+  /// Pre-decodes banner images at their display resolution so the first
+  /// rendered frame is synchronous and doesn't spike the raster thread.
+  void _precacheBanners(List<String> urls) {
+    if (!mounted || urls.isEmpty) return;
+    for (final url in urls) {
+      if (url.isEmpty) continue;
+      final provider = OptimizedImage.buildProvider(
+        imageUrlOrPath: url,
+        cacheWidth: 1200,
+        cacheHeight: 300,
+      );
+      if (provider != null) {
+        precacheImage(provider, context).ignore();
+      }
     }
   }
 
@@ -237,7 +258,12 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
                             radius: 24,
                             backgroundColor: Colors.white,
                             backgroundImage: store['logo_url'] != null
-                                ? NetworkImage(store['logo_url'])
+                                ? OptimizedImage.buildContextAwareProvider(
+                                    context: context,
+                                    imageUrlOrPath: store['logo_url'],
+                                    width: 48,
+                                    height: 48,
+                                  )
                                 : null,
                             child: store['logo_url'] == null
                                 ? Text(
@@ -289,16 +315,21 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               itemCount: _bannerUrls.length,
               itemBuilder: (context, index) {
-                return Container(
-                  width: MediaQuery.of(context).size.width * 0.85,
-                  margin: const EdgeInsets.only(right: 12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    color: Colors.grey.shade100,
-                    image: DecorationImage(
-                      image: NetworkImage(_bannerUrls[index]),
+                return RepaintBoundary(
+                  child: Container(
+                    width: MediaQuery.of(context).size.width * 0.85,
+                    margin: const EdgeInsets.only(right: 12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.grey.shade100,
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: OptimizedImage(
+                      imageUrlOrPath: _bannerUrls[index],
                       fit: BoxFit.cover,
-                      onError: (_, __) {},
+                      cacheWidth: 1200,
+                      cacheHeight: 300,
+                      errorWidget: ColoredBox(color: Colors.grey),
                     ),
                   ),
                 );

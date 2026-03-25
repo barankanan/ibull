@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../../../models/seller_product.dart';
 import '../../../services/store_service.dart';
 import 'product_detail_dialog.dart';
@@ -372,7 +373,7 @@ class _ProductApprovalPageState extends State<ProductApprovalPage> {
                     height: 40,
                     color: Colors.grey.shade100,
                     child: (displayImage != null && displayImage.isNotEmpty)
-                        ? Image.network(
+                        ? OptimizedImage(imageUrlOrPath: 
                             displayImage,
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {

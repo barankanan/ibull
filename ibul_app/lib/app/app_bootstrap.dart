@@ -1,9 +1,12 @@
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:provider/single_child_widget.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/app_state.dart';
+import '../core/app_motion.dart';
 import '../core/cart_state.dart';
 import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
@@ -13,11 +16,27 @@ import '../core/providers/connectivity_provider.dart';
 import '../core/review_state.dart';
 import '../screens/home_screen.dart';
 
-Future<void> initializeAppSupabase() {
-  return Supabase.initialize(
-    url: AppRuntimeConfig.supabaseUrl,
-    anonKey: AppRuntimeConfig.supabaseAnonKey,
+Future<void> initializeAppSupabase() async {
+  final rawUrl = AppRuntimeConfig.rawSupabaseUrl.trim();
+  final rawAnonKey = AppRuntimeConfig.rawSupabaseAnonKey.trim();
+
+  debugPrint('IBUL_SUPABASE_URL=${rawUrl.isEmpty ? 'EMPTY' : rawUrl}');
+  debugPrint(
+    'IBUL_SUPABASE_ANON_KEY=${rawAnonKey.isEmpty ? 'EMPTY' : 'SET(len=${rawAnonKey.length})'}',
   );
+
+  try {
+    debugPrint('Supabase bootstrap: validating runtime config.');
+    await Supabase.initialize(
+      url: AppRuntimeConfig.supabaseUrl,
+      anonKey: AppRuntimeConfig.supabaseAnonKey,
+    );
+    debugPrint('Supabase bootstrap: initialize completed.');
+  } catch (error, stackTrace) {
+    debugPrint('Supabase bootstrap failed before runApp: $error');
+    debugPrintStack(stackTrace: stackTrace);
+    rethrow;
+  }
 }
 
 void configureAppDiagnostics({
@@ -32,6 +51,14 @@ void configureAppDiagnostics({
     if (includeErrorStackTrace && details.stack != null) {
       debugPrintStack(stackTrace: details.stack);
     }
+  };
+
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stackTrace) {
+    debugPrint('Unhandled platform error: $error');
+    if (includeErrorStackTrace) {
+      debugPrintStack(stackTrace: stackTrace);
+    }
+    return false;
   };
 
   assert(() {
@@ -68,6 +95,7 @@ ThemeData buildAppTheme() {
     useMaterial3: true,
     primaryColor: AppColors.primary,
     colorScheme: colorScheme,
+    pageTransitionsTheme: AppMotion.pageTransitionsTheme(),
     dialogTheme: DialogThemeData(
       backgroundColor: Colors.white,
       surfaceTintColor: AppColors.popupLavender,

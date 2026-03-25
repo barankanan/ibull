@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -367,7 +368,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                               seller['logo'] != null &&
                                   seller['logo'].toString().startsWith('http')
                               ? ClipOval(
-                                  child: Image.network(
+                                  child: OptimizedImage(imageUrlOrPath: 
                                     seller['logo'],
                                     width: 44,
                                     height: 44,
@@ -525,7 +526,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                             child: widget.product.images.isNotEmpty
                                 ? ClipRRect(
                                     borderRadius: BorderRadius.circular(8),
-                                    child: Image.network(
+                                    child: OptimizedImage(imageUrlOrPath: 
                                       widget.product.images[0],
                                       fit: BoxFit.cover,
                                       errorBuilder:
@@ -716,7 +717,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                                             ? ClipRRect(
                                                 borderRadius:
                                                     BorderRadius.circular(12),
-                                                child: Image.network(
+                                                child: OptimizedImage(imageUrlOrPath: 
                                                   seller['logo'],
                                                   width: 50,
                                                   height: 50,

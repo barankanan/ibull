@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -2264,7 +2265,7 @@ class _AddProductPageState extends State<AddProductPage> {
         child: Container(
           color: Colors.black,
           child: thumbUrl != null && thumbUrl.isNotEmpty
-              ? Image.network(
+              ? OptimizedImage(imageUrlOrPath: 
                   thumbUrl,
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) => _buildVideoFallbackPreview(),
@@ -2704,7 +2705,7 @@ class _AddProductPageState extends State<AddProductPage> {
                             errorBuilder: (_, __, ___) =>
                                 const Icon(Icons.image_outlined, size: 40),
                           )
-                        : Image.network(
+                        : OptimizedImage(imageUrlOrPath: 
                             imageUrl!,
                             width: 140,
                             height: 140,
@@ -2834,7 +2835,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: displayNetworkUrl != null
-                          ? Image.network(displayNetworkUrl, fit: BoxFit.cover)
+                          ? OptimizedImage(imageUrlOrPath: displayNetworkUrl, fit: BoxFit.cover)
                           : Image(
                               image: xFileImageProvider(displayXFile!),
                               fit: BoxFit.cover,
@@ -3071,7 +3072,7 @@ class _AddProductPageState extends State<AddProductPage> {
               clipBehavior: Clip.antiAlias,
               child: imageUrl.isEmpty
                   ? Icon(Icons.image_outlined, color: Colors.grey.shade400)
-                  : Image.network(
+                  : OptimizedImage(imageUrlOrPath: 
                       imageUrl,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => Icon(

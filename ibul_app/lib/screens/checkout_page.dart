@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
@@ -652,7 +653,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
 
     if (imagePath.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         imagePath,
         fit: fit,
         errorBuilder: (_, __, ___) => const Center(
@@ -2072,7 +2073,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Image.network(
+                        OptimizedImage(imageUrlOrPath: 
                           'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Mastercard-logo.svg/1280px-Mastercard-logo.svg.png',
                           height: 32,
                           errorBuilder: (c, e, s) => const Icon(

@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
+import '../../core/app_image_cdn.dart';
 import '../../core/constants.dart';
 import '../../core/app_state.dart';
 import '../../models/product_model.dart';
@@ -331,7 +333,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                                   return _buildRecentProductItem(
                                                     product.name,
                                                     product.price,
-                                                    product.images.isNotEmpty ? product.images.first : '',
+                                                    product.imageFor(AppImageVariant.thumb),
                                                     isDiscounted: true,
                                                   );
                                                 }).toList(),
@@ -524,10 +526,10 @@ class _SearchOverlayState extends State<SearchOverlay> {
               width: 40,
               height: 40,
               child: imageUrl.startsWith('http')
-                  ? Image.network(
-                      imageUrl, 
+                  ? OptimizedImage(
+                      imageUrlOrPath: imageUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (c, e, s) => Container(
+                      errorWidget: Container(
                         color: Colors.grey.shade100,
                         child: const Icon(Icons.image_not_supported, size: 16, color: Colors.grey),
                       ),

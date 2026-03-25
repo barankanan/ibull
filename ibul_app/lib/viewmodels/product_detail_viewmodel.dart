@@ -1026,6 +1026,22 @@ class ProductDetailViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateReviewSummary({
+    required double rating,
+    required int reviewCount,
+  }) {
+    if (initialProduct.rating == rating &&
+        initialProduct.reviewCount == reviewCount) {
+      return;
+    }
+
+    initialProduct = initialProduct.copyWith(
+      rating: rating,
+      reviewCount: reviewCount,
+    );
+    notifyListeners();
+  }
+
   Product get displayProduct {
     final matchingVariant = getMatchingVariant();
     if (matchingVariant != null) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/constants.dart';
 import '../widgets/common/video_player_widget.dart';
@@ -707,7 +708,7 @@ class ShipmentTrackingPage extends StatelessWidget {
   Widget _buildImage(String path) {
     if (path.isEmpty) return _placeholder();
     if (path.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         path,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) => _placeholder(),

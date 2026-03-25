@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
+
+import '../core/build_profile.dart';
 
 class FeatureMenu extends StatelessWidget {
   final List<Map<String, dynamic>> remoteCategories;
@@ -50,45 +53,47 @@ class FeatureMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isSmallScreen = screenWidth < 360;
-    final Map<String, Map<String, dynamic>> remoteByKey = {
-      for (final category in remoteCategories)
-        if ((category['category_key']?.toString() ?? '').isNotEmpty)
-          category['category_key'].toString(): category,
-    };
+    return BuildProfileCollector.measure('FeatureMenu', () {
+      final screenWidth = MediaQuery.of(context).size.width;
+      final isSmallScreen = screenWidth < 360;
+      final Map<String, Map<String, dynamic>> remoteByKey = {
+        for (final category in remoteCategories)
+          if ((category['category_key']?.toString() ?? '').isNotEmpty)
+            category['category_key'].toString(): category,
+      };
 
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: isSmallScreen ? 8.0 : 12.0,
-        vertical: isSmallScreen ? 6.0 : 8.0,
-      ),
-      child: GridView.count(
-        crossAxisCount: 4,
-        mainAxisSpacing: isSmallScreen ? 12 : 16,
-        crossAxisSpacing: isSmallScreen ? 6 : 10,
-        physics: const NeverScrollableScrollPhysics(),
-        childAspectRatio: isSmallScreen ? 0.75 : 0.7,
-        padding: EdgeInsets.zero,
-        shrinkWrap: true,
-        children: _featureConfigs.map((config) {
-          final remote = remoteByKey[config.key];
-          final remoteUrl = remote?['image_url']?.toString();
-          final displayName = remote?['display_name']?.toString();
-          final isActive = remote?['is_active'] != false;
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: isSmallScreen ? 8.0 : 12.0,
+          vertical: isSmallScreen ? 6.0 : 8.0,
+        ),
+        child: GridView.count(
+          crossAxisCount: 4,
+          mainAxisSpacing: isSmallScreen ? 12 : 16,
+          crossAxisSpacing: isSmallScreen ? 6 : 10,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: isSmallScreen ? 0.75 : 0.7,
+          padding: EdgeInsets.zero,
+          shrinkWrap: true,
+          children: _featureConfigs.map((config) {
+            final remote = remoteByKey[config.key];
+            final remoteUrl = remote?['image_url']?.toString();
+            final displayName = remote?['display_name']?.toString();
+            final isActive = remote?['is_active'] != false;
 
-          return _FeatureTile(
-            imageUrl: (isActive && remoteUrl != null && remoteUrl.isNotEmpty)
-                ? remoteUrl
-                : null,
-            assetPath: config.assetPath,
-            label: (displayName != null && displayName.isNotEmpty)
-                ? displayName
-                : config.label,
-          );
-        }).toList(),
-      ),
-    );
+            return _FeatureTile(
+              imageUrl: (isActive && remoteUrl != null && remoteUrl.isNotEmpty)
+                  ? remoteUrl
+                  : null,
+              assetPath: config.assetPath,
+              label: (displayName != null && displayName.isNotEmpty)
+                  ? displayName
+                  : config.label,
+            );
+          }).toList(),
+        ),
+      );
+    });
   }
 }
 
@@ -167,12 +172,10 @@ class _FeatureTile extends StatelessWidget {
     );
 
     if (imageUrl != null && imageUrl!.isNotEmpty) {
-      return Image.network(
-        imageUrl!,
+      return OptimizedImage(
+        imageUrlOrPath: imageUrl!,
         fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) => _buildAssetFallback(
-          fallback,
-        ),
+        errorWidget: _buildAssetFallback(fallback),
       );
     }
 

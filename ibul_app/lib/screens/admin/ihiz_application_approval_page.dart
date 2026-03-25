@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../../services/admin_service.dart';
 
@@ -537,7 +538,7 @@ class _IhizApplicationDetailDialogState
                     minScale: 1,
                     maxScale: 5,
                     child: Center(
-                      child: Image.network(
+                      child: OptimizedImage(imageUrlOrPath: 
                         imageUrl,
                         fit: BoxFit.contain,
                         errorBuilder: (_, _, _) {
@@ -651,7 +652,7 @@ class _IhizApplicationDetailDialogState
                 borderRadius: BorderRadius.circular(10),
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
-                  child: Image.network(
+                  child: OptimizedImage(imageUrlOrPath: 
                     normalizedUrl,
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/constants.dart';
 import '../screens/photo_review_detail_page.dart';
@@ -897,7 +898,7 @@ class _ReviewImage extends StatelessWidget {
       );
     }
     if (imageUrl.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         imageUrl,
         fit: fit,
         errorBuilder: (_, __, ___) => _fallback(),

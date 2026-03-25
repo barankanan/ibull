@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
@@ -934,7 +935,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
               ),
               clipBehavior: Clip.antiAlias,
               child: coverImage.isNotEmpty
-                  ? Image.network(
+                  ? OptimizedImage(imageUrlOrPath: 
                       coverImage,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) =>
@@ -2084,7 +2085,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   Widget _buildStoreLogoWidget(String businessName, double size) {
     final logoUrl = _storePublicInfo?['logoUrl'] as String?;
     if (logoUrl != null && logoUrl.isNotEmpty) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         logoUrl,
         width: size,
         height: size,
@@ -2164,7 +2165,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     color: Colors.grey[200],
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: Image.network(
+                  child: OptimizedImage(imageUrlOrPath: 
                     bannerUrls[index],
                     fit: BoxFit.cover,
                     width: double.infinity,
@@ -2530,8 +2531,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(8),
                       color: Colors.grey.shade200,
-                      image: const DecorationImage(
-                        image: NetworkImage("https://picsum.photos/200"),
+                      image: DecorationImage(
+                        image: ResizeImage.resizeIfNeeded(
+                          200,
+                          200,
+                          const NetworkImage("https://picsum.photos/200"),
+                        ),
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -4373,7 +4378,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       );
     }
     if (url.startsWith('http')) {
-      return Image.network(
+      return OptimizedImage(imageUrlOrPath: 
         url,
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _reviewFallback(),
@@ -4467,7 +4472,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     color: Colors.grey[200],
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: Image.network(
+                  child: OptimizedImage(imageUrlOrPath: 
                     banner['url'] as String,
                     fit: BoxFit.cover,
                     width: double.infinity,
@@ -5722,7 +5727,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
                                 child: product.images.isNotEmpty
-                                    ? Image.network(
+                                    ? OptimizedImage(imageUrlOrPath: 
                                         product.images.first,
                                         width: 56,
                                         height: 56,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
@@ -208,7 +209,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                                                 borderRadius: BorderRadius.circular(6),
                                               ),
                                               child: product['image'] != null
-                                                  ? Image.network(product['image'], fit: BoxFit.cover)
+                                                  ? OptimizedImage(imageUrlOrPath: product['image'], fit: BoxFit.cover)
                                                   : const Icon(Icons.image, size: 20, color: Colors.grey),
                                             ),
                                             const SizedBox(width: 12),
@@ -558,7 +559,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                         ? ClipRRect(
                             borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
                             child: imagePath.startsWith('http') 
-                                ? Image.network(
+                                ? OptimizedImage(imageUrlOrPath: 
                                     imagePath,
                                     fit: BoxFit.cover,
                                     width: double.infinity,

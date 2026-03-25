@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
@@ -248,10 +249,10 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: Image.network(
-            product.images!.first,
+          child: OptimizedImage(
+            imageUrlOrPath: product.images!.first,
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) =>
+            errorWidget:
                 const Icon(Icons.image, size: 60, color: Colors.grey),
           ),
         ),

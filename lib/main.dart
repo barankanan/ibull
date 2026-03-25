@@ -10,18 +10,22 @@ import 'package:ibul_app/screens/become_seller_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await initializeAppSupabase();
   configureAppDiagnostics(
     startupMessage: 'Starting IBUL App. Platform: ${kIsWeb ? "web" : "native"}',
+    includeErrorStackTrace: true,
   );
 
-  runApp(
-    MultiProvider(
-      providers: buildAppProviders(),
-      child: const MyApp(),
-    ),
-  );
+  try {
+    debugPrint('Bootstrap stage: initializeAppSupabase');
+    await initializeAppSupabase();
+    debugPrint('Bootstrap stage: runApp');
+
+    runApp(MultiProvider(providers: buildAppProviders(), child: const MyApp()));
+  } catch (error, stackTrace) {
+    debugPrint('Fatal startup error in root main(): $error');
+    debugPrintStack(stackTrace: stackTrace);
+    rethrow;
+  }
 }
 
 class MyApp extends StatelessWidget {

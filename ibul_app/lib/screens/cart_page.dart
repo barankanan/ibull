@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'dart:ui';
 import '../core/constants.dart';
 import '../core/app_state.dart';
@@ -1882,7 +1883,7 @@ class _CartPageState extends State<CartPage>
                         product['image'] != null &&
                             product['image'].toString().isNotEmpty
                         ? (product['image'].toString().startsWith('http')
-                              ? Image.network(
+                              ? OptimizedImage(imageUrlOrPath: 
                                   product['image'],
                                   fit: BoxFit.contain,
                                   errorBuilder: (context, error, stackTrace) {
@@ -3416,7 +3417,7 @@ class _CartPageState extends State<CartPage>
                     product['image'] != null &&
                         product['image'].toString().isNotEmpty
                     ? (product['image'].toString().startsWith('http')
-                          ? Image.network(product['image'], fit: BoxFit.contain)
+                          ? OptimizedImage(imageUrlOrPath: product['image'], fit: BoxFit.contain)
                           : Image.asset(product['image'], fit: BoxFit.contain))
                     : const Icon(Icons.image_not_supported),
               ),

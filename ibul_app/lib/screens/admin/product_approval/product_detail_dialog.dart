@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../../../models/seller_product.dart';
 import '../../../services/store_service.dart';
 
@@ -271,7 +272,7 @@ class _ProductDetailDialogState extends State<ProductDetailDialog> with SingleTi
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.network(
+            child: OptimizedImage(imageUrlOrPath: 
               allImages[index],
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.error)),

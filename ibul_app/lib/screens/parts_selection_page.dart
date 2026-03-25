@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import 'compare_features_page.dart';
 
@@ -166,7 +167,7 @@ class _PartsSelectionPageState extends State<PartsSelectionPage> {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Image.network(
+              child: OptimizedImage(imageUrlOrPath: 
                 widget.productImage,
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) => const Icon(Icons.phone_iphone, size: 40),
@@ -338,7 +339,7 @@ class _PartsSelectionPageState extends State<PartsSelectionPage> {
                 child: Center(
                   child: ClipRRect(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                    child: Image.network(
+                    child: OptimizedImage(imageUrlOrPath: 
                       part['image'],
                       fit: BoxFit.cover,
                       width: double.infinity,

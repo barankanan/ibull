@@ -54,41 +54,15 @@ class ProductDetailPage extends StatelessWidget {
           fallbackCount: product.reviewCount,
         );
 
-    if (initialSummary.averageRating > 0 || initialSummary.reviewCount > 0) {
-      return _buildResolvedPage(
-        context,
-        product.copyWith(
-          rating: initialSummary.averageRating,
-          reviewCount: initialSummary.reviewCount,
-        ),
-      );
-    }
+    final resolvedProduct =
+        initialSummary.averageRating > 0 || initialSummary.reviewCount > 0
+        ? product.copyWith(
+            rating: initialSummary.averageRating,
+            reviewCount: initialSummary.reviewCount,
+          )
+        : product;
 
-    return FutureBuilder<ReviewSummary>(
-      future: ReviewRepository.instance.getProductReviewSummary(
-        productName: product.name,
-        storeName: product.store,
-        localReviews: localReviews,
-      ),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData &&
-            snapshot.connectionState != ConnectionState.done) {
-          return const Scaffold(
-            backgroundColor: Colors.white,
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        final resolvedSummary = snapshot.data ?? initialSummary;
-        return _buildResolvedPage(
-          context,
-          product.copyWith(
-            rating: resolvedSummary.averageRating,
-            reviewCount: resolvedSummary.reviewCount,
-          ),
-        );
-      },
-    );
+    return _buildResolvedPage(context, resolvedProduct);
   }
 
   Widget _buildResolvedPage(BuildContext context, Product resolvedProduct) {
@@ -115,6 +89,36 @@ class _ProductDetailPageContent extends StatefulWidget {
 class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   final GlobalKey _descriptionKey = GlobalKey();
   final GlobalKey _specsKey = GlobalKey();
+  bool _didRequestReviewSummary = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didRequestReviewSummary) return;
+    _didRequestReviewSummary = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshReviewSummary();
+    });
+  }
+
+  Future<void> _refreshReviewSummary() async {
+    final appState = context.read<AppState>();
+    final viewModel = context.read<ProductDetailViewModel>();
+    final localReviews = appState.getProductReviewsFor(
+      productName: viewModel.initialProduct.name,
+      storeName: viewModel.initialProduct.store,
+    );
+    final summary = await ReviewRepository.instance.getProductReviewSummary(
+      productName: viewModel.initialProduct.name,
+      storeName: viewModel.initialProduct.store,
+      localReviews: localReviews,
+    );
+    if (!mounted) return;
+    viewModel.updateReviewSummary(
+      rating: summary.averageRating,
+      reviewCount: summary.reviewCount,
+    );
+  }
 
   void _scrollToDescription() {
     final ctx = _descriptionKey.currentContext;

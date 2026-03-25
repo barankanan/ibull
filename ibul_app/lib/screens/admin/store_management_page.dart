@@ -1008,7 +1008,11 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                     borderRadius: BorderRadius.circular(18),
                     image: store['logo_url'] != null
                         ? DecorationImage(
-                            image: NetworkImage(store['logo_url'].toString()),
+                            image: ResizeImage.resizeIfNeeded(
+                              180,
+                              180,
+                              NetworkImage(store['logo_url'].toString()),
+                            ),
                             fit: BoxFit.cover,
                           )
                         : null,
@@ -2195,7 +2199,11 @@ class _StoreDetailDialogState extends State<StoreDetailDialog> {
               borderRadius: BorderRadius.circular(12),
               image: widget.store['logo_url'] != null
                   ? DecorationImage(
-                      image: NetworkImage(widget.store['logo_url'].toString()),
+                      image: ResizeImage.resizeIfNeeded(
+                        144,
+                        144,
+                        NetworkImage(widget.store['logo_url'].toString()),
+                      ),
                       fit: BoxFit.cover,
                     )
                   : null,
@@ -2555,7 +2563,11 @@ class _StoreDetailDialogState extends State<StoreDetailDialog> {
                       (product['image_url'] != null &&
                           product['image_url'].toString().isNotEmpty)
                       ? DecorationImage(
-                          image: NetworkImage(product['image_url'].toString()),
+                          image: ResizeImage.resizeIfNeeded(
+                            156,
+                            156,
+                            NetworkImage(product['image_url'].toString()),
+                          ),
                           fit: BoxFit.cover,
                         )
                       : null,

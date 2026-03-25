@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import 'list_detail_page.dart';
 
@@ -541,7 +542,7 @@ class _AIDiscoverPageState extends State<AIDiscoverPage> {
                   child: product['image'] != null
                       ? ClipRRect(
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                          child: Image.network(
+                          child: OptimizedImage(imageUrlOrPath: 
                             product['image'],
                             fit: BoxFit.cover,
                             width: double.infinity,

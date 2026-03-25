@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import '../core/build_profile.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
+import 'optimized_image.dart';
 import 'product_card.dart';
 
 class BrandSection extends StatelessWidget {
@@ -28,21 +30,23 @@ class BrandSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedData = brandData[selectedBrand];
+    return BuildProfileCollector.measure('BrandSection', () {
+      final selectedData = brandData[selectedBrand];
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildHeader(),
-        const SizedBox(height: 12),
-        _buildBrandSelector(),
-        const SizedBox(height: 16),
-        if (selectedData != null)
-          _buildBrandBannerSlider(selectedData['adUrls']),
-        const SizedBox(height: 16),
-        _buildProductList(selectedData),
-      ],
-    );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildHeader(),
+          const SizedBox(height: 12),
+          _buildBrandSelector(),
+          const SizedBox(height: 16),
+          if (selectedData != null)
+            _buildBrandBannerSlider(selectedData['adUrls']),
+          const SizedBox(height: 16),
+          _buildProductList(selectedData),
+        ],
+      );
+    });
   }
 
   Widget _buildBrandBannerSlider(List<dynamic>? adUrls) {
@@ -61,19 +65,23 @@ class BrandSection extends StatelessWidget {
         itemCount: urls.length,
         itemBuilder: (context, index) {
           final url = urls[index];
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.network(
-                url,
-                width: double.infinity,
-                height: 160,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  color: Colors.grey[100],
-                  alignment: Alignment.center,
-                  child: Icon(Icons.image_outlined, color: Colors.grey[400]),
+          return RepaintBoundary(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: OptimizedImage(
+                  imageUrlOrPath: url,
+                  width: double.infinity,
+                  height: 160,
+                  fit: BoxFit.cover,
+                  cacheWidth: 1200,
+                  cacheHeight: 320,
+                  errorWidget: Container(
+                    color: Colors.grey[100],
+                    alignment: Alignment.center,
+                    child: Icon(Icons.image_outlined, color: Colors.grey[400]),
+                  ),
                 ),
               ),
             ),
@@ -150,33 +158,21 @@ class BrandSection extends StatelessWidget {
                     ),
                     child: ClipOval(
                       child: logoUrl.isNotEmpty
-                          ? (logoUrl.startsWith('http')
-                                ? Image.network(
-                                    logoUrl,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Center(
-                                      child: Text(
-                                        brand.isNotEmpty ? brand[0] : '?',
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  )
-                                : Image.asset(
-                                    logoUrl,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Center(
-                                      child: Text(
-                                        brand.isNotEmpty ? brand[0] : '?',
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  ))
+                          ? OptimizedImage(
+                              imageUrlOrPath: logoUrl,
+                              fit: BoxFit.cover,
+                              cacheWidth: 96,
+                              cacheHeight: 96,
+                              errorWidget: Center(
+                                child: Text(
+                                  brand.isNotEmpty ? brand[0] : '?',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            )
                           : Center(
                               child: Text(
                                 brand.isNotEmpty ? brand[0] : '?',

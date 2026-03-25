@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
+import '../core/app_motion.dart';
 import '../core/constants.dart';
 import '../screens/account_page.dart';
 import '../screens/cart_page.dart';
@@ -51,11 +52,7 @@ class WebHeaderMenuItems extends StatelessWidget {
   void _pushReplacement(BuildContext context, Widget page) {
     Navigator.pushReplacement(
       context,
-      PageRouteBuilder(
-        pageBuilder: (context, animation1, animation2) => page,
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
-      ),
+      buildAppPageRoute<void>(builder: (context) => page),
     );
   }
 }

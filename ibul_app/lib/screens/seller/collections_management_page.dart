@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/app_state.dart';
@@ -187,7 +188,7 @@ class _SellerCollectionsManagementContentState
                                   fit: BoxFit.cover,
                                 )
                               : (coverImageUrl ?? '').trim().isNotEmpty
-                              ? Image.network(
+                              ? OptimizedImage(imageUrlOrPath: 
                                   coverImageUrl!,
                                   fit: BoxFit.cover,
                                   errorBuilder: (_, __, ___) {
@@ -599,7 +600,7 @@ class _SellerCollectionsManagementContentState
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: (list.iconUrl ?? '').trim().isNotEmpty
-                    ? Image.network(
+                    ? OptimizedImage(imageUrlOrPath: 
                         list.iconUrl!,
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) {
@@ -1069,7 +1070,7 @@ class _SellerCollectionsManagementContentState
       );
     }
 
-    return Image.network(
+    return OptimizedImage(imageUrlOrPath: 
       imageUrl,
       width: 58,
       height: 58,

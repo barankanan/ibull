@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
 import '../models/db_product.dart';
@@ -476,7 +477,7 @@ class _VisualIntelligenceResultPageState
                                         clipBehavior: Clip.antiAlias,
                                         child: widget.imagePath != null
                                             ? (kIsWeb
-                                                  ? Image.network(
+                                                  ? OptimizedImage(imageUrlOrPath: 
                                                       widget.imagePath!,
                                                       fit: BoxFit.cover,
                                                       errorBuilder:

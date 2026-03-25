@@ -25,24 +25,6 @@ final SeoRouteObserver seoRouteObserver = SeoRouteObserver();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  Intl.defaultLocale = 'tr_TR';
-  await initializeDateFormatting('tr_TR');
-
-  await initializeAppSupabase();
-
-  // ReviewState singleton initializes itself in its constructor (_internal calls
-  // initialize() which is memoized). Awaiting it here only delays runApp by the
-  // SharedPreferences read time (~5-50 ms) without any benefit — the data is
-  // only needed after products load (~1-2 s later). Let it run in the background.
-  ReviewState().initialize(); // fire-and-forget; memoized, safe to call again
-
-  if (!kIsWeb) {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-  }
-
   configureAppDiagnostics(
     startupMessage: !kIsWeb
         ? 'Starting IBUL App on Native Platform'
@@ -50,55 +32,78 @@ void main() async {
     includeErrorStackTrace: true,
   );
 
-  // Render hatalarını ekranda göster
-  ErrorWidget.builder = (FlutterErrorDetails details) {
-    return Material(
-      child: Container(
-        color: Colors.white,
-        padding: const EdgeInsets.all(16),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.error_outline, color: Colors.red, size: 48),
-              const SizedBox(height: 16),
-              Text(
-                'Bir hata oluştu:',
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.red,
+  try {
+    debugPrint('Bootstrap stage: initializeDateFormatting');
+    Intl.defaultLocale = 'tr_TR';
+    await initializeDateFormatting('tr_TR');
+
+    debugPrint('Bootstrap stage: initializeAppSupabase');
+    await initializeAppSupabase();
+
+    // ReviewState singleton initializes itself in its constructor (_internal calls
+    // initialize() which is memoized). Awaiting it here only delays runApp by the
+    // SharedPreferences read time (~5-50 ms) without any benefit — the data is
+    // only needed after products load (~1-2 s later). Let it run in the background.
+    ReviewState().initialize(); // fire-and-forget; memoized, safe to call again
+
+    if (!kIsWeb) {
+      debugPrint('Bootstrap stage: Firebase.initializeApp');
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    }
+
+    // Render hatalarını ekranda göster
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      return Material(
+        child: Container(
+          color: Colors.white,
+          padding: const EdgeInsets.all(16),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 48),
+                const SizedBox(height: 16),
+                Text(
+                  'Bir hata oluştu:',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                details.exceptionAsString(),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.black87),
-              ),
-            ],
+                const SizedBox(height: 8),
+                Text(
+                  details.exceptionAsString(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.black87),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-    );
-  };
-
-  runApp(
-    MultiProvider(
-      providers: buildAppProviders(),
-      child: const MyApp(),
-    ),
-  );
-
-  if (!kIsWeb) {
-    try {
-      await PushNotificationService.instance.initialize(
-        navigatorKey: appNavigatorKey,
       );
-    } catch (error, stackTrace) {
-      debugPrint('PushNotificationService initialize failed: $error');
-      debugPrintStack(stackTrace: stackTrace);
+    };
+
+    debugPrint('Bootstrap stage: runApp');
+    runApp(MultiProvider(providers: buildAppProviders(), child: const MyApp()));
+
+    if (!kIsWeb) {
+      try {
+        await PushNotificationService.instance.initialize(
+          navigatorKey: appNavigatorKey,
+        );
+      } catch (error, stackTrace) {
+        debugPrint('PushNotificationService initialize failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
     }
+  } catch (error, stackTrace) {
+    debugPrint('Fatal startup error in ibul_app main(): $error');
+    debugPrintStack(stackTrace: stackTrace);
+    rethrow;
   }
 }
 

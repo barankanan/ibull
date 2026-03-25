@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 
 class AdsPreviewCard extends StatelessWidget {
   const AdsPreviewCard({
@@ -43,7 +44,10 @@ class AdsPreviewCard extends StatelessWidget {
               image: imageUrl == null
                   ? null
                   : DecorationImage(
-                      image: NetworkImage(imageUrl!),
+                      image: OptimizedImage.buildContextAwareProvider(
+                        context: context,
+                        imageUrlOrPath: imageUrl!,
+                      )!,
                       fit: BoxFit.cover,
                     ),
             ),

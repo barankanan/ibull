@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../core/app_image_cdn.dart';
 import '../models/product_model.dart';
 import '../screens/product_detail_page.dart';
 import '../screens/home_screen.dart';
@@ -9,10 +10,15 @@ import '../core/app_state.dart';
 import '../core/cart_state.dart';
 import '../core/favorite_state.dart';
 import '../core/review_state.dart';
+import '../core/app_motion.dart';
+import '../core/interaction_feedback.dart';
+import '../core/build_profile.dart';
 import '../core/constants.dart';
 import '../screens/login_page.dart';
 import '../screens/business_detail_page.dart';
 import 'optimized_image.dart';
+import 'premium_interactions.dart';
+import 'staggered_reveal.dart';
 
 class _CampaignBadgeData {
   final String text;
@@ -34,6 +40,7 @@ class ProductCard extends StatefulWidget {
   final bool tight;
   final bool forceFoodOrderButton;
   final bool pinActionsBottom;
+  final OptimizedImagePriority imagePriority;
 
   const ProductCard({
     super.key,
@@ -44,6 +51,7 @@ class ProductCard extends StatefulWidget {
     this.tight = false,
     this.forceFoodOrderButton = false,
     this.pinActionsBottom = false,
+    this.imagePriority = OptimizedImagePriority.high,
   });
 
   @override
@@ -52,13 +60,15 @@ class ProductCard extends StatefulWidget {
 
 class _ProductCardState extends State<ProductCard> {
   late final String _heroTag;
+  late _CampaignBadgeData _campaignBadgeData;
+  String? _primaryImageUrlOrPath;
 
   // Purple color from the screenshot
   static const Color _brandPurple = Color(0xFF7C3AED);
 
   AppState get _appState => context.read<AppState>();
 
-  _CampaignBadgeData? get _campaignBadgeData {
+  _CampaignBadgeData _resolveCampaignBadgeData() {
     if (widget.product.tags.contains('Ücretsiz Kargo')) {
       return const _CampaignBadgeData(
         text: 'Ücretsiz Kargo',
@@ -94,14 +104,15 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
-  String? get _primaryImageUrlOrPath {
-    if (widget.product.images.isNotEmpty &&
-        widget.product.images.first.trim().isNotEmpty) {
-      return widget.product.images.first.trim();
-    }
-    final thumb = widget.product.thumbnailPublicUrl?.trim();
-    if (thumb != null && thumb.isNotEmpty) return thumb;
-    return null;
+  String? _resolvePrimaryImageUrlOrPath() {
+    // Use CDN card variant — 420×420 @ q75 — instead of raw original URL.
+    final url = widget.product.imageFor(AppImageVariant.card);
+    return url.isEmpty ? null : url;
+  }
+
+  void _primeDerivedState() {
+    _campaignBadgeData = _resolveCampaignBadgeData();
+    _primaryImageUrlOrPath = _resolvePrimaryImageUrlOrPath();
   }
 
   @override
@@ -109,10 +120,19 @@ class _ProductCardState extends State<ProductCard> {
     super.initState();
     _heroTag =
         'product-image-${widget.product.productId ?? widget.product.name}-${identityHashCode(this)}';
+    _primeDerivedState();
+  }
+
+  @override
+  void didUpdateWidget(covariant ProductCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.product, widget.product)) {
+      _primeDerivedState();
+    }
   }
 
   void _showLoginRequiredDialog(BuildContext context) {
-    showDialog(
+    showAppDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Giriş Yap'),
@@ -127,7 +147,9 @@ class _ProductCardState extends State<ProductCard> {
               Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const LoginPage()),
+                buildAppPageRoute<void>(
+                  builder: (context) => const LoginPage(),
+                ),
               );
             },
             child: const Text('Giriş Yap'),
@@ -139,32 +161,36 @@ class _ProductCardState extends State<ProductCard> {
 
   @override
   Widget build(BuildContext context) {
-    final isAddedToCart = context.select<CartState, bool>(
-      (cartState) => cartState.isInCart(widget.product),
-    );
-    final isFavorite = context.select<FavoriteState, bool>(
-      (favoriteState) => favoriteState.isFavorite(widget.product),
-    );
-    final ratingData = context.select<ReviewState, ProductRatingSummary>(
-      (reviewState) => reviewState.getProductRatingSummary(
-        productName: widget.product.name,
-        storeName: widget.product.store,
-        fallbackRating: widget.product.rating,
-        fallbackReviewCount: widget.product.reviewCount,
-      ),
-    );
+    return BuildProfileCollector.measure('ProductCard', () {
+      final isAddedToCart = context.select<CartState, bool>(
+        (cartState) => cartState.isInCart(widget.product),
+      );
+      final isFavorite = context.select<FavoriteState, bool>(
+        (favoriteState) => favoriteState.isFavorite(widget.product),
+      );
+      final ratingData = context.select<ReviewState, ProductRatingSummary>(
+        (reviewState) => reviewState.getProductRatingSummary(
+          productName: widget.product.name,
+          storeName: widget.product.store,
+          fallbackRating: widget.product.rating,
+          fallbackReviewCount: widget.product.reviewCount,
+        ),
+      );
 
-    return widget.compact
-        ? _buildCompactCard(
-            isAddedToCart: isAddedToCart,
-            isFavorite: isFavorite,
-            ratingData: ratingData,
-          )
-        : _buildNormalCard(
-            isAddedToCart: isAddedToCart,
-            isFavorite: isFavorite,
-            ratingData: ratingData,
-          );
+      return RepaintBoundary(
+        child: widget.compact
+            ? _buildCompactCard(
+                isAddedToCart: isAddedToCart,
+                isFavorite: isFavorite,
+                ratingData: ratingData,
+              )
+            : _buildNormalCard(
+                isAddedToCart: isAddedToCart,
+                isFavorite: isFavorite,
+                ratingData: ratingData,
+              ),
+      );
+    });
   }
 
   void _onCardTap() {
@@ -173,19 +199,10 @@ class _ProductCardState extends State<ProductCard> {
       if (!mounted) return;
       Navigator.push(
         context,
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
+        buildAppPageRoute<void>(
+          builder: (context) =>
               ProductDetailPage(product: widget.product, heroTag: _heroTag),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(
-              opacity: CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-              ),
-              child: child,
-            );
-          },
-          transitionDuration: const Duration(milliseconds: 160),
+          transitionStyle: AppRouteTransitionStyle.hero,
         ),
       );
     });
@@ -199,44 +216,50 @@ class _ProductCardState extends State<ProductCard> {
   }) {
     assert(aspectRatio != null || height != null);
 
+    final imagePath = _primaryImageUrlOrPath;
+    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final logicalWidth =
+        widget.width ??
+        (widget.compact ? 160.0 : (widget.tight ? 188.0 : 198.0));
+    final logicalHeight = height ?? (logicalWidth / (aspectRatio ?? 1.0));
+    final cacheWidth = (logicalWidth * devicePixelRatio).round().clamp(
+      160,
+      widget.compact ? 320 : 520,
+    );
+    final cacheHeight = (logicalHeight * devicePixelRatio).round().clamp(
+      160,
+      widget.compact ? 320 : 520,
+    );
+
     final imageContent = Container(
       color: Colors.grey[100],
       width: double.infinity,
       alignment: Alignment.center,
       child: Hero(
         tag: _heroTag,
-        child: _primaryImageUrlOrPath != null
-            ? LayoutBuilder(
-                builder: (context, constraints) {
-                  final mediaQuery = MediaQuery.of(context);
-                  final logicalWidth = constraints.maxWidth.isFinite
-                      ? constraints.maxWidth
-                      : (widget.width ?? (widget.compact ? 160 : 220));
-                  final logicalHeight = constraints.maxHeight.isFinite
-                      ? constraints.maxHeight
-                      : (height ?? (logicalWidth / aspectRatio!));
-                  final devicePixelRatio = mediaQuery.devicePixelRatio;
-                  final cacheWidth = (logicalWidth * devicePixelRatio)
-                      .round()
-                      .clamp(160, widget.compact ? 320 : 520);
-                  final cacheHeight = (logicalHeight * devicePixelRatio)
-                      .round()
-                      .clamp(160, widget.compact ? 320 : 520);
-
-                  return OptimizedImage(
-                    imageUrlOrPath: _primaryImageUrlOrPath!,
-                    width: double.infinity,
-                    height: double.infinity,
-                    fit: BoxFit.cover,
-                    cacheWidth: cacheWidth,
-                    cacheHeight: cacheHeight,
-                    errorWidget: Icon(
-                      Icons.image_not_supported,
-                      color: Colors.grey[400],
-                      size: fallbackIconSize,
-                    ),
-                  );
+        transitionOnUserGestures: true,
+        child: imagePath != null
+            ? OptimizedImage(
+                imageUrlOrPath: imagePath,
+                width: double.infinity,
+                height: double.infinity,
+                fit: BoxFit.cover,
+                cacheWidth: cacheWidth,
+                cacheHeight: cacheHeight,
+                priority: widget.imagePriority,
+                onFirstFrameReady: () {
+                  // Fire the StaggeredReveal signal so the slide animation
+                  // starts only after this image's GPU texture is ready.
+                  final signal = StaggeredRevealSignal.maybeOf(context);
+                  if (signal != null && signal.value != true) {
+                    signal.value = true;
+                  }
                 },
+                errorWidget: Icon(
+                  Icons.image_not_supported,
+                  color: Colors.grey[400],
+                  size: fallbackIconSize,
+                ),
               )
             : Icon(
                 Icons.image_not_supported,
@@ -248,13 +271,15 @@ class _ProductCardState extends State<ProductCard> {
 
     return ClipRRect(
       borderRadius: borderRadius,
-      child: height != null
-          ? SizedBox(
-              height: height,
-              width: double.infinity,
-              child: imageContent,
-            )
-          : AspectRatio(aspectRatio: aspectRatio!, child: imageContent),
+      child: RepaintBoundary(
+        child: height != null
+            ? SizedBox(
+                height: height,
+                width: double.infinity,
+                child: imageContent,
+              )
+            : AspectRatio(aspectRatio: aspectRatio!, child: imageContent),
+      ),
     );
   }
 
@@ -314,50 +339,55 @@ class _ProductCardState extends State<ProductCard> {
         return SizedBox(
           width: widget.width,
           height: cardHeight,
-          child: Container(
-            margin: widget.margin ?? EdgeInsets.only(right: 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: Material(
-                color: Colors.white,
-                child: InkWell(
-                  onTap: _onCardTap,
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      padding,
-                      padding,
-                      padding,
-                      padding,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildNormalImageSection(
-                          isFavorite: isFavorite,
-                          imageHeight: imageHeight,
-                        ),
-                        SizedBox(height: isTight ? 3 : 5),
-                        _buildCampaignBadge(),
-                        SizedBox(height: isTight ? 3 : 5),
-                        _buildTitle(),
-                        const SizedBox(height: 2),
-                        _buildRating(ratingData),
-                        SizedBox(height: isTight ? 3 : 5),
-                        _buildPrice(),
-                        SizedBox(height: isTight ? 4 : 6),
-                        _buildButton(context, isAddedToCart),
-                      ],
+          child: PremiumPressable(
+            hoverLift: 2,
+            hoverScale: 1.008,
+            pressedScale: 0.982,
+            child: Container(
+              margin: widget.margin ?? const EdgeInsets.only(right: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Material(
+                  color: Colors.white,
+                  child: InkWell(
+                    onTap: _onCardTap,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        padding,
+                        padding,
+                        padding,
+                        padding,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildNormalImageSection(
+                            isFavorite: isFavorite,
+                            imageHeight: imageHeight,
+                          ),
+                          SizedBox(height: isTight ? 3 : 5),
+                          _buildCampaignBadge(),
+                          SizedBox(height: isTight ? 3 : 5),
+                          _buildTitle(),
+                          const SizedBox(height: 2),
+                          _buildRating(ratingData),
+                          SizedBox(height: isTight ? 3 : 5),
+                          _buildPrice(),
+                          SizedBox(height: isTight ? 4 : 6),
+                          _buildButton(context, isAddedToCart),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -382,39 +412,44 @@ class _ProductCardState extends State<ProductCard> {
 
         return SizedBox(
           height: cardHeight,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.grey.shade200, width: 1),
-              color: Colors.white,
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: Material(
+          child: PremiumPressable(
+            hoverLift: 2,
+            hoverScale: 1.008,
+            pressedScale: 0.982,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.grey.shade200, width: 1),
                 color: Colors.white,
-                child: InkWell(
-                  onTap: _onCardTap,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildImageSection(
-                          isFavorite: isFavorite,
-                          imageHeight: imageHeight,
-                        ),
-                        const SizedBox(height: 6),
-                        _buildCampaignBadge(),
-                        const SizedBox(height: 5),
-                        _buildTitle(),
-                        const SizedBox(height: 2),
-                        _buildRating(ratingData),
-                        const SizedBox(height: 5),
-                        _buildPrice(),
-                        const SizedBox(height: 6),
-                        _buildButton(context, isAddedToCart),
-                      ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Material(
+                  color: Colors.white,
+                  child: InkWell(
+                    onTap: _onCardTap,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildImageSection(
+                            isFavorite: isFavorite,
+                            imageHeight: imageHeight,
+                          ),
+                          const SizedBox(height: 6),
+                          _buildCampaignBadge(),
+                          const SizedBox(height: 5),
+                          _buildTitle(),
+                          const SizedBox(height: 2),
+                          _buildRating(ratingData),
+                          const SizedBox(height: 5),
+                          _buildPrice(),
+                          const SizedBox(height: 6),
+                          _buildButton(context, isAddedToCart),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -451,25 +486,30 @@ class _ProductCardState extends State<ProductCard> {
             onTap: () {
               _handleFavoriteTap(context);
             },
-            child: Container(
-              width: 28,
-              height: 28,
-              padding: EdgeInsets.zero,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Icon(
-                isFavorite ? Icons.favorite : Icons.favorite_border,
-                color: isFavorite ? Colors.red : Colors.grey.shade400,
-                size: 16,
+            child: PremiumPressable(
+              pressedScale: 0.9,
+              hoverScale: 1.04,
+              hoverLift: 0.5,
+              child: Container(
+                width: 28,
+                height: 28,
+                padding: EdgeInsets.zero,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  isFavorite ? Icons.favorite : Icons.favorite_border,
+                  color: isFavorite ? Colors.red : Colors.grey.shade400,
+                  size: 16,
+                ),
               ),
             ),
           ),
@@ -506,25 +546,30 @@ class _ProductCardState extends State<ProductCard> {
             onTap: () {
               _handleFavoriteTap(context);
             },
-            child: Container(
-              width: 28,
-              height: 28,
-              padding: EdgeInsets.zero,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Icon(
-                isFavorite ? Icons.favorite : Icons.favorite_border,
-                color: isFavorite ? Colors.red : Colors.grey.shade400,
-                size: 16,
+            child: PremiumPressable(
+              pressedScale: 0.9,
+              hoverScale: 1.04,
+              hoverLift: 0.5,
+              child: Container(
+                width: 28,
+                height: 28,
+                padding: EdgeInsets.zero,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  isFavorite ? Icons.favorite : Icons.favorite_border,
+                  color: isFavorite ? Colors.red : Colors.grey.shade400,
+                  size: 16,
+                ),
               ),
             ),
           ),
@@ -534,9 +579,6 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Widget _buildCampaignBadge() {
-    final badgeData = _campaignBadgeData;
-    if (badgeData == null) return const SizedBox.shrink();
-
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
     final verticalPadding = widget.compact
@@ -555,16 +597,16 @@ class _ProductCardState extends State<ProductCard> {
           horizontal: widget.compact ? 6 : 8,
         ),
         decoration: BoxDecoration(
-          color: badgeData.backgroundColor,
+          color: _campaignBadgeData.backgroundColor,
           borderRadius: BorderRadius.circular(widget.compact ? 10 : 999),
         ),
         child: Text(
-          badgeData.text,
+          _campaignBadgeData.text,
           textAlign: TextAlign.center,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: badgeData.textColor,
+            color: _campaignBadgeData.textColor,
             fontSize: fontSize,
             fontWeight: FontWeight.w700,
           ),
@@ -859,25 +901,35 @@ class _ProductCardState extends State<ProductCard> {
 
     // Eğer yemek kategorisi ise özel "Sipariş Ver" butonu göster
     if (isFoodCategory) {
-      return SizedBox(
-        key: const ValueKey('product-card-primary-button'),
-        width: double.infinity,
-        height: buttonHeight,
-        child: ElevatedButton(
-          onPressed: () => _showFoodOrderModePopup(context),
-          style: ElevatedButton.styleFrom(
-            elevation: 0,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-            alignment: Alignment.center,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
+      return PremiumPressable(
+        child: SizedBox(
+          key: const ValueKey('product-card-primary-button'),
+          width: double.infinity,
+          height: buttonHeight,
+          child: ElevatedButton(
+            onPressed: () {
+              InteractionFeedback.forInteraction(
+                InteractionFeedbackType.mainCta,
+              );
+              _showFoodOrderModePopup(context);
+            },
+            style: premiumButtonInteractionStyle(
+              ElevatedButton.styleFrom(
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                alignment: Alignment.center,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
+                ),
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              overlayColor: Colors.white,
             ),
-            backgroundColor: AppColors.primary,
-            foregroundColor: Colors.white,
-          ),
-          child: Text(
-            'Sipariş Ver',
-            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
+            child: Text(
+              'Sipariş Ver',
+              style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
+            ),
           ),
         ),
       );
@@ -902,28 +954,33 @@ class _ProductCardState extends State<ProductCard> {
               SizedBox(
                 width: primaryButtonWidth,
                 height: buttonHeight,
-                child: ElevatedButton(
-                  onPressed: _onCardTap,
-                  style: ElevatedButton.styleFrom(
-                    elevation: 0,
-                    padding: EdgeInsets.zero,
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(
-                        widget.compact ? 6 : 12,
+                child: PremiumPressable(
+                  child: ElevatedButton(
+                    onPressed: _onCardTap,
+                    style: premiumButtonInteractionStyle(
+                      ElevatedButton.styleFrom(
+                        elevation: 0,
+                        padding: EdgeInsets.zero,
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            widget.compact ? 6 : 12,
+                          ),
+                        ),
                       ),
+                      overlayColor: Colors.white,
                     ),
-                  ),
-                  child: Text(
-                    'Sepette',
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                    child: Text(
+                      'Sepette',
+                      style: TextStyle(
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ),
@@ -931,31 +988,37 @@ class _ProductCardState extends State<ProductCard> {
               SizedBox(
                 width: iconButtonWidth,
                 height: buttonHeight,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const HomeScreen(initialIndex: 3),
+                child: PremiumPressable(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              const HomeScreen(initialIndex: 3),
+                        ),
+                        (route) => false,
+                      );
+                    },
+                    style: premiumButtonInteractionStyle(
+                      ElevatedButton.styleFrom(
+                        elevation: 0,
+                        padding: EdgeInsets.zero,
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            widget.compact ? 6 : 12,
+                          ),
+                        ),
                       ),
-                      (route) => false,
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    elevation: 0,
-                    padding: EdgeInsets.zero,
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(
-                        widget.compact ? 6 : 12,
-                      ),
+                      overlayColor: Colors.white,
                     ),
-                  ),
-                  child: Icon(
-                    Icons.shopping_cart_outlined,
-                    size: widget.compact ? 16 : 20,
-                    color: Colors.white,
+                    child: Icon(
+                      Icons.shopping_cart_outlined,
+                      size: widget.compact ? 16 : 20,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
@@ -966,31 +1029,33 @@ class _ProductCardState extends State<ProductCard> {
     }
 
     // Normal Sepete Ekle Butonu
-    return SizedBox(
-      key: const ValueKey('product-card-primary-button'),
-      width: double.infinity,
-      height: buttonHeight,
-      child: ElevatedButton(
-        onPressed: () {
-          _handleAddToCartTap(context);
-        },
-        style: ElevatedButton.styleFrom(
-          elevation: 0,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 4,
-            vertical: 0,
-          ), // padding ekle
-          alignment: Alignment.center,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
+    return PremiumPressable(
+      child: SizedBox(
+        key: const ValueKey('product-card-primary-button'),
+        width: double.infinity,
+        height: buttonHeight,
+        child: ElevatedButton(
+          onPressed: () {
+            _handleAddToCartTap(context);
+          },
+          style: premiumButtonInteractionStyle(
+            ElevatedButton.styleFrom(
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+              alignment: Alignment.center,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
+              ),
+              side: const BorderSide(color: _brandPurple, width: 2),
+              backgroundColor: Colors.white,
+              foregroundColor: _brandPurple,
+            ),
+            overlayColor: _brandPurple,
           ),
-          side: const BorderSide(color: _brandPurple, width: 2),
-          backgroundColor: Colors.white,
-          foregroundColor: _brandPurple,
-        ),
-        child: Text(
-          'Sepete Ekle',
-          style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
+          child: Text(
+            'Sepete Ekle',
+            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
+          ),
         ),
       ),
     );
@@ -1001,9 +1066,8 @@ class _ProductCardState extends State<ProductCard> {
       _showLoginRequiredDialog(context);
       return;
     }
-    setState(() {
-      _appState.toggleFavorite(widget.product);
-    });
+    InteractionFeedback.forInteraction(InteractionFeedbackType.favorite);
+    _appState.toggleFavorite(widget.product);
   }
 
   void _handleAddToCartTap(BuildContext context) {
@@ -1011,13 +1075,12 @@ class _ProductCardState extends State<ProductCard> {
       _showLoginRequiredDialog(context);
       return;
     }
-    setState(() {
-      _appState.addToCart(widget.product);
-    });
+    InteractionFeedback.forInteraction(InteractionFeedbackType.addToCart);
+    _appState.addToCart(widget.product);
   }
 
   void _showFoodOrderModePopup(BuildContext context) {
-    showModalBottomSheet(
+    showAppModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
@@ -1081,6 +1144,10 @@ class _ProductCardState extends State<ProductCard> {
                         subtitle: 'Masaya sipariş ver',
                         color: AppColors.primary,
                         onTap: () {
+                          InteractionFeedback.forInteraction(
+                            InteractionFeedbackType.mainCta,
+                            channel: 'food_dining_mode',
+                          );
                           Navigator.pop(sheetCtx);
                           _navigateToDiningMode(context);
                         },
@@ -1182,6 +1249,10 @@ class _ProductCardState extends State<ProductCard> {
       _showLoginRequiredDialog(context);
       return;
     }
+    InteractionFeedback.forInteraction(
+      InteractionFeedbackType.mainCta,
+      channel: 'food_online_order',
+    );
     _appState.addToCart(widget.product);
     Navigator.pushAndRemoveUntil(
       context,
