@@ -4,6 +4,7 @@ import 'dart:ui';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../models/product_model.dart';
+import '../models/product_pricing.dart';
 import 'checkout_page.dart';
 import 'product_detail_page.dart';
 import '../widgets/web_header.dart';
@@ -138,7 +139,7 @@ class _CartPageState extends State<CartPage>
                     child: ListView.separated(
                       controller: controller,
                       itemCount: _availableCoupons.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 12),
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
                       itemBuilder: (context, index) {
                         final coupon = _availableCoupons[index];
                         final bool isApplied =
@@ -751,7 +752,7 @@ class _CartPageState extends State<CartPage>
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
+                color: AppColors.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -1311,6 +1312,28 @@ class _CartPageState extends State<CartPage>
     );
   }
 
+  String _foodOrderItemTitle(Map<String, dynamic> item) {
+    final name = item['name']?.toString() ?? '';
+    final grams = (item['selectedWeightGrams'] as num?)?.toInt();
+    if (grams != null && grams > 0) {
+      return '$name - ${ProductPriceCalculator.formatWeight(grams)}';
+    }
+    final gramaj = item['gramaj']?.toString().trim() ?? '';
+    if (gramaj.isNotEmpty) {
+      return '$name - $gramaj';
+    }
+    return name;
+  }
+
+  String? _foodOrderItemPrice(Map<String, dynamic> item) {
+    final lineTotal = (item['calculatedLineTotal'] as num?)?.toDouble();
+    if (lineTotal != null && lineTotal > 0) {
+      return ProductPriceCalculator.formatCurrency(lineTotal);
+    }
+    final priceText = item['price']?.toString().trim() ?? '';
+    return priceText.isEmpty ? null : priceText;
+  }
+
   // ignore: unused_element
   Widget _buildMobileDeliverySelector() {
     final isNarrow = _isNarrowPhone(context);
@@ -1323,7 +1346,7 @@ class _CartPageState extends State<CartPage>
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 14,
             offset: const Offset(0, 6),
           ),
@@ -1528,7 +1551,7 @@ class _CartPageState extends State<CartPage>
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
+                    color: statusColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: statusColor),
                   ),
@@ -1561,8 +1584,12 @@ class _CartPageState extends State<CartPage>
                         .toList() ??
                     [];
                 final quantity = item['quantity'] ?? 1;
-                final gramaj = item['gramaj']?.toString();
                 final notes = item['notes']?.toString();
+                final priceText = _foodOrderItemPrice(item);
+                final subtitleParts = <String>[
+                  if (attrs.isNotEmpty) attrs.join(' • '),
+                  if (notes != null && notes.isNotEmpty) notes,
+                ];
 
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1582,45 +1609,34 @@ class _CartPageState extends State<CartPage>
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              item['name']?.toString() ?? '',
+                              _foodOrderItemTitle(item),
                               style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
                           ),
+                          if (priceText != null) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              priceText,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
-                      if (attrs.isNotEmpty)
+                      if (subtitleParts.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
-                            attrs.join(' • '),
+                            subtitleParts.join(' • '),
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.grey.shade700,
-                            ),
-                          ),
-                        ),
-                      if (gramaj != null && gramaj.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            gramaj,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                        ),
-                      if (notes != null && notes.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            notes,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade500,
                             ),
                           ),
                         ),
@@ -1651,7 +1667,7 @@ class _CartPageState extends State<CartPage>
         border: Border.all(color: Colors.grey.shade200, width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -1883,8 +1899,8 @@ class _CartPageState extends State<CartPage>
                         product['image'] != null &&
                             product['image'].toString().isNotEmpty
                         ? (product['image'].toString().startsWith('http')
-                              ? OptimizedImage(imageUrlOrPath: 
-                                  product['image'],
+                              ? OptimizedImage(
+                                  imageUrlOrPath: product['image'],
                                   fit: BoxFit.contain,
                                   errorBuilder: (context, error, stackTrace) {
                                     return const Center(
@@ -2192,7 +2208,7 @@ class _CartPageState extends State<CartPage>
                 ),
                 decoration: BoxDecoration(
                   color: coupon != null
-                      ? AppColors.primary.withOpacity(0.08)
+                      ? AppColors.primary.withValues(alpha: 0.08)
                       : Colors.white,
                   border: Border.all(color: AppColors.primary, width: 1),
                   borderRadius: BorderRadius.circular(14),
@@ -2408,7 +2424,7 @@ class _CartPageState extends State<CartPage>
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               blurRadius: 18,
               offset: const Offset(0, -6),
             ),
@@ -3110,7 +3126,7 @@ class _CartPageState extends State<CartPage>
                               vertical: 5,
                             ),
                             decoration: BoxDecoration(
-                              color: statusColor.withOpacity(0.1),
+                              color: statusColor.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(color: statusColor),
                             ),
@@ -3170,9 +3186,12 @@ class _CartPageState extends State<CartPage>
                                   .toList() ??
                               [];
                           final quantity = (item['quantity'] ?? 1) as int;
-                          final gramaj = item['gramaj']?.toString();
                           final notes = item['notes']?.toString();
-                          final price = item['price']?.toString();
+                          final price = _foodOrderItemPrice(item);
+                          final subtitleParts = <String>[
+                            if (attrs.isNotEmpty) attrs.join(' • '),
+                            if (notes != null && notes.isNotEmpty) notes,
+                          ];
 
                           return Container(
                             margin: const EdgeInsets.only(bottom: 10),
@@ -3203,7 +3222,7 @@ class _CartPageState extends State<CartPage>
                                             height: 26,
                                             decoration: BoxDecoration(
                                               color: AppColors.primary
-                                                  .withOpacity(0.05),
+                                                  .withValues(alpha: 0.05),
                                               borderRadius:
                                                   BorderRadius.circular(6),
                                             ),
@@ -3236,7 +3255,7 @@ class _CartPageState extends State<CartPage>
                                             height: 26,
                                             decoration: BoxDecoration(
                                               color: AppColors.primary
-                                                  .withOpacity(0.05),
+                                                  .withValues(alpha: 0.05),
                                               borderRadius:
                                                   BorderRadius.circular(6),
                                             ),
@@ -3252,7 +3271,7 @@ class _CartPageState extends State<CartPage>
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        item['name']?.toString() ?? '',
+                                        _foodOrderItemTitle(item),
                                         style: const TextStyle(
                                           fontSize: 13,
                                           fontWeight: FontWeight.w600,
@@ -3270,36 +3289,14 @@ class _CartPageState extends State<CartPage>
                                       ),
                                   ],
                                 ),
-                                if (attrs.isNotEmpty)
+                                if (subtitleParts.isNotEmpty)
                                   Padding(
                                     padding: const EdgeInsets.only(top: 4),
                                     child: Text(
-                                      attrs.join(' • '),
+                                      subtitleParts.join(' • '),
                                       style: TextStyle(
                                         fontSize: 12,
                                         color: Colors.grey.shade700,
-                                      ),
-                                    ),
-                                  ),
-                                if (gramaj != null && gramaj.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      gramaj,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey.shade700,
-                                      ),
-                                    ),
-                                  ),
-                                if (notes != null && notes.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      notes,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey.shade500,
                                       ),
                                     ),
                                   ),
@@ -3417,7 +3414,10 @@ class _CartPageState extends State<CartPage>
                     product['image'] != null &&
                         product['image'].toString().isNotEmpty
                     ? (product['image'].toString().startsWith('http')
-                          ? OptimizedImage(imageUrlOrPath: product['image'], fit: BoxFit.contain)
+                          ? OptimizedImage(
+                              imageUrlOrPath: product['image'],
+                              fit: BoxFit.contain,
+                            )
                           : Image.asset(product['image'], fit: BoxFit.contain))
                     : const Icon(Icons.image_not_supported),
               ),
@@ -3612,7 +3612,7 @@ class _CartPageState extends State<CartPage>
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.purple.withOpacity(0.3),
+            color: Colors.purple.withValues(alpha: 0.3),
             blurRadius: 12,
             offset: const Offset(0, 6),
           ),
@@ -3626,7 +3626,7 @@ class _CartPageState extends State<CartPage>
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -3650,7 +3650,7 @@ class _CartPageState extends State<CartPage>
           Text(
             'Premium ayrıcalıkları ile tasarruf et',
             style: TextStyle(
-              color: Colors.white.withOpacity(0.95),
+              color: Colors.white.withValues(alpha: 0.95),
               fontSize: 13,
               fontWeight: FontWeight.w500,
             ),

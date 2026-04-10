@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../services/auth_service.dart';
 
@@ -104,7 +102,7 @@ class _RegisterPageState extends State<RegisterPage> {
                           width: 100,
                           height: 100,
                           decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.1),
+                            color: AppColors.primary.withValues(alpha: 0.1),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
@@ -334,7 +332,7 @@ class _RegisterPageState extends State<RegisterPage> {
                               borderRadius: BorderRadius.circular(16),
                             ),
                             elevation: 2,
-                            shadowColor: AppColors.primary.withOpacity(0.4),
+                            shadowColor: AppColors.primary.withValues(alpha: 0.4),
                           ),
                           child: _isLoading
                               ? const SizedBox(

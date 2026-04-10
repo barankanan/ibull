@@ -603,9 +603,15 @@ class AppState extends ChangeNotifier {
     _cartState.clear();
     _cartAttentionKeys.clear();
     _cartAttentionMessage = null;
-    _foodOrders.clear();
+    // NOTE: _foodOrders intentionally NOT cleared here.
+    // Food orders are in-session records created by the QR restaurant flow.
+    // Auth state changes fire during Supabase initialization even for anonymous
+    // users, which would erase a freshly-placed table order and make the
+    // active-order screen appear blank. Orders are only removed when the user
+    // explicitly dismisses them or the app restarts.
     _followedStores.clear();
     _communityProductLists.clear();
+    debugPrint('[AppState] _clearUserData called — cart/favorites cleared; food orders PRESERVED');
   }
 
   // Kullanıcının özel listeleri (ProductList modeli)

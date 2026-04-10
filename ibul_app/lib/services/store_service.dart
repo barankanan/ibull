@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/config/runtime_config.dart';
 import '../models/seller_product.dart';
 import '../models/sub_admin.dart';
 import 'store/store_media_service.dart';
@@ -27,6 +28,24 @@ class StoreService {
     currentUserIdResolver: () => currentUserId,
     tableOrderTimeout: _tableOrderTimeout,
   );
+
+  String get _debugSupabaseUrl {
+    final raw = AppRuntimeConfig.rawSupabaseUrl.trim();
+    return raw.isEmpty ? '(missing)' : raw;
+  }
+
+  String _debugRestRequestUrl(
+    String table, {
+    Map<String, String> query = const <String, String>{},
+  }) {
+    final encodedQuery = query.isEmpty
+        ? ''
+        : '?${Uri(queryParameters: query).query}';
+    if (_debugSupabaseUrl == '(missing)') {
+      return 'supabase://$table$encodedQuery';
+    }
+    return '$_debugSupabaseUrl/rest/v1/$table$encodedQuery';
+  }
 
   // --- Store Profile Methods ---
 
@@ -249,21 +268,48 @@ class StoreService {
 
   // Get Store Profile
   Future<Map<String, dynamic>?> getStoreProfile() async {
-    if (currentUserId == null) return null;
+    final userId = currentUserId;
+    if (userId == null) {
+      debugPrint(
+        '[StoreService] getStoreProfile skipped: authUserId missing',
+      );
+      return null;
+    }
+
+    final requestUrl = _debugRestRequestUrl(
+      'stores',
+      query: <String, String>{
+        'select': '*',
+        'seller_id': 'eq.$userId',
+      },
+    );
+    debugPrint(
+      '[StoreService] getStoreProfile requestUrl=$requestUrl authUserId=$userId',
+    );
 
     try {
       final data = await _supabase
           .from('stores')
           .select()
-          .eq('seller_id', currentUserId!)
+          .eq('seller_id', userId)
           .maybeSingle();
 
-      if (data == null) return null;
+      if (data == null) {
+        debugPrint(
+          '[StoreService] getStoreProfile empty result requestUrl=$requestUrl '
+          'authUserId=$userId',
+        );
+        return null;
+      }
 
       // Map snake_case to camelCase for UI consumption
       return StoreServiceMappers.storeToCamelCase(data);
-    } catch (e) {
-      debugPrint('Error getting store profile: $e');
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[StoreService] getStoreProfile failed requestUrl=$requestUrl '
+        'authUserId=$userId error=$e',
+      );
+      debugPrintStack(stackTrace: stackTrace);
       return null;
     }
   }
@@ -394,36 +440,11 @@ class StoreService {
         }).toList();
       }
 
-      dynamic response;
-      try {
-        response = await _supabase
-            .from('products')
-            .upsert(productDbData)
-            .select()
-            .single();
-      } catch (e) {
-        final msg = e.toString();
-        if (msg.contains('additional_info') ||
-            msg.contains('faq') ||
-            msg.contains('accessories') ||
-            msg.contains('video_path') ||
-            msg.contains('video_public_url') ||
-            msg.contains('thumbnail_path') ||
-            msg.contains('thumbnail_public_url') ||
-            msg.contains('video_duration_seconds') ||
-            msg.contains('video_size_bytes') ||
-            msg.contains('thumbnail_size_bytes') ||
-            msg.contains('video_status')) {
-          _stripOptionalProductColumns(productDbData);
-          response = await _supabase
-              .from('products')
-              .upsert(productDbData)
-              .select()
-              .single();
-        } else {
-          rethrow;
-        }
-      }
+      final response = await _runProductWriteWithFallback(
+        productDbData,
+        (payload) =>
+            _supabase.from('products').upsert(payload).select().single(),
+      );
       final productId = response['id'].toString();
 
       // 2. Görselleri Yükle
@@ -432,8 +453,9 @@ class StoreService {
       if (images.isNotEmpty) {
         for (int i = 0; i < images.length; i++) {
           final file = images[i];
-          if (onProgress != null)
+          if (onProgress != null) {
             onProgress('Görsel ${i + 1}/${images.length} yükleniyor...');
+          }
 
           final url = await _uploadProductImage(productId, file, i);
           uploadedUrls.add(url);
@@ -462,10 +484,11 @@ class StoreService {
             try {
               final file = (v as dynamic).imageFile;
               if (file is XFile) {
-                if (onProgress != null)
+                if (onProgress != null) {
                   onProgress(
                     'Varyant görseli ${i + 1}/${variants.length} yükleniyor...',
                   );
+                }
                 imageUrl = await _uploadVariantImage(productId, file, i);
               }
             } catch (_) {}
@@ -485,17 +508,20 @@ class StoreService {
       }
 
       // 3. Ürün Verisini Güncelle (Resim URL'leri ve Durum)
+      final Map<String, dynamic> uploadedProductData = <String, dynamic>{
+        'image_urls': uploadedUrls,
+        'image_url': uploadedUrls.isNotEmpty ? uploadedUrls.first : null,
+        'status': (product.status == 'Aktif')
+            ? 'pending_approval'
+            : product.status,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      if (updatedVariants != null) {
+        uploadedProductData['variants'] = updatedVariants;
+      }
       await _supabase
           .from('products')
-          .update({
-            'image_urls': uploadedUrls,
-            'image_url': uploadedUrls.isNotEmpty ? uploadedUrls.first : null,
-            if (updatedVariants != null) 'variants': updatedVariants,
-            'status': (product.status == 'Aktif')
-                ? 'pending_approval'
-                : product.status,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
+          .update(uploadedProductData)
           .eq('id', productId);
     } catch (e) {
       debugPrint('Add Product Error: $e');
@@ -509,6 +535,7 @@ class StoreService {
     Function(String)? onProgress,
     String? previousStatus,
     List<dynamic>? variants,
+    bool bypassApproval = false,
   }) async {
     if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
 
@@ -520,10 +547,11 @@ class StoreService {
       if (newImages != null && newImages.isNotEmpty) {
         for (int i = 0; i < newImages.length; i++) {
           final file = newImages[i];
-          if (onProgress != null)
+          if (onProgress != null) {
             onProgress(
               'Yeni görsel ${i + 1}/${newImages.length} yükleniyor...',
             );
+          }
 
           final url = await _uploadProductImage(
             product.id,
@@ -546,8 +574,13 @@ class StoreService {
         updateData['accessories'] = product.accessories;
       }
 
-      if (product.status == 'Aktif') {
-        updateData['status'] = 'pending_approval';
+      // 'Aktif' ve 'active' her ikisi de aktif durumu temsil eder; DB'ye
+      // her zaman canonical Türkçe değer ('Aktif') yazılır.
+      final bool isActiveStatus =
+          product.status.trim().toLowerCase() == 'aktif' ||
+          product.status.trim().toLowerCase() == 'active';
+      if (isActiveStatus) {
+        updateData['status'] = bypassApproval ? 'Aktif' : 'pending_approval';
       }
 
       if (variants != null) {
@@ -571,10 +604,11 @@ class StoreService {
             try {
               final file = (v as dynamic).imageFile;
               if (file is XFile) {
-                if (onProgress != null)
+                if (onProgress != null) {
                   onProgress(
                     'Varyant görseli ${i + 1}/${variants.length} yükleniyor...',
                   );
+                }
                 imageUrl = await _uploadVariantImage(product.id, file, i);
               }
             } catch (_) {}
@@ -594,52 +628,158 @@ class StoreService {
         updateData['variants'] = updatedVariants;
       }
 
-      try {
-        await _supabase
-            .from('products')
-            .update(updateData)
-            .eq('id', product.id);
-      } catch (e) {
-        final msg = e.toString();
-        if (msg.contains('additional_info') ||
-            msg.contains('faq') ||
-            msg.contains('accessories') ||
-            msg.contains('video_path') ||
-            msg.contains('video_public_url') ||
-            msg.contains('thumbnail_path') ||
-            msg.contains('thumbnail_public_url') ||
-            msg.contains('video_duration_seconds') ||
-            msg.contains('video_size_bytes') ||
-            msg.contains('thumbnail_size_bytes') ||
-            msg.contains('video_status')) {
-          _stripOptionalProductColumns(updateData);
-          await _supabase
-              .from('products')
-              .update(updateData)
-              .eq('id', product.id);
-        } else {
-          rethrow;
-        }
-      }
+      await _runProductWriteWithFallback(
+        updateData,
+        (payload) =>
+            _supabase.from('products').update(payload).eq('id', product.id),
+      );
     } catch (e) {
       debugPrint('Update Product Error: $e');
       throw Exception('Ürün güncellenirken hata: $e');
     }
   }
 
-  Future<String> _uploadProductImage(
-    String productId,
-    XFile file,
-    int index,
-  ) {
+  Future<SellerProduct> updateProductQuickEdit({
+    required SellerProduct product,
+    required String name,
+    required double price,
+    required int stock,
+    required String status,
+    XFile? replacementImage,
+  }) async {
+    if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
+
+    try {
+      final Map<String, dynamic> updateData = <String, dynamic>{};
+      final trimmedName = name.trim();
+      final trimmedStatus = status.trim();
+      String normalizeStatus(String value) {
+        switch (value.trim().toLowerCase()) {
+          case 'active':
+          case 'aktif':
+            return 'aktif';
+          case 'inactive':
+          case 'pasif':
+            return 'pasif';
+          case 'draft':
+          case 'taslak':
+            return 'taslak';
+          case 'pending':
+          case 'pending_approval':
+          case 'bekleniyor':
+            return 'bekleniyor';
+          case 'rejected':
+          case 'reddedildi':
+            return 'reddedildi';
+          default:
+            return value.trim().toLowerCase();
+        }
+      }
+
+      if (trimmedName != product.name.trim()) {
+        updateData['name'] = trimmedName;
+      }
+      if (price != product.price) {
+        updateData['price'] = price;
+        if (product.isWeightPriced) {
+          updateData['price_per_kg'] = price;
+        } else {
+          updateData['portion_price'] = price;
+        }
+      }
+      if (stock != product.stock) {
+        updateData['stock'] = stock;
+      }
+      if (trimmedStatus.isNotEmpty &&
+          normalizeStatus(trimmedStatus) != normalizeStatus(product.status)) {
+        updateData['status'] = trimmedStatus;
+      }
+
+      if (replacementImage != null) {
+        final uploadedUrl = await _uploadProductImage(
+          product.id,
+          replacementImage,
+          0,
+        );
+        final List<String> currentImageUrls = product.imageUrls.isNotEmpty
+            ? List<String>.from(product.imageUrls)
+            : <String>[
+                if ((product.imageUrl ?? '').trim().isNotEmpty)
+                  product.imageUrl!.trim(),
+              ];
+        final List<String> nextImageUrls = currentImageUrls.isEmpty
+            ? <String>[uploadedUrl]
+            : <String>[uploadedUrl, ...currentImageUrls.skip(1)];
+        updateData['image_url'] = uploadedUrl;
+        updateData['image_urls'] = nextImageUrls;
+      }
+
+      if (updateData.isEmpty) {
+        return product;
+      }
+
+      updateData['updated_at'] = DateTime.now().toIso8601String();
+
+      await _runProductWriteWithFallback(
+        updateData,
+        (payload) => _supabase
+            .from('products')
+            .update(payload)
+            .eq('id', product.id)
+            .eq('seller_id', currentUserId!),
+      );
+
+      return await getProductById(product.id) ?? product;
+    } catch (e) {
+      debugPrint('Update Product Quick Edit Error: $e');
+      throw Exception('Hızlı düzenleme kaydedilemedi: $e');
+    }
+  }
+
+  Future<void> updateProductPriceStockStatus({
+    required String productId,
+    required double price,
+    required int stock,
+    required String pricingType,
+    double? portionPrice,
+    double? pricePerKg,
+    String? status,
+  }) async {
+    if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
+
+    try {
+      final Map<String, dynamic> updateData = <String, dynamic>{
+        'price': price,
+        'stock': stock,
+        'pricing_type': pricingType,
+        'portion_price': portionPrice,
+        'price_per_kg': pricePerKg,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      final String normalizedStatus = status?.trim() ?? '';
+      if (normalizedStatus.isNotEmpty) {
+        updateData['status'] = normalizedStatus;
+      }
+
+      await _runProductWriteWithFallback(
+        updateData,
+        (payload) => _supabase
+            .from('products')
+            .update(payload)
+            .eq('id', productId)
+            .eq('seller_id', currentUserId!),
+      );
+    } catch (e) {
+      debugPrint('Update Product Price/Stock Error: $e');
+      throw Exception('Fiyat ve stok güncellenirken hata: $e');
+    }
+  }
+
+  Future<String> _uploadProductImage(String productId, XFile file, int index) {
     return _mediaService.uploadProductImage(productId, file, index);
   }
 
-  Future<String> _uploadVariantImage(
-    String productId,
-    XFile file,
-    int index,
-  ) {
+  Future<String> _uploadVariantImage(String productId, XFile file, int index) {
     return _mediaService.uploadVariantImage(productId, file, index);
   }
 
@@ -703,27 +843,10 @@ class StoreService {
       productDbData['variants'] = updatedVariants;
     }
 
-    try {
-      await _supabase.from('products').upsert(productDbData);
-    } catch (e) {
-      final msg = e.toString();
-      if (msg.contains('additional_info') ||
-          msg.contains('faq') ||
-          msg.contains('accessories') ||
-          msg.contains('video_path') ||
-          msg.contains('video_public_url') ||
-          msg.contains('thumbnail_path') ||
-          msg.contains('thumbnail_public_url') ||
-          msg.contains('video_duration_seconds') ||
-          msg.contains('video_size_bytes') ||
-          msg.contains('thumbnail_size_bytes') ||
-          msg.contains('video_status')) {
-        _stripOptionalProductColumns(productDbData);
-        await _supabase.from('products').upsert(productDbData);
-      } else {
-        rethrow;
-      }
-    }
+    await _runProductWriteWithFallback(
+      productDbData,
+      (payload) => _supabase.from('products').upsert(payload),
+    );
   }
 
   // --- Admin Product Approval Methods ---
@@ -834,8 +957,37 @@ class StoreService {
 
   // --- Helper Methods ---
 
-  void _stripOptionalProductColumns(Map<String, dynamic> data) {
-    stripOptionalProductColumns(data);
+  Future<T> _runProductWriteWithFallback<T>(
+    Map<String, dynamic> data,
+    Future<T> Function(Map<String, dynamic> payload) action,
+  ) async {
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
+      try {
+        return await action(data);
+      } catch (error, stackTrace) {
+        final message = error.toString();
+        if (!isOptionalProductColumnError(message)) rethrow;
+
+        final removedColumns = stripUnsupportedProductColumns(data, message);
+        if (removedColumns.isEmpty) {
+          lastError = error;
+          lastStackTrace = stackTrace;
+          break;
+        }
+
+        lastError = error;
+        lastStackTrace = stackTrace;
+      }
+    }
+
+    if (lastError != null) {
+      Error.throwWithStackTrace(lastError, lastStackTrace!);
+    }
+
+    throw StateError('Ürün yazma fallback akışı beklenmeyen şekilde sonlandı.');
   }
 
   Stream<List<SellerProduct>> getProducts() {
@@ -911,6 +1063,16 @@ class StoreService {
     return _tableService.getTableOrdersStream(sellerId);
   }
 
+  Future<List<Map<String, dynamic>>> getTableOrdersSnapshot(
+    String sellerId, {
+    int? tableNumber,
+  }) {
+    return _tableService.getTableOrdersSnapshot(
+      sellerId,
+      tableNumber: tableNumber,
+    );
+  }
+
   Future<List<Map<String, dynamic>>> getTableOrdersByTable({
     required String sellerId,
     required int tableNumber,
@@ -921,19 +1083,28 @@ class StoreService {
     );
   }
 
-  Future<void> updateTableOrder(
+  Future<Map<String, dynamic>?> updateTableOrder(
     String orderId, {
     String? status,
     List<Map<String, dynamic>>? items,
+    int? revision,
+    Map<String, dynamic>? lastEditSummary,
+    String? lastEditNote,
   }) {
     return _tableService.updateTableOrder(
       orderId,
       status: status,
       items: items,
+      revision: revision,
+      lastEditSummary: lastEditSummary,
+      lastEditNote: lastEditNote,
     );
   }
 
-  Future<void> updateTableOrderStatus(String orderId, String status) {
+  Future<Map<String, dynamic>?> updateTableOrderStatus(
+    String orderId,
+    String status,
+  ) {
     return _tableService.updateTableOrderStatus(orderId, status);
   }
 
@@ -948,6 +1119,122 @@ class StoreService {
     return _tableService.closeTableOrders(
       sellerId: sellerId,
       tableNumber: tableNumber,
+    );
+  }
+
+  Future<void> closeTableWithHistory({
+    required String sellerId,
+    required int tableNumber,
+    required String paymentMethod,
+    String? paymentNote,
+    String? waiterId,
+    String? waiterName,
+    String? sessionKey,
+  }) {
+    return _tableService.closeTableWithHistory(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      paymentMethod: paymentMethod,
+      paymentNote: paymentNote,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      sessionKey: sessionKey,
+    );
+  }
+
+  Future<Map<String, dynamic>> recordTablePayment({
+    required String sellerId,
+    required int tableNumber,
+    required double amount,
+    required String method,
+    String? waiterId,
+    String? waiterName,
+    String? sessionKey,
+    String? note,
+  }) {
+    return _tableService.recordTablePayment(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      amount: amount,
+      method: method,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      sessionKey: sessionKey ?? 'default',
+      note: note,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getTablePayments({
+    required String sellerId,
+    required int tableNumber,
+    String? sessionKey,
+  }) {
+    return _tableService.getTablePayments(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      sessionKey: sessionKey,
+    );
+  }
+
+  Future<Map<String, dynamic>> transferTableOrders({
+    required String sellerId,
+    required int fromTable,
+    required int toTable,
+    String transferType = 'full',
+    List<String> itemIds = const [],
+    String? waiterId,
+    String? note,
+  }) {
+    return _tableService.transferTableOrders(
+      sellerId: sellerId,
+      fromTable: fromTable,
+      toTable: toTable,
+      transferType: transferType,
+      itemIds: itemIds,
+      waiterId: waiterId,
+      note: note,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getTableOrderHistory({
+    required String sellerId,
+    int? tableNumber,
+    DateTime? fromDate,
+    DateTime? toDate,
+    int limit = 50,
+    int offset = 0,
+  }) {
+    return _tableService.getTableOrderHistory(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      fromDate: fromDate,
+      toDate: toDate,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getWaiterPerformance({
+    required String sellerId,
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) {
+    return _tableService.getWaiterPerformance(
+      sellerId: sellerId,
+      fromDate: fromDate,
+      toDate: toDate,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getProductRecommendations({
+    required String sellerId,
+    required List<String> currentProductIds,
+    int limit = 5,
+  }) {
+    return _tableService.getProductRecommendations(
+      sellerId: sellerId,
+      currentProductIds: currentProductIds,
+      limit: limit,
     );
   }
 
@@ -1155,13 +1442,145 @@ class StoreService {
     await _supabase.from('stores').delete().eq('seller_id', sellerId);
   }
 
+  /// Lightweight fetch for the restaurant menu dialog — only columns the
+  /// dialog actually uses. Avoids pulling video/thumbnail/variant payload.
+  Future<List<Map<String, dynamic>>> getMenuProductsBySellerId(
+    String sellerId,
+  ) async {
+    const richMenuSelect =
+        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, '
+        'price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
+        'attributes, description, specifications, additional_info, accessories, '
+        'short_description, ingredients, features, preparation_time, cooking_time, '
+        'station_id, printer_routing_enabled';
+    const detailMenuSelect =
+        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, '
+        'price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
+        'attributes, description, specifications, additional_info, accessories, '
+        'station_id, printer_routing_enabled';
+    const noSpecificationsSelect =
+        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, '
+        'price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
+        'attributes, description, additional_info, accessories, '
+        'station_id, printer_routing_enabled';
+    const menuSelect =
+        'id, seller_id, name, image_url, image_urls, sub_category, price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, attributes, station_id, printer_routing_enabled';
+
+    Future<List<Map<String, dynamic>>> runSelect(String select) async {
+      final list = await _supabase
+          .from('products')
+          .select(select)
+          .eq('seller_id', sellerId)
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(list as List);
+    }
+
+    try {
+      return await runSelect(richMenuSelect);
+    } catch (e) {
+      final message = e.toString();
+      if (message.contains('short_description') ||
+          message.contains('ingredients') ||
+          message.contains('features') ||
+          message.contains('preparation_time') ||
+          message.contains('cooking_time')) {
+        try {
+          return await runSelect(detailMenuSelect);
+        } catch (fallbackError) {
+          final fallbackMessage = fallbackError.toString();
+          if (fallbackMessage.contains('specifications')) {
+            try {
+              return await runSelect(noSpecificationsSelect);
+            } catch (finalError) {
+              debugPrint('getMenuProductsBySellerId error: $finalError');
+              return [];
+            }
+          }
+          if (fallbackMessage.contains('pricing_type') ||
+              fallbackMessage.contains('portion_price') ||
+              fallbackMessage.contains('price_per_kg') ||
+              fallbackMessage.contains('service_control_type') ||
+              fallbackMessage.contains('min_portion') ||
+              fallbackMessage.contains('max_portion') ||
+              fallbackMessage.contains('portion_step') ||
+              fallbackMessage.contains('default_weight_grams') ||
+              fallbackMessage.contains('min_weight_grams') ||
+              fallbackMessage.contains('weight_step_grams') ||
+              fallbackMessage.contains('max_weight_grams') ||
+              fallbackMessage.contains('additional_info') ||
+              fallbackMessage.contains('accessories')) {
+            try {
+              return await runSelect(menuSelect);
+            } catch (finalError) {
+              debugPrint('getMenuProductsBySellerId error: $finalError');
+              return [];
+            }
+          }
+          debugPrint('getMenuProductsBySellerId error: $fallbackError');
+          return [];
+        }
+      }
+      if (message.contains('specifications')) {
+        try {
+          return await runSelect(noSpecificationsSelect);
+        } catch (fallbackError) {
+          final fallbackMessage = fallbackError.toString();
+          if (fallbackMessage.contains('pricing_type') ||
+              fallbackMessage.contains('portion_price') ||
+              fallbackMessage.contains('price_per_kg') ||
+              fallbackMessage.contains('service_control_type') ||
+              fallbackMessage.contains('min_portion') ||
+              fallbackMessage.contains('max_portion') ||
+              fallbackMessage.contains('portion_step') ||
+              fallbackMessage.contains('default_weight_grams') ||
+              fallbackMessage.contains('min_weight_grams') ||
+              fallbackMessage.contains('weight_step_grams') ||
+              fallbackMessage.contains('max_weight_grams') ||
+              fallbackMessage.contains('additional_info') ||
+              fallbackMessage.contains('accessories')) {
+            try {
+              return await runSelect(menuSelect);
+            } catch (finalError) {
+              debugPrint('getMenuProductsBySellerId error: $finalError');
+              return [];
+            }
+          }
+          debugPrint('getMenuProductsBySellerId error: $fallbackError');
+          return [];
+        }
+      }
+      if (message.contains('pricing_type') ||
+          message.contains('portion_price') ||
+          message.contains('price_per_kg') ||
+          message.contains('service_control_type') ||
+          message.contains('min_portion') ||
+          message.contains('max_portion') ||
+          message.contains('portion_step') ||
+          message.contains('default_weight_grams') ||
+          message.contains('min_weight_grams') ||
+          message.contains('weight_step_grams') ||
+          message.contains('max_weight_grams') ||
+          message.contains('additional_info') ||
+          message.contains('accessories')) {
+        try {
+          return await runSelect(menuSelect);
+        } catch (fallbackError) {
+          debugPrint('getMenuProductsBySellerId error: $fallbackError');
+          return [];
+        }
+      }
+      debugPrint('getMenuProductsBySellerId error: $e');
+      return [];
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getProductsBySellerId(
     String sellerId,
   ) async {
     const fullSelect =
-        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, stock, status, created_at, attributes, video_url, video_path, video_public_url, thumbnail_path, thumbnail_public_url, video_duration_seconds, video_size_bytes, thumbnail_size_bytes, video_status, variants, accessories, station_id, printer_routing_enabled';
+        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, specifications, product_type, pricing_type, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, created_at, attributes, video_url, video_path, video_public_url, thumbnail_path, thumbnail_public_url, video_duration_seconds, video_size_bytes, thumbnail_size_bytes, video_status, variants, accessories, station_id, printer_routing_enabled';
     const fallbackSelect =
-        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, stock, status, created_at, attributes, video_url, station_id, printer_routing_enabled';
+        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, specifications, product_type, pricing_type, stock, status, created_at, attributes, video_url, station_id, printer_routing_enabled';
 
     try {
       final list = await _supabase

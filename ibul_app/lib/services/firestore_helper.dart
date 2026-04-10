@@ -15,9 +15,9 @@ class FirestoreHelper {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   // Collection References
-  CollectionReference get _productsRef => _firestore.collection('products');
-  CollectionReference get _bannersRef => _firestore.collection('banners');
-  CollectionReference get _categoriesRef => _firestore.collection('categories');
+  CollectionReference<Map<String, dynamic>> get _productsRef => _firestore.collection('products');
+  CollectionReference<Map<String, dynamic>> get _bannersRef => _firestore.collection('banners');
+  CollectionReference<Map<String, dynamic>> get _categoriesRef => _firestore.collection('categories');
 
   Map<String, dynamic> _normalizeFirestorePayload(Map<String, dynamic> raw) {
     final payload = Map<String, dynamic>.from(raw);
@@ -32,6 +32,8 @@ class FirestoreHelper {
     return payload;
   }
 
+  int _productIdValue(String? id) => int.tryParse(id ?? '') ?? 0;
+
   // ==================== PRODUCTS CRUD ====================
 
   // Tüm ürünleri getir
@@ -43,12 +45,12 @@ class FirestoreHelper {
           .get();
 
       final products = snapshot.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         return DBProduct.fromMap(data);
       }).toList();
       
       // Client-side sıralama (ID'ye göre)
-      products.sort((a, b) => (a.id ?? 0).compareTo(b.id ?? 0));
+      products.sort((a, b) => _productIdValue(a.id).compareTo(_productIdValue(b.id)));
       
       return products;
     } catch (e) {
@@ -66,10 +68,10 @@ class FirestoreHelper {
           // .orderBy('id', descending: true)
           .get();
 
-      final products = snapshot.docs.map((doc) => DBProduct.fromMap(doc.data() as Map<String, dynamic>)).toList();
+      final products = snapshot.docs.map((doc) => DBProduct.fromMap(doc.data())).toList();
       
       // Client-side sıralama
-      products.sort((a, b) => (b.id ?? 0).compareTo(a.id ?? 0));
+      products.sort((a, b) => _productIdValue(b.id).compareTo(_productIdValue(a.id)));
       
       return products;
     } catch (e) {
@@ -87,10 +89,10 @@ class FirestoreHelper {
           // .orderBy('id', descending: true)
           .get();
 
-      final products = snapshot.docs.map((doc) => DBProduct.fromMap(doc.data() as Map<String, dynamic>)).toList();
+      final products = snapshot.docs.map((doc) => DBProduct.fromMap(doc.data())).toList();
       
       // Client-side sıralama
-      products.sort((a, b) => (b.id ?? 0).compareTo(a.id ?? 0));
+      products.sort((a, b) => _productIdValue(b.id).compareTo(_productIdValue(a.id)));
       
       return products;
     } catch (e) {
@@ -127,7 +129,7 @@ class FirestoreHelper {
           .get();
 
       if (snapshot.docs.isNotEmpty) {
-        return DBProduct.fromMap(snapshot.docs.first.data() as Map<String, dynamic>);
+        return DBProduct.fromMap(snapshot.docs.first.data());
       }
       return null;
     } catch (e) {
@@ -141,12 +143,12 @@ class FirestoreHelper {
     try {
       // ID yönetimi: Eğer ID yoksa, yeni bir ID oluşturmamız lazım.
       // Basitlik için timestamp kullanalım veya mevcut en yüksek ID + 1
-      int newId = product.id ?? DateTime.now().millisecondsSinceEpoch;
+      final newId = product.id ?? DateTime.now().millisecondsSinceEpoch.toString();
       
       final productWithId = product.copyWith(id: newId);
       
       // Belge ID'si olarak da bu int ID'nin string halini kullanalım
-      await _productsRef.doc(newId.toString()).set(_normalizeFirestorePayload(productWithId.toMap()));
+      await _productsRef.doc(newId).set(_normalizeFirestorePayload(productWithId.toMap()));
     } catch (e) {
       debugPrint('Error inserting product: $e');
     }
@@ -168,9 +170,9 @@ class FirestoreHelper {
 
         for (var j = i; j < end; j++) {
           final product = products[j];
-          final newId = product.id ?? (baseId + j);
+          final newId = product.id ?? (baseId + j).toString();
           final productWithId = product.copyWith(id: newId);
-          final docRef = _productsRef.doc(newId.toString());
+          final docRef = _productsRef.doc(newId);
           batch.set(docRef, _normalizeFirestorePayload(productWithId.toMap()));
         }
 
@@ -192,10 +194,10 @@ class FirestoreHelper {
           // .orderBy('id', descending: false)
           .get();
 
-      final products = snapshot.docs.map((doc) => DBProduct.fromMap(doc.data() as Map<String, dynamic>)).toList();
+      final products = snapshot.docs.map((doc) => DBProduct.fromMap(doc.data())).toList();
       
       // Client-side sıralama
-      products.sort((a, b) => (a.id ?? 0).compareTo(b.id ?? 0));
+      products.sort((a, b) => _productIdValue(a.id).compareTo(_productIdValue(b.id)));
       
       return products;
     } catch (e) {
@@ -281,7 +283,7 @@ class FirestoreHelper {
           // .orderBy('orderIndex', descending: false)
           .get();
 
-      final banners = snapshot.docs.map((doc) => DBBanner.fromMap(doc.data() as Map<String, dynamic>)).toList();
+      final banners = snapshot.docs.map((doc) => DBBanner.fromMap(doc.data())).toList();
       
       // Client-side sıralama
       banners.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
@@ -304,7 +306,7 @@ class FirestoreHelper {
           // .orderBy('orderIndex', descending: false)
           .get();
 
-      final categories = snapshot.docs.map((doc) => DBCategory.fromMap(doc.data() as Map<String, dynamic>)).toList();
+      final categories = snapshot.docs.map((doc) => DBCategory.fromMap(doc.data())).toList();
       
       // Client-side sıralama
       categories.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
@@ -324,7 +326,7 @@ class FirestoreHelper {
           // .orderBy('orderIndex', descending: false)
           .get();
 
-      final categories = snapshot.docs.map((doc) => DBCategory.fromMap(doc.data() as Map<String, dynamic>)).toList();
+      final categories = snapshot.docs.map((doc) => DBCategory.fromMap(doc.data())).toList();
       
       // Client-side sıralama
       categories.sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
@@ -346,7 +348,7 @@ class FirestoreHelper {
       final batch = _firestore.batch();
       
       for (var doc in productSnapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         String imageUrl = data['imageUrl'] ?? '';
         String imageUrls = data['imageUrls'] ?? '[]';
         
@@ -399,7 +401,7 @@ class FirestoreHelper {
       final bannerBatch = _firestore.batch();
       
       for (var doc in bannerSnapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         String imageUrl = data['imageUrl'] ?? '';
         
         if (imageUrl.isNotEmpty && imageUrl.startsWith('assets/') && !imageUrl.startsWith('packages/ibul_app/')) {
@@ -441,7 +443,7 @@ class FirestoreHelper {
       
       // Mevcut ürün isimlerini al (tekrar eklememek için)
       final existingNames = snapshot.docs
-          .map((doc) => ((doc.data() as Map<String, dynamic>)['name'] as String?)?.trim())
+          .map((doc) => (doc.data()['name'] as String?)?.trim())
           .whereType<String>()
           .where((name) => name.isNotEmpty)
           .toSet();

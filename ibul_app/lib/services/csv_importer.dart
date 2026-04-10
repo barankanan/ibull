@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import '../models/db_product.dart';
 import 'database_helper.dart';
@@ -33,7 +34,7 @@ class CSVImporter {
             products.add(product);
           }
         } catch (e) {
-          print('Satır parse hatası ($i): $e');
+          debugPrint('Satır parse hatası ($i): $e');
         }
       }
 
@@ -44,7 +45,7 @@ class CSVImporter {
 
       return products.length;
     } catch (e) {
-      print('CSV import hatası: $e');
+      debugPrint('CSV import hatası: $e');
       return 0;
     }
   }
@@ -100,7 +101,7 @@ class CSVImporter {
         isActive: true,
       );
     } catch (e) {
-      print('Ürün parse hatası: $e');
+      debugPrint('Ürün parse hatası: $e');
       return null;
     }
   }
@@ -163,9 +164,9 @@ class CSVImporter {
     // Önce tam eşleşme ara
     if (imageMap.containsKey(normalized)) {
       normalized = imageMap[normalized]!;
-      print('🖼️  Image mapping: "$imagePath" → "$normalized"');
+      debugPrint('🖼️  Image mapping: "$imagePath" → "$normalized"');
     } else {
-      print('⚠️  No mapping found for: "$imagePath" (normalized: "$normalized")');
+      debugPrint('⚠️  No mapping found for: "$imagePath" (normalized: "$normalized")');
     }
     
     // assets/products/ öneki ekle
@@ -173,7 +174,7 @@ class CSVImporter {
       normalized = 'assets/products/$normalized';
     }
     
-    print('✅ Final image path: "$normalized"');
+    debugPrint('✅ Final image path: "$normalized"');
     return normalized;
   }
 
@@ -205,6 +206,6 @@ class CSVImporter {
   /// Veritabanını temizler
   Future<void> clearDatabase() async {
     await _dbHelper.clearAllData();
-    print('Veritabanı temizlendi');
+    debugPrint('Veritabanı temizlendi');
   }
 }

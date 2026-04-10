@@ -607,7 +607,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _photoReviews.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
               itemBuilder: (context, index) {
                 final review = _photoReviews[index];
                 final images = List<String>.from(
@@ -656,7 +656,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
     return ListView.separated(
       padding: EdgeInsets.all(isWeb ? 0 : 16),
       itemCount: _nearbyProducts.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      separatorBuilder: (_, _) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final product = _nearbyProducts[index];
         return InkWell(
@@ -894,7 +894,7 @@ class _ListDetailPageState extends State<ListDetailPage> {
         return ListView.separated(
           padding: EdgeInsets.all(isWeb ? 0 : 16),
           itemCount: changes.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (context, index) {
             final item = changes[index];
             final product = item.product;
@@ -1324,7 +1324,7 @@ class _FlexibleImage extends StatelessWidget {
       return OptimizedImage(imageUrlOrPath: 
         image,
         fit: fit,
-        errorBuilder: (_, __, ___) => Container(
+        errorBuilder: (_, _, _) => Container(
           color: const Color(0xFFF3F2F8),
           child: const Icon(Icons.image_outlined, color: Colors.grey),
         ),
@@ -1333,7 +1333,7 @@ class _FlexibleImage extends StatelessWidget {
     return Image.asset(
       image,
       fit: fit,
-      errorBuilder: (_, __, ___) => Container(
+      errorBuilder: (_, _, _) => Container(
         color: const Color(0xFFF3F2F8),
         child: const Icon(Icons.image_outlined, color: Colors.grey),
       ),

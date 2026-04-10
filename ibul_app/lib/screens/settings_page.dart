@@ -5,7 +5,6 @@ import '../core/app_state.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../widgets/account_sidebar.dart';
-import '../services/auth_service.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -113,6 +112,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     if (confirmed == true) {
       // Perform delete operation
+      if (!mounted) return;
       final appState = Provider.of<AppState>(context, listen: false);
       await appState.deleteAccount();
       
@@ -228,7 +228,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                       border: Border.all(color: Colors.grey.shade200),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.black.withOpacity(0.02),
+                                          color: Colors.black.withValues(alpha: 0.02),
                                           blurRadius: 10,
                                           offset: const Offset(0, 4),
                                         ),
@@ -338,9 +338,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                                       Container(
                                                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                                                         decoration: BoxDecoration(
-                                                          color: AppColors.primary.withOpacity(0.1),
+                                                          color: AppColors.primary.withValues(alpha: 0.1),
                                                           borderRadius: BorderRadius.circular(8),
-                                                          border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                                                          border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
                                                         ),
                                                         child: const Text('+90', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary)),
                                                       ),

@@ -4,10 +4,12 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/auth/user_identity.dart';
 import '../../core/constants.dart';
+import '../../models/product_model.dart';
 import '../../screens/all_questions_page.dart';
 import '../../screens/ask_product_question_page.dart';
 import '../../services/product_question_service.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
+import '../skeleton_loading.dart';
 
 class ProductQaCard extends StatefulWidget {
   const ProductQaCard({super.key});
@@ -42,11 +44,13 @@ class _ProductQaCardState extends State<ProductQaCard> {
 
   @override
   Widget build(BuildContext context) {
-    final viewModel = context.watch<ProductDetailViewModel>();
-    final product = viewModel.initialProduct;
-    final appState = context.watch<AppState>();
-    final canAskQuestion =
-        appState.isLoggedIn && !UserIdentity.isGuest(appState.currentUser);
+    final product = context.select<ProductDetailViewModel, Product>(
+      (viewModel) => viewModel.initialProduct,
+    );
+    final canAskQuestion = context.select<AppState, bool>(
+      (appState) =>
+          appState.isLoggedIn && !UserIdentity.isGuest(appState.currentUser),
+    );
 
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _future,
@@ -90,14 +94,22 @@ class _ProductQaCardState extends State<ProductQaCard> {
               ),
               const SizedBox(height: 10),
               if (snapshot.connectionState == ConnectionState.waiting)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    children: [
+                      SkeletonLoading(
+                        width: double.infinity,
+                        height: 58,
+                        borderRadius: 10,
+                      ),
+                      SizedBox(height: 10),
+                      SkeletonLoading(
+                        width: double.infinity,
+                        height: 58,
+                        borderRadius: 10,
+                      ),
+                    ],
                   ),
                 )
               else if (latest.isEmpty)

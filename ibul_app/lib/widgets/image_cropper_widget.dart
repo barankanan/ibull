@@ -9,12 +9,12 @@ class ImageCropperWidget extends StatefulWidget {
   final double? suggestedWidth;
 
   const ImageCropperWidget({
-    Key? key,
+    super.key,
     required this.imageData,
     required this.onCropped,
     this.aspectRatio,
     this.suggestedWidth,
-  }) : super(key: key);
+  });
 
   @override
   State<ImageCropperWidget> createState() => _ImageCropperWidgetState();
@@ -74,7 +74,7 @@ class _ImageCropperWidgetState extends State<ImageCropperWidget> {
                 overlayType: OverlayType.rectangle,
                 aspectRatio: widget.aspectRatio ?? 1.0,
                 zoomScale: 3.0,
-                overlayColor: Colors.black.withOpacity(0.5),
+                overlayColor: Colors.black.withValues(alpha: 0.5),
               ),
             ),
             const SizedBox(height: 16),

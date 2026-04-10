@@ -33,15 +33,16 @@ class _ProductApprovalPageState extends State<ProductApprovalPage> {
   void _showProductDetail(SellerProduct product) {
     showDialog(
       context: context,
-      builder: (context) => ProductDetailDialog(
+      builder: (dialogContext) => ProductDetailDialog(
         product: product,
         onApprove: () async {
           await _approveProduct(product.id);
-          if (mounted) Navigator.pop(context);
+          if (!dialogContext.mounted) return;
+          Navigator.pop(dialogContext);
         },
         onReject: () async {
           // Close detail dialog first
-          Navigator.pop(context);
+          Navigator.pop(dialogContext);
           // Then show rejection reason dialog
           _showRejectionDialog(product.id);
         },
@@ -63,8 +64,8 @@ class _ProductApprovalPageState extends State<ProductApprovalPage> {
 
     await showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) {
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (stateContext, setState) {
           return AlertDialog(
             title: const Text('Ürünü Reddet'),
             content: SingleChildScrollView(
@@ -77,18 +78,27 @@ class _ProductApprovalPageState extends State<ProductApprovalPage> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
-                  ...rejectionReasons.map(
-                    (reason) => RadioListTile<String>(
-                      title: Text(reason, style: const TextStyle(fontSize: 14)),
-                      value: reason,
-                      groupValue: selectedReason,
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      onChanged: (value) {
-                        setState(() {
-                          selectedReason = value;
-                        });
-                      },
+                  RadioGroup<String>(
+                    groupValue: selectedReason,
+                    onChanged: (value) {
+                      setState(() {
+                        selectedReason = value;
+                      });
+                    },
+                    child: Column(
+                      children: rejectionReasons
+                          .map(
+                            (reason) => RadioListTile<String>(
+                              title: Text(
+                                reason,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                              value: reason,
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                            ),
+                          )
+                          .toList(),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -110,7 +120,7 @@ class _ProductApprovalPageState extends State<ProductApprovalPage> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.pop(dialogContext),
                 child: const Text('İptal'),
               ),
               ElevatedButton(
@@ -122,7 +132,8 @@ class _ProductApprovalPageState extends State<ProductApprovalPage> {
                             : selectedReason!;
 
                         await _rejectProduct(productId, fullReason);
-                        if (mounted) Navigator.pop(context);
+                        if (!dialogContext.mounted) return;
+                        Navigator.pop(dialogContext);
                       },
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
                 child: const Text('Reddet'),

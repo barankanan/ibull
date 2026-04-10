@@ -8,6 +8,7 @@ import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../core/store_logo_helper.dart';
 import '../models/product_model.dart';
+import '../models/product_pricing.dart';
 import '../models/product_list_model.dart';
 import '../models/db_product.dart';
 import '../services/store_service.dart';
@@ -19,7 +20,14 @@ import '../widgets/product_card.dart';
 import '../widgets/filter_sidebar.dart';
 import '../services/coupon_service.dart';
 import '../widgets/common/video_player_widget.dart';
+import '../models/mixed_service_order.dart';
+import '../models/seller_product.dart';
+import '../widgets/restaurant_order/food_product_card.dart';
+import '../widgets/restaurant_order/mixed_service_dialog.dart';
+import '../widgets/restaurant_order/product_quick_view_dialog.dart';
+import '../widgets/restaurant_order/weight_selector.dart';
 import '../services/campaign_service.dart';
+import '../core/qr_initial_params.dart';
 import 'chat_page.dart';
 import 'list_detail_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,6 +39,11 @@ class BusinessDetailPage extends StatefulWidget {
   final int? initialTableNumber;
   final String? initialProductQuery;
 
+  /// Set to true when opened from [QrEntryScreen] via a zero-duration route
+  /// transition. Reduces the dialog-open delay from 420 ms to 80 ms because
+  /// there is no route animation to wait for.
+  final bool fromQr;
+
   const BusinessDetailPage({
     super.key,
     required this.business,
@@ -38,6 +51,7 @@ class BusinessDetailPage extends StatefulWidget {
     this.forceTableSelection = false,
     this.initialTableNumber,
     this.initialProductQuery,
+    this.fromQr = false,
   });
 
   @override
@@ -62,7 +76,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
   // Web Scroll Controller and Keys
   final ScrollController _webScrollController = ScrollController();
-  final GlobalKey _flashProductsKey = GlobalKey();
   final GlobalKey _campaignsKey = GlobalKey();
   final GlobalKey _allProductsKey = GlobalKey();
 
@@ -70,6 +83,21 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   bool _diningPopupShown = false;
   bool _hasAutoOpenedDiningFlow = false;
   bool _isLoadingTables = false;
+  bool _pendingForceTableSelection = false;
+  int? _pendingInitialQrTableNumber;
+
+  /// Set to true the instant the user initiates back navigation from a
+  /// QR-opened page. All async dining-flow continuations check this flag so
+  /// they bail out instead of showing a dialog on a context that is already
+  /// being disposed/replaced. This prevents the popup-re-open loop that
+  /// occurs when the polling loop in [_openForcedDiningFlowWhenReady] or
+  /// any other async gap resolves AFTER navigation has started.
+  bool _isLeavingQrFlow = false;
+  bool _isQrAutoFlowCancelled = false;
+  bool _isNavigatingHomeFromQr = false;
+  int _activeQrPopupToken = 0;
+  String? _activeQrPopupName;
+  bool _activeQrPopupUseRootNavigator = false;
   List<int> _availableTableNumbers = <int>[];
   String _activeWebTab = 'Ana Sayfa';
 
@@ -86,6 +114,11 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
   late List<String> _categories;
   late List<Product> _allProducts;
+
+  /// Completer that resolves once [_fetchStoreProducts] finishes (or fails).
+  /// Passed to [_FoodOrderDialog] so it can await the SAME in-flight request
+  /// instead of spawning a duplicate Supabase call.
+  final Completer<List<Product>> _productCompleter = Completer<List<Product>>();
 
   String _normalize(String s) {
     return TextNormalizer.normalize(s);
@@ -153,6 +186,13 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       name: dbProduct.name,
       brand: dbProduct.brand,
       price: dbProduct.price,
+      pricingType: dbProduct.pricingType,
+      portionPrice: dbProduct.portionPrice,
+      pricePerKg: dbProduct.pricePerKg,
+      defaultWeightGrams: dbProduct.defaultWeightGrams,
+      minWeightGrams: dbProduct.minWeightGrams,
+      weightStepGrams: dbProduct.weightStepGrams,
+      maxWeightGrams: dbProduct.maxWeightGrams,
       rating: dbProduct.rating,
       reviewCount: dbProduct.reviewCount,
       tags: tags,
@@ -169,6 +209,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   }
 
   Future<void> _fetchStoreProducts() async {
+    final sw = Stopwatch()..start();
+    debugPrint(
+      '[BDP-Timing] ${sw.elapsedMilliseconds}ms — _fetchStoreProducts start',
+    );
     setState(() => _isLoadingProducts = true);
     try {
       final storeName = widget.business['name'].toString();
@@ -179,60 +223,32 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
       if (sellerId != null && sellerId.isNotEmpty) {
         try {
-          final supaProducts = await StoreService().getProductsBySellerId(
+          final supaProducts = await StoreService().getMenuProductsBySellerId(
             sellerId,
           );
           if (supaProducts.isNotEmpty) {
             storeProducts = supaProducts.map<Product>((map) {
               final data = Map<String, dynamic>.from(map);
-
-              final images = <String>[];
-              final mainImage = data['image_url']?.toString();
-              if (mainImage != null && mainImage.isNotEmpty) {
-                images.add(mainImage);
-              }
-
-              List<String>? attributes;
-              final rawAttrs = data['attributes'];
-              if (rawAttrs is List) {
-                attributes = rawAttrs.map((e) => e.toString()).toList();
-              } else if (rawAttrs is String && rawAttrs.isNotEmpty) {
-                try {
-                  final decoded = json.decode(rawAttrs);
-                  if (decoded is List) {
-                    attributes = decoded.map((e) => e.toString()).toList();
-                  }
-                } catch (_) {}
-              }
-
+              final product = Product.fromDBProduct({
+                ...data,
+                'brand':
+                    data['brand']?.toString() ??
+                    widget.business['name']?.toString() ??
+                    '',
+                'store': storeName,
+                'category':
+                    data['main_category']?.toString() ??
+                    widget.business['category']?.toString(),
+              });
               final rawPrice = data['price'];
-              String priceStr;
-              if (rawPrice is num) {
-                priceStr = '₺${rawPrice.toStringAsFixed(0)}';
-              } else {
-                priceStr = rawPrice?.toString() ?? '';
-              }
-
-              return Product(
-                name: data['name']?.toString() ?? '',
-                brand: widget.business['name']?.toString() ?? '',
-                price: priceStr,
-                rating: 0,
-                reviewCount: 0,
-                tags: const [],
-                images: images,
-                store: storeName,
-                category: widget.business['category']?.toString(),
-                subCategory: data['sub_category']?.toString(),
-                description: null,
-                specifications: null,
-                oldPrice: null,
-                attributes: attributes,
-              );
+              final formattedPrice = rawPrice is num
+                  ? '₺${rawPrice.toStringAsFixed(0)}'
+                  : rawPrice?.toString() ?? '';
+              return product.copyWith(price: formattedPrice);
             }).toList();
           }
         } catch (e) {
-          print('Supabase ürünleri yüklenirken hata: $e');
+          debugPrint('Supabase ürünleri yüklenirken hata: $e');
         }
       }
 
@@ -242,8 +258,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         storeProducts = paged.items.map(_convertToProduct).toList();
 
         if (storeProducts.isEmpty) {
-          print('⚠️ DB\'de ürün bulunamadı, JSON\'dan manuel aranıyor...');
+          debugPrint('⚠️ DB\'de ürün bulunamadı, JSON\'dan manuel aranıyor...');
           try {
+            if (!mounted) return;
             final jsonString = await DefaultAssetBundle.of(
               context,
             ).loadString('assets/urunler.json');
@@ -295,20 +312,26 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
             if (jsonProducts.isNotEmpty) {
               storeProducts = jsonProducts;
-              print(
+              debugPrint(
                 '✅ JSON\'dan ${storeProducts.length} ürün bulundu ve yüklendi.',
               );
             } else {
-              print('❌ JSON\'da da bu mağaza için ürün bulunamadı.');
+              debugPrint('❌ JSON\'da da bu mağaza için ürün bulunamadı.');
             }
           } catch (e) {
-            print('Error loading JSON fallback: $e');
+            debugPrint('Error loading JSON fallback: $e');
           }
         }
       }
 
-      print('✅ Sonuç: ${storeProducts.length} ürün listelenecek.');
+      debugPrint('✅ Sonuç: ${storeProducts.length} ürün listelenecek.');
+      debugPrint(
+        '[BDP-Timing] ${sw.elapsedMilliseconds}ms — _fetchStoreProducts products ready (${storeProducts.length})',
+      );
 
+      if (!_productCompleter.isCompleted) {
+        _productCompleter.complete(storeProducts);
+      }
       if (mounted) {
         setState(() {
           if (storeProducts.isNotEmpty) {
@@ -321,7 +344,11 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         });
       }
     } catch (e) {
-      print('Error fetching store products: $e');
+      debugPrint('Error fetching store products: $e');
+      debugPrint(
+        '[BDP-Timing] ${sw.elapsedMilliseconds}ms — _fetchStoreProducts ERROR: $e',
+      );
+      if (!_productCompleter.isCompleted) _productCompleter.complete([]);
       if (mounted) setState(() => _isLoadingProducts = false);
     }
   }
@@ -338,6 +365,18 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   @override
   void initState() {
     super.initState();
+    _pendingForceTableSelection = widget.forceTableSelection;
+    _pendingInitialQrTableNumber = widget.initialTableNumber;
+    debugPrint(
+      '[BDP-Timing] initState — store: ${widget.business['name']} '
+      'fromQr=${widget.fromQr} table=$_pendingInitialQrTableNumber',
+    );
+    // Log the first rendered frame so we can measure end-to-end QR→BDP time.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      debugPrint(
+        '[BDP-Timing] BusinessDetailPage first frame rendered (mounted=true)',
+      );
+    });
     _tabController = TabController(length: 4, vsync: this);
     _lastObservedProductListsSignature = _productListsSignature(
       _appState.productLists,
@@ -361,8 +400,28 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     _fetchStoreProducts();
     _loadStoreTables();
     _loadStorePublicInfo();
-    _loadStoreCampaigns();
-    _loadPublicSellerLists();
+
+    if (widget.fromQr) {
+      // QR path: defer non-critical fetches until after the first frame so
+      // they don't compete with product loading and the order dialog.
+      // Campaigns and seller lists are not needed for the ordering flow.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_shouldAbortQrAutoFlow(
+          source: 'postFrame:deferred-loads',
+          logLabel: 'postFrame callback blocked',
+        )) {
+          return;
+        }
+        unawaited(_loadStoreCampaigns());
+        unawaited(_loadPublicSellerLists());
+        debugPrint(
+          '[BDP-Timing] QR: deferred campaigns + seller lists started after first frame',
+        );
+      });
+    } else {
+      _loadStoreCampaigns();
+      _loadPublicSellerLists();
+    }
 
     // QR ile zorunlu masa seçiminde kategoriye bakmadan sipariş akışını aç.
     // Normal akışta sadece yemek/restoran mağazalarında garson popup'ı göster.
@@ -373,15 +432,32 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         category.contains('restoran') ||
         category.contains('kafe') ||
         category.contains('cafe');
-    if (widget.forceTableSelection || isFoodCategory) {
+    if (_pendingForceTableSelection || isFoodCategory) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_diningPopupShown) {
-          _diningPopupShown = true;
-          if (widget.forceTableSelection) {
-            _openForcedDiningFlowWhenReady();
-          } else {
-            _showDiningModePopup(context);
-          }
+        if (_shouldAbortQrAutoFlow(
+          source: 'postFrame:dining-flow',
+          logLabel: 'postFrame callback blocked',
+        )) {
+          return;
+        }
+        if (_diningPopupShown) {
+          debugPrint(
+            '[BDP/QR] postFrame callback blocked — dining flow already shown '
+            '_diningPopupShown=$_diningPopupShown',
+          );
+          return;
+        }
+        _diningPopupShown = true;
+        debugPrint(
+          '[BDP/QR] postFrameCallback: opening dining flow '
+          'forceTableSelection=$_pendingForceTableSelection '
+          'fromQr=${widget.fromQr} '
+          '_isLeavingQrFlow=$_isLeavingQrFlow',
+        );
+        if (_pendingForceTableSelection) {
+          unawaited(_openForcedDiningFlowWhenReady());
+        } else {
+          _showDiningModePopup(context);
         }
       });
     }
@@ -479,24 +555,298 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     });
   }
 
+  bool _shouldAbortQrAutoFlow({
+    required String source,
+    required String logLabel,
+  }) {
+    final blocked =
+        !mounted ||
+        _isLeavingQrFlow ||
+        _isQrAutoFlowCancelled ||
+        _isNavigatingHomeFromQr;
+    if (blocked) {
+      debugPrint(
+        '[BDP/QR] $logLabel — source=$source '
+        'mounted=$mounted leaving=$_isLeavingQrFlow '
+        'cancelled=$_isQrAutoFlowCancelled '
+        'navigatingHome=$_isNavigatingHomeFromQr '
+        'pendingForce=$_pendingForceTableSelection '
+        'pendingTable=$_pendingInitialQrTableNumber '
+        'activePopup=$_activeQrPopupName',
+      );
+    }
+    return blocked;
+  }
+
+  bool _isQrPopupBlocked(String popupName) {
+    return _shouldAbortQrAutoFlow(
+      source: popupName,
+      logLabel: 'popup BLOCKED by cancel',
+    );
+  }
+
+  void _trackQrPopup<T>({
+    required String popupName,
+    required bool useRootNavigator,
+    required Future<T?> future,
+  }) {
+    final token = ++_activeQrPopupToken;
+    _activeQrPopupName = popupName;
+    _activeQrPopupUseRootNavigator = useRootNavigator;
+    debugPrint(
+      '[BDP/QR] popup TRACKED — $popupName '
+      'token=$token useRootNavigator=$useRootNavigator',
+    );
+    future.whenComplete(() {
+      final wasCurrent = _activeQrPopupToken == token;
+      debugPrint(
+        '[BDP/QR] popup CLOSED — $popupName '
+        'token=$token wasCurrent=$wasCurrent',
+      );
+      if (wasCurrent) {
+        _activeQrPopupName = null;
+        _activeQrPopupUseRootNavigator = false;
+      }
+    });
+  }
+
+  void _cancelQrAutoFlow({required String reason}) {
+    final alreadyCancelled = _isQrAutoFlowCancelled && _isLeavingQrFlow;
+    final previousPendingForce = _pendingForceTableSelection;
+    final previousPendingTable = _pendingInitialQrTableNumber;
+    _isLeavingQrFlow = true;
+    _isQrAutoFlowCancelled = true;
+    _hasAutoOpenedDiningFlow = true;
+    _diningPopupShown = true;
+    _pendingForceTableSelection = false;
+    _pendingInitialQrTableNumber = null;
+    debugPrint(
+      '[BDP/QR] QR flow cancelled — reason=$reason '
+      'alreadyCancelled=$alreadyCancelled '
+      'pendingForce=$previousPendingForce '
+      'pendingTable=$previousPendingTable '
+      'activePopup=$_activeQrPopupName',
+    );
+  }
+
+  Future<void> _closeQrPopupBeforeNavigation({required String reason}) async {
+    final pageNavigator = Navigator.of(context);
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    for (var attempt = 1; attempt <= 4; attempt++) {
+      final popupName = _activeQrPopupName;
+      if (popupName == null) {
+        debugPrint(
+          '[BDP/QR] dialog close before navigation skipped — '
+          'no tracked popup reason=$reason attempt=$attempt',
+        );
+        return;
+      }
+
+      final useRootNavigator = _activeQrPopupUseRootNavigator;
+      debugPrint(
+        '[BDP/QR] dialog close before navigation requested — '
+        'popup=$popupName useRootNavigator=$useRootNavigator '
+        'reason=$reason attempt=$attempt',
+      );
+      final navigator = useRootNavigator ? rootNavigator : pageNavigator;
+      if (!navigator.canPop()) {
+        debugPrint(
+          '[BDP/QR] dialog close before navigation skipped — '
+          'navigator.canPop=false popup=$popupName '
+          'reason=$reason attempt=$attempt',
+        );
+        return;
+      }
+
+      final popped = await navigator.maybePop();
+      await Future<void>.delayed(Duration.zero);
+      debugPrint(
+        '[BDP/QR] dialog close before navigation result — '
+        'popup=$popupName popped=$popped '
+        'remainingActive=$_activeQrPopupName attempt=$attempt',
+      );
+      if (!popped) {
+        return;
+      }
+      if (_activeQrPopupName == null) {
+        debugPrint(
+          '[BDP/QR] dialog closed before navigation — '
+          'popup=$popupName reason=$reason attempt=$attempt',
+        );
+        return;
+      }
+    }
+
+    debugPrint(
+      '[BDP/QR] dialog close before navigation stopped — '
+      'activePopup=$_activeQrPopupName reason=$reason maxAttempts=4',
+    );
+  }
+
+  Future<void> _navigateHomeFromQrBack({required String source}) async {
+    if (_isNavigatingHomeFromQr) {
+      debugPrint(
+        '[BDP/QR] home navigation already in progress — source=$source',
+      );
+      return;
+    }
+    if (!mounted) {
+      debugPrint(
+        '[BDP/QR] home navigation aborted — widget not mounted '
+        'source=$source',
+      );
+      return;
+    }
+
+    _isNavigatingHomeFromQr = true;
+    debugPrint(
+      '[BDP/QR] back from QR triggered — source=$source '
+      'activePopup=$_activeQrPopupName pendingForce=$_pendingForceTableSelection '
+      'pendingTable=$_pendingInitialQrTableNumber',
+    );
+    _cancelQrAutoFlow(reason: 'back:$source');
+    QrInitialParams.reset(source: 'BusinessDetailPage.back:$source');
+    await _closeQrPopupBeforeNavigation(reason: source);
+    if (!mounted) {
+      debugPrint(
+        '[BDP/QR] home navigation aborted after popup close — '
+        'widget not mounted source=$source',
+      );
+      return;
+    }
+
+    debugPrint(
+      '[BDP/QR] home navigation triggered — source=$source '
+      'rootNavigator=true route=/home',
+    );
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).pushNamedAndRemoveUntil('/home', (route) => false);
+  }
+
   Future<void> _openForcedDiningFlowWhenReady() async {
-    if (_hasAutoOpenedDiningFlow) return;
+    if (_shouldAbortQrAutoFlow(
+      source: '_openForcedDiningFlowWhenReady:start',
+      logLabel: 'forced dining flow blocked',
+    )) {
+      return;
+    }
+    if (!_pendingForceTableSelection) {
+      debugPrint(
+        '[BDP/QR] _openForcedDiningFlowWhenReady BLOCKED — '
+        '_pendingForceTableSelection=false',
+      );
+      return;
+    }
+    // Guard 1: only auto-open once per page instance.
+    if (_hasAutoOpenedDiningFlow) {
+      debugPrint(
+        '[BDP/QR] _openForcedDiningFlowWhenReady BLOCKED — _hasAutoOpenedDiningFlow already true',
+      );
+      return;
+    }
+    if (_shouldAbortQrAutoFlow(
+      source: '_openForcedDiningFlowWhenReady:before-mark-opened',
+      logLabel: 'forced dining flow blocked',
+    )) {
+      return;
+    }
     _hasAutoOpenedDiningFlow = true;
 
-    final initialTable = widget.initialTableNumber;
+    final initialTable = _pendingInitialQrTableNumber;
+    debugPrint(
+      '[BDP/QR] _openForcedDiningFlowWhenReady STARTED '
+      'initialTableNumber=$initialTable fromQr=${widget.fromQr} '
+      '_isLeavingQrFlow=$_isLeavingQrFlow',
+    );
+    debugPrint(
+      '[BDP-Timing] _openForcedDiningFlowWhenReady → initialTableNumber=$initialTable fromQr=${widget.fromQr}',
+    );
+    debugPrint(
+      '[QR-BDP] seller_id=${widget.business["seller_id"]}  name=${widget.business["name"]}',
+    );
+
+    // fromQr path: addPostFrameCallback in initState already ensures BDP has
+    // rendered at least one frame before this method runs — no extra delay
+    // needed. The previous 80 ms guard was conservative safety margin.
+    // Non-QR path: wait for the slide-in page animation (~420 ms) before
+    // attaching a bottom sheet on top of an animating page.
+    if (!widget.fromQr) {
+      await Future<void>.delayed(const Duration(milliseconds: 420));
+      if (_shouldAbortQrAutoFlow(
+        source: '_openForcedDiningFlowWhenReady:after-animation-wait',
+        logLabel: 'forced dining flow blocked',
+      )) {
+        return;
+      }
+      if (!_pendingForceTableSelection) {
+        debugPrint(
+          '[BDP/QR] forced dining flow blocked — '
+          'pendingForceTableSelection cleared after animation wait',
+        );
+        return;
+      }
+    }
+
     if (initialTable != null && initialTable > 0) {
+      // ─── QR path: table number is already known ───────────────────────────
+      // Go DIRECTLY to the "Masa X — Sipariş" dialog.
+      if (_isQrPopupBlocked('food-order-dialog')) {
+        return;
+      }
+      if (!mounted) return;
+      debugPrint(
+        '[QR-BDP] Table known ($initialTable) → opening food-order dialog directly.',
+      );
+      debugPrint(
+        '[BDP-Timing] _showFoodOrderDialog called for table $initialTable',
+      );
       _showFoodOrderDialog(context, initialTable);
       return;
     }
 
-    // Masa numarası QR'dan gelmediyse kısa süre masa listesinin yüklenmesini bekle.
+    // ─── QR path: no table number in the QR (show table grid) ────────────────
+    debugPrint('[QR-BDP] No table in QR — waiting for store tables to load...');
     var attempts = 0;
-    while (mounted && attempts < 15 && _isLoadingTables) {
+    while (mounted && attempts < 20 && _isLoadingTables) {
+      if (_shouldAbortQrAutoFlow(
+        source: '_openForcedDiningFlowWhenReady:table-loading-loop',
+        logLabel: 'async loop cancelled',
+      )) {
+        debugPrint('[BDP/QR] LOOP CANCELLED during loading tables');
+        return;
+      }
       await Future<void>.delayed(const Duration(milliseconds: 120));
       attempts++;
+      if (_shouldAbortQrAutoFlow(
+        source: '_openForcedDiningFlowWhenReady:table-loading-loop-after-delay',
+        logLabel: 'async loop cancelled',
+      )) {
+        debugPrint('[BDP/QR] LOOP CANCELLED during loading tables');
+        return;
+      }
     }
-    if (!mounted) return;
+    debugPrint(
+      '[QR-BDP] Tables wait done. attempts=$attempts '
+      'available=$_availableTableNumbers '
+      '_isLeavingQrFlow=$_isLeavingQrFlow mounted=$mounted',
+    );
+    if (_shouldAbortQrAutoFlow(
+      source: '_openForcedDiningFlowWhenReady:after-table-wait',
+      logLabel: 'forced dining flow blocked',
+    )) {
+      return;
+    }
+    if (!_pendingForceTableSelection) {
+      debugPrint(
+        '[BDP/QR] forced dining flow blocked — '
+        'pendingForceTableSelection cleared after table wait',
+      );
+      return;
+    }
 
+    if (!mounted) return;
     _showTableSelection(context);
   }
 
@@ -935,10 +1285,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
               ),
               clipBehavior: Clip.antiAlias,
               child: coverImage.isNotEmpty
-                  ? OptimizedImage(imageUrlOrPath: 
-                      coverImage,
+                  ? OptimizedImage(
+                      imageUrlOrPath: coverImage,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
+                      errorBuilder: (_, _, _) =>
                           _buildSellerPublicListPlaceholder(),
                     )
                   : _buildSellerPublicListPlaceholder(),
@@ -1103,6 +1453,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
   @override
   void dispose() {
+    if (widget.fromQr ||
+        _pendingForceTableSelection ||
+        _pendingInitialQrTableNumber != null ||
+        _activeQrPopupName != null) {
+      _cancelQrAutoFlow(reason: 'dispose');
+    }
     _appState.removeListener(_handleAppStateChanged);
     _tabController.removeListener(_handleTabChanged);
     _tabController.dispose();
@@ -1116,8 +1472,61 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   Widget build(BuildContext context) {
     final isWeb = MediaQuery.of(context).size.width > 800;
 
+    // ---------------------------------------------------------------------------
+    // Unified back handler — used by BOTH mobile AppBar and web header.
+    // When fromQr==true, QrEntryScreen used pushReplacement, so
+    // BusinessDetailPage is the only route left in the stack.  Calling pop()
+    // would remove the last route and leave a blank white screen.  Instead we
+    // always navigate deterministically to the safe '/home' route.
+    // ---------------------------------------------------------------------------
+    void handleBack() {
+      debugPrint(
+        '[BDP] handleBack fired — fromQr=${widget.fromQr}, '
+        'layout=${isWeb ? "web" : "mobile"}, handler=UI-back-button',
+      );
+      if (!mounted) {
+        debugPrint('[BDP] handleBack: widget not mounted — aborting');
+        return;
+      }
+      if (widget.fromQr) {
+        debugPrint(
+          '[BDP] QR back uses deterministic home navigation '
+          'pop() NOT called',
+        );
+        unawaited(_navigateHomeFromQrBack(source: 'UI-back-button'));
+      } else {
+        debugPrint('[BDP] pop() called — fromQr=false');
+        Navigator.pop(context);
+      }
+    }
+
+    // PopScope intercepts the system/hardware back regardless of layout.
+    // canPop=false blocks the automatic pop; onPopInvokedWithResult lets us
+    // redirect to home for QR-opened pages.
+    void onSystemBack(bool didPop, _) {
+      debugPrint(
+        '[BDP] PopScope.onPopInvokedWithResult — didPop=$didPop '
+        'fromQr=${widget.fromQr}, layout=${isWeb ? "web" : "mobile"}',
+      );
+      if (!didPop && widget.fromQr) {
+        debugPrint(
+          '[BDP] leaving QR flow via system back — '
+          'pop() NOT called → pushNamedAndRemoveUntil("/home")',
+        );
+        unawaited(_navigateHomeFromQrBack(source: 'system-back'));
+      }
+    }
+
     if (isWeb) {
-      return _buildWebLayout();
+      // Web layout is returned early.  It MUST also be wrapped in PopScope so
+      // that system back on wide-screen devices (tablets, desktops) is handled
+      // identically to the mobile path — without this wrapper, a hardware back
+      // gesture pops the last route and produces a blank white screen.
+      return PopScope(
+        canPop: !widget.fromQr,
+        onPopInvokedWithResult: onSystemBack,
+        child: _buildWebLayout(handleBack: handleBack),
+      );
     }
 
     final businessName = widget.business['name'] ?? 'Mağaza';
@@ -1125,317 +1534,328 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     final businessFollowers =
         widget.business['followers']?.toString() ?? '9.8B Takipçi';
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: NestedScrollView(
-        headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
-          return <Widget>[
-            SliverAppBar(
-              backgroundColor: AppColors.primary,
-              pinned: true,
-              floating: false,
-              expandedHeight: 200.0, // Reduced height to decrease gap
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
-              ),
-              flexibleSpace: FlexibleSpaceBar(
-                background: Container(
-                  color: AppColors.primary,
-                  padding: EdgeInsets.only(
-                    top:
-                        MediaQuery.of(context).padding.top +
-                        45, // Slightly reduced top padding
-                    left: 16,
-                    right: 16,
-                    bottom: 48, // Adjusted bottom padding
-                  ),
-                  child: Column(
-                    children: [
-                      // Business Info Row
-                      Row(
-                        children: [
-                          // Logo (Supabase veya asset)
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white,
-                              border: Border.all(
+    return PopScope(
+      // canPop=false intercepts the system back gesture; onPopInvoked fires
+      // so we can redirect it ourselves.
+      canPop: !widget.fromQr,
+      onPopInvokedWithResult: onSystemBack,
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: NestedScrollView(
+          headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
+            return <Widget>[
+              SliverAppBar(
+                backgroundColor: AppColors.primary,
+                pinned: true,
+                floating: false,
+                expandedHeight: 200.0, // Reduced height to decrease gap
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: handleBack,
+                ),
+                flexibleSpace: FlexibleSpaceBar(
+                  background: Container(
+                    color: AppColors.primary,
+                    padding: EdgeInsets.only(
+                      top:
+                          MediaQuery.of(context).padding.top +
+                          45, // Slightly reduced top padding
+                      left: 16,
+                      right: 16,
+                      bottom: 48, // Adjusted bottom padding
+                    ),
+                    child: Column(
+                      children: [
+                        // Business Info Row
+                        Row(
+                          children: [
+                            // Logo (Supabase veya asset)
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
                                 color: Colors.white,
-                                width: 1.5,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: ClipOval(
+                                child: _buildStoreLogoWidget(businessName, 40),
                               ),
                             ),
-                            child: ClipOval(
-                              child: _buildStoreLogoWidget(businessName, 40),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
+                            const SizedBox(width: 10),
 
-                          // Name & Rating
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            // Name & Rating
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          businessName,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.amber,
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          businessRating,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    businessFollowers,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            // Follow Button & Bell Icon
+                            Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Row(
-                                  children: [
-                                    Flexible(
-                                      child: Text(
-                                        businessName,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 4,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.amber,
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        businessRating,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
+                                InkWell(
+                                  onTap: _handleNotificationBellTap,
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: Container(
+                                    width: 28,
+                                    height: 28,
+                                    decoration: BoxDecoration(
+                                      color: _isNotificationsEnabled
+                                          ? Colors.white
+                                          : Colors.white.withValues(
+                                              alpha: 0.14,
+                                            ),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.55,
                                         ),
                                       ),
                                     ),
-                                  ],
+                                    child: Icon(
+                                      _isNotificationsEnabled
+                                          ? Icons.notifications_active
+                                          : Icons.notifications_none,
+                                      color: _isNotificationsEnabled
+                                          ? Colors.amber.shade700
+                                          : Colors.white,
+                                      size: 18,
+                                    ),
+                                  ),
                                 ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  businessFollowers,
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 11,
+                                const SizedBox(width: 8),
+                                SizedBox(
+                                  height: 28,
+                                  child: ElevatedButton(
+                                    onPressed: _toggleFollowStore,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: _isFollowing
+                                          ? AppColors.primary
+                                          : Colors.white,
+                                      foregroundColor: _isFollowing
+                                          ? Colors.white
+                                          : AppColors.primary,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                        side: BorderSide(
+                                          color: _isFollowing
+                                              ? Colors.white
+                                              : Colors.transparent,
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                      elevation: 0,
+                                      overlayColor: AppColors.primary
+                                          .withValues(alpha: 0.12),
+                                    ),
+                                    child: Text(
+                                      _isFollowing
+                                          ? 'Takip Ediliyor'
+                                          : 'Takip Et',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                          ),
+                          ],
+                        ),
 
-                          // Follow Button & Bell Icon
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              InkWell(
-                                onTap: _handleNotificationBellTap,
-                                borderRadius: BorderRadius.circular(14),
-                                child: Container(
-                                  width: 28,
-                                  height: 28,
-                                  decoration: BoxDecoration(
-                                    color: _isNotificationsEnabled
-                                        ? Colors.white
-                                        : Colors.white.withValues(alpha: 0.14),
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.55,
-                                      ),
+                        const SizedBox(
+                          height: 8,
+                        ), // Reduced spacing from 12 to 8
+                        // Search Bar & Actions Row
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Container(
+                                height: 36, // Smaller vertically
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: TextField(
+                                  onChanged: (value) => setState(
+                                    () => _searchQuery = value.toLowerCase(),
+                                  ),
+                                  decoration: InputDecoration(
+                                    hintText: 'Mağazada Ara',
+                                    hintStyle: TextStyle(
+                                      color: Colors.grey[500],
+                                      fontSize: 13,
                                     ),
+                                    prefixIcon: Icon(
+                                      Icons.search,
+                                      color: Colors.grey[600],
+                                      size: 18,
+                                    ),
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      vertical: 0,
+                                    ), // Centered vertically
+                                    isDense: true,
                                   ),
-                                  child: Icon(
-                                    _isNotificationsEnabled
-                                        ? Icons.notifications_active
-                                        : Icons.notifications_none,
-                                    color: _isNotificationsEnabled
-                                        ? Colors.amber.shade700
-                                        : Colors.white,
-                                    size: 18,
-                                  ),
+                                  style: const TextStyle(fontSize: 13),
+                                  textAlignVertical: TextAlignVertical.center,
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                height: 28,
-                                child: ElevatedButton(
-                                  onPressed: _toggleFollowStore,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: _isFollowing
-                                        ? AppColors.primary
-                                        : Colors.white,
-                                    foregroundColor: _isFollowing
-                                        ? Colors.white
-                                        : AppColors.primary,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                      side: BorderSide(
-                                        color: _isFollowing
-                                            ? Colors.white
-                                            : Colors.transparent,
-                                        width: 1.5,
-                                      ),
-                                    ),
-                                    elevation: 0,
-                                    overlayColor: AppColors.primary.withValues(
-                                      alpha: 0.12,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    _isFollowing
-                                        ? 'Takip Ediliyor'
-                                        : 'Takip Et',
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                            ),
+                            const SizedBox(width: 8),
 
-                      const SizedBox(height: 8), // Reduced spacing from 12 to 8
-                      // Search Bar & Actions Row
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Container(
-                              height: 36, // Smaller vertically
+                            // Chat Button
+                            Container(
+                              width: 36,
+                              height: 36,
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: TextField(
-                                onChanged: (value) => setState(
-                                  () => _searchQuery = value.toLowerCase(),
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.chat_bubble_outline,
+                                  color: AppColors.primary,
+                                  size: 18,
                                 ),
-                                decoration: InputDecoration(
-                                  hintText: 'Mağazada Ara',
-                                  hintStyle: TextStyle(
-                                    color: Colors.grey[500],
-                                    fontSize: 13,
-                                  ),
-                                  prefixIcon: Icon(
-                                    Icons.search,
-                                    color: Colors.grey[600],
-                                    size: 18,
-                                  ),
-                                  border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    vertical: 0,
-                                  ), // Centered vertically
-                                  isDense: true,
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          ChatPage(seller: widget.business),
+                                    ),
+                                  );
+                                },
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+
+                            const SizedBox(width: 8),
+
+                            // Share Button
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.share_outlined,
+                                  color: AppColors.primary,
+                                  size: 18,
                                 ),
-                                style: const TextStyle(fontSize: 13),
-                                textAlignVertical: TextAlignVertical.center,
+                                onPressed: () {},
+                                padding: EdgeInsets.zero,
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-
-                          // Chat Button
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: IconButton(
-                              icon: const Icon(
-                                Icons.chat_bubble_outline,
-                                color: AppColors.primary,
-                                size: 18,
-                              ),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        ChatPage(seller: widget.business),
-                                  ),
-                                );
-                              },
-                              padding: EdgeInsets.zero,
-                            ),
-                          ),
-
-                          const SizedBox(width: 8),
-
-                          // Share Button
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: IconButton(
-                              icon: const Icon(
-                                Icons.share_outlined,
-                                color: AppColors.primary,
-                                size: 18,
-                              ),
-                              onPressed: () {},
-                              padding: EdgeInsets.zero,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              bottom: PreferredSize(
-                preferredSize: const Size.fromHeight(48),
-                child: Container(
-                  color: AppColors.primary, // Keep purple background
-                  child: TabBar(
-                    controller: _tabController,
-                    indicatorColor: Colors.white,
-                    indicatorWeight: 3,
-                    labelColor: Colors.white,
-                    unselectedLabelColor: Colors.white60,
-                    labelStyle: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
+                          ],
+                        ),
+                      ],
                     ),
-                    dividerColor: Colors.transparent,
-                    tabs: const [
-                      Tab(text: 'Ana Sayfa'),
-                      Tab(text: 'Tüm Ürünler'),
-                      Tab(text: 'Listeler'),
-                      Tab(text: 'Satıcı'),
-                    ],
+                  ),
+                ),
+                bottom: PreferredSize(
+                  preferredSize: const Size.fromHeight(48),
+                  child: Container(
+                    color: AppColors.primary, // Keep purple background
+                    child: TabBar(
+                      controller: _tabController,
+                      indicatorColor: Colors.white,
+                      indicatorWeight: 3,
+                      labelColor: Colors.white,
+                      unselectedLabelColor: Colors.white60,
+                      labelStyle: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                      dividerColor: Colors.transparent,
+                      tabs: const [
+                        Tab(text: 'Ana Sayfa'),
+                        Tab(text: 'Tüm Ürünler'),
+                        Tab(text: 'Listeler'),
+                        Tab(text: 'Satıcı'),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ];
-        },
-        body: TabBarView(
-          controller: _tabController,
-          children: [
-            _buildAnaSayfaTab(),
-            _buildTumUrunlerTab(),
-            _buildListelerTab(),
-            _buildSaticiTab(),
-          ],
+            ];
+          },
+          body: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildAnaSayfaTab(),
+              _buildTumUrunlerTab(),
+              _buildListelerTab(),
+              _buildSaticiTab(),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildWebLayout() {
+  Widget _buildWebLayout({required VoidCallback handleBack}) {
     final businessName = widget.business['name'] ?? 'Mağaza';
     final businessRating = widget.business['rating']?.toString() ?? '8.2';
     final businessFollowers =
@@ -1457,10 +1877,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Row(
                     children: [
-                      // Back Button
+                      // Back Button — delegates to the shared handleBack()
+                      // passed from build(), which already checks fromQr and
+                      // routes to '/' instead of pop() when needed.
                       IconButton(
                         icon: const Icon(Icons.arrow_back, color: Colors.white),
-                        onPressed: () => Navigator.pop(context),
+                        onPressed: handleBack,
                       ),
                       const SizedBox(width: 10),
                       // Logo
@@ -1854,7 +2276,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     return Container(
       height: 40,
       width: 1,
-      color: Colors.white.withOpacity(0.5),
+      color: Colors.white.withValues(alpha: 0.5),
     );
   }
 
@@ -1892,9 +2314,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          splashColor: AppColors.primary.withOpacity(0.12),
-          hoverColor: AppColors.primary.withOpacity(0.08),
-          focusColor: AppColors.primary.withOpacity(0.12),
+          splashColor: AppColors.primary.withValues(alpha: 0.12),
+          hoverColor: AppColors.primary.withValues(alpha: 0.08),
+          focusColor: AppColors.primary.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(4),
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
@@ -1961,10 +2383,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.05),
+            color: AppColors.primary.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -1975,7 +2397,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
+              color: AppColors.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Icon(
@@ -2085,12 +2507,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   Widget _buildStoreLogoWidget(String businessName, double size) {
     final logoUrl = _storePublicInfo?['logoUrl'] as String?;
     if (logoUrl != null && logoUrl.isNotEmpty) {
-      return OptimizedImage(imageUrlOrPath: 
-        logoUrl,
+      return OptimizedImage(
+        imageUrlOrPath: logoUrl,
         width: size,
         height: size,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _storeLogoLetter(businessName, size),
+        errorBuilder: (_, _, _) => _storeLogoLetter(businessName, size),
       );
     }
     if (StoreLogoHelper.hasLogo(businessName)) {
@@ -2165,12 +2587,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     color: Colors.grey[200],
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: OptimizedImage(imageUrlOrPath: 
-                    bannerUrls[index],
+                  child: OptimizedImage(
+                    imageUrlOrPath: bannerUrls[index],
                     fit: BoxFit.cover,
                     width: double.infinity,
                     height: double.infinity,
-                    errorBuilder: (_, __, ___) => Center(
+                    errorBuilder: (_, _, _) => Center(
                       child: Icon(
                         Icons.image_not_supported,
                         size: 48,
@@ -2333,7 +2755,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
+                            color: Colors.black.withValues(alpha: 0.1),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -2395,7 +2817,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                 border: Border.all(color: Colors.grey.shade200),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.02),
+                    color: Colors.black.withValues(alpha: 0.02),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -2572,82 +2994,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     );
   }
 
-  Widget _buildSellerStatCard({
-    required IconData icon,
-    required String title,
-    required String value,
-    required Color color,
-    Color? borderColor,
-    required Color iconColor,
-    bool showInfoIcon = false,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(8),
-        border: borderColor != null ? Border.all(color: borderColor) : null,
-        boxShadow: [
-          if (borderColor == null)
-            BoxShadow(
-              color: Colors.black.withOpacity(0.02),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: iconColor, size: 28),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    if (showInfoIcon) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.info_outline,
-                        size: 14,
-                        color: Colors.grey.shade400,
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildReviewTabItem(String title, bool isActive) {
     return Container(
       padding: const EdgeInsets.only(bottom: 16),
@@ -2717,26 +3063,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         ],
       ),
     );
-  }
-
-  // Kategori ikonları için yardımcı metot
-  IconData _getCategoryIcon(String category) {
-    final cat = category.toLowerCase();
-    if (cat.contains('telefon')) return Icons.phone_iphone;
-    if (cat.contains('bilgisayar') ||
-        cat.contains('laptop') ||
-        cat.contains('tablet'))
-      return Icons.laptop;
-    if (cat.contains('televizyon') || cat.contains('tv')) return Icons.tv;
-    if (cat.contains('beyaz eşya')) return Icons.kitchen;
-    if (cat.contains('küçük ev')) return Icons.coffee_maker;
-    if (cat.contains('aksesuar')) return Icons.headphones;
-    if (cat.contains('giyim') || cat.contains('moda')) return Icons.checkroom;
-    if (cat.contains('spor')) return Icons.fitness_center;
-    if (cat.contains('kozmetik') || cat.contains('bakım')) return Icons.face;
-    if (cat.contains('oyun') || cat.contains('gaming'))
-      return Icons.sports_esports;
-    return Icons.grid_view; // Varsayılan ikon
   }
 
   // Kategori Listesi Widget'ı - Yatay Bar Tasarımı
@@ -2983,7 +3309,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         side: BorderSide(color: AppColors.primary, width: 2),
                       ),
                       elevation: 0,
-                      overlayColor: AppColors.primary.withOpacity(0.12),
+                      overlayColor: AppColors.primary.withValues(alpha: 0.12),
                     ),
                     child: const Text(
                       'Ürün Değerlendirmeleri',
@@ -3012,7 +3338,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         side: BorderSide(color: AppColors.primary, width: 2),
                       ),
                       elevation: 0,
-                      overlayColor: AppColors.primary.withOpacity(0.12),
+                      overlayColor: AppColors.primary.withValues(alpha: 0.12),
                     ),
                     child: const Text(
                       'Satıcı Değerlendirmeleri',
@@ -3277,24 +3603,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     );
   }
 
-  // Badge Widget (Rozetler için)
-  Widget _buildBadge(IconData icon, String label, Color color) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 24),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: Colors.black87,
-          ),
-        ),
-      ],
-    );
-  }
-
   // Modern Badge Widget (Gelişmiş Rozetler için)
   Widget _buildModernBadge({
     required IconData icon,
@@ -3309,7 +3617,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
+            color: color.withValues(alpha: 0.15),
             shape: BoxShape.circle,
           ),
           child: Icon(icon, color: color, size: 20),
@@ -3489,7 +3797,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         border: Border.all(color: Colors.grey.shade200), // Hafif gri çerçeve
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -3502,7 +3810,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
+              color: AppColors.primary.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(icon, color: AppColors.primary, size: 20),
@@ -3526,49 +3834,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
               fontWeight: FontWeight.bold,
               color: Colors.black87,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Info Card Widget (Kargo/Konum/Cevap için) - ARTIK KULLANILMIYOR AMA ESKİ KOD HATASI VERMESİN DİYE TUTUYORUM
-  Widget _buildInfoCard(IconData icon, String title, String subtitle) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isSmallScreen = screenWidth < 360;
-
-    return Container(
-      padding: EdgeInsets.all(isSmallScreen ? 8 : 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: AppColors.primary, size: isSmallScreen ? 22 : 28),
-          SizedBox(height: isSmallScreen ? 4 : 8),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: isSmallScreen ? 9 : 11,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          SizedBox(height: isSmallScreen ? 2 : 4),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: isSmallScreen ? 9 : 10,
-              color: Colors.grey[600],
-            ),
-            textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -3652,7 +3917,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
           physics: const NeverScrollableScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: 16),
           itemCount: reviews.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (context, index) {
             final review = reviews[index];
             final images = _reviewImages(review);
@@ -3705,7 +3970,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: images.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        separatorBuilder: (_, _) => const SizedBox(width: 8),
                         itemBuilder: (context, imageIndex) {
                           return ClipRRect(
                             borderRadius: BorderRadius.circular(10),
@@ -3911,7 +4176,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: images.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            separatorBuilder: (_, _) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
               return ClipRRect(
                 borderRadius: BorderRadius.circular(18),
@@ -4009,9 +4274,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     _selectedCategoryIndex = i;
                   });
                 },
-                splashColor: AppColors.primary.withOpacity(0.12),
-                hoverColor: AppColors.primary.withOpacity(0.08),
-                focusColor: AppColors.primary.withOpacity(0.12),
+                splashColor: AppColors.primary.withValues(alpha: 0.12),
+                hoverColor: AppColors.primary.withValues(alpha: 0.08),
+                focusColor: AppColors.primary.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -4042,157 +4307,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
           }),
         ),
       ),
-    );
-  }
-
-  Widget _buildSellerReviewsTab() {
-    return AnimatedBuilder(
-      animation: AppState(),
-      builder: (context, _) {
-        final sellerReviews = _sellerReviewCards();
-        final total = sellerReviews.length;
-        final average = total == 0
-            ? 0.0
-            : sellerReviews
-                      .map((e) => _reviewRating(e))
-                      .fold<double>(0, (a, b) => a + b) /
-                  total;
-        final starCounts = _starCounts(sellerReviews);
-
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Summary
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: Row(
-                  children: [
-                    Column(
-                      children: [
-                        Text(
-                          average.toStringAsFixed(1),
-                          style: const TextStyle(
-                            fontSize: 36,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                        Row(
-                          children: List.generate(
-                            5,
-                            (index) => Icon(
-                              index < average.round()
-                                  ? Icons.star
-                                  : Icons.star_border,
-                              color: AppColors.primary,
-                              size: 16,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '$total Değerlendirme',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 24),
-                    Expanded(
-                      child: Column(
-                        children: [5, 4, 3, 2, 1].map((star) {
-                          final count = starCounts[star] ?? 0;
-                          final ratio = total == 0 ? 0.0 : count / total;
-                          return _buildSellerRatingBar(star, ratio);
-                        }).toList(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Değerlendirmeler',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (sellerReviews.isEmpty)
-                _buildEmptyReviewState(
-                  'Satıcı değerlendirmesi henüz yok',
-                  'Bu mağaza için gerçek satıcı değerlendirmesi geldiğinde burada gösterilecek.',
-                )
-              else
-                ...sellerReviews.map(
-                  (review) => _buildSellerReviewCard(review),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildWebSellerReviewsTab() {
-    return Center(
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 800),
-        padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Satıcı Değerlendirmeleri',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 24),
-            _buildSellerReviewsTab(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSellerRatingBar(int star, double percentage) {
-    return Row(
-      children: [
-        Text(
-          '$star',
-          style: TextStyle(
-            color: Colors.grey[600],
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(width: 4),
-        const Icon(Icons.star, size: 12, color: Colors.grey),
-        const SizedBox(width: 8),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(
-              value: percentage,
-              backgroundColor: Colors.grey[200],
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                AppColors.primary,
-              ),
-              minHeight: 6,
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -4262,7 +4376,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: images.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
                   return ClipRRect(
                     borderRadius: BorderRadius.circular(10),
@@ -4378,16 +4492,16 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       );
     }
     if (url.startsWith('http')) {
-      return OptimizedImage(imageUrlOrPath: 
-        url,
+      return OptimizedImage(
+        imageUrlOrPath: url,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _reviewFallback(),
+        errorBuilder: (_, _, _) => _reviewFallback(),
       );
     }
     return Image.asset(
       url,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _reviewFallback(),
+      errorBuilder: (_, _, _) => _reviewFallback(),
     );
   }
 
@@ -4472,12 +4586,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     color: Colors.grey[200],
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: OptimizedImage(imageUrlOrPath: 
-                    banner['url'] as String,
+                  child: OptimizedImage(
+                    imageUrlOrPath: banner['url'] as String,
                     fit: BoxFit.cover,
                     width: double.infinity,
                     height: double.infinity,
-                    errorBuilder: (_, __, ___) => Center(
+                    errorBuilder: (_, _, _) => Center(
                       child: Icon(
                         Icons.image_not_supported,
                         color: Colors.grey[400],
@@ -4494,7 +4608,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     gradient: LinearGradient(
                       colors: [
                         banner['color'] as Color,
-                        (banner['color'] as Color).withOpacity(0.8),
+                        (banner['color'] as Color).withValues(alpha: 0.8),
                       ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
@@ -4502,7 +4616,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: [
                       BoxShadow(
-                        color: (banner['color'] as Color).withOpacity(0.3),
+                        color: (banner['color'] as Color).withValues(
+                          alpha: 0.3,
+                        ),
                         blurRadius: 8,
                         offset: const Offset(0, 4),
                       ),
@@ -4518,7 +4634,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         Container(
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
+                            color: Colors.white.withValues(alpha: 0.2),
                             shape: BoxShape.circle,
                           ),
                           child: Icon(
@@ -4545,7 +4661,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                               Text(
                                 banner['subtitle'] as String,
                                 style: TextStyle(
-                                  color: Colors.white.withOpacity(0.9),
+                                  color: Colors.white.withValues(alpha: 0.9),
                                   fontSize: isMobile ? 11 : 13,
                                 ),
                                 maxLines: 1,
@@ -4556,7 +4672,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         ),
                         Icon(
                           Icons.arrow_forward_ios,
-                          color: Colors.white.withOpacity(0.7),
+                          color: Colors.white.withValues(alpha: 0.7),
                           size: 16,
                         ),
                       ],
@@ -4576,7 +4692,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
+                        color: Colors.black.withValues(alpha: 0.1),
                         blurRadius: 8,
                         offset: const Offset(0, 4),
                       ),
@@ -4594,8 +4710,18 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   // ─── GARSON / MASA SİPARİŞ AKIŞI ───────────────────────────────────────
 
   void _showDiningModePopup(BuildContext ctx) {
-    showModalBottomSheet(
+    const popupName = 'dining-mode-bottom-sheet';
+    debugPrint(
+      '[BDP/QR] popup OPEN ATTEMPT — $popupName '
+      'fromQr=${widget.fromQr} pendingForce=$_pendingForceTableSelection',
+    );
+    if (_isQrPopupBlocked(popupName)) {
+      return;
+    }
+
+    final popupFuture = showModalBottomSheet<void>(
       context: ctx,
+      useRootNavigator: false,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -4625,7 +4751,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                       width: 56,
                       height: 56,
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.1),
+                        color: AppColors.primary.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: const Icon(
@@ -4678,6 +4804,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         subtitle: 'Masaya sipariş', // Shortened slightly
                         color: AppColors.primary,
                         onTap: () {
+                          debugPrint(
+                            '[BDP/QR] dining-mode-bottom-sheet action — '
+                            'open table selection',
+                          );
                           Navigator.pop(sheetCtx);
                           _showTableSelection(ctx);
                         },
@@ -4701,6 +4831,12 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         );
       },
     );
+    debugPrint('[BDP/QR] popup OPENED — $popupName useRootNavigator=false');
+    _trackQrPopup(
+      popupName: popupName,
+      useRootNavigator: false,
+      future: popupFuture,
+    );
   }
 
   Widget _diningModeButton({
@@ -4718,9 +4854,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
           horizontal: 10,
         ), // Reduced horizontal padding
         decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
+          color: color.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withOpacity(0.3)),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
         ),
         // Changed to Column for inner content if space is tight? No, user explicitly asked for Icon Left.
         // Let's use Row but maybe vertical layout if screen is very small?
@@ -4753,7 +4889,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                         subtitle,
                         style: TextStyle(
                           fontSize: 10,
-                          color: color.withOpacity(0.7),
+                          color: color.withValues(alpha: 0.7),
                           height: 1.1,
                         ),
                         maxLines: 2,
@@ -4771,22 +4907,60 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   }
 
   Future<void> _showTableSelection(BuildContext ctx) async {
+    const popupName = 'table-selection-dialog';
+    debugPrint(
+      '[BDP/QR] popup OPEN ATTEMPT — $popupName '
+      'fromQr=${widget.fromQr} tablesLoading=$_isLoadingTables',
+    );
+    if (_isQrPopupBlocked(popupName)) {
+      return;
+    }
+
     // Masa listesi hâlâ yükleniyorsa bekle (max 3 sn).
     var waited = 0;
     while (_isLoadingTables && mounted && waited < 3000) {
+      if (_shouldAbortQrAutoFlow(
+        source: '_showTableSelection:tables-loading-loop',
+        logLabel: 'async loop cancelled',
+      )) {
+        debugPrint('[BDP/QR] LOOP CANCELLED during table-selection loading');
+        return;
+      }
       await Future<void>.delayed(const Duration(milliseconds: 100));
       waited += 100;
+      if (_shouldAbortQrAutoFlow(
+        source: '_showTableSelection:tables-loading-loop-after-delay',
+        logLabel: 'async loop cancelled',
+      )) {
+        debugPrint('[BDP/QR] LOOP CANCELLED during table-selection loading');
+        return;
+      }
     }
     // Hâlâ boşsa bir kez daha yüklemeyi dene.
     if (mounted && _availableTableNumbers.isEmpty && !_isLoadingTables) {
       await _loadStoreTables();
+      if (_shouldAbortQrAutoFlow(
+        source: '_showTableSelection:after-loadStoreTables',
+        logLabel: 'forced dining flow blocked',
+      )) {
+        return;
+      }
     }
-    if (!mounted) return;
+    // Guard after every async gap.
+    if (_isQrPopupBlocked(popupName)) {
+      debugPrint('[BDP/QR] _showTableSelection ABORTED after async wait');
+      return;
+    }
 
     final tableNumbers = _availableTableNumbers;
+    if (!mounted) {
+      debugPrint('[BDP/QR] _showTableSelection ABORTED — state not mounted');
+      return;
+    }
 
-    showDialog(
-      context: ctx,
+    final popupFuture = showDialog<void>(
+      context: context,
+      useRootNavigator: false,
       builder: (dlgCtx) {
         return Dialog(
           backgroundColor: Colors.white,
@@ -4857,15 +5031,19 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                       final tableNum = tableNumbers[i];
                       return GestureDetector(
                         onTap: () {
+                          debugPrint(
+                            '[BDP/QR] table-selection-dialog action — '
+                            'table=$tableNum',
+                          );
                           Navigator.pop(dlgCtx);
                           _showFoodOrderDialog(ctx, tableNum);
                         },
                         child: Container(
                           decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.07),
+                            color: AppColors.primary.withValues(alpha: 0.07),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: AppColors.primary.withOpacity(0.25),
+                              color: AppColors.primary.withValues(alpha: 0.25),
                             ),
                           ),
                           child: Column(
@@ -4897,17 +5075,53 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         );
       },
     );
+    debugPrint(
+      '[BDP/QR] popup OPENED — $popupName '
+      'useRootNavigator=false tables=${tableNumbers.length}',
+    );
+    _trackQrPopup(
+      popupName: popupName,
+      useRootNavigator: false,
+      future: popupFuture,
+    );
   }
 
   void _showFoodOrderDialog(BuildContext ctx, int tableNumber) {
-    showDialog(
+    const popupName = 'food-order-dialog';
+    debugPrint(
+      '[BDP/QR] popup OPEN ATTEMPT — $popupName tableNumber=$tableNumber '
+      'fromQr=${widget.fromQr}',
+    );
+    // Never auto-open a dialog if the user has already initiated back navigation.
+    // This is the last-line guard for any async continuation that fires after
+    // handleBack() has set _isLeavingQrFlow=true.
+    if (_isQrPopupBlocked(popupName)) {
+      return;
+    }
+    debugPrint(
+      '[BDP/QR] popup OPENED via _showFoodOrderDialog '
+      'tableNumber=$tableNumber _allProducts.length=${_allProducts.length}',
+    );
+    debugPrint(
+      '[QR-BDP] _showFoodOrderDialog called. tableNumber=$tableNumber _allProducts.length=${_allProducts.length}',
+    );
+    debugPrint('[BDP-Timing] order sheet visible — tableNumber=$tableNumber');
+    final popupFuture = showDialog<void>(
       context: ctx,
+      useRootNavigator: false,
       barrierDismissible: false,
       builder: (dlgCtx) => _FoodOrderDialog(
         business: widget.business,
         products: _allProducts,
+        productsFuture: _productCompleter.future,
         tableNumber: tableNumber,
+        logoUrl: _storePublicInfo?['logoUrl'] as String?,
       ),
+    );
+    _trackQrPopup(
+      popupName: popupName,
+      useRootNavigator: false,
+      future: popupFuture,
     );
   }
 }
@@ -4917,12 +5131,19 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 class _FoodOrderDialog extends StatefulWidget {
   final Map<String, dynamic> business;
   final List<Product> products;
+
+  /// Shared future that resolves when the page-level product fetch completes.
+  /// The dialog awaits this instead of spawning its own duplicate request.
+  final Future<List<Product>> productsFuture;
   final int tableNumber;
+  final String? logoUrl;
 
   const _FoodOrderDialog({
     required this.business,
     required this.products,
+    required this.productsFuture,
     required this.tableNumber,
+    this.logoUrl,
   });
 
   @override
@@ -4932,25 +5153,879 @@ class _FoodOrderDialog extends StatefulWidget {
 class _FoodOrderDialogState extends State<_FoodOrderDialog> {
   final StoreService _storeService = StoreService();
   final Map<String, Map<String, dynamic>> _cart = {};
+  final List<Map<String, dynamic>> _mixedServiceCartItems = [];
   List<Product> _products = <Product>[];
   bool _isSending = false;
+  bool _isCallingWaiter = false;
   bool _isLoadingProducts = false;
+  bool _summaryExpanded = false;
   String? _productsError;
   String _selectedSubCat = 'Tümü';
+
+  /// Seller ID resolved once and cached — avoids repeated lookups in
+  /// _sendOrder and _loadProductsForDialog.
+  String? _resolvedSellerId;
 
   @override
   void initState() {
     super.initState();
     _products = List<Product>.from(widget.products);
     if (_products.isEmpty) {
-      unawaited(_loadProductsForDialog());
+      // Await the SHARED page-level fetch instead of a duplicate Supabase call.
+      _awaitSharedProductFuture();
     }
   }
 
+  Future<void> _awaitSharedProductFuture() async {
+    // Pre-resolve seller ID while waiting for products — reused by _sendOrder.
+    _resolveSellerIdIfNeeded();
+    final dlgWatch = Stopwatch()..start();
+    debugPrint('[BDP-Timing] dialog awaiting productsFuture…');
+    setState(() {
+      _isLoadingProducts = true;
+      _productsError = null;
+    });
+    try {
+      final loaded = await widget.productsFuture;
+      debugPrint(
+        '[BDP-Timing] dialog productsFuture resolved in ${dlgWatch.elapsedMilliseconds}ms — ${loaded.length} products',
+      );
+      if (!mounted) return;
+      setState(() {
+        _products = loaded;
+        _isLoadingProducts = false;
+        _productsError = loaded.isEmpty
+            ? 'Ürünler bulunamadı. Tekrar deneyin.'
+            : null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingProducts = false;
+        _productsError = 'Ürünler yüklenemedi. Tekrar deneyin.';
+      });
+    }
+  }
+
+  void _removeServiceCartItem(int index) {
+    if (index < 0 || index >= _mixedServiceCartItems.length) return;
+    setState(() {
+      _mixedServiceCartItems.removeAt(index);
+    });
+  }
+
   int _totalItems() =>
-      _cart.values.fold(0, (sum, v) => sum + (v['quantity'] as int));
+      _cart.values.fold(0, (sum, v) => sum + (v['quantity'] as int)) +
+      _mixedServiceCartItems.fold(
+        0,
+        (sum, v) => sum + ((v['quantity'] as num?)?.toInt() ?? 1),
+      );
+
+  Widget _buildDialogLogo() {
+    final businessName = widget.business['name']?.toString() ?? '';
+    final logoUrl = widget.logoUrl;
+    if (logoUrl != null && logoUrl.isNotEmpty) {
+      return OptimizedImage(
+        imageUrlOrPath: logoUrl,
+        width: 62,
+        height: 62,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _dialogLogoFallback(businessName),
+      );
+    }
+    if (StoreLogoHelper.hasLogo(businessName)) {
+      return Image.asset(
+        StoreLogoHelper.getStoreLogo(businessName)!,
+        width: 62,
+        height: 62,
+        fit: BoxFit.cover,
+      );
+    }
+    return _dialogLogoFallback(businessName);
+  }
+
+  Widget _dialogLogoFallback(String businessName) {
+    return Center(
+      child: Icon(
+        Icons.store_rounded,
+        color: Colors.white.withValues(alpha: 0.90),
+        size: 30,
+      ),
+    );
+  }
+
+  void _debugRestaurantPricing(Product product, {required String source}) {
+    debugPrint(
+      '[RestaurantPricing][$source] ${product.name} '
+      'rawPrice=${product.price} '
+      'resolvedPricingType=${product.resolvedPricingType.storageValue} '
+      'pricingType=${product.pricingType} '
+      'pricePerKg=${product.pricePerKg} '
+      'effectivePricePerKg=${product.effectivePricePerKg} '
+      'defaultWeightGrams=${product.defaultWeightGrams} '
+      'minWeightGrams=${product.minWeightGrams} '
+      'weightStepGrams=${product.weightStepGrams} '
+      'maxWeightGrams=${product.maxWeightGrams} '
+      'usesWeightSelector=${product.usesWeightSelector} '
+      'displayPricing=${product.displayPricingText}',
+    );
+  }
+
+  String _baseProductKey(Product product) {
+    final productId = product.productId?.trim() ?? '';
+    if (productId.isNotEmpty) return productId;
+    return product.name.trim().isEmpty ? product.name : product.name.trim();
+  }
+
+  String _cartKeyForConfig(
+    Product product, {
+    int? selectedWeightGrams,
+    double? selectedServiceAmount,
+    List<String> selectedAttrs = const <String>[],
+    String notes = '',
+  }) {
+    final baseKey = _baseProductKey(product);
+    if (!product.usesServiceControlStepper) return baseKey;
+    final normalizedAttrs = [...selectedAttrs]..sort();
+    final selectionKey = product.usesWeightSelector
+        ? (selectedWeightGrams ?? product.resolvedDefaultWeightGrams).toString()
+        : ProductPriceCalculator.formatNumericAmount(
+            selectedServiceAmount ?? product.resolvedDefaultServiceAmount,
+          );
+    return [
+      baseKey,
+      product.resolvedServiceControlType.storageValue,
+      product.resolvedPricingType.storageValue,
+      selectionKey,
+      normalizedAttrs.join(','),
+      notes.trim().toLowerCase(),
+    ].join('|');
+  }
+
+  List<MapEntry<String, Map<String, dynamic>>> _cartEntriesForProduct(
+    Product product,
+  ) {
+    final baseKey = _baseProductKey(product);
+    return _cart.entries
+        .where((entry) => entry.value['baseProductKey'] == baseKey)
+        .toList(growable: false);
+  }
+
+  MapEntry<String, Map<String, dynamic>>? _simpleCartEntryFor(Product product) {
+    for (final entry in _cartEntriesForProduct(product)) {
+      final attrs =
+          (entry.value['selectedAttrs'] as List?)
+              ?.whereType<String>()
+              .toList() ??
+          const <String>[];
+      final notes = entry.value['notes']?.toString().trim() ?? '';
+      if (attrs.isEmpty && notes.isEmpty) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _cartItemFor(Product product) {
+    if (product.usesServiceControlStepper) {
+      return _simpleCartEntryFor(product)?.value;
+    }
+    final key = _cartKeyForConfig(
+      product,
+      selectedWeightGrams: product.usesWeightSelector
+          ? product.resolvedDefaultWeightGrams
+          : null,
+    );
+    return _cart[key];
+  }
+
+  int _quantityFor(Product product) {
+    return _cartEntriesForProduct(product).fold<int>(
+      0,
+      (sum, entry) => sum + ((entry.value['quantity'] as int?) ?? 0),
+    );
+  }
+
+  List<String> _selectedAttributesFor(Product product) =>
+      (_cartItemFor(product)?['selectedAttrs'] as List?)?.cast<String>() ??
+      const <String>[];
+
+  String _cartLineSubtitle(Map<String, dynamic> item) {
+    final parts = <String>[];
+    final amountLabel = item['amountLabel']?.toString().trim() ?? '';
+    final weightGrams = (item['selectedWeightGrams'] as num?)?.toInt();
+    final gramaj = item['gramaj']?.toString().trim() ?? '';
+    final notes = item['notes']?.toString().trim() ?? '';
+    final attrs =
+        (item['selectedAttrs'] as List?)?.whereType<String>().toList() ??
+        const <String>[];
+    if (amountLabel.isNotEmpty) {
+      parts.add(amountLabel);
+    } else if (weightGrams != null && weightGrams > 0) {
+      parts.add(ProductPriceCalculator.formatWeight(weightGrams));
+    } else if (gramaj.isNotEmpty) {
+      parts.add(gramaj);
+    }
+    if (attrs.isNotEmpty) {
+      parts.add(attrs.join(', '));
+    }
+    if (notes.isNotEmpty) {
+      parts.add(notes);
+    }
+    return parts.join(' · ');
+  }
+
+  String _mixedServiceGeneralNote(Map<String, dynamic> item) {
+    return item['general_note']?.toString().trim().isNotEmpty == true
+        ? item['general_note'].toString().trim()
+        : item['note']?.toString().trim().isNotEmpty == true
+        ? item['note'].toString().trim()
+        : item['notes']?.toString().trim() ?? '';
+  }
+
+  Widget _buildMixedServiceSummaryCard(
+    Map<String, dynamic> item,
+    int itemIndex,
+  ) {
+    final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
+    final title = item['name']?.toString().trim().isNotEmpty == true
+        ? item['name'].toString().trim()
+        : item['item_name']?.toString().trim().isNotEmpty == true
+        ? item['item_name'].toString().trim()
+        : 'Servis';
+    final note = _mixedServiceGeneralNote(item);
+    final detailEntries = MixedServiceOrder.childItemDisplayEntries(item);
+    final lineTotal = MixedServiceOrder.itemLineTotal(item);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.16)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$quantity× $title',
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    const Text(
+                      'Seçilen içerikler',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '₺${lineTotal.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => _removeServiceCartItem(itemIndex),
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    size: 15,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (detailEntries.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ...detailEntries.map((entry) {
+              if (entry.isGroupHeader) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 5),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      entry.label,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                );
+              }
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '- ',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            entry.label,
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF64748B),
+                              height: 1.25,
+                            ),
+                          ),
+                          if (entry.detail?.isNotEmpty ?? false)
+                            Text(
+                              entry.detail!,
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w500,
+                                color: Color(0xFF94A3B8),
+                                height: 1.3,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+          if (note.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Genel not: $note',
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF64748B),
+                height: 1.25,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Compact summary row for a normal (non-mixed-service) cart item.
+  Widget _buildCartItemSummaryRow(String cartKey, Map<String, dynamic> item) {
+    final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+    final name = item['name']?.toString() ?? '';
+    final subtitle = _cartLineSubtitle(item);
+    final lineTotal = (item['calculatedLineTotal'] as num?)?.toDouble() ??
+        ((item['unitPriceSnapshot'] as num?)?.toDouble() ?? 0) * qty;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$qty× $name',
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+                if (subtitle.isNotEmpty)
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (lineTotal > 0)
+            Text(
+              '₺${lineTotal.toStringAsFixed(0)}',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: AppColors.primary,
+              ),
+            ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () => setState(() => _cart.remove(cartKey)),
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.close_rounded, size: 15, color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactOrderSummaryBar() {
+    final cartList = _cart.entries.toList();
+    final serviceList = _mixedServiceCartItems;
+    final totalCount = cartList.length + serviceList.length;
+
+    final allLabels = <String>[
+      ...cartList.map(
+        (e) =>
+            '${e.value['quantity']}× ${e.value['name'] ?? ''}',
+      ),
+      ...serviceList.map(
+        (e) =>
+            '${(e['quantity'] as num?)?.toInt() ?? 1}× ${e['name'] ?? 'Servis'}',
+      ),
+    ];
+
+    final previewLabels = allLabels.take(2).toList(growable: false);
+    final remaining = totalCount - previewLabels.length;
+    final total = _totalPrice();
+
+    return GestureDetector(
+      onTap: () => setState(() => _summaryExpanded = !_summaryExpanded),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Sipariş Özeti',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+                const Spacer(),
+                if (total > 0)
+                  Text(
+                    '₺${total.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                const SizedBox(width: 4),
+                Icon(
+                  _summaryExpanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  size: 18,
+                  color: const Color(0xFF6B7280),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            if (_summaryExpanded) ...[
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 180),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ..._cart.entries.map(
+                        (e) => _buildCartItemSummaryRow(e.key, e.value),
+                      ),
+                      ..._mixedServiceCartItems
+                          .asMap()
+                          .entries
+                          .map((e) => _buildMixedServiceSummaryCard(e.value, e.key)),
+                    ],
+                  ),
+                ),
+              ),
+            ] else ...[
+              ...previewLabels.map(
+                (label) => Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1F2937),
+                    ),
+                  ),
+                ),
+              ),
+              if (remaining > 0)
+                Text(
+                  '+$remaining ürün daha',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey.shade500,
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String? _selectionMetaFor(Product product) {
+    final entries = _cartEntriesForProduct(product);
+    if (entries.isEmpty) return null;
+    final lines = entries
+        .map((entry) {
+          final item = entry.value;
+          final qty = (item['quantity'] as int?) ?? 1;
+          final subtitle = _cartLineSubtitle(item);
+          if (subtitle.isEmpty) {
+            return product.usesWeightSelector ? '$qty seçim' : '';
+          }
+          return qty > 1 ? '$subtitle x$qty' : subtitle;
+        })
+        .where((line) => line.trim().isNotEmpty)
+        .toList(growable: false);
+    if (lines.isEmpty) {
+      return entries.length > 1 ? '${entries.length} seçim' : null;
+    }
+    if (lines.length <= 2) {
+      return lines.join(' · ');
+    }
+    return '${lines.take(2).join(' · ')} +${lines.length - 2}';
+  }
+
+  Map<String, dynamic> _buildCartItem(
+    Product product, {
+    required int quantity,
+    required List<String> selectedAttrs,
+    required String notes,
+    int? selectedWeightGrams,
+    double? selectedServiceAmount,
+  }) {
+    final effectiveWeight = product.usesWeightSelector
+        ? ProductPriceCalculator.clampWeightSelection(
+            selectedWeightGrams ?? product.resolvedDefaultWeightGrams,
+            minWeightGrams: product.minWeightGrams,
+            weightStepGrams: product.weightStepGrams,
+            maxWeightGrams: product.maxWeightGrams,
+          )
+        : null;
+    final effectiveServiceAmount = product.usesPortionLikeStepper
+        ? ProductPriceCalculator.clampPortionSelection(
+            selectedServiceAmount ?? product.resolvedDefaultServiceAmount,
+            type: product.resolvedServiceControlType,
+            minPortion: product.minPortion,
+            maxPortion: product.maxPortion,
+            portionStep: product.portionStep,
+          )
+        : null;
+    final unitPrice = ProductPriceCalculator.resolveServiceControlledUnitPrice(
+      serviceControlType: product.resolvedServiceControlType,
+      pricingType: product.resolvedPricingType,
+      portionPrice: product.portionPrice,
+      pricePerKg: product.effectivePricePerKg,
+      fallbackPrice: product.effectivePortionPrice,
+      selectedAmount: effectiveServiceAmount,
+      selectedWeightGrams: effectiveWeight,
+    );
+    final lineTotal = unitPrice * quantity;
+    final sortedAttrs = [...selectedAttrs]..sort();
+    final amountLabel = product.usesServiceControlStepper
+        ? ProductPriceCalculator.formatServiceAmountLabel(
+            type: product.resolvedServiceControlType,
+            amount: effectiveServiceAmount,
+            grams: effectiveWeight,
+          )
+        : '';
+    return {
+      'baseProductKey': _baseProductKey(product),
+      'productId': product.productId,
+      'quantity': quantity,
+      'gramaj': amountLabel,
+      'amountLabel': amountLabel,
+      'serviceControlType': product.resolvedServiceControlType.storageValue,
+      'selectedServiceAmount': effectiveServiceAmount,
+      'selectedWeightGrams': effectiveWeight,
+      'notes': notes.trim(),
+      'price': unitPrice,
+      'name': product.name,
+      'selectedAttrs': sortedAttrs,
+      'unitPricingType': product.resolvedPricingType.storageValue,
+      'unitPriceSnapshot': unitPrice,
+      'calculatedLineTotal': lineTotal,
+    };
+  }
+
+  void _setProductQuantity(Product product, int quantity) {
+    final existing = _cartItemFor(product);
+    final key = _cartKeyForConfig(
+      product,
+      selectedWeightGrams: (existing?['selectedWeightGrams'] as num?)?.toInt(),
+      selectedServiceAmount: (existing?['selectedServiceAmount'] as num?)
+          ?.toDouble(),
+      selectedAttrs:
+          (existing?['selectedAttrs'] as List?)?.cast<String>() ??
+          const <String>[],
+      notes: existing?['notes']?.toString() ?? '',
+    );
+    setState(() {
+      if (quantity <= 0) {
+        _cart.remove(key);
+        return;
+      }
+      _cart[key] = _buildCartItem(
+        product,
+        quantity: quantity,
+        selectedAttrs:
+            (existing?['selectedAttrs'] as List?)?.cast<String>() ??
+            const <String>[],
+        notes: existing?['notes']?.toString() ?? '',
+        selectedWeightGrams: (existing?['selectedWeightGrams'] as num?)
+            ?.toInt(),
+        selectedServiceAmount: (existing?['selectedServiceAmount'] as num?)
+            ?.toDouble(),
+      );
+    });
+  }
+
+  void _setServiceControlAmount(Product product, double? nextAmount) {
+    final existingEntry = _simpleCartEntryFor(product);
+    final existing = existingEntry?.value;
+    final currentWeight = (existing?['selectedWeightGrams'] as num?)?.toInt();
+    final currentAmount = (existing?['selectedServiceAmount'] as num?)
+        ?.toDouble();
+    final shouldRemove = nextAmount == null || nextAmount <= 0;
+
+    setState(() {
+      if (existingEntry != null) {
+        _cart.remove(existingEntry.key);
+      }
+      if (shouldRemove) return;
+
+      _cart[_cartKeyForConfig(
+        product,
+        selectedWeightGrams: product.usesWeightSelector
+            ? nextAmount.round()
+            : currentWeight,
+        selectedServiceAmount: product.usesPortionLikeStepper
+            ? nextAmount
+            : currentAmount,
+      )] = _buildCartItem(
+        product,
+        quantity: 1,
+        selectedAttrs: const <String>[],
+        notes: '',
+        selectedWeightGrams: product.usesWeightSelector
+            ? nextAmount.round()
+            : currentWeight,
+        selectedServiceAmount: product.usesPortionLikeStepper
+            ? nextAmount
+            : currentAmount,
+      );
+    });
+  }
+
+  double? _serviceStepperValueFor(Product product) {
+    final existing = _cartItemFor(product);
+    if (existing == null) return null;
+    if (product.usesWeightSelector) {
+      final grams = (existing['selectedWeightGrams'] as num?)?.toInt();
+      return grams == null || grams <= 0 ? null : grams.toDouble();
+    }
+    final amount = (existing['selectedServiceAmount'] as num?)?.toDouble();
+    return amount == null || amount <= 0 ? null : amount;
+  }
+
+  String? _serviceStepperLabelFor(Product product) {
+    final existing = _cartItemFor(product);
+    if (existing == null) return null;
+    final label = existing['amountLabel']?.toString().trim() ?? '';
+    return label.isEmpty ? null : label;
+  }
+
+  void _addProductToCart(Product product) {
+    if (product.usesServiceControlStepper) {
+      _setServiceControlAmount(
+        product,
+        product.usesWeightSelector
+            ? product.resolvedDefaultWeightGrams.toDouble()
+            : product.resolvedDefaultServiceAmount,
+      );
+      return;
+    }
+    _setProductQuantity(product, 1);
+  }
+
+  void _incrementProductQuantity(Product product) {
+    if (product.usesServiceControlStepper) {
+      if (product.usesWeightSelector) {
+        final current =
+            _serviceStepperValueFor(product) ??
+            product.resolvedDefaultWeightGrams.toDouble();
+        _setServiceControlAmount(
+          product,
+          ProductPriceCalculator.clampWeightSelection(
+            current.round() + product.resolvedWeightStepGrams,
+            minWeightGrams: product.minWeightGrams,
+            weightStepGrams: product.weightStepGrams,
+            maxWeightGrams: product.maxWeightGrams,
+          ).toDouble(),
+        );
+      } else {
+        final current =
+            _serviceStepperValueFor(product) ??
+            product.resolvedDefaultServiceAmount;
+        _setServiceControlAmount(
+          product,
+          ProductPriceCalculator.clampPortionSelection(
+            current + product.resolvedPortionStepAmount,
+            type: product.resolvedServiceControlType,
+            minPortion: product.minPortion,
+            maxPortion: product.maxPortion,
+            portionStep: product.portionStep,
+          ),
+        );
+      }
+      return;
+    }
+    _setProductQuantity(
+      product,
+      ((_cartItemFor(product)?['quantity'] as int?) ?? 0) + 1,
+    );
+  }
+
+  void _decrementProductQuantity(Product product) {
+    if (product.usesServiceControlStepper) {
+      if (product.usesWeightSelector) {
+        final currentValue = _serviceStepperValueFor(product);
+        if (currentValue == null) return;
+        final min = ProductPriceCalculator.resolveMinWeightGrams(
+          product.minWeightGrams,
+        ).toDouble();
+        if (currentValue <= min) {
+          _setServiceControlAmount(product, null);
+          return;
+        }
+        _setServiceControlAmount(
+          product,
+          ProductPriceCalculator.clampWeightSelection(
+            currentValue.round() - product.resolvedWeightStepGrams,
+            minWeightGrams: product.minWeightGrams,
+            weightStepGrams: product.weightStepGrams,
+            maxWeightGrams: product.maxWeightGrams,
+          ).toDouble(),
+        );
+      } else {
+        final currentValue = _serviceStepperValueFor(product);
+        if (currentValue == null) return;
+        final min = product.resolvedMinPortionAmount;
+        if (currentValue <= min + 0.0001) {
+          _setServiceControlAmount(product, null);
+          return;
+        }
+        _setServiceControlAmount(
+          product,
+          ProductPriceCalculator.clampPortionSelection(
+            currentValue - product.resolvedPortionStepAmount,
+            type: product.resolvedServiceControlType,
+            minPortion: product.minPortion,
+            maxPortion: product.maxPortion,
+            portionStep: product.portionStep,
+          ),
+        );
+      }
+      return;
+    }
+    _setProductQuantity(
+      product,
+      ((_cartItemFor(product)?['quantity'] as int?) ?? 0) - 1,
+    );
+  }
+
+  Future<void> _showProductQuickView(Product product) async {
+    _debugRestaurantPricing(product, source: 'quick_view_open');
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.42),
+      builder: (sheetContext) {
+        return ProductQuickInfoSheet(product: product);
+      },
+    );
+  }
+
+  // ── Memoized category / filter results ──────────────────────────────────
+  List<String>? _cachedSubCats;
+  int _cachedSubCatsProductCount = -1;
 
   List<String> _subCategories() {
+    if (_cachedSubCats != null &&
+        _cachedSubCatsProductCount == _products.length) {
+      return _cachedSubCats!;
+    }
     final cats =
         _products
             .map((p) => p.subCategory ?? '')
@@ -4958,12 +6033,53 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
             .toSet()
             .toList()
           ..sort();
-    return ['Tümü', ...cats];
+    _cachedSubCats = ['Tümü', ...cats];
+    _cachedSubCatsProductCount = _products.length;
+    return _cachedSubCats!;
   }
 
+  List<Product>? _cachedFiltered;
+  String _cachedFilteredSubCat = '';
+  int _cachedFilteredProductCount = -1;
+
   List<Product> _filteredProducts() {
-    if (_selectedSubCat == 'Tümü') return _products;
-    return _products.where((p) => p.subCategory == _selectedSubCat).toList();
+    if (_cachedFiltered != null &&
+        _cachedFilteredSubCat == _selectedSubCat &&
+        _cachedFilteredProductCount == _products.length) {
+      return _cachedFiltered!;
+    }
+    _cachedFiltered = _selectedSubCat == 'Tümü'
+        ? _products
+        : _products.where((p) => p.subCategory == _selectedSubCat).toList();
+    _cachedFilteredSubCat = _selectedSubCat;
+    _cachedFilteredProductCount = _products.length;
+    return _cachedFiltered!;
+  }
+
+  /// Sum of all cart items × quantity. Used for the CTA label and summary row.
+  double _totalPrice() {
+    double total = 0;
+    for (final entry in _cart.values) {
+      final lineTotal = (entry['calculatedLineTotal'] as num?)?.toDouble();
+      if (lineTotal != null && lineTotal > 0) {
+        total += lineTotal;
+        continue;
+      }
+      final unitPrice = (entry['unitPriceSnapshot'] as num?)?.toDouble();
+      final quantity = (entry['quantity'] as int?) ?? 1;
+      if (unitPrice != null && unitPrice > 0) {
+        total += unitPrice * quantity;
+        continue;
+      }
+      final raw = entry['price']?.toString() ?? '';
+      final cleaned = raw.replaceAll(RegExp(r'[^\d.]'), '');
+      final value = double.tryParse(cleaned) ?? 0;
+      total += value * quantity;
+    }
+    for (final item in _mixedServiceCartItems) {
+      total += MixedServiceOrder.itemLineTotal(item);
+    }
+    return total;
   }
 
   String _formatPrice(dynamic rawPrice) {
@@ -5013,6 +6129,13 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       name: dbProduct.name,
       brand: dbProduct.brand,
       price: _formatPrice(dbProduct.price),
+      pricingType: dbProduct.pricingType,
+      portionPrice: dbProduct.portionPrice,
+      pricePerKg: dbProduct.pricePerKg,
+      defaultWeightGrams: dbProduct.defaultWeightGrams,
+      minWeightGrams: dbProduct.minWeightGrams,
+      weightStepGrams: dbProduct.weightStepGrams,
+      maxWeightGrams: dbProduct.maxWeightGrams,
       rating: dbProduct.rating,
       reviewCount: dbProduct.reviewCount,
       tags: const [],
@@ -5021,6 +6144,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       sellerId: dbProduct.sellerId,
       category: dbProduct.category,
       subCategory: dbProduct.subCategory,
+      shortDescription: dbProduct.description,
       description: dbProduct.description,
       specifications: dbProduct.specifications,
       oldPrice: dbProduct.oldPrice,
@@ -5067,6 +6191,41 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
               name: map['isim']?.toString() ?? '',
               brand: map['marka']?.toString() ?? '',
               price: _formatPrice(priceText),
+              pricingType:
+                  map['pricing_type']?.toString() ??
+                  map['pricingType']?.toString() ??
+                  ProductPricingType.portion.storageValue,
+              portionPrice:
+                  (map['portion_price'] as num?)?.toDouble() ??
+                  (map['portionPrice'] as num?)?.toDouble() ??
+                  ProductPriceCalculator.parsePriceValue(priceText),
+              pricePerKg:
+                  (map['price_per_kg'] as num?)?.toDouble() ??
+                  (map['pricePerKg'] as num?)?.toDouble(),
+              serviceControlType:
+                  map['service_control_type']?.toString() ??
+                  map['serviceControlType']?.toString(),
+              minPortion:
+                  (map['min_portion'] as num?)?.toDouble() ??
+                  (map['minPortion'] as num?)?.toDouble(),
+              maxPortion:
+                  (map['max_portion'] as num?)?.toDouble() ??
+                  (map['maxPortion'] as num?)?.toDouble(),
+              portionStep:
+                  (map['portion_step'] as num?)?.toDouble() ??
+                  (map['portionStep'] as num?)?.toDouble(),
+              defaultWeightGrams:
+                  (map['default_weight_grams'] as num?)?.toInt() ??
+                  (map['defaultWeightGrams'] as num?)?.toInt(),
+              minWeightGrams:
+                  (map['min_weight_grams'] as num?)?.toInt() ??
+                  (map['minWeightGrams'] as num?)?.toInt(),
+              weightStepGrams:
+                  (map['weight_step_grams'] as num?)?.toInt() ??
+                  (map['weightStepGrams'] as num?)?.toInt(),
+              maxWeightGrams:
+                  (map['max_weight_grams'] as num?)?.toInt() ??
+                  (map['maxWeightGrams'] as num?)?.toInt(),
               rating: (map['puan'] as num?)?.toDouble() ?? 0,
               reviewCount: (map['degerlendirme'] as num?)?.toInt() ?? 0,
               tags: tags,
@@ -5074,7 +6233,11 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
               store: map['magaza']?.toString() ?? businessName,
               category: map['kategori']?.toString(),
               subCategory: map['alt_kategori']?.toString(),
+              shortDescription: map['kisa_aciklama']?.toString(),
               description: map['aciklama']?.toString(),
+              preparationTime:
+                  map['hazirlanma_suresi']?.toString() ??
+                  map['pisme_suresi']?.toString(),
               specifications: map['ozellikler'] != null
                   ? json.encode(map['ozellikler'])
                   : null,
@@ -5087,6 +6250,21 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     }
   }
 
+  Future<void> _resolveSellerIdIfNeeded() async {
+    if (_resolvedSellerId != null) return;
+    final fromBusiness = widget.business['seller_id']?.toString();
+    if ((fromBusiness ?? '').trim().isNotEmpty) {
+      _resolvedSellerId = fromBusiness;
+      return;
+    }
+    final businessName = widget.business['name']?.toString() ?? '';
+    if (businessName.isNotEmpty) {
+      _resolvedSellerId = await _storeService.getSellerIdByBusinessName(
+        businessName,
+      );
+    }
+  }
+
   Future<void> _loadProductsForDialog() async {
     if (_isLoadingProducts) return;
     setState(() {
@@ -5095,76 +6273,60 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     });
     try {
       final businessName = widget.business['name']?.toString() ?? '';
-      var sellerId = widget.business['seller_id']?.toString();
-      if ((sellerId ?? '').trim().isEmpty && businessName.isNotEmpty) {
-        sellerId = await _storeService.getSellerIdByBusinessName(businessName);
-      }
+      await _resolveSellerIdIfNeeded();
+      final sellerId = _resolvedSellerId;
       if ((sellerId ?? '').trim().isEmpty) {
         throw Exception('Satıcı bulunamadı.');
       }
 
-      final rows = await _storeService.getProductsBySellerId(sellerId!);
+      final rows = await _storeService.getMenuProductsBySellerId(sellerId!);
       var loadedProducts = rows
           .map<Product>((raw) {
             final data = Map<String, dynamic>.from(raw);
-            final images = <String>[];
-            final mainImage = data['image_url']?.toString().trim() ?? '';
-            if (mainImage.isNotEmpty) {
-              images.add(mainImage);
-            }
-            final extraImages = data['image_urls'];
-            if (extraImages is List) {
-              for (final image in extraImages) {
-                final value = image?.toString().trim() ?? '';
-                if (value.isNotEmpty && !images.contains(value)) {
-                  images.add(value);
-                }
-              }
-            }
-
-            List<String>? attributes;
-            final rawAttrs = data['attributes'];
-            if (rawAttrs is List) {
-              attributes = rawAttrs.map((e) => e.toString()).toList();
-            } else if (rawAttrs is String && rawAttrs.isNotEmpty) {
-              try {
-                final decoded = json.decode(rawAttrs);
-                if (decoded is List) {
-                  attributes = decoded.map((e) => e.toString()).toList();
-                }
-              } catch (_) {}
-            }
-
-            return Product(
-              name: data['name']?.toString() ?? '',
-              brand: widget.business['name']?.toString() ?? '',
-              price: _formatPrice(data['price']),
-              rating: 0,
-              reviewCount: 0,
-              tags: const [],
-              images: images,
-              store: widget.business['name']?.toString() ?? '',
-              category: widget.business['category']?.toString(),
-              subCategory: data['sub_category']?.toString(),
-              description: null,
-              specifications: null,
-              oldPrice: null,
-              attributes: attributes,
-            );
+            final product = Product.fromDBProduct({
+              ...data,
+              'brand':
+                  data['brand']?.toString() ??
+                  widget.business['name']?.toString() ??
+                  '',
+              'store': widget.business['name']?.toString() ?? '',
+              'category':
+                  data['main_category']?.toString() ??
+                  widget.business['category']?.toString(),
+            });
+            _debugRestaurantPricing(product, source: 'menu_fetch');
+            return product.copyWith(price: _formatPrice(data['price']));
           })
           .where((product) => product.name.trim().isNotEmpty)
           .toList();
+
+      debugPrint(
+        '[Müşteri-Dialog] loaded ${loadedProducts.length} products from supabase',
+      );
+      for (final p in loadedProducts.take(10)) {
+        debugPrint(
+          '[Müşteri-Dialog] "${p.name}" isServiceTpl=${_isServiceTemplate(p)} '
+          'type=${_productTypeFromProduct(p)} specs=${p.specifications != null ? "${p.specifications!.length}b" : "null"}',
+        );
+      }
 
       if (loadedProducts.isEmpty && businessName.isNotEmpty) {
         final paged = await SupabaseService.instance
             .getProductsByStoreNamePaged(storeName: businessName, limit: 120);
         loadedProducts = paged.items
-            .map(_convertDbProductToDialogProduct)
+            .map((item) {
+              final product = _convertDbProductToDialogProduct(item);
+              _debugRestaurantPricing(product, source: 'paged_fallback');
+              return product;
+            })
             .toList(growable: false);
       }
 
       if (loadedProducts.isEmpty && businessName.isNotEmpty) {
         loadedProducts = await _loadProductsFromLocalJson(businessName);
+        for (final product in loadedProducts) {
+          _debugRestaurantPricing(product, source: 'json_fallback');
+        }
       }
 
       if (!mounted) return;
@@ -5184,246 +6346,534 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     }
   }
 
-  void _showItemSettings(Product product) {
-    final existing = _cart[product.name];
+  Future<void> _showItemSettings(Product product) async {
+    _debugRestaurantPricing(product, source: 'item_settings_open');
+    final productCartEntries = _cartEntriesForProduct(product);
+    final existing = product.usesWeightSelector
+        ? (productCartEntries.isNotEmpty ? productCartEntries.last.value : null)
+        : _cartItemFor(product);
     int qty = existing?['quantity'] ?? 1;
-    final gramajCtrl = TextEditingController(text: existing?['gramaj'] ?? '');
+    double selectedServiceAmount =
+        (existing?['selectedServiceAmount'] as num?)?.toDouble() ??
+        product.resolvedDefaultServiceAmount;
+    int selectedWeightGrams =
+        (existing?['selectedWeightGrams'] as num?)?.toInt() ??
+        product.resolvedDefaultWeightGrams;
     final notesCtrl = TextEditingController(text: existing?['notes'] ?? '');
     final productAttrs = product.attributes ?? [];
     final selectedAttrs = <String>{
       ...((existing?['selectedAttrs'] as List?)?.cast<String>() ?? []),
     };
+    final actionLabel = existing == null ? 'Sepete Ekle' : 'Onayla';
 
-    showModalBottomSheet(
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (sheetCtx) {
         return StatefulBuilder(
           builder: (sheetCtx, setSheet) {
-            return Padding(
+            final resolvedUnitPrice =
+                ProductPriceCalculator.resolveServiceControlledUnitPrice(
+                  serviceControlType: product.resolvedServiceControlType,
+                  pricingType: product.resolvedPricingType,
+                  portionPrice: product.portionPrice,
+                  pricePerKg: product.effectivePricePerKg,
+                  fallbackPrice: product.effectivePortionPrice,
+                  selectedAmount: product.usesPortionLikeStepper
+                      ? selectedServiceAmount
+                      : null,
+                  selectedWeightGrams: product.usesWeightSelector
+                      ? selectedWeightGrams
+                      : null,
+                );
+            final totalPrice = resolvedUnitPrice * qty;
+            return AnimatedPadding(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
               padding: EdgeInsets.only(
-                left: 24,
-                right: 24,
-                top: 20,
-                bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 24,
+                bottom: MediaQuery.of(sheetCtx).viewInsets.bottom,
               ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade300,
-                          borderRadius: BorderRadius.circular(2),
+              child: SafeArea(
+                top: false,
+                child: DraggableScrollableSheet(
+                  expand: false,
+                  initialChildSize: 0.84,
+                  minChildSize: 0.56,
+                  maxChildSize: 0.96,
+                  builder: (context, scrollController) {
+                    return DecoratedBox(
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(28),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      product.name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    Text(
-                      product.price,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Adet',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        _qtyButton(Icons.remove, () {
-                          if (qty > 1) setSheet(() => qty--);
-                        }),
-                        Container(
-                          width: 48,
-                          height: 40,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade200),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '$qty',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        _qtyButton(Icons.add, () => setSheet(() => qty++)),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Gramaj (isteğe bağlı)',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: gramajCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        hintText: 'Örn: 250g',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        isDense: true,
-                      ),
-                    ),
-                    if (productAttrs.isNotEmpty) ...[
-                      const SizedBox(height: 20),
-                      const Text(
-                        'Özellikler',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: productAttrs.map((attr) {
-                          final isSelected = selectedAttrs.contains(attr);
-                          return GestureDetector(
-                            onTap: () => setSheet(() {
-                              if (isSelected) {
-                                selectedAttrs.remove(attr);
-                              } else {
-                                selectedAttrs.add(attr);
-                              }
-                            }),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 8,
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: ListView(
+                              controller: scrollController,
+                              padding: const EdgeInsets.fromLTRB(
+                                20,
+                                16,
+                                20,
+                                20,
                               ),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? AppColors.primary
-                                    : Colors.grey.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: isSelected
-                                      ? AppColors.primary
-                                      : Colors.grey.shade300,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (isSelected) ...[
-                                    const Icon(
-                                      Icons.check,
-                                      size: 14,
-                                      color: Colors.white,
+                              children: [
+                                Center(
+                                  child: Container(
+                                    width: 42,
+                                    height: 4,
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade300,
+                                      borderRadius: BorderRadius.circular(999),
                                     ),
-                                    const SizedBox(width: 6),
-                                  ],
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  product.name,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  product.displayPricingText,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                                if (product.usesWeightSelector) ...[
+                                  const SizedBox(height: 14),
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 10,
+                                    children: [
+                                      _buildSelectionInfoBadge(
+                                        label: 'Kg fiyatı',
+                                        value:
+                                            ProductPriceCalculator.formatPerKgLabel(
+                                              product.effectivePricePerKg,
+                                            ),
+                                      ),
+                                      _buildSelectionInfoBadge(
+                                        label: 'Başlangıç gramajı',
+                                        value:
+                                            ProductPriceCalculator.formatWeight(
+                                              product
+                                                  .resolvedDefaultWeightGrams,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ] else if (product.displayWeightInfo !=
+                                    null) ...[
+                                  const SizedBox(height: 4),
                                   Text(
-                                    attr,
+                                    product.displayWeightInfo!,
                                     style: TextStyle(
-                                      fontSize: 13,
+                                      fontSize: 12,
                                       fontWeight: FontWeight.w600,
-                                      color: isSelected
-                                          ? Colors.white
-                                          : const Color(0xFF374151),
+                                      color: Colors.grey.shade600,
                                     ),
                                   ),
                                 ],
+                                const SizedBox(height: 22),
+                                if (!product.usesServiceControlStepper) ...[
+                                  const Text(
+                                    'Adet',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      _qtyButton(Icons.remove, () {
+                                        if (qty > 1) {
+                                          setSheet(() => qty--);
+                                        }
+                                      }),
+                                      Container(
+                                        width: 52,
+                                        height: 42,
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          border: Border.all(
+                                            color: Colors.grey.shade200,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '$qty',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      _qtyButton(
+                                        Icons.add,
+                                        () => setSheet(() => qty++),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                                if (product.usesPortionLikeStepper) ...[
+                                  const SizedBox(height: 22),
+                                  const Text(
+                                    'Servis Secimi',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      _qtyButton(Icons.remove, () {
+                                        setSheet(() {
+                                          selectedServiceAmount =
+                                              ProductPriceCalculator.clampPortionSelection(
+                                                selectedServiceAmount -
+                                                    product
+                                                        .resolvedPortionStepAmount,
+                                                type: product
+                                                    .resolvedServiceControlType,
+                                                minPortion: product.minPortion,
+                                                maxPortion: product.maxPortion,
+                                                portionStep:
+                                                    product.portionStep,
+                                              );
+                                        });
+                                      }),
+                                      Container(
+                                        constraints: const BoxConstraints(
+                                          minWidth: 132,
+                                        ),
+                                        height: 42,
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          border: Border.all(
+                                            color: Colors.grey.shade200,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          ProductPriceCalculator.formatServiceAmountLabel(
+                                            type: product
+                                                .resolvedServiceControlType,
+                                            amount: selectedServiceAmount,
+                                          ),
+                                          style: const TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      _qtyButton(Icons.add, () {
+                                        setSheet(() {
+                                          selectedServiceAmount =
+                                              ProductPriceCalculator.clampPortionSelection(
+                                                selectedServiceAmount +
+                                                    product
+                                                        .resolvedPortionStepAmount,
+                                                type: product
+                                                    .resolvedServiceControlType,
+                                                minPortion: product.minPortion,
+                                                maxPortion: product.maxPortion,
+                                                portionStep:
+                                                    product.portionStep,
+                                              );
+                                        });
+                                      }),
+                                    ],
+                                  ),
+                                ],
+                                if (product.usesWeightSelector) ...[
+                                  const SizedBox(height: 22),
+                                  WeightSelector(
+                                    selectedGrams: selectedWeightGrams,
+                                    minWeightGrams:
+                                        ProductPriceCalculator.resolveMinWeightGrams(
+                                          product.minWeightGrams,
+                                        ),
+                                    weightStepGrams:
+                                        ProductPriceCalculator.resolveWeightStepGrams(
+                                          product.weightStepGrams,
+                                        ),
+                                    maxWeightGrams:
+                                        ProductPriceCalculator.resolveMaxWeightGrams(
+                                          product.maxWeightGrams,
+                                        ),
+                                    presetOptions:
+                                        ProductPriceCalculator.buildPresetWeightOptions(
+                                          minWeightGrams:
+                                              product.minWeightGrams,
+                                          defaultWeightGrams:
+                                              product.defaultWeightGrams,
+                                          weightStepGrams:
+                                              product.weightStepGrams,
+                                          maxWeightGrams:
+                                              product.maxWeightGrams,
+                                        ),
+                                    onChanged: (value) {
+                                      setSheet(() {
+                                        selectedWeightGrams = value;
+                                      });
+                                    },
+                                  ),
+                                ],
+                                if (productAttrs.isNotEmpty) ...[
+                                  const SizedBox(height: 22),
+                                  const Text(
+                                    'Özellikler',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: productAttrs.map((attr) {
+                                      final isSelected = selectedAttrs.contains(
+                                        attr,
+                                      );
+                                      return GestureDetector(
+                                        onTap: () => setSheet(() {
+                                          if (isSelected) {
+                                            selectedAttrs.remove(attr);
+                                          } else {
+                                            selectedAttrs.add(attr);
+                                          }
+                                        }),
+                                        child: AnimatedContainer(
+                                          duration: const Duration(
+                                            milliseconds: 150,
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: isSelected
+                                                ? AppColors.primary
+                                                : Colors.grey.shade100,
+                                            borderRadius: BorderRadius.circular(
+                                              20,
+                                            ),
+                                            border: Border.all(
+                                              color: isSelected
+                                                  ? AppColors.primary
+                                                  : Colors.grey.shade300,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              if (isSelected) ...[
+                                                const Icon(
+                                                  Icons.check,
+                                                  size: 14,
+                                                  color: Colors.white,
+                                                ),
+                                                const SizedBox(width: 6),
+                                              ],
+                                              Text(
+                                                attr,
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: isSelected
+                                                      ? Colors.white
+                                                      : const Color(0xFF374151),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                ],
+                                const SizedBox(height: 18),
+                                const Text(
+                                  'Açıklama / Not (isteğe bağlı)',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                TextField(
+                                  controller: notesCtrl,
+                                  minLines: 2,
+                                  maxLines: 4,
+                                  textInputAction: TextInputAction.newline,
+                                  decoration: InputDecoration(
+                                    hintText: 'Örn: Az tuzlu, yanında ketçap',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 12,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              border: Border(
+                                top: BorderSide(color: Colors.grey.shade200),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.06),
+                                  blurRadius: 14,
+                                  offset: const Offset(0, -4),
+                                ),
+                              ],
+                            ),
+                            child: SafeArea(
+                              top: false,
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final useVerticalLayout =
+                                      constraints.maxWidth < 360;
+                                  final totalInfo = Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Text(
+                                        'Canlı toplam',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        ProductPriceCalculator.formatCurrency(
+                                          totalPrice,
+                                        ),
+                                        style: const TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w900,
+                                          color: AppColors.primary,
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                  final actionButton = SizedBox(
+                                    width: useVerticalLayout
+                                        ? double.infinity
+                                        : 180,
+                                    child: ElevatedButton(
+                                      onPressed: () {
+                                        final trimmedNotes = notesCtrl.text
+                                            .trim();
+                                        final attrs = selectedAttrs.toList()
+                                          ..sort();
+                                        final key = _cartKeyForConfig(
+                                          product,
+                                          selectedWeightGrams:
+                                              product.usesWeightSelector
+                                              ? selectedWeightGrams
+                                              : null,
+                                          selectedServiceAmount:
+                                              product.usesPortionLikeStepper
+                                              ? selectedServiceAmount
+                                              : null,
+                                          selectedAttrs: attrs,
+                                          notes: trimmedNotes,
+                                        );
+                                        final cartItem = _buildCartItem(
+                                          product,
+                                          quantity: qty,
+                                          selectedAttrs: attrs,
+                                          notes: trimmedNotes,
+                                          selectedWeightGrams:
+                                              product.usesWeightSelector
+                                              ? selectedWeightGrams
+                                              : null,
+                                          selectedServiceAmount:
+                                              product.usesPortionLikeStepper
+                                              ? selectedServiceAmount
+                                              : null,
+                                        );
+                                        Navigator.pop(sheetCtx);
+                                        setState(() {
+                                          _cart[key] = cartItem;
+                                        });
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.primary,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 14,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            14,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        actionLabel,
+                                        style: const TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                  if (useVerticalLayout) {
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        totalInfo,
+                                        const SizedBox(height: 14),
+                                        actionButton,
+                                      ],
+                                    );
+                                  }
+                                  return Row(
+                                    children: [
+                                      Expanded(child: totalInfo),
+                                      const SizedBox(width: 16),
+                                      actionButton,
+                                    ],
+                                  );
+                                },
                               ),
                             ),
-                          );
-                        }).toList(),
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Açıklama / Not (isteğe bağlı)',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: notesCtrl,
-                      maxLines: 2,
-                      decoration: InputDecoration(
-                        hintText: 'Örn: Az tuzlu, yanında ketçap',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pop(sheetCtx);
-                          setState(() {
-                            _cart[product.name] = {
-                              'quantity': qty,
-                              'gramaj': gramajCtrl.text.trim(),
-                              'notes': notesCtrl.text.trim(),
-                              'price': product.price,
-                              'name': product.name,
-                              'selectedAttrs': selectedAttrs.toList(),
-                            };
-                          });
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
                           ),
-                        ),
-                        child: const Text(
-                          'Onayla',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                        ],
                       ),
-                    ),
-                  ],
+                    );
+                  },
                 ),
               ),
             );
@@ -5431,6 +6881,8 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
         );
       },
     );
+
+    notesCtrl.dispose();
   }
 
   Widget _qtyButton(IconData icon, VoidCallback onTap) {
@@ -5441,7 +6893,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
         height: 40,
         margin: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.1),
+          color: AppColors.primary.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Icon(icon, color: AppColors.primary, size: 18),
@@ -5449,35 +6901,243 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     );
   }
 
+  Widget _buildSelectionInfoBadge({
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF64748B),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Product type helpers (menu_template / service_template) ─────────────
+
+  String _productTypeFromProduct(Product product) {
+    return MixedServiceOrder.resolveProductKind(
+      specifications: product.specifications,
+      category: product.category,
+      subCategory: product.subCategory,
+    );
+  }
+
+  bool _isServiceTemplate(Product p) =>
+      _productTypeFromProduct(p) ==
+      MixedServiceOrder.serviceTemplateProductType;
+
+  SellerProduct _toSellerProduct(Product p) {
+    return SellerProduct(
+      id: p.productId ?? '',
+      name: p.name,
+      brand: p.brand,
+      mainCategory: p.category ?? '',
+      subCategory: p.subCategory ?? '',
+      price: ProductPriceCalculator.parsePriceValue(p.price),
+      pricingType: p.pricingType,
+      portionPrice: p.portionPrice,
+      pricePerKg: p.pricePerKg,
+      serviceControlType: p.serviceControlType,
+      minPortion: p.minPortion,
+      maxPortion: p.maxPortion,
+      portionStep: p.portionStep,
+      defaultWeightGrams: p.defaultWeightGrams,
+      minWeightGrams: p.minWeightGrams,
+      weightStepGrams: p.weightStepGrams,
+      maxWeightGrams: p.maxWeightGrams,
+      stock: 9999,
+      sku: '',
+      status: 'active',
+      imageUrl: p.images.isNotEmpty ? p.images.first : null,
+      specifications: p.specifications,
+      attributes: p.attributes ?? const <String>[],
+      createdAt: DateTime.now(),
+    );
+  }
+
+  Future<void> _openServiceTemplate(Product serviceProduct) async {
+    debugPrint(
+      '[ServiceDialog] opening for "${serviceProduct.name}" '
+      'type=${_productTypeFromProduct(serviceProduct)}',
+    );
+    final allSellerProducts = _products.map(_toSellerProduct).toList();
+    final serviceSellerProduct = _toSellerProduct(serviceProduct);
+    final resolution = MixedServiceOrder.inspectTemplateSelectableProducts(
+      serviceSellerProduct,
+      availableProducts: allSellerProducts,
+      debugContext: 'business_detail_page._openServiceTemplate',
+    );
+    final selectableProducts = resolution.selectableProducts;
+    if (selectableProducts.isEmpty) {
+      debugPrint(
+        '[SERVICE_EMPTY] '
+        'serviceId=${serviceSellerProduct.id} '
+        'serviceName="${serviceSellerProduct.name}" '
+        'templateItems=${resolution.templateItemsCount} '
+        'matchedProducts=${resolution.matchedSelectableProductsCount} '
+        'activeMatchedProducts=${resolution.activeMatchedProductsCount} '
+        'finalSelectableCount=${resolution.selectableProducts.length}',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bu serviste seçilebilir aktif içerik bulunmuyor.'),
+        ),
+      );
+      return;
+    }
+    final configured = await showMixedServiceDialog(
+      context: context,
+      products: selectableProducts,
+      mode: MixedServiceDialogMode.edit,
+      title: serviceProduct.name,
+      subtitle: 'Servis içinden istediğiniz ürünleri seçin.',
+      submitLabel: 'Sepete Ekle',
+      headerImageUrl: serviceProduct.images.isNotEmpty
+          ? serviceProduct.images.first
+          : null,
+      showItemNameField: false,
+      noteHintText: 'Örn: Az pişmiş, soğansız, acısız, yanına lavaş ekleyin',
+      initialItem: MixedServiceOrder.buildOrderItemFromTemplateProduct(
+        serviceSellerProduct,
+        availableProducts: allSellerProducts,
+        preselectTemplateItems: false,
+      ),
+      availablePricingModes: const <String>[MixedServiceOrder.autoSumPriceMode],
+    );
+    if (configured == null || !mounted) return;
+    setState(() {
+      _mixedServiceCartItems.add(configured);
+    });
+  }
+
+  Future<void> _callWaiter() async {
+    if (_isCallingWaiter || _isSending) return;
+    setState(() => _isCallingWaiter = true);
+    try {
+      await _resolveSellerIdIfNeeded();
+      final sellerId = _resolvedSellerId;
+      if (sellerId == null || sellerId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Garson çağrılamadı. Lütfen tekrar deneyin.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+      await _storeService.submitTableOrder(
+        sellerId: sellerId,
+        tableNumber: widget.tableNumber,
+        items: const [
+          {
+            'name': 'Garson Çağrıldı',
+            'quantity': 1,
+            'price': 0.0,
+            'type': 'waiter_call',
+          },
+        ],
+        status: 'call_waiter',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Garson çağrıldı! Masa ${widget.tableNumber} için garson yolda.',
+            ),
+            backgroundColor: Colors.orange.shade700,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Garson çağrılamadı: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isCallingWaiter = false);
+    }
+  }
+
   Future<void> _sendOrder() async {
-    if (_cart.isEmpty) return;
+    if (_cart.isEmpty && _mixedServiceCartItems.isEmpty) return;
+    debugPrint(
+      '[Order] _sendOrder start — ${_cart.length} regular + ${_mixedServiceCartItems.length} service items, table=${widget.tableNumber}',
+    );
     setState(() => _isSending = true);
     try {
       final businessName = widget.business['name']?.toString() ?? '';
-      String? sellerId = widget.business['seller_id']?.toString();
-      sellerId ??= await StoreService().getSellerIdByBusinessName(businessName);
+      // Use cached sellerId — avoids a Supabase lookup at submit time.
+      await _resolveSellerIdIfNeeded();
+      final sellerId = _resolvedSellerId;
 
-      if (sellerId == null || sellerId.isEmpty)
+      if (sellerId == null || sellerId.isEmpty) {
         throw Exception('Satıcı bulunamadı.');
+      }
 
-      final items = _cart.values
-          .map(
-            (v) => {
-              'name': v['name'],
-              'price': v['price'],
-              'quantity': v['quantity'],
-              'gramaj': v['gramaj'],
-              'notes': v['notes'],
-              'attributes': v['selectedAttrs'] ?? [],
-            },
-          )
-          .toList();
+      final items = [
+        ..._cart.values.map(
+          (v) => {
+            'productId': v['productId'],
+            'name': v['name'],
+            'price': v['price'],
+            'quantity': v['quantity'],
+            'gramaj': v['gramaj'],
+            'amountLabel': v['amountLabel'],
+            'serviceControlType': v['serviceControlType'],
+            'selectedServiceAmount': v['selectedServiceAmount'],
+            'selectedWeightGrams': v['selectedWeightGrams'],
+            'notes': v['notes'],
+            'attributes': v['selectedAttrs'] ?? [],
+            'unitPricingType': v['unitPricingType'],
+            'unitPriceSnapshot': v['unitPriceSnapshot'],
+            'calculatedLineTotal': v['calculatedLineTotal'],
+          },
+        ),
+        ..._mixedServiceCartItems.map(
+          (item) => Map<String, dynamic>.from(item),
+        ),
+      ];
 
       final inserted = await StoreService().submitTableOrder(
         sellerId: sellerId,
         tableNumber: widget.tableNumber,
         items: items,
       );
+      debugPrint('[Order] _sendOrder success — orderId=${inserted["id"]}');
 
       final orderId =
           inserted['id']?.toString() ??
@@ -5496,10 +7156,17 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
         'createdAt': createdAt,
         'items': items,
       });
+      debugPrint('[Order] addFoodOrder complete — orderId=$orderId');
 
       if (mounted) {
+        // Capture ScaffoldMessenger BEFORE Navigator.pop so we can show the
+        // snackbar even after the dialog's own context is deactivated.
+        // (Using the dialog's context after pop is technically undefined
+        // behaviour and occasionally fails in debug builds.)
+        final messenger = ScaffoldMessenger.of(context);
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        debugPrint('[Order] dialog popped — returning to BusinessDetailPage');
+        messenger.showSnackBar(
           SnackBar(
             content: Text(
               'Masa ${widget.tableNumber} siparişiniz gönderildi! Garson kısa sürede gelecek.',
@@ -5508,8 +7175,10 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
             duration: const Duration(seconds: 3),
           ),
         );
+        debugPrint('[Order] post-order rebuild complete');
       }
     } catch (e) {
+      debugPrint('[Order] _sendOrder error: $e');
       if (mounted) {
         setState(() => _isSending = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -5524,94 +7193,164 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     final filteredProducts = _filteredProducts();
     final subCats = _subCategories();
     final isWeb = MediaQuery.of(context).size.width > 800;
+    final hasAnyItems = _cart.isNotEmpty || _mixedServiceCartItems.isNotEmpty;
 
     return Dialog(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: const Color(0xFFF7F7FC),
       surfaceTintColor: Colors.transparent,
+      elevation: 28,
       insetPadding: isWeb
           ? const EdgeInsets.symmetric(horizontal: 80, vertical: 40)
-          : const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          : const EdgeInsets.symmetric(horizontal: 8, vertical: 20),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      clipBehavior: Clip.antiAlias,
       child: SizedBox(
-        width: isWeb ? 700 : double.infinity,
-        height: MediaQuery.of(context).size.height * 0.85,
+        width: isWeb ? 720 : double.infinity,
+        height: MediaQuery.of(context).size.height * 0.88,
         child: Column(
           children: [
-            // Header
+            // ── Premium header ────────────────────────────────────────────
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              padding: const EdgeInsets.fromLTRB(20, 20, 16, 20),
               decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(20),
+                gradient: LinearGradient(
+                  colors: [
+                    AppColors.primary,
+                    Color.lerp(
+                      AppColors.primary,
+                      const Color(0xFF5B1FBF),
+                      0.55,
+                    )!,
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
               ),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Icon(
-                    Icons.table_restaurant_outlined,
-                    color: Colors.white,
-                    size: 22,
+                  // Business logo badge
+                  Container(
+                    width: 62,
+                    height: 62,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.20),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.30),
+                        width: 1.5,
+                      ),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: _buildDialogLogo(),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 14),
+                  // Title + sub
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Masa ${widget.tableNumber} — Sipariş',
+                          'Masa ${widget.tableNumber}',
                           style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
                             color: Colors.white,
+                            height: 1.2,
+                            letterSpacing: -0.3,
                           ),
                         ),
+                        const SizedBox(height: 2),
                         Text(
                           widget.business['name']?.toString() ?? '',
                           style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white.withOpacity(0.8),
+                            fontSize: 12.5,
+                            color: Colors.white.withValues(alpha: 0.82),
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  if (_totalItems() > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        '${_totalItems()} ürün',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primary,
+                  const SizedBox(width: 8),
+                  // Cart badge + close stacked
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      GestureDetector(
+                        onTap: () {
+                          debugPrint(
+                            '[BDP/QR] popup CLOSED via X button '
+                            'table=${widget.tableNumber}',
+                          );
+                          Navigator.pop(context);
+                        },
+                        child: Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
                         ),
                       ),
-                    ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: const Icon(Icons.close, color: Colors.white),
+                      if (_totalItems() > 0) ...[
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.12),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Text(
+                            '${_totalItems()} ürün',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
             ),
 
-            // Subcategory filter bar
+            // ── Subcategory filter bar ────────────────────────────────────
             if (subCats.length > 1)
               Container(
-                height: 44,
-                color: Colors.white,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
+                  horizontal: 14,
+                  vertical: 8,
                 ),
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
@@ -5622,31 +7361,45 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                     return GestureDetector(
                       onTap: () => setState(() => _selectedSubCat = cat),
                       child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
+                        duration: const Duration(milliseconds: 160),
                         margin: const EdgeInsets.only(right: 8),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 4,
+                          horizontal: 16,
+                          vertical: 5,
                         ),
                         decoration: BoxDecoration(
                           color: isSelected
                               ? AppColors.primary
-                              : Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(20),
+                              : Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(22),
                           border: Border.all(
                             color: isSelected
                                 ? AppColors.primary
                                 : Colors.grey.shade200,
+                            width: isSelected ? 0 : 1,
                           ),
+                          boxShadow: isSelected
+                              ? [
+                                  BoxShadow(
+                                    color: AppColors.primary.withValues(
+                                      alpha: 0.25,
+                                    ),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ]
+                              : null,
                         ),
                         child: Text(
                           cat,
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
                             color: isSelected
                                 ? Colors.white
-                                : Colors.grey.shade700,
+                                : Colors.grey.shade600,
                           ),
                         ),
                       ),
@@ -5655,340 +7408,311 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                 ),
               ),
 
-            // Product list
+            // ── Product list ──────────────────────────────────────────────
             Expanded(
               child: _isLoadingProducts && _products.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2.2),
-                          ),
-                          SizedBox(height: 10),
-                          Text(
-                            'Ürünler yükleniyor...',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    )
+                  ? _buildMenuSkeleton()
                   : filteredProducts.isEmpty
                   ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _productsError ?? 'Bu kategoride ürün bulunamadı.',
-                            style: const TextStyle(color: Colors.grey),
-                          ),
-                          if (_productsError != null) ...[
-                            const SizedBox(height: 8),
-                            TextButton(
-                              onPressed: _loadProductsForDialog,
-                              child: const Text('Tekrar dene'),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 64,
+                              height: 64,
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade50,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: Colors.grey.shade200),
+                              ),
+                              child: Icon(
+                                Icons.search_off_rounded,
+                                size: 30,
+                                color: Colors.grey.shade400,
+                              ),
                             ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _productsError ??
+                                  'Bu kategoride ürün bulunamadı.',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF374151),
+                              ),
+                            ),
+                            if (_productsError != null) ...[
+                              const SizedBox(height: 12),
+                              TextButton.icon(
+                                onPressed: _loadProductsForDialog,
+                                icon: const Icon(
+                                  Icons.refresh_rounded,
+                                  size: 18,
+                                ),
+                                label: const Text('Tekrar dene'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.primary,
+                                ),
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     )
                   : ListView.builder(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 8,
-                        horizontal: 12,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
                       itemCount: filteredProducts.length,
                       itemBuilder: (_, i) {
                         final product = filteredProducts[i];
-                        final inCart = _cart.containsKey(product.name);
-                        final cartItem = _cart[product.name];
-                        final selectedAttrs =
-                            (cartItem?['selectedAttrs'] as List?)
-                                ?.cast<String>() ??
-                            [];
-
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: inCart
-                                  ? AppColors.primary.withOpacity(0.4)
-                                  : Colors.grey.shade100,
-                              width: inCart ? 1.5 : 1,
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: product.images.isNotEmpty
-                                    ? OptimizedImage(imageUrlOrPath: 
-                                        product.images.first,
-                                        width: 56,
-                                        height: 56,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (c, e, s) =>
-                                            _imgFallback(),
-                                      )
-                                    : _imgFallback(),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      product.name,
-                                      style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                        color: Color(0xFF1F2937),
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    if (product.subCategory != null &&
-                                        product.subCategory!.isNotEmpty)
-                                      Text(
-                                        product.subCategory!,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: Colors.grey.shade400,
-                                        ),
-                                      ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      product.price,
-                                      style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: AppColors.primary,
-                                      ),
-                                    ),
-                                    if (inCart) ...[
-                                      const SizedBox(height: 4),
-                                      Wrap(
-                                        spacing: 4,
-                                        children: [
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 6,
-                                              vertical: 2,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: AppColors.primary
-                                                  .withOpacity(0.1),
-                                              borderRadius:
-                                                  BorderRadius.circular(6),
-                                            ),
-                                            child: Text(
-                                              '${cartItem!['quantity']}x${cartItem['gramaj'] != '' ? ' · ${cartItem['gramaj']}' : ''}',
-                                              style: const TextStyle(
-                                                fontSize: 11,
-                                                color: AppColors.primary,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                          ...selectedAttrs.map(
-                                            (a) => Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 6,
-                                                    vertical: 2,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.orange
-                                                    .withOpacity(0.1),
-                                                borderRadius:
-                                                    BorderRadius.circular(6),
-                                              ),
-                                              child: Text(
-                                                a,
-                                                style: const TextStyle(
-                                                  fontSize: 11,
-                                                  color: Colors.orange,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  GestureDetector(
-                                    onTap: () {
-                                      if (!inCart) {
-                                        setState(() {
-                                          _cart[product.name] = {
-                                            'quantity': 1,
-                                            'gramaj': '',
-                                            'notes': '',
-                                            'price': product.price,
-                                            'name': product.name,
-                                            'selectedAttrs': <String>[],
-                                          };
-                                        });
-                                      } else {
-                                        setState(
-                                          () => _cart.remove(product.name),
-                                        );
-                                      }
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: inCart
-                                            ? Colors.red.shade50
-                                            : AppColors.primary,
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Text(
-                                        inCart ? 'Çıkar' : 'Ekle',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w700,
-                                          color: inCart
-                                              ? Colors.red
-                                              : Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  GestureDetector(
-                                    onTap: () => _showItemSettings(product),
-                                    child: Container(
-                                      width: 36,
-                                      height: 36,
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey.shade100,
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: const Icon(
-                                        Icons.tune,
-                                        size: 18,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                        final usesServiceStepper =
+                            product.usesServiceControlStepper;
+                        final isServiceTpl = _isServiceTemplate(product);
+                        // TODO(debug): remove before production
+                        debugPrint(
+                          '[CUSTOMER_CARD] '
+                          'name="${product.name}" '
+                          'resolved_kind=${_productTypeFromProduct(product)} '
+                          'button_mode=${isServiceTpl ? 'Seç' : 'Ekle'}',
+                        );
+                        return FoodProductCard(
+                          product: product,
+                          quantity: isServiceTpl
+                              ? 0
+                              : usesServiceStepper
+                              ? (_serviceStepperValueFor(product) == null
+                                    ? 0
+                                    : 1)
+                              : _quantityFor(product),
+                          selectedAttributes: usesServiceStepper || isServiceTpl
+                              ? const <String>[]
+                              : _selectedAttributesFor(product),
+                          selectionMeta: isServiceTpl
+                              ? null
+                              : _selectionMetaFor(product),
+                          stepperValueLabel: usesServiceStepper && !isServiceTpl
+                              ? _serviceStepperLabelFor(product)
+                              : null,
+                          addLabel: isServiceTpl
+                              ? 'Seç'
+                              : product.usesWeightSelector
+                              ? ProductPriceCalculator.formatServiceAmountLabel(
+                                  type: product.resolvedServiceControlType,
+                                  grams: product.resolvedDefaultWeightGrams,
+                                )
+                              : product.usesPortionLikeStepper
+                              ? ProductPriceCalculator.formatServiceAmountLabel(
+                                  type: product.resolvedServiceControlType,
+                                  amount: product.resolvedDefaultServiceAmount,
+                                )
+                              : 'Ekle',
+                          onImageTap: () => _showProductQuickView(product),
+                          onAdd: isServiceTpl
+                              ? () => _openServiceTemplate(product)
+                              : () => _addProductToCart(product),
+                          onIncrement: isServiceTpl
+                              ? null
+                              : () => _incrementProductQuantity(product),
+                          onDecrement: isServiceTpl
+                              ? null
+                              : () => _decrementProductQuantity(product),
+                          onCustomize: isServiceTpl
+                              ? null
+                              : () => _showItemSettings(product),
                         );
                       },
                     ),
             ),
 
-            // Cart bar + Garson Gönder
-            if (_cart.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
-                ),
-                child: Column(
-                  children: [
-                    SizedBox(
-                      height: 32,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        children: _cart.entries.map((e) {
-                          return Container(
-                            margin: const EdgeInsets.only(right: 6),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: AppColors.primary.withOpacity(0.2),
-                              ),
-                            ),
-                            child: Text(
-                              '${e.value['quantity']}x ${e.key}',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _isSending ? null : _sendOrder,
-                        icon: _isSending
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(
-                                Icons.notifications_active_outlined,
-                                size: 20,
-                              ),
-                        label: Text(
-                          _isSending ? 'Gönderiliyor...' : 'Garson Gönder',
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+            // ── Action bar (always visible) ───────────────────────────────
+            Container(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 14,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 16,
               ),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border(
+                  top: BorderSide(color: Colors.grey.shade100, width: 1.0),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.07),
+                    blurRadius: 16,
+                    offset: const Offset(0, -4),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_cart.isNotEmpty ||
+                      _mixedServiceCartItems.isNotEmpty) ...[
+                    _buildCompactOrderSummaryBar(),
+                    const SizedBox(height: 10),
+                  ],
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _isSending || _isCallingWaiter
+                          ? null
+                          : _callWaiter,
+                      icon: _isCallingWaiter
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(
+                              Icons.notifications_active_rounded,
+                              size: 18,
+                            ),
+                      label: Text(
+                        _isCallingWaiter
+                            ? 'Garson çağrılıyor...'
+                            : 'Garson Çağır',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.orange.shade700,
+                        side: BorderSide(color: Colors.orange.shade400),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: !hasAnyItems || _isSending ? null : _sendOrder,
+                      icon: _isSending
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.send_rounded, size: 19),
+                      label: Text(
+                        _isSending
+                            ? 'Gönderiliyor...'
+                            : !hasAnyItems
+                            ? 'Menüden ürün seçin'
+                            : _totalPrice() > 0
+                            ? 'Masa ${widget.tableNumber} — Sipariş Ver · ₺${_totalPrice().toStringAsFixed(0)}'
+                            : 'Masa ${widget.tableNumber} — Sipariş Ver',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: !hasAnyItems
+                            ? Colors.grey.shade200
+                            : AppColors.primary,
+                        foregroundColor: !hasAnyItems
+                            ? Colors.grey.shade500
+                            : Colors.white,
+                        disabledBackgroundColor: Colors.grey.shade200,
+                        disabledForegroundColor: Colors.grey.shade500,
+                        elevation: !hasAnyItems ? 0 : 5,
+                        shadowColor: AppColors.primary.withValues(alpha: 0.38),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _imgFallback() => Container(
-    width: 56,
-    height: 56,
-    decoration: BoxDecoration(
-      color: Colors.grey.shade100,
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: const Icon(Icons.fastfood_outlined, color: Colors.grey, size: 24),
-  );
+  // ── Skeleton loader ──────────────────────────────────────────────────────
+
+  Widget _buildMenuSkeleton() {
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+      itemCount: 5,
+      itemBuilder: (_, _) => _skeletonCard(),
+    );
+  }
+
+  Widget _skeletonCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade100),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // image placeholder
+          _shimmer(width: 64, height: 64, radius: 12),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _shimmer(width: double.infinity, height: 13, radius: 6),
+                const SizedBox(height: 6),
+                _shimmer(width: 100, height: 11, radius: 5),
+                const SizedBox(height: 8),
+                _shimmer(width: 60, height: 13, radius: 5),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          _shimmer(width: 58, height: 36, radius: 10),
+        ],
+      ),
+    );
+  }
+
+  Widget _shimmer({
+    required double width,
+    required double height,
+    required double radius,
+  }) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.4, end: 0.9),
+      duration: const Duration(milliseconds: 800),
+      curve: Curves.easeInOut,
+      builder: (_, value, _) => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200.withValues(alpha: value),
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      ),
+      onEnd: () {
+        /* TweenAnimationBuilder loops automatically via key cycling – stable */
+      },
+    );
+  }
 }

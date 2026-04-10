@@ -96,7 +96,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 24,
                 offset: const Offset(0, 8),
               ),
@@ -117,7 +117,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.1),
+                        color: AppColors.primary.withValues(alpha: 0.1),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(Icons.compare_arrows, color: AppColors.primary, size: 28),
@@ -189,7 +189,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                                   )
                                 : ListView.separated(
                                     itemCount: _selectedProducts.length,
-                                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                    separatorBuilder: (_, _) => const SizedBox(height: 12),
                                     itemBuilder: (context, index) {
                                       final product = _selectedProducts[index];
                                       return Container(
@@ -288,7 +288,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
         context,
         PageRouteBuilder(
           opaque: false,
-          pageBuilder: (context, _, __) => page,
+          pageBuilder: (context, _, _) => page,
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(opacity: animation, child: child);
           },
@@ -349,7 +349,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                               width: 40,
                               height: 40,
                               decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.1),
+                                color: AppColors.primary.withValues(alpha: 0.1),
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
@@ -392,7 +392,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
                   // Categories
                   ..._categories.entries.map((entry) {
                     return _buildCategorySection(entry.key, entry.value);
-                  }).toList(),
+                  }),
 
                   const SizedBox(height: 100),
                 ],
@@ -407,7 +407,7 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 10,
                   offset: const Offset(0, -3),
                 ),

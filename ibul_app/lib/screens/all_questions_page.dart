@@ -50,6 +50,7 @@ class _AllQuestionsPageState extends State<AllQuestionsPage> {
 
   Future<void> _loadQuestions() async {
     setState(() => _isLoading = true);
+    final appState = context.read<AppState>();
     final serviceQuestions = await ProductQuestionService.instance.getQuestions(
       productName: widget.productName,
       storeName: widget.storeName,
@@ -63,11 +64,11 @@ class _AllQuestionsPageState extends State<AllQuestionsPage> {
       return;
     }
 
-    final local = context.read<AppState>().getProductQuestionsFor(
+    if (!mounted) return;
+    final local = appState.getProductQuestionsFor(
       productName: widget.productName,
       storeName: widget.storeName,
     );
-    if (!mounted) return;
     setState(() {
       _questions = local;
       _isLoading = false;
@@ -378,13 +379,13 @@ class _AllQuestionsPageState extends State<AllQuestionsPage> {
       return OptimizedImage(imageUrlOrPath: 
         path,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _placeholder(),
+        errorBuilder: (_, _, _) => _placeholder(),
       );
     }
     return Image.asset(
       path,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _placeholder(),
+      errorBuilder: (_, _, _) => _placeholder(),
     );
   }
 

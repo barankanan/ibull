@@ -17,8 +17,8 @@ class _TryProductPageState extends State<TryProductPage> {
   int _selectedAccessoryIndex = 0;
   double _scale = 1.0;
   double _baseScale = 1.0;
-  double _rotation = 0.0;
-  bool _showInterface = true;
+  final double _rotation = 0.0;
+  final bool _showInterface = true;
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +50,7 @@ class _TryProductPageState extends State<TryProductPage> {
             decoration: BoxDecoration(
               color: Colors.purple[50],
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
             ),
             child: Row(
               children: [
@@ -106,8 +106,8 @@ class _TryProductPageState extends State<TryProductPage> {
                                   boxShadow: [
                                     BoxShadow(
                                       color: isSelected 
-                                          ? AppColors.primary.withOpacity(0.3)
-                                          : Colors.black.withOpacity(0.05),
+                                          ? AppColors.primary.withValues(alpha: 0.3)
+                                          : Colors.black.withValues(alpha: 0.05),
                                       blurRadius: isSelected ? 8 : 4,
                                       spreadRadius: isSelected ? 1 : 0,
                                     ),
@@ -186,7 +186,7 @@ class _TryProductPageState extends State<TryProductPage> {
                                         borderRadius: BorderRadius.circular(100),
                                         boxShadow: [
                                           BoxShadow(
-                                            color: Colors.black.withOpacity(0.3),
+                                            color: Colors.black.withValues(alpha: 0.3),
                                             blurRadius: 20,
                                             spreadRadius: 5,
                                           ),
@@ -300,7 +300,7 @@ class _TryProductPageState extends State<TryProductPage> {
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.grey.withOpacity(0.2),
+                  color: Colors.grey.withValues(alpha: 0.2),
                   blurRadius: 10,
                   offset: const Offset(0, -3),
                 ),

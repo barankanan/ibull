@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class DBProduct {
   final String? id;
   final String? sellerId;
@@ -5,6 +7,17 @@ class DBProduct {
   final String brand;
   final String? store; // Mağaza adı
   final String price;
+  final String pricingType;
+  final double? portionPrice;
+  final double? pricePerKg;
+  final String? serviceControlType;
+  final double? minPortion;
+  final double? maxPortion;
+  final double? portionStep;
+  final int? defaultWeightGrams;
+  final int? minWeightGrams;
+  final int? weightStepGrams;
+  final int? maxWeightGrams;
   final String? oldPrice;
   final double rating;
   final int reviewCount;
@@ -45,6 +58,17 @@ class DBProduct {
     required this.brand,
     this.store,
     required this.price,
+    this.pricingType = 'portion',
+    this.portionPrice,
+    this.pricePerKg,
+    this.serviceControlType,
+    this.minPortion,
+    this.maxPortion,
+    this.portionStep,
+    this.defaultWeightGrams,
+    this.minWeightGrams,
+    this.weightStepGrams,
+    this.maxWeightGrams,
     this.oldPrice,
     required this.rating,
     required this.reviewCount,
@@ -84,6 +108,17 @@ class DBProduct {
       'brand': brand,
       'store': store,
       'price': price,
+      'pricingType': pricingType,
+      'portionPrice': portionPrice,
+      'pricePerKg': pricePerKg,
+      'serviceControlType': serviceControlType,
+      'minPortion': minPortion,
+      'maxPortion': maxPortion,
+      'portionStep': portionStep,
+      'defaultWeightGrams': defaultWeightGrams,
+      'minWeightGrams': minWeightGrams,
+      'weightStepGrams': weightStepGrams,
+      'maxWeightGrams': maxWeightGrams,
       'oldPrice': oldPrice,
       'rating': rating,
       'reviewCount': reviewCount,
@@ -126,6 +161,40 @@ class DBProduct {
       brand: map['brand'] as String,
       store: map['store'] as String?,
       price: map['price'] as String,
+      pricingType:
+          map['pricing_type']?.toString() ??
+          map['pricingType']?.toString() ??
+          'portion',
+      portionPrice:
+          (map['portion_price'] as num?)?.toDouble() ??
+          (map['portionPrice'] as num?)?.toDouble(),
+      pricePerKg:
+          (map['price_per_kg'] as num?)?.toDouble() ??
+          (map['pricePerKg'] as num?)?.toDouble(),
+      serviceControlType:
+          map['service_control_type']?.toString() ??
+          map['serviceControlType']?.toString(),
+      minPortion:
+          (map['min_portion'] as num?)?.toDouble() ??
+          (map['minPortion'] as num?)?.toDouble(),
+      maxPortion:
+          (map['max_portion'] as num?)?.toDouble() ??
+          (map['maxPortion'] as num?)?.toDouble(),
+      portionStep:
+          (map['portion_step'] as num?)?.toDouble() ??
+          (map['portionStep'] as num?)?.toDouble(),
+      defaultWeightGrams:
+          (map['default_weight_grams'] as num?)?.toInt() ??
+          (map['defaultWeightGrams'] as num?)?.toInt(),
+      minWeightGrams:
+          (map['min_weight_grams'] as num?)?.toInt() ??
+          (map['minWeightGrams'] as num?)?.toInt(),
+      weightStepGrams:
+          (map['weight_step_grams'] as num?)?.toInt() ??
+          (map['weightStepGrams'] as num?)?.toInt(),
+      maxWeightGrams:
+          (map['max_weight_grams'] as num?)?.toInt() ??
+          (map['maxWeightGrams'] as num?)?.toInt(),
       oldPrice: map['oldPrice'] as String?,
       rating: (map['rating'] as num).toDouble(),
       reviewCount: (map['reviewCount'] as num).toInt(),
@@ -136,7 +205,7 @@ class DBProduct {
       tags: map['tags'] as String,
       keywords: map['keywords'] as String?,
       description: map['description'] as String?,
-      specifications: map['specifications'] as String?,
+      specifications: _normalizeSpecifications(map['specifications']),
       isPart: isPartRaw is bool ? isPartRaw : isPartRaw == 1,
       damagedParts: map['damagedParts'] as String?,
       variantGroupId: map['variantGroupId'] as String?,
@@ -168,6 +237,17 @@ class DBProduct {
     String? brand,
     String? store,
     String? price,
+    String? pricingType,
+    double? portionPrice,
+    double? pricePerKg,
+    String? serviceControlType,
+    double? minPortion,
+    double? maxPortion,
+    double? portionStep,
+    int? defaultWeightGrams,
+    int? minWeightGrams,
+    int? weightStepGrams,
+    int? maxWeightGrams,
     String? oldPrice,
     double? rating,
     int? reviewCount,
@@ -204,6 +284,17 @@ class DBProduct {
       brand: brand ?? this.brand,
       store: store ?? this.store,
       price: price ?? this.price,
+      pricingType: pricingType ?? this.pricingType,
+      portionPrice: portionPrice ?? this.portionPrice,
+      pricePerKg: pricePerKg ?? this.pricePerKg,
+      serviceControlType: serviceControlType ?? this.serviceControlType,
+      minPortion: minPortion ?? this.minPortion,
+      maxPortion: maxPortion ?? this.maxPortion,
+      portionStep: portionStep ?? this.portionStep,
+      defaultWeightGrams: defaultWeightGrams ?? this.defaultWeightGrams,
+      minWeightGrams: minWeightGrams ?? this.minWeightGrams,
+      weightStepGrams: weightStepGrams ?? this.weightStepGrams,
+      maxWeightGrams: maxWeightGrams ?? this.maxWeightGrams,
       oldPrice: oldPrice ?? this.oldPrice,
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,
@@ -259,5 +350,18 @@ class DBProduct {
   @override
   String toString() {
     return 'DBProduct(id: $id, sellerId: $sellerId, name: $name, brand: $brand, price: $price)';
+  }
+
+  static String? _normalizeSpecifications(Object? value) {
+    if (value == null) return null;
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (value is Map || value is List) {
+      return jsonEncode(value);
+    }
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
   }
 }

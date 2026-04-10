@@ -87,7 +87,7 @@ class _MapFilterBottomSheetState extends State<MapFilterBottomSheet> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
+                  color: AppColors.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
@@ -119,9 +119,9 @@ class _MapFilterBottomSheetState extends State<MapFilterBottomSheet> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
+              color: statusColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: statusColor.withOpacity(0.3)),
+              border: Border.all(color: statusColor.withValues(alpha: 0.3)),
             ),
             child: Row(
               children: [
@@ -170,7 +170,7 @@ class _MapFilterBottomSheetState extends State<MapFilterBottomSheet> {
                   });
                 },
                 backgroundColor: Colors.grey[100],
-                selectedColor: AppColors.primary.withOpacity(0.2),
+                selectedColor: AppColors.primary.withValues(alpha: 0.2),
                 checkmarkColor: AppColors.primary,
                 labelStyle: TextStyle(
                   color: isSelected ? AppColors.primary : Colors.black87,
@@ -198,7 +198,7 @@ class _MapFilterBottomSheetState extends State<MapFilterBottomSheet> {
               ),
               Switch(
                 value: _openNow,
-                activeColor: AppColors.primary,
+                activeThumbColor: AppColors.primary,
                 onChanged: (value) {
                   setState(() {
                     _openNow = value;

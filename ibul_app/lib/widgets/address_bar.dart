@@ -203,7 +203,7 @@ class AddressSelectionSheetState extends State<AddressSelectionSheet> {
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: CircleAvatar(
-                        backgroundColor: AppColors.primary.withOpacity(0.1),
+                        backgroundColor: AppColors.primary.withValues(alpha: 0.1),
                         child: Icon(
                           _selectedTab == 0 ? Icons.place : Icons.receipt,
                           color: AppColors.primary,

@@ -70,12 +70,12 @@ class ProductConverter {
     );
   }
   
-  /// List<DBProduct>'ı List<Product>'a çevir
+  /// `List<DBProduct>`'ı `List<Product>`'a çevir
   static List<Product> toProductList(List<DBProduct> dbProducts) {
     return dbProducts.map((dbProduct) => toProduct(dbProduct)).toList();
   }
   
-  /// List<Product>'ı List<DBProduct>'a çevir
+  /// `List<Product>`'ı `List<DBProduct>`'a çevir
   static List<DBProduct> toDBProductList(List<Product> products) {
     return products.map((product) => toDBProduct(product)).toList();
   }

@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 import '../core/app_motion.dart';
-import '../core/auth/user_identity.dart';
-import '../core/config/app_feature_flags.dart';
 import '../core/constants.dart';
 import 'register_page.dart';
 import '../services/auth_service.dart';
 import 'home_screen.dart';
+import 'seller_panel_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -16,7 +15,8 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginPageState extends State<LoginPage>
+    with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -24,8 +24,33 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
 
+  late final AnimationController _animController;
+  late final Animation<double> _fadeAnim;
+  late final Animation<Offset> _slideAnim;
+
+  // Button press scale states
+  bool _loginPressed = false;
+  bool _registerPressed = false;
+  bool _googlePressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, 0.06),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _animController, curve: Curves.easeOut));
+    _animController.forward();
+  }
+
   @override
   void dispose() {
+    _animController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -42,16 +67,14 @@ class _LoginPageState extends State<LoginPage> {
           authArea: 'user',
         );
 
-        // Check User Role and Status
-        final role = await _authService.getUserDataField('role');
-        final isSellerApproved = await _authService.getUserDataField(
-          'is_seller_approved',
+        final resolution = await _authService.resolveLoginRoute(
+          diagnosticContext: 'user_login',
         );
 
         if (!mounted) return;
 
-        if (role == 'seller') {
-          if (isSellerApproved == true) {
+        if (resolution.resolvedRole == LoginResolvedRole.seller) {
+          if (resolution.isSellerApproved) {
             Navigator.of(
               context,
             ).pushNamedAndRemoveUntil('/seller', (route) => false);
@@ -63,6 +86,20 @@ class _LoginPageState extends State<LoginPage> {
               'Satıcı hesabınız henüz onaylanmadı. Lütfen yönetici onayını bekleyin.',
             );
           }
+        }
+
+        if (resolution.resolvedRole == LoginResolvedRole.waiter) {
+          Navigator.of(context).pushNamedAndRemoveUntil(
+            '/seller',
+            (route) => false,
+            arguments: SellerPanelEntryRole.waiter,
+          );
+          return;
+        }
+
+        if (resolution.resolvedRole == LoginResolvedRole.unknown) {
+          await _authService.signOut();
+          throw Exception('Rol bilgisi çözümlenemedi. Lütfen tekrar deneyin.');
         }
 
         // Login successful (Regular User)
@@ -105,379 +142,491 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
     final isCompactMobile = screenWidth < 390;
-    final contentMaxWidth = isMobile ? 420.0 : 450.0;
-    final pagePadding = isCompactMobile ? 20.0 : 24.0;
-    final topSpacing = isCompactMobile ? 8.0 : 16.0;
-    final heroSize = isCompactMobile ? 82.0 : 92.0;
-    final heroIconSize = isCompactMobile ? 38.0 : 44.0;
-    final titleSize = isCompactMobile ? 22.0 : 24.0;
-    final subtitleSize = isCompactMobile ? 13.0 : 14.0;
-    final sectionSpacing = isCompactMobile ? 28.0 : 32.0;
-    final buttonHeight = isCompactMobile ? 48.0 : 52.0;
-    final buttonRadius = isCompactMobile ? 14.0 : 16.0;
-    final primaryButtonFontSize = isCompactMobile ? 14.0 : 15.0;
-    final secondaryButtonFontSize = isCompactMobile ? 13.5 : 14.5;
-    final tertiaryButtonFontSize = isCompactMobile ? 14.0 : 15.0;
+    final contentMaxWidth = 420.0;
+    final hPad = isCompactMobile ? 20.0 : 24.0;
+
+    // ── colour tokens ──────────────────────────────────────────────
+    const primary = AppColors.primary;
+    final primaryLight = primary.withValues(alpha: 0.10);
+    final grey200 = const Color(0xFFE5E7EB);
+    const textDark = Color(0xFF111827);
+    const textMid = Color(0xFF6B7280);
+
+    // ── field decoration factory ───────────────────────────────────
+    final purpleBorder = primary.withValues(alpha: 0.25);
+    InputDecoration fieldDeco({
+      required String label,
+      required String hint,
+      required Widget prefix,
+      Widget? suffix,
+    }) => InputDecoration(
+      labelText: label,
+      hintText: hint,
+      labelStyle: const TextStyle(fontSize: 13, color: textMid),
+      hintStyle: TextStyle(
+        fontSize: 13,
+        color: textMid.withValues(alpha: 0.55),
+      ),
+      prefixIcon: prefix,
+      suffixIcon: suffix,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: BorderSide(color: purpleBorder, width: 1.2),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: const BorderSide(color: primary, width: 1.8),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.8),
+      ),
+    );
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text(
-          'Giriş Yap',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: AppColors.primary,
-          ),
-        ),
-        centerTitle: true,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.primary),
-      ),
+      // No AppBar — clean full-bleed layout
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: contentMaxWidth),
-              child: Padding(
-                padding: EdgeInsets.all(pagePadding),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(height: topSpacing),
-                      // Logo veya İkon
-                      Center(
-                        child: Container(
-                          width: heroSize,
-                          height: heroSize,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.shopping_bag_outlined,
-                            size: heroIconSize,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                      SizedBox(height: isCompactMobile ? 20 : 22),
-                      Text(
-                        'İbul\'a Hoş Geldiniz',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: titleSize,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1F2937),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Alışverişin en akıllı yolu. Devam etmek için giriş yapın.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: subtitleSize,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                      SizedBox(height: sectionSpacing),
-
-                      // Email / Phone Field
-                      TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.next,
-                        decoration: InputDecoration(
-                          labelText: 'E-posta veya Telefon Numarası',
-                          hintText: 'Örn: ornek@email.com veya 5551234567',
-                          prefixIcon: const Icon(
-                            Icons.person_outline,
-                            color: Colors.grey,
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey.shade50,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.grey.shade200),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                              color: AppColors.primary,
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Lütfen e-posta veya telefon girin';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Password Field
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        textInputAction: TextInputAction.done,
-                        decoration: InputDecoration(
-                          labelText: 'Şifre',
-                          hintText: '********',
-                          prefixIcon: const Icon(
-                            Icons.lock_outline,
-                            color: Colors.grey,
-                          ),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword
-                                  ? Icons.visibility_outlined
-                                  : Icons.visibility_off_outlined,
-                              color: Colors.grey,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey.shade50,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.grey.shade200),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                              color: AppColors.primary,
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Lütfen şifrenizi girin';
-                          }
-                          return null;
-                        },
-                      ),
-                      SizedBox(height: isCompactMobile ? 24 : 28),
-
-                      // Login Button
-                      SizedBox(
-                        height: buttonHeight,
-                        child: ElevatedButton(
-                          onPressed: _isLoading ? null : _handleLogin,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(buttonRadius),
-                            ),
-                            elevation: 2,
-                            shadowColor: AppColors.primary.withValues(
-                              alpha: 0.4,
-                            ),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Text(
-                                  'GİRİŞ YAP',
-                                  style: TextStyle(
-                                    fontSize: primaryButtonFontSize,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 1,
-                                  ),
-                                ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Register Button
-                      SizedBox(
-                        height: buttonHeight,
-                        child: OutlinedButton(
-                          onPressed: _isLoading
-                              ? null
-                              : () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          const RegisterPage(),
-                                    ),
-                                  );
-                                },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.primary,
-                            side: const BorderSide(
-                              color: AppColors.primary,
-                              width: 2,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(buttonRadius),
-                            ),
-                            backgroundColor: Colors.white,
-                            elevation: 0,
-                          ),
-                          child: Text(
-                            'ÜYE OL / KAYIT OL',
-                            style: TextStyle(
-                              fontSize: secondaryButtonFontSize,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      SizedBox(height: isCompactMobile ? 20 : 24),
-
-                      // Divider
-                      Row(
-                        children: [
-                          Expanded(child: Divider(color: Colors.grey.shade300)),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Text(
-                              'VEYA',
-                              style: TextStyle(
-                                color: Colors.grey.shade500,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                          Expanded(child: Divider(color: Colors.grey.shade300)),
-                        ],
-                      ),
-
-                      SizedBox(height: isCompactMobile ? 20 : 24),
-
-                      // Google Login Button
-                      SizedBox(
-                        height: buttonHeight,
-                        child: OutlinedButton.icon(
-                          onPressed: _isLoading
-                              ? null
-                              : () async {
-                                  setState(() => _isLoading = true);
-                                  final navigator = Navigator.of(context);
-                                  final messenger = ScaffoldMessenger.of(
-                                    context,
-                                  );
-                                  try {
-                                    final appState = Provider.of<AppState>(
-                                      context,
-                                      listen: false,
-                                    );
-                                    await appState.loginWithGoogle();
-                                    if (!mounted) return;
-                                    navigator.pushReplacement(
-                                      buildAppPageRoute<void>(
-                                        builder: (context) =>
-                                            const HomeScreen(initialIndex: 4),
-                                      ),
-                                    );
-                                  } catch (e) {
-                                    if (!mounted) return;
-                                    messenger.showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Giriş başarısız: ${e.toString()}',
-                                        ),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
-                                  } finally {
-                                    if (mounted) {
-                                      setState(() => _isLoading = false);
-                                    }
-                                  }
-                                },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.black87,
-                            side: BorderSide(color: Colors.grey.shade300),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(buttonRadius),
-                            ),
-                            backgroundColor: Colors.white,
-                          ),
-                          icon: Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.g_mobiledata,
-                              size: 28,
-                              color: Colors.red,
-                            ), // Basit Google ikonu placeholder
-                          ),
-                          label: Text(
-                            'Google ile Giriş Yap',
-                            style: TextStyle(
-                              fontSize: tertiaryButtonFontSize,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Guest Login Button
-                      TextButton(
-                        onPressed: _isLoading || !AppFeatureFlags.allowGuestMode
-                            ? null
-                            : () {
-                                final appState = Provider.of<AppState>(
-                                  context,
-                                  listen: false,
-                                );
-                                appState.login(
-                                  UserIdentity.defaultGuestDisplayName,
-                                  UserIdentity.guestEmail,
-                                );
-                                Navigator.pop(context);
-                              },
-                        child: Text(
-                          'Misafir Olarak Devam Et',
-                          style: TextStyle(
-                            fontSize: isCompactMobile ? 15 : 16,
-                            color: Colors.grey,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── TOP NAV ROW ─────────────────────────────────
+            Padding(
+              padding: EdgeInsets.only(left: hPad - 8, top: 6),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.maybePop(context),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 18,
+                      color: textDark.withValues(alpha: 0.6),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+            // ── SCROLLABLE CONTENT ───────────────────────────
+            Expanded(
+              child: FadeTransition(
+                opacity: _fadeAnim,
+                child: SlideTransition(
+                  position: _slideAnim,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: hPad,
+                        vertical: 24,
+                      ),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: contentMaxWidth),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // ── HERO ───────────────────────────────────
+                              Center(
+                                child: Container(
+                                  width: isCompactMobile ? 76 : 84,
+                                  height: isCompactMobile ? 76 : 84,
+                                  decoration: BoxDecoration(
+                                    color: primaryLight,
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: primary.withValues(alpha: 0.12),
+                                        blurRadius: 20,
+                                        offset: const Offset(0, 6),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Icon(
+                                    Icons.shopping_bag_outlined,
+                                    size: isCompactMobile ? 36 : 40,
+                                    color: primary,
+                                  ),
+                                ),
+                              ),
+
+                              SizedBox(height: isCompactMobile ? 18 : 20),
+
+                              // ── TITLE ──────────────────────────────────
+                              Text(
+                                'İbul\'a Hoş Geldiniz',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: isCompactMobile ? 20 : 22,
+                                  fontWeight: FontWeight.w700,
+                                  color: textDark,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+
+                              const SizedBox(height: 6),
+
+                              Text(
+                                'Devam etmek için giriş yapın.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: isCompactMobile ? 13 : 14,
+                                  color: textMid.withValues(alpha: 0.75),
+                                  height: 1.4,
+                                ),
+                              ),
+
+                              SizedBox(height: isCompactMobile ? 28 : 32),
+
+                              // ── EMAIL ──────────────────────────────────
+                              TextFormField(
+                                controller: _emailController,
+                                keyboardType: TextInputType.emailAddress,
+                                textInputAction: TextInputAction.next,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: textDark,
+                                ),
+                                decoration: fieldDeco(
+                                  label: 'E-posta veya Telefon',
+                                  hint: 'ornek@email.com',
+                                  prefix: const Icon(
+                                    Icons.person_outline_rounded,
+                                    size: 18,
+                                    color: textMid,
+                                  ),
+                                ),
+                                validator: (v) {
+                                  if (v == null || v.trim().isEmpty) {
+                                    return 'Lütfen e-posta veya telefon girin';
+                                  }
+                                  return null;
+                                },
+                              ),
+
+                              const SizedBox(height: 12),
+
+                              // ── PASSWORD ───────────────────────────────
+                              TextFormField(
+                                controller: _passwordController,
+                                obscureText: _obscurePassword,
+                                textInputAction: TextInputAction.done,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: textDark,
+                                ),
+                                decoration: fieldDeco(
+                                  label: 'Şifre',
+                                  hint: '••••••••',
+                                  prefix: const Icon(
+                                    Icons.lock_outline_rounded,
+                                    size: 18,
+                                    color: textMid,
+                                  ),
+                                  suffix: IconButton(
+                                    icon: Icon(
+                                      _obscurePassword
+                                          ? Icons.visibility_outlined
+                                          : Icons.visibility_off_outlined,
+                                      size: 18,
+                                      color: textMid,
+                                    ),
+                                    onPressed: () => setState(
+                                      () =>
+                                          _obscurePassword = !_obscurePassword,
+                                    ),
+                                  ),
+                                ),
+                                validator: (v) {
+                                  if (v == null || v.trim().isEmpty) {
+                                    return 'Lütfen şifrenizi girin';
+                                  }
+                                  return null;
+                                },
+                              ),
+
+                              SizedBox(height: isCompactMobile ? 20 : 24),
+
+                              // ── PRIMARY ACTIONS ROW ────────────────────
+                              Row(
+                                children: [
+                                  // Giriş Yap
+                                  Expanded(
+                                    child: GestureDetector(
+                                      onTapDown: (_) =>
+                                          setState(() => _loginPressed = true),
+                                      onTapUp: (_) =>
+                                          setState(() => _loginPressed = false),
+                                      onTapCancel: () =>
+                                          setState(() => _loginPressed = false),
+                                      onTap: _isLoading ? null : _handleLogin,
+                                      child: AnimatedScale(
+                                        scale: _loginPressed ? 0.97 : 1.0,
+                                        duration: const Duration(
+                                          milliseconds: 80,
+                                        ),
+                                        child: Container(
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            gradient: const LinearGradient(
+                                              colors: [
+                                                Color(0xFF8B3FF5),
+                                                Color(0xFF6A1FD8),
+                                              ],
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                            ),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: primary.withValues(
+                                                  alpha: 0.28,
+                                                ),
+                                                blurRadius: 10,
+                                                offset: const Offset(0, 4),
+                                              ),
+                                            ],
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: _isLoading
+                                              ? const SizedBox(
+                                                  width: 20,
+                                                  height: 20,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        color: Colors.white,
+                                                        strokeWidth: 2,
+                                                      ),
+                                                )
+                                              : const Text(
+                                                  'Giriş Yap',
+                                                  style: TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.white,
+                                                    letterSpacing: 0.2,
+                                                  ),
+                                                ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                  const SizedBox(width: 10),
+
+                                  // Üye Ol
+                                  Expanded(
+                                    child: GestureDetector(
+                                      onTapDown: (_) => setState(
+                                        () => _registerPressed = true,
+                                      ),
+                                      onTapUp: (_) => setState(
+                                        () => _registerPressed = false,
+                                      ),
+                                      onTapCancel: () => setState(
+                                        () => _registerPressed = false,
+                                      ),
+                                      onTap: _isLoading
+                                          ? null
+                                          : () => Navigator.push(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    const RegisterPage(),
+                                              ),
+                                            ),
+                                      child: AnimatedScale(
+                                        scale: _registerPressed ? 0.97 : 1.0,
+                                        duration: const Duration(
+                                          milliseconds: 80,
+                                        ),
+                                        child: Container(
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            border: Border.all(
+                                              color: primary,
+                                              width: 1.5,
+                                            ),
+                                            color: Colors.white,
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            'Üye Ol',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: primary,
+                                              letterSpacing: 0.2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              SizedBox(height: isCompactMobile ? 20 : 24),
+
+                              // ── DIVIDER ────────────────────────────────
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Divider(
+                                      color: grey200,
+                                      thickness: 1,
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                    ),
+                                    child: Text(
+                                      'veya',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: textMid.withValues(alpha: 0.6),
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Divider(
+                                      color: grey200,
+                                      thickness: 1,
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              SizedBox(height: isCompactMobile ? 20 : 24),
+
+                              // ── GOOGLE ─────────────────────────────────
+                              GestureDetector(
+                                onTapDown: (_) =>
+                                    setState(() => _googlePressed = true),
+                                onTapUp: (_) =>
+                                    setState(() => _googlePressed = false),
+                                onTapCancel: () =>
+                                    setState(() => _googlePressed = false),
+                                onTap: _isLoading
+                                    ? null
+                                    : () async {
+                                        setState(() => _isLoading = true);
+                                        final navigator = Navigator.of(context);
+                                        final messenger = ScaffoldMessenger.of(
+                                          context,
+                                        );
+                                        try {
+                                          final appState =
+                                              Provider.of<AppState>(
+                                                context,
+                                                listen: false,
+                                              );
+                                          await appState.loginWithGoogle();
+                                          if (!mounted) return;
+                                          navigator.pushReplacement(
+                                            buildAppPageRoute<void>(
+                                              builder: (context) =>
+                                                  const HomeScreen(
+                                                    initialIndex: 4,
+                                                  ),
+                                            ),
+                                          );
+                                        } catch (e) {
+                                          if (!mounted) return;
+                                          messenger.showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Giriş başarısız: ${e.toString()}',
+                                              ),
+                                              backgroundColor: Colors.red,
+                                            ),
+                                          );
+                                        } finally {
+                                          if (mounted) {
+                                            setState(() => _isLoading = false);
+                                          }
+                                        }
+                                      },
+                                child: AnimatedScale(
+                                  scale: _googlePressed ? 0.97 : 1.0,
+                                  duration: const Duration(milliseconds: 80),
+                                  child: Container(
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: grey200,
+                                        width: 1.2,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.04,
+                                          ),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        const Icon(
+                                          Icons.g_mobiledata_rounded,
+                                          size: 22,
+                                          color: Colors.red,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Google ile giriş yap',
+                                          style: TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: textDark.withValues(
+                                              alpha: 0.85,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 24),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -24,7 +24,7 @@ class ProductAdditionalServices extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue.withOpacity(0.3)),
+        border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
       ),
       child: Column(
         children: [
@@ -64,7 +64,7 @@ class ProductAdditionalServices extends StatelessWidget {
                         side: const BorderSide(color: Color(0xFF1E88E5)),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                         padding: EdgeInsets.zero,
-                        backgroundColor: viewModel.isWarrantyAdded ? const Color(0xFF1E88E5).withOpacity(0.1) : null,
+                        backgroundColor: viewModel.isWarrantyAdded ? const Color(0xFF1E88E5).withValues(alpha: 0.1) : null,
                       ),
                       child: Text(viewModel.isWarrantyAdded ? 'Eklendi' : 'Ekle', style: const TextStyle(fontSize: 11)),
                     ),

@@ -5,6 +5,7 @@ import '../models/product_model.dart';
 import '../services/store_service.dart';
 import 'optimized_image.dart';
 import 'product_card.dart';
+import 'skeleton_loading.dart';
 
 class DynamicBrandSection extends StatefulWidget {
   final Map<String, dynamic> layout;
@@ -225,7 +226,7 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: _stores.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final store = _stores[index];
                 final isSelected = _selectedSellerId == store['seller_id'];
@@ -303,9 +304,19 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
             ),
           ),
         if (_isLoadingBanners)
-          const SizedBox(
+          SizedBox(
             height: 150,
-            child: Center(child: CircularProgressIndicator()),
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              itemCount: 2,
+              separatorBuilder: (context, index) => const SizedBox(width: 12),
+              itemBuilder: (context, index) => SkeletonLoading(
+                width: MediaQuery.of(context).size.width * 0.85,
+                height: 134,
+                borderRadius: 12,
+              ),
+            ),
           )
         else if (_bannerUrls.isNotEmpty)
           SizedBox(
@@ -354,7 +365,7 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
               physics: const BouncingScrollPhysics(),
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: _displayedProducts.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final dbProduct = _displayedProducts[index];
                 return SizedBox(

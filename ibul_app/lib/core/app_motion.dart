@@ -212,19 +212,19 @@ class AppAnimatedIndexedStack extends StatelessWidget {
         final isActive = childIndex == index;
         return IgnorePointer(
           ignoring: !isActive,
-          child: TickerMode(
-            enabled: isActive,
-            child: AnimatedSlide(
-              offset: isActive ? Offset.zero : const Offset(0, 0.012),
+          child: AnimatedSlide(
+            offset: isActive ? Offset.zero : const Offset(0, 0.012),
+            duration: AppMotion.normalTransitionDuration,
+            curve: AppMotion.revealCurve,
+            child: AnimatedOpacity(
+              opacity: isActive ? 1 : 0,
               duration: AppMotion.normalTransitionDuration,
-              curve: AppMotion.revealCurve,
-              child: AnimatedOpacity(
-                opacity: isActive ? 1 : 0,
-                duration: AppMotion.normalTransitionDuration,
-                curve: AppMotion.fadeInCurve,
-                child: RepaintBoundary(
-                  child: KeyedSubtree(
-                    key: ValueKey<int>(childIndex),
+              curve: AppMotion.fadeInCurve,
+              child: RepaintBoundary(
+                child: KeyedSubtree(
+                  key: ValueKey<int>(childIndex),
+                  child: TickerMode(
+                    enabled: isActive,
                     child: children[childIndex],
                   ),
                 ),

@@ -51,7 +51,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     36.1605,
   ); // Hatay/Antakya
   LatLng? _userLocation;
-  bool _isLoading = true;
   List<int> _filteredBusinessIndices = [];
   String _searchQuery = '';
   List<Map<String, dynamic>> _businesses = [];
@@ -863,11 +862,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   Future<void> _loadStoresFromSupabase() async {
-    // If we already have stores loaded, don't show loading indicator
-    if (_businesses.isEmpty) {
-      setState(() => _isLoading = true);
-    }
-
     try {
       final list = await _storeService.getStoresForMap();
 
@@ -924,7 +918,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           );
         }
         _applyDistanceDataAndSort();
-        _isLoading = false;
       });
       if (widget.initialSearchQuery != null &&
           widget.initialSearchQuery!.isNotEmpty) {
@@ -955,10 +948,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         }
       }
     } catch (e) {
-      print('Harita mağazaları yüklenirken hata: $e');
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      debugPrint('Harita mağazaları yüklenirken hata: $e');
     }
   }
 
@@ -1347,7 +1337,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                 width: 55,
                                 height: 55,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
+                                errorBuilder: (_, _, _) =>
                                     _buildStoreLogoPlaceholder(business),
                               )
                             : StoreLogoHelper.hasLogo(business['name'])
@@ -1356,7 +1346,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                 width: 55,
                                 height: 55,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
+                                errorBuilder: (_, _, _) =>
                                     _buildStoreLogoPlaceholder(business),
                               )
                             : _buildStoreLogoPlaceholder(business),
@@ -1468,7 +1458,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                     fit: BoxFit.cover,
                                     width: double.infinity,
                                     height: 100,
-                                    errorBuilder: (_, __, ___) => Center(
+                                    errorBuilder: (_, _, _) => Center(
                                       child: Icon(
                                         Icons.image,
                                         size: 32,
@@ -1653,7 +1643,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
+                color: Colors.black.withValues(alpha: 0.2),
                 blurRadius: 6,
                 offset: const Offset(0, 3),
               ),
@@ -1685,7 +1675,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             border: Border.all(color: Colors.grey.shade300, width: 0.5),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.15),
+                color: Colors.black.withValues(alpha: 0.15),
                 blurRadius: 3,
                 offset: const Offset(0, 1),
               ),
@@ -1880,7 +1870,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             scrollDirection: Axis.horizontal,
                             itemCount: _filteredBusinessIndices.length,
-                            separatorBuilder: (_, __) =>
+                            separatorBuilder: (_, _) =>
                                 const SizedBox(width: 10),
                             itemBuilder: (context, i) {
                               final businessIndex = _filteredBusinessIndices[i];
@@ -1912,8 +1902,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                     boxShadow: [
                                       BoxShadow(
                                         color: selected
-                                            ? AppColors.primary.withOpacity(0.3)
-                                            : Colors.black.withOpacity(0.08),
+                                            ? AppColors.primary.withValues(alpha: 0.3)
+                                            : Colors.black.withValues(alpha: 0.08),
                                         blurRadius: selected ? 12 : 6,
                                         offset: const Offset(0, 3),
                                       ),
@@ -1951,10 +1941,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                         ),
                                         decoration: BoxDecoration(
                                           color: selected
-                                              ? Colors.white.withOpacity(0.25)
-                                              : AppColors.primary.withOpacity(
-                                                  0.1,
-                                                ),
+                                              ? Colors.white.withValues(alpha: 0.25)
+                                              : AppColors.primary.withValues(alpha: 0.1,),
                                           borderRadius: BorderRadius.circular(
                                             8,
                                           ),
@@ -1986,7 +1974,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                       options: MapOptions(
                         initialCenter: _userLocation ?? _initialPosition,
                         initialZoom: 14.0,
-                        onTap: (_, __) {},
+                        onTap: (_, _) {},
                       ),
                       children: [
                         TileLayer(
@@ -2032,12 +2020,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                         shape: BoxShape.circle,
                                         color: const Color(
                                           0xFF60A5FA,
-                                        ).withOpacity(0.18),
+                                        ).withValues(alpha: 0.18),
                                         boxShadow: [
                                           BoxShadow(
                                             color: const Color(
                                               0xFF60A5FA,
-                                            ).withOpacity(0.28),
+                                            ).withValues(alpha: 0.28),
                                             blurRadius: 18,
                                             spreadRadius: 6,
                                           ),
@@ -2152,7 +2140,7 @@ class _UserDirectionPainter extends CustomPainter {
       ..lineTo(0, size.height)
       ..close();
 
-    canvas.drawShadow(path, Colors.black.withOpacity(0.18), 3, false);
+    canvas.drawShadow(path, Colors.black.withValues(alpha: 0.18), 3, false);
     canvas.drawPath(path, fillPaint);
     canvas.drawPath(path, strokePaint);
   }

@@ -4,7 +4,7 @@ class SellerDashboardCardShell extends StatelessWidget {
   const SellerDashboardCardShell({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.all(20),
+    this.padding = const EdgeInsets.all(16),
   });
 
   final Widget child;
@@ -16,7 +16,7 @@ class SellerDashboardCardShell extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE5E7EB)),
         boxShadow: const [
           BoxShadow(
@@ -45,15 +45,15 @@ class SellerDashboardStatusCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 34,
-                height: 34,
+                width: 30,
+                height: 30,
                 decoration: BoxDecoration(
                   color: data['iconBackground'] as Color,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   data['icon'] as IconData,
-                  size: 18,
+                  size: 16,
                   color: data['iconColor'] as Color,
                 ),
               ),
@@ -62,36 +62,36 @@ class SellerDashboardStatusCard extends StatelessWidget {
                 data['trend'] as String,
                 style: TextStyle(
                   color: data['trendColor'] as Color,
-                  fontSize: 15,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text(
             data['title'] as String,
             style: const TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             data['value'] as String,
             style: const TextStyle(
               color: Color(0xFF0F172A),
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             data['subtitle'] as String,
             style: const TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -115,15 +115,15 @@ class SellerDashboardRevenueCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 34,
-                height: 34,
+                width: 30,
+                height: 30,
                 decoration: BoxDecoration(
                   color: data['iconBackground'] as Color,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   data['icon'] as IconData,
-                  size: 18,
+                  size: 16,
                   color: data['iconColor'] as Color,
                 ),
               ),
@@ -132,36 +132,36 @@ class SellerDashboardRevenueCard extends StatelessWidget {
                 data['trend'] as String,
                 style: TextStyle(
                   color: data['trendColor'] as Color,
-                  fontSize: 22,
+                  fontSize: 15,
                   fontWeight: FontWeight.w700,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Text(
             data['title'] as String,
             style: const TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            data['value'] as String,
-            style: const TextStyle(
-              color: Color(0xFF0F172A),
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 6),
           Text(
+            data['value'] as String,
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
             data['subtitle'] as String,
             style: const TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -189,12 +189,12 @@ class SellerDashboardRangeChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(10),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFFF1F5F9) : const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: selected ? const Color(0xFFE2E8F0) : const Color(0xFFF1F5F9),
           ),
@@ -203,14 +203,14 @@ class SellerDashboardRangeChip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 16, color: const Color(0xFF64748B)),
-              const SizedBox(width: 8),
+              Icon(icon, size: 14, color: const Color(0xFF64748B)),
+              const SizedBox(width: 6),
             ],
             Text(
               label,
               style: TextStyle(
                 color: const Color(0xFF475569),
-                fontSize: 14,
+                fontSize: 12,
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
               ),
             ),
@@ -236,7 +236,7 @@ class SellerDashboardMetricInline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(right: 18),
+      padding: const EdgeInsets.only(right: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -244,16 +244,16 @@ class SellerDashboardMetricInline extends StatelessWidget {
             title,
             style: const TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             value,
             style: TextStyle(
               color: color,
-              fontSize: 16,
+              fontSize: 14,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -270,8 +270,8 @@ class SellerDashboardInlineDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 1,
-      height: 36,
-      margin: const EdgeInsets.only(right: 18),
+      height: 30,
+      margin: const EdgeInsets.only(right: 14),
       color: const Color(0xFFE5E7EB),
     );
   }
@@ -292,7 +292,7 @@ class SellerDashboardLegendPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: outlined ? color.withValues(alpha: 0.08) : Colors.white,
         borderRadius: BorderRadius.circular(999),
@@ -302,16 +302,16 @@ class SellerDashboardLegendPill extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 9,
-            height: 9,
+            width: 8,
+            height: 8,
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Text(
             label,
             style: const TextStyle(
               color: Color(0xFF475569),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -350,24 +350,24 @@ class SellerDashboardPerformanceCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 34,
-            height: 34,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
               color: iconBackground,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, size: 18, color: iconColor),
+            child: Icon(icon, size: 16, color: iconColor),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text(
             title,
             style: const TextStyle(
               color: Color(0xFF64748B),
-              fontSize: 14,
+              fontSize: 12.5,
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           RichText(
             text: TextSpan(
               children: [
@@ -375,7 +375,7 @@ class SellerDashboardPerformanceCard extends StatelessWidget {
                   text: value,
                   style: const TextStyle(
                     color: Color(0xFF0F172A),
-                    fontSize: 18,
+                    fontSize: 16,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -383,14 +383,14 @@ class SellerDashboardPerformanceCard extends StatelessWidget {
                   text: valueSuffix,
                   style: const TextStyle(
                     color: Color(0xFF94A3B8),
-                    fontSize: 14,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           ClipRRect(
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(

@@ -372,7 +372,11 @@ class OrderDetailPage extends StatelessWidget {
             radius: 20,
             backgroundColor: const Color(0xFFF3F0FF),
             backgroundImage: (storeLogo != null && storeLogo.isNotEmpty)
-                ? ResizeImage.resizeIfNeeded(80, 80, NetworkImage(storeLogo))
+                ? OptimizedImage.buildProvider(
+                    imageUrlOrPath: storeLogo,
+                    cacheWidth: 80,
+                    cacheHeight: 80,
+                  )
                 : null,
             child: (storeLogo != null && storeLogo.isNotEmpty)
                 ? null
@@ -845,8 +849,8 @@ class OrderDetailPage extends StatelessWidget {
     }
 
     if (path.startsWith('http')) {
-      return OptimizedImage(imageUrlOrPath: 
-        path,
+      return OptimizedImage(
+        imageUrlOrPath: path,
         fit: BoxFit.cover,
         errorBuilder: (_, _, _) => Container(
           color: const Color(0xFFF3F4F6),
@@ -1156,7 +1160,7 @@ class OrderDetailPage extends StatelessWidget {
                       ),
                       const SizedBox(height: 14),
                       DropdownButtonFormField<String>(
-                        value: selectedDamage,
+                        initialValue: selectedDamage,
                         decoration: InputDecoration(
                           labelText: 'Hasar sınıfı',
                           border: OutlineInputBorder(
@@ -1382,12 +1386,11 @@ class OrderDetailPage extends StatelessWidget {
     final request = await OrderService.instance.getLatestReturnRequestForItem(
       orderItemId: orderItemId,
     );
+    if (!context.mounted) return false;
     if (request == null) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('İade kaydı bulunamadı.')));
-      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('İade kaydı bulunamadı.')));
       return false;
     }
     final requestId = request['id']?.toString() ?? '';

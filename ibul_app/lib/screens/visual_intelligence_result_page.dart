@@ -171,11 +171,16 @@ class _VisualIntelligenceResultPageState
 
   int _similarScore(DBProduct candidate, DBProduct detected) {
     int score = 0;
-    if (candidate.category == detected.category) score += 4;
-    if (candidate.subCategory != null &&
-        candidate.subCategory == detected.subCategory)
+    if (candidate.category == detected.category) {
       score += 4;
-    if (candidate.brand == detected.brand) score += 3;
+    }
+    if (candidate.subCategory != null &&
+        candidate.subCategory == detected.subCategory) {
+      score += 4;
+    }
+    if (candidate.brand == detected.brand) {
+      score += 3;
+    }
 
     final dTokens = _significantModelTokens(detected);
     final cText = _normalizeText(
@@ -241,7 +246,7 @@ class _VisualIntelligenceResultPageState
             }
           }
         } catch (e) {
-          print('Error in visual matching: $e');
+          debugPrint('Error in visual matching: $e');
         }
       }
 
@@ -257,10 +262,13 @@ class _VisualIntelligenceResultPageState
           );
           int score = 0;
           for (final t in hintTokens) {
-            if (text.contains(t)) score += 2;
+            if (text.contains(t)) {
+              score += 2;
+            }
           }
-          if (widget.mode == VisualIntelligenceMode.parts && !p.isPart)
+          if (widget.mode == VisualIntelligenceMode.parts && !p.isPart) {
             score += 1;
+          }
           return MapEntry(p, score);
         }).toList()..sort((a, b) => b.value.compareTo(a.value));
 
@@ -340,7 +348,7 @@ class _VisualIntelligenceResultPageState
         });
       }
     } catch (e) {
-      print('Error in visual intelligence simulation: $e');
+      debugPrint('Error in visual intelligence simulation: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -452,7 +460,7 @@ class _VisualIntelligenceResultPageState
                                   borderRadius: BorderRadius.circular(12),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.grey.withOpacity(0.2),
+                                      color: Colors.grey.withValues(alpha: 0.2),
                                       blurRadius: 8,
                                       offset: const Offset(0, 2),
                                     ),

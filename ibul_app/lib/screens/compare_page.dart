@@ -235,7 +235,7 @@ class ComparePage extends StatelessWidget {
                   ),
                 ),
               ),
-            )).toList(),
+            )),
           ],
         ),
       ),

@@ -14,10 +14,10 @@ class DesktopLayout extends StatefulWidget {
   final String? title;
 
   const DesktopLayout({
-    Key? key,
+    super.key,
     this.content,
     this.title,
-  }) : super(key: key);
+  });
 
   @override
   State<DesktopLayout> createState() => _DesktopLayoutState();
@@ -64,9 +64,9 @@ class DesktopHeader extends StatelessWidget {
   final String? title;
 
   const DesktopHeader({
-    Key? key,
+    super.key,
     this.title,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +76,7 @@ class DesktopHeader extends StatelessWidget {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -234,7 +234,7 @@ class _NavItemState extends State<_NavItem> {
 
 /// Desktop Sidebar Widget
 class DesktopSidebar extends StatelessWidget {
-  const DesktopSidebar({Key? key}) : super(key: key);
+  const DesktopSidebar({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -421,7 +421,7 @@ class _FilterSection extends StatelessWidget {
 
 /// Desktop Footer Widget
 class DesktopFooter extends StatelessWidget {
-  const DesktopFooter({Key? key}) : super(key: key);
+  const DesktopFooter({super.key});
 
   @override
   Widget build(BuildContext context) {

@@ -274,25 +274,17 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
                   padding: const EdgeInsets.symmetric(horizontal: 11),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: _searchFocusNode.hasFocus
-                          ? AppColors.primary.withValues(alpha: 0.35)
-                          : const Color(0xFFD8DCE6),
+                          ? AppColors.primary
+                          : AppColors.primary.withValues(alpha: 0.35),
+                      width: 1.0,
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: _searchFocusNode.hasFocus
-                            ? AppColors.primary.withValues(alpha: 0.12)
-                            : Colors.black.withValues(alpha: 0.03),
-                        blurRadius: _searchFocusNode.hasFocus ? 12 : 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
                   ),
                   child: Row(
                     children: [
-                      InkWell(
+                      GestureDetector(
                         onTap: () {
                           if (_searchFocusNode.hasFocus) {
                             _closeSearchOverlay();
@@ -300,19 +292,10 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
                           }
                           _searchFocusNode.requestFocus();
                         },
-                        borderRadius: BorderRadius.circular(999),
-                        child: Container(
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.12),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.search_rounded,
-                            color: AppColors.primary,
-                            size: 14,
-                          ),
+                        child: const Icon(
+                          Icons.search_rounded,
+                          color: AppColors.primary,
+                          size: 18,
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -390,6 +373,7 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
                 );
               },
               tooltip: 'Kamera',
+              accent: true,
             ),
           ],
         ),
@@ -403,6 +387,7 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
     required String tooltip,
     bool filled = false,
     bool borderless = false,
+    bool accent = false,
     Color? iconColor,
     int badgeCount = 0,
   }) {
@@ -413,14 +398,16 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: borderless
+            color: accent
                 ? Colors.transparent
-                : (filled ? AppColors.primary : Colors.white),
+                : borderless
+                    ? Colors.transparent
+                    : (filled ? AppColors.primary : Colors.white),
             shape: BoxShape.circle,
-            border: borderless || filled
+            border: accent || borderless || filled
                 ? null
                 : Border.all(color: const Color(0xFFDADDE6)),
-            boxShadow: borderless
+            boxShadow: accent || borderless
                 ? const []
                 : [
                     BoxShadow(
@@ -436,9 +423,10 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
             padding: EdgeInsets.zero,
             icon: Icon(
               icon,
-              color:
-                  iconColor ??
-                  (filled ? Colors.white : const Color(0xFF545E70)),
+              color: accent
+                  ? AppColors.primary
+                  : iconColor ??
+                      (filled ? Colors.white : const Color(0xFF545E70)),
               size: 22,
             ),
             onPressed: onPressed,

@@ -52,12 +52,22 @@ class PrintJobModel {
   }
 
   String get tableName => payload['table_name']?.toString() ?? '-';
-  String get stationName => payload['station_name']?.toString() ?? '-';
-  String get printerName => payload['printer_name']?.toString() ?? '-';
+  String get stationName {
+    final value = payload['station_name']?.toString().trim() ?? '';
+    return value.isEmpty ? 'Genel' : value;
+  }
+
+  String get printerName {
+    final value = payload['printer_name']?.toString().trim() ?? '';
+    return value.isEmpty ? 'Yerel Yazici' : value;
+  }
+
   String get orderNo =>
       payload['order_no']?.toString() ??
       payload['order_number']?.toString() ??
       '-';
+  int get itemCount =>
+      payload['items'] is List ? (payload['items'] as List).length : 0;
 
   Map<String, dynamic> toMap() {
     return {

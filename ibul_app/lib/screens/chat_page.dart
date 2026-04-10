@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
 import '../core/chat_state.dart';
+import '../widgets/optimized_image.dart';
 
 class ChatPage extends StatefulWidget {
   final Map<String, dynamic> seller;
   final Map<String, dynamic>? product; // Optional product
   final bool isSellerChat; // True for official seller, False for user-to-user
-  final String? initialMessage; // Optional initial message to send automatically
+  final String?
+  initialMessage; // Optional initial message to send automatically
 
   const ChatPage({
     super.key,
@@ -31,11 +33,12 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _loadMessages() {
-    final sellerId = widget.seller['id']?.toString() ?? widget.seller['name'] ?? 'unknown';
+    final sellerId =
+        widget.seller['id']?.toString() ?? widget.seller['name'] ?? 'unknown';
     final productName = widget.product?['name'];
-    
+
     final savedMessages = ChatState().getMessages(sellerId, productName);
-    
+
     if (savedMessages.isNotEmpty) {
       setState(() {
         _messages.addAll(savedMessages);
@@ -48,7 +51,8 @@ class _ChatPageState extends State<ChatPage> {
         'time': '12:18',
       });
       _messages.add({
-        'text': 'Yakın lokasyonda olduğunuz için tahmini 4 saat içersinde kurye ürününüzü size iletecektir',
+        'text':
+            'Yakın lokasyonda olduğunuz için tahmini 4 saat içersinde kurye ürününüzü size iletecektir',
         'isSender': true,
         'time': '14:58',
       });
@@ -63,7 +67,7 @@ class _ChatPageState extends State<ChatPage> {
         'isSender': true,
         'time': timestamp,
       };
-      
+
       setState(() {
         _messages.add(messageMap);
       });
@@ -90,24 +94,21 @@ class _ChatPageState extends State<ChatPage> {
 
   void _sendMessage() {
     if (_messageController.text.trim().isEmpty) return;
-    
+
     final message = _messageController.text;
     final now = DateTime.now();
     final timestamp = '${now.hour}:${now.minute.toString().padLeft(2, '0')}';
-    
-    final messageMap = {
-      'text': message,
-      'isSender': true,
-      'time': timestamp,
-    };
+
+    final messageMap = {'text': message, 'isSender': true, 'time': timestamp};
 
     setState(() {
       _messages.add(messageMap);
     });
-    
+
     // Save to chat state
     ChatState().addOrUpdateChat(
-      sellerId: widget.seller['id']?.toString() ?? widget.seller['name'] ?? 'unknown',
+      sellerId:
+          widget.seller['id']?.toString() ?? widget.seller['name'] ?? 'unknown',
       sellerName: widget.seller['name'] ?? 'Satıcı',
       sellerLogo: widget.seller['logo'] ?? 'S',
       productName: widget.product?['name'],
@@ -116,27 +117,31 @@ class _ChatPageState extends State<ChatPage> {
       timestamp: '${now.day}/${now.month}/${now.year} $timestamp',
       fullMessage: messageMap,
     );
-    
+
     _messageController.clear();
-    
+
     // Auto-reply from seller after 1 second
     Future.delayed(const Duration(seconds: 1), () {
       if (mounted) {
         final replyTime = DateTime.now();
-        final replyTimestamp = '${replyTime.hour}:${replyTime.minute.toString().padLeft(2, '0')}';
+        final replyTimestamp =
+            '${replyTime.hour}:${replyTime.minute.toString().padLeft(2, '0')}';
         final replyMap = {
           'text': 'Merhaba, size nasıl yardımcı olabilirim?',
           'isSender': false,
           'time': replyTimestamp,
         };
-        
+
         setState(() {
           _messages.add(replyMap);
         });
-        
+
         // Save reply to chat state
         ChatState().addOrUpdateChat(
-          sellerId: widget.seller['id']?.toString() ?? widget.seller['name'] ?? 'unknown',
+          sellerId:
+              widget.seller['id']?.toString() ??
+              widget.seller['name'] ??
+              'unknown',
           sellerName: widget.seller['name'] ?? 'Satıcı',
           sellerLogo: widget.seller['logo'] ?? 'S',
           productName: widget.product?['name'],
@@ -153,7 +158,7 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     // If no messages yet and product exists, show initial product question screen
     final bool showInitialScreen = _messages.isEmpty && widget.product != null;
-    
+
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
@@ -169,10 +174,7 @@ class _ChatPageState extends State<ChatPage> {
             if (widget.isSellerChat)
               Text(
                 'Satıcı',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
               ),
             Row(
               children: [
@@ -219,10 +221,7 @@ class _ChatPageState extends State<ChatPage> {
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
-              children: [
-                _buildProductCardInitial(),
-                const Spacer(),
-              ],
+              children: [_buildProductCardInitial(), const Spacer()],
             ),
           ),
         ),
@@ -244,7 +243,7 @@ class _ChatPageState extends State<ChatPage> {
               if (widget.product != null && index == 0) {
                 return _buildProductCard();
               }
-              
+
               final messageIndex = widget.product != null ? index - 1 : index;
               final message = _messages[messageIndex];
               return _buildMessageBubble(
@@ -255,7 +254,7 @@ class _ChatPageState extends State<ChatPage> {
             },
           ),
         ),
-        
+
         // Input Area
         _buildInputArea(),
       ],
@@ -264,82 +263,87 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildInputArea() {
     return Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, -2),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            // Message Input
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.grey.shade300),
                 ),
-              ],
-            ),
-            child: SafeArea(
-              child: Row(
-                children: [
-                  // Message Input
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[100],
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.grey.shade300),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.search, color: AppColors.primary, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: _messageController,
-                              decoration: InputDecoration(
-                                hintText: 'Soru Sor...',
-                                hintStyle: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[500],
-                                ),
-                                border: InputBorder.none,
-                              ),
-                              maxLines: null,
-                            ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.search,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _messageController,
+                        decoration: InputDecoration(
+                          hintText: 'Soru Sor...',
+                          hintStyle: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[500],
                           ),
-                        ],
+                          border: InputBorder.none,
+                        ),
+                        maxLines: null,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Send Button
-                  GestureDetector(
-                    onTap: _sendMessage,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: const BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.arrow_forward,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
+            const SizedBox(width: 8),
+            // Send Button
+            GestureDetector(
+              onTap: _sendMessage,
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.arrow_forward,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _buildProductCardInitial() {
     if (widget.product == null) return const SizedBox.shrink();
-    
+
     final now = DateTime.now();
-    final timestamp = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}\n${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final timestamp =
+        '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}\n${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     final hasMessages = _messages.isNotEmpty;
-    
+
     return GestureDetector(
       onTap: () {
         // Navigate to product page
@@ -364,11 +368,11 @@ class _ChatPageState extends State<ChatPage> {
                 borderRadius: BorderRadius.circular(8),
                 image: widget.product!['image'] != null
                     ? DecorationImage(
-                        image: ResizeImage.resizeIfNeeded(
-                          210,
-                          270,
-                          NetworkImage(widget.product!['image']),
-                        ),
+                        image: OptimizedImage.buildProvider(
+                          imageUrlOrPath: widget.product!['image'],
+                          cacheWidth: 210,
+                          cacheHeight: 270,
+                        )!,
                         fit: BoxFit.cover,
                       )
                     : null,
@@ -408,10 +412,7 @@ class _ChatPageState extends State<ChatPage> {
                       const SizedBox(width: 4),
                       Text(
                         '62 Değerlendirme',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                        ),
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                       ),
                     ],
                   ),
@@ -424,14 +425,14 @@ class _ChatPageState extends State<ChatPage> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: hasMessages ? AppColors.primary : Colors.white,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: AppColors.primary,
-                      width: 1,
-                    ),
+                    border: Border.all(color: AppColors.primary, width: 1),
                   ),
                   child: Text(
                     hasMessages ? 'Yanıtlandı' : 'Yanıtlanmadı',
@@ -462,11 +463,12 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildProductCard() {
     if (widget.product == null) return const SizedBox.shrink();
-    
+
     final now = DateTime.now();
-    final timestamp = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}\n${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final timestamp =
+        '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}\n${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     final hasMessages = _messages.isNotEmpty;
-    
+
     return GestureDetector(
       onTap: () {
         // Navigate to product page
@@ -492,11 +494,11 @@ class _ChatPageState extends State<ChatPage> {
                 borderRadius: BorderRadius.circular(8),
                 image: widget.product!['image'] != null
                     ? DecorationImage(
-                        image: ResizeImage.resizeIfNeeded(
-                          210,
-                          270,
-                          NetworkImage(widget.product!['image']),
-                        ),
+                        image: OptimizedImage.buildProvider(
+                          imageUrlOrPath: widget.product!['image'],
+                          cacheWidth: 210,
+                          cacheHeight: 270,
+                        )!,
                         fit: BoxFit.cover,
                       )
                     : null,
@@ -536,10 +538,7 @@ class _ChatPageState extends State<ChatPage> {
                       const SizedBox(width: 4),
                       Text(
                         '62 Değerlendirme',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                        ),
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                       ),
                     ],
                   ),
@@ -552,14 +551,14 @@ class _ChatPageState extends State<ChatPage> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: hasMessages ? AppColors.primary : Colors.white,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: AppColors.primary,
-                      width: 1,
-                    ),
+                    border: Border.all(color: AppColors.primary, width: 1),
                   ),
                   child: Text(
                     hasMessages ? 'Yanıtlandı' : 'Yanıtlanmadı',
@@ -592,7 +591,9 @@ class _ChatPageState extends State<ChatPage> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
-        crossAxisAlignment: isSender ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isSender
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           Container(
             constraints: BoxConstraints(
@@ -613,13 +614,7 @@ class _ChatPageState extends State<ChatPage> {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            time,
-            style: TextStyle(
-              fontSize: 11,
-              color: Colors.grey[500],
-            ),
-          ),
+          Text(time, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
         ],
       ),
     );

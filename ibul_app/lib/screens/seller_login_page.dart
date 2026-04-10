@@ -4,6 +4,7 @@ import '../core/constants.dart';
 import 'become_seller_page.dart';
 import '../services/auth_service.dart';
 import 'seller/admin_panel_page.dart';
+import 'seller_panel_page.dart';
 
 class SellerLoginPage extends StatefulWidget {
   const SellerLoginPage({super.key, this.adminMode = false});
@@ -14,7 +15,8 @@ class SellerLoginPage extends StatefulWidget {
   State<SellerLoginPage> createState() => _SellerLoginPageState();
 }
 
-class _SellerLoginPageState extends State<SellerLoginPage> {
+class _SellerLoginPageState extends State<SellerLoginPage>
+    with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -22,8 +24,31 @@ class _SellerLoginPageState extends State<SellerLoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
 
+  late final AnimationController _animController;
+  late final Animation<double> _fadeAnim;
+  late final Animation<Offset> _slideAnim;
+
+  bool _loginPressed = false;
+  bool _sellerPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, 0.06),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _animController, curve: Curves.easeOut));
+    _animController.forward();
+  }
+
   @override
   void dispose() {
+    _animController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -48,20 +73,15 @@ class _SellerLoginPageState extends State<SellerLoginPage> {
           authArea: widget.adminMode ? 'admin' : 'seller',
         );
 
-        // 2. Check User Role and Status
-        // Add a small delay to ensure Firestore data is propagated if it was just created (rare case but good safety)
-        await Future.delayed(const Duration(milliseconds: 500));
-
-        final role = await _authService.getUserDataField('role');
-        // Check both camelCase and snake_case just in case, but DB uses snake_case
-        final isSellerApproved = await _authService.getUserDataField(
-          'is_seller_approved',
+        final resolution = await _authService.resolveLoginRoute(
+          diagnosticContext: widget.adminMode ? 'admin_login' : 'seller_login',
+          includeStoreProfile: !widget.adminMode,
         );
 
         if (!mounted) return;
 
         if (widget.adminMode) {
-          if (AuthService.isAdminRole(role?.toString())) {
+          if (resolution.resolvedRole == LoginResolvedRole.admin) {
             Navigator.pushReplacement(
               context,
               buildAppPageRoute<void>(
@@ -72,13 +92,16 @@ class _SellerLoginPageState extends State<SellerLoginPage> {
           }
 
           await _authService.signOut();
-          throw Exception('Bu hesap admin degil. Rol: $role');
+          throw Exception(
+            'Bu hesap admin degil. Rol: ${resolution.rawRole ?? 'unknown'}',
+          );
         }
 
-        if (role == 'seller') {
-          if (isSellerApproved == true) {
+        if (resolution.resolvedRole == LoginResolvedRole.seller) {
+          if (resolution.isSellerApproved) {
             Navigator.of(
               context,
+              rootNavigator: true,
             ).pushNamedAndRemoveUntil('/seller', (route) => false);
             return;
           } else {
@@ -88,13 +111,21 @@ class _SellerLoginPageState extends State<SellerLoginPage> {
               'Satıcı hesabınız henüz onaylanmadı. Lütfen yönetici onayını bekleyin.',
             );
           }
-        } else {
-          // Not a seller
-          await _authService.signOut();
-          throw Exception(
-            'Bu e-posta adresi bir satıcı hesabına ait değil. Rol: $role',
-          );
         }
+
+        if (resolution.resolvedRole == LoginResolvedRole.waiter) {
+          Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
+            '/seller',
+            (route) => false,
+            arguments: SellerPanelEntryRole.waiter,
+          );
+          return;
+        }
+
+        await _authService.signOut();
+        throw Exception(
+          'Bu e-posta adresi seller/garson hesabına ait değil. Rol: ${resolution.rawRole ?? 'unknown'}',
+        );
       } catch (e) {
         if (hadExistingUserSession) {
           try {
@@ -125,254 +156,480 @@ class _SellerLoginPageState extends State<SellerLoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    final pageTitle = widget.adminMode ? 'Admin Girişi' : 'Satıcı Girişi';
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isCompactMobile = screenWidth < 390;
+    final hPad = isCompactMobile ? 20.0 : 24.0;
+
+    // ── seller-specific strings ──────────────────────────────
     final panelTitle = widget.adminMode
         ? 'Admin Paneline Giriş'
         : 'Satıcı Paneline Giriş';
     final subtitle = widget.adminMode
         ? 'Admin yetkileriyle devam etmek için giriş yapın.'
         : 'Mağazanızı yönetmek için giriş yapın.';
-    final icon = widget.adminMode
+    final heroIcon = widget.adminMode
         ? Icons.admin_panel_settings_outlined
-        : Icons.store_mall_directory;
+        : Icons.store_mall_directory_outlined;
     final emailHint = widget.adminMode ? 'admin@ibul.com' : 'magaza@ornek.com';
+
+    // ── colour tokens ─────────────────────────────────────────
+    const primary = AppColors.primary;
+    final primaryLight = primary.withValues(alpha: 0.10);
+    final purpleBorder = primary.withValues(alpha: 0.25);
+    const textDark = Color(0xFF111827);
+    const textMid = Color(0xFF6B7280);
+    const grey200 = Color(0xFFE5E7EB);
+
+    // ── field decoration factory ───────────────────────────────────
+    InputDecoration fieldDeco({
+      required String label,
+      required String hint,
+      required Widget prefix,
+      Widget? suffix,
+    }) => InputDecoration(
+      labelText: label,
+      hintText: hint,
+      labelStyle: const TextStyle(fontSize: 13, color: textMid),
+      hintStyle: TextStyle(
+        fontSize: 13,
+        color: textMid.withValues(alpha: 0.55),
+      ),
+      prefixIcon: prefix,
+      suffixIcon: suffix,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: BorderSide(color: purpleBorder, width: 1.2),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: const BorderSide(color: primary, width: 1.8),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.2),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.8),
+      ),
+    );
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: Text(
-          pageTitle,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: AppColors.primary,
-          ),
-        ),
-        centerTitle: true,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.primary),
-      ),
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 450),
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 20),
-                      // Logo veya İkon
-                      Center(
-                        child: Container(
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(icon, size: 50, color: AppColors.primary),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Text(
-                        panelTitle,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1F2937),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        subtitle,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                      const SizedBox(height: 40),
-
-                      // Email / Phone Field
-                      TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.next,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        decoration: InputDecoration(
-                          labelText: 'E-posta',
-                          hintText: emailHint,
-                          prefixIcon: const Icon(
-                            Icons.email_outlined,
-                            color: Colors.grey,
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey.shade50,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.grey.shade200),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                              color: AppColors.primary,
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Lütfen e-posta adresinizi girin';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Password Field
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        textInputAction: TextInputAction.done,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        decoration: InputDecoration(
-                          labelText: 'Şifre',
-                          hintText: '********',
-                          prefixIcon: const Icon(
-                            Icons.lock_outline,
-                            color: Colors.grey,
-                          ),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword
-                                  ? Icons.visibility_outlined
-                                  : Icons.visibility_off_outlined,
-                              color: Colors.grey,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey.shade50,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.grey.shade200),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                              color: AppColors.primary,
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Lütfen şifrenizi girin';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 32),
-
-                      // Login Button
-                      SizedBox(
-                        height: 56,
-                        child: ElevatedButton(
-                          onPressed: _isLoading ? null : _handleLogin,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            elevation: 2,
-                            shadowColor: AppColors.primary.withOpacity(0.4),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text(
-                                  'GİRİŞ YAP',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 1,
-                                  ),
-                                ),
-                        ),
-                      ),
-
-                      if (!widget.adminMode) ...[
-                        const SizedBox(height: 16),
-
-                        SizedBox(
-                          height: 56,
-                          child: OutlinedButton(
-                            onPressed: _isLoading
-                                ? null
-                                : () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const BecomeSellerPage(),
-                                      ),
-                                    );
-                                  },
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.primary,
-                              side: const BorderSide(
-                                color: AppColors.primary,
-                                width: 2,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              backgroundColor: Colors.white,
-                              elevation: 0,
-                            ),
-                            child: const Text(
-                              'SATICI OL / BAŞVUR',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── TOP NAV ROW ─────────────────────────────────
+            Padding(
+              padding: EdgeInsets.only(left: hPad - 8, top: 6),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.maybePop(context),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 18,
+                      color: textDark.withValues(alpha: 0.6),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+            // ── SCROLLABLE CONTENT ───────────────────────────
+            Expanded(
+              child: FadeTransition(
+                opacity: _fadeAnim,
+                child: SlideTransition(
+                  position: _slideAnim,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: hPad,
+                        vertical: 24,
+                      ),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // ── HERO ───────────────────────────────────
+                              Center(
+                                child: Container(
+                                  width: isCompactMobile ? 76 : 84,
+                                  height: isCompactMobile ? 76 : 84,
+                                  decoration: BoxDecoration(
+                                    color: primaryLight,
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: primary.withValues(alpha: 0.12),
+                                        blurRadius: 20,
+                                        offset: const Offset(0, 6),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Icon(
+                                    heroIcon,
+                                    size: isCompactMobile ? 36 : 40,
+                                    color: primary,
+                                  ),
+                                ),
+                              ),
+
+                              SizedBox(height: isCompactMobile ? 18 : 20),
+
+                              // ── TITLE ───────────────────────────────────
+                              Text(
+                                panelTitle,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: isCompactMobile ? 20 : 22,
+                                  fontWeight: FontWeight.w700,
+                                  color: textDark,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+
+                              const SizedBox(height: 6),
+
+                              Text(
+                                subtitle,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: isCompactMobile ? 13 : 14,
+                                  color: textMid.withValues(alpha: 0.75),
+                                  height: 1.4,
+                                ),
+                              ),
+
+                              SizedBox(height: isCompactMobile ? 28 : 32),
+
+                              // ── EMAIL ───────────────────────────────────
+                              TextFormField(
+                                controller: _emailController,
+                                keyboardType: TextInputType.emailAddress,
+                                textInputAction: TextInputAction.next,
+                                autocorrect: false,
+                                enableSuggestions: false,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: textDark,
+                                ),
+                                decoration: fieldDeco(
+                                  label: 'E-posta',
+                                  hint: emailHint,
+                                  prefix: const Icon(
+                                    Icons.email_outlined,
+                                    size: 18,
+                                    color: textMid,
+                                  ),
+                                ),
+                                validator: (v) {
+                                  if (v == null || v.trim().isEmpty) {
+                                    return 'Lütfen e-posta adresinizi girin';
+                                  }
+                                  return null;
+                                },
+                              ),
+
+                              const SizedBox(height: 12),
+
+                              // ── PASSWORD ───────────────────────────────────
+                              TextFormField(
+                                controller: _passwordController,
+                                obscureText: _obscurePassword,
+                                textInputAction: TextInputAction.done,
+                                autocorrect: false,
+                                enableSuggestions: false,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: textDark,
+                                ),
+                                decoration: fieldDeco(
+                                  label: 'Şifre',
+                                  hint: '••••••••',
+                                  prefix: const Icon(
+                                    Icons.lock_outline_rounded,
+                                    size: 18,
+                                    color: textMid,
+                                  ),
+                                  suffix: IconButton(
+                                    icon: Icon(
+                                      _obscurePassword
+                                          ? Icons.visibility_outlined
+                                          : Icons.visibility_off_outlined,
+                                      size: 18,
+                                      color: textMid,
+                                    ),
+                                    onPressed: () => setState(
+                                      () =>
+                                          _obscurePassword = !_obscurePassword,
+                                    ),
+                                  ),
+                                ),
+                                validator: (v) {
+                                  if (v == null || v.trim().isEmpty) {
+                                    return 'Lütfen şifrenizi girin';
+                                  }
+                                  return null;
+                                },
+                              ),
+
+                              SizedBox(height: isCompactMobile ? 20 : 24),
+
+                              // ── PRIMARY ACTIONS ────────────────────────────
+                              if (widget.adminMode)
+                                // Admin: single full-width gradient button
+                                GestureDetector(
+                                  onTapDown: (_) =>
+                                      setState(() => _loginPressed = true),
+                                  onTapUp: (_) =>
+                                      setState(() => _loginPressed = false),
+                                  onTapCancel: () =>
+                                      setState(() => _loginPressed = false),
+                                  onTap: _isLoading ? null : _handleLogin,
+                                  child: AnimatedScale(
+                                    scale: _loginPressed ? 0.97 : 1.0,
+                                    duration: const Duration(milliseconds: 80),
+                                    child: Container(
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(12),
+                                        gradient: const LinearGradient(
+                                          colors: [
+                                            Color(0xFF8B3FF5),
+                                            Color(0xFF6A1FD8),
+                                          ],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: primary.withValues(
+                                              alpha: 0.28,
+                                            ),
+                                            blurRadius: 10,
+                                            offset: const Offset(0, 4),
+                                          ),
+                                        ],
+                                      ),
+                                      alignment: Alignment.center,
+                                      child: _isLoading
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                color: Colors.white,
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Text(
+                                              'Giriş Yap',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                                color: Colors.white,
+                                                letterSpacing: 0.2,
+                                              ),
+                                            ),
+                                    ),
+                                  ),
+                                )
+                              else
+                                // Seller: two-column row
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTapDown: (_) => setState(
+                                          () => _loginPressed = true,
+                                        ),
+                                        onTapUp: (_) => setState(
+                                          () => _loginPressed = false,
+                                        ),
+                                        onTapCancel: () => setState(
+                                          () => _loginPressed = false,
+                                        ),
+                                        onTap: _isLoading ? null : _handleLogin,
+                                        child: AnimatedScale(
+                                          scale: _loginPressed ? 0.97 : 1.0,
+                                          duration: const Duration(
+                                            milliseconds: 80,
+                                          ),
+                                          child: Container(
+                                            height: 44,
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              gradient: const LinearGradient(
+                                                colors: [
+                                                  Color(0xFF8B3FF5),
+                                                  Color(0xFF6A1FD8),
+                                                ],
+                                                begin: Alignment.topLeft,
+                                                end: Alignment.bottomRight,
+                                              ),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: primary.withValues(
+                                                    alpha: 0.28,
+                                                  ),
+                                                  blurRadius: 10,
+                                                  offset: const Offset(0, 4),
+                                                ),
+                                              ],
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: _isLoading
+                                                ? const SizedBox(
+                                                    width: 20,
+                                                    height: 20,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          color: Colors.white,
+                                                          strokeWidth: 2,
+                                                        ),
+                                                  )
+                                                : const Text(
+                                                    'Giriş Yap',
+                                                    style: TextStyle(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color: Colors.white,
+                                                      letterSpacing: 0.2,
+                                                    ),
+                                                  ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTapDown: (_) => setState(
+                                          () => _sellerPressed = true,
+                                        ),
+                                        onTapUp: (_) => setState(
+                                          () => _sellerPressed = false,
+                                        ),
+                                        onTapCancel: () => setState(
+                                          () => _sellerPressed = false,
+                                        ),
+                                        onTap: _isLoading
+                                            ? null
+                                            : () => Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      const BecomeSellerPage(),
+                                                ),
+                                              ),
+                                        child: AnimatedScale(
+                                          scale: _sellerPressed ? 0.97 : 1.0,
+                                          duration: const Duration(
+                                            milliseconds: 80,
+                                          ),
+                                          child: Container(
+                                            height: 44,
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              border: Border.all(
+                                                color: primary,
+                                                width: 1.5,
+                                              ),
+                                              color: Colors.white,
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              'Satıcı Ol',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                                color: primary,
+                                                letterSpacing: 0.2,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+
+                              // ── DIVIDER (seller only) ────────────────────────
+                              if (!widget.adminMode) ...[
+                                SizedBox(height: isCompactMobile ? 20 : 24),
+                                Row(
+                                  children: [
+                                    const Expanded(
+                                      child: Divider(
+                                        color: grey200,
+                                        thickness: 1,
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                      ),
+                                      child: Text(
+                                        'satıcı başvurusu',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: textMid.withValues(
+                                            alpha: 0.55,
+                                          ),
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                    const Expanded(
+                                      child: Divider(
+                                        color: grey200,
+                                        thickness: 1,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(height: isCompactMobile ? 16 : 20),
+                                Center(
+                                  child: Text(
+                                    'Satıcı olmak için "Satıcı Ol" butonuna tıklayın.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: textMid.withValues(alpha: 0.6),
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ),
+                              ],
+
+                              const SizedBox(height: 8),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

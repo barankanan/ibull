@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
-import '../../core/constants.dart';
 import '../../screens/map_page.dart';
 
 class ProductTabsSection extends StatefulWidget {
@@ -42,7 +40,7 @@ class _ProductTabsSectionState extends State<ProductTabsSection> {
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: viewModel.tabs.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
             itemBuilder: (context, index) {
               final isSelected = viewModel.selectedTabIndex == index;
               return GestureDetector(
@@ -105,8 +103,8 @@ class _ProductTabsSectionState extends State<ProductTabsSection> {
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          const Color(0xFFF5F5F5).withOpacity(0.0),
-                          const Color(0xFFF5F5F5).withOpacity(0.9),
+                          const Color(0xFFF5F5F5).withValues(alpha: 0.0),
+                          const Color(0xFFF5F5F5).withValues(alpha: 0.9),
                           const Color(0xFFF5F5F5),
                         ],
                         stops: const [0.0, 0.3, 1.0],

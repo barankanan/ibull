@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --shell: #f3f4fa;
+  --panel: rgba(255, 255, 255, 0.92);
+  --panel-strong: rgba(255, 255, 255, 0.98);
+  --line: rgba(103, 114, 148, 0.16);
+  --ink: #12131a;
+  --muted: #697083;
+  --plum: #8b4dff;
+  --plum-deep: #5d30b4;
+  --success: #1f9d74;
+  --warning: #d97706;
+  --danger: #e15271;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--shell);
+  background-image:
+    radial-gradient(circle at top left, rgba(166, 119, 255, 0.18), transparent 34%),
+    radial-gradient(circle at 90% 10%, rgba(115, 57, 222, 0.12), transparent 28%),
+    linear-gradient(180deg, #faf8ff 0%, #f2f4fb 100%);
+  color: var(--ink);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(139, 77, 255, 0.18);
+}
+
+.glass-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 30px rgba(20, 23, 33, 0.08);
+  backdrop-filter: blur(16px);
+}
+
+.shell-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(123, 96, 191, 0.28) transparent;
+}
+
+.shell-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.shell-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(123, 96, 191, 0.28);
+}

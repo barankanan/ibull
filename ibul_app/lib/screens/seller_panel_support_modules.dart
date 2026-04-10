@@ -119,8 +119,7 @@ extension _SellerPanelSupportModules on _SellerPanelPageState {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: _buildSupportTicketCard(ticket),
                 ),
-              )
-              .toList(growable: false),
+              ),
       ],
     );
   }

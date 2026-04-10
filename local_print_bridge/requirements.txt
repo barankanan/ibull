@@ -1,0 +1,2 @@
+# This bridge intentionally uses only Python's standard library.
+# No third-party pip package is required for the first working version.

@@ -5,12 +5,14 @@ import '../../core/store_logo_helper.dart';
 import '../../screens/business_detail_page.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../models/product_model.dart';
+import '../skeleton_loading.dart';
 
 class ProductOtherSellersFull extends StatefulWidget {
   const ProductOtherSellersFull({super.key});
 
   @override
-  State<ProductOtherSellersFull> createState() => _ProductOtherSellersFullState();
+  State<ProductOtherSellersFull> createState() =>
+      _ProductOtherSellersFullState();
 }
 
 class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
@@ -24,7 +26,10 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
 
   void _scrollLeft() {
     _scrollController.animateTo(
-      (_scrollController.offset - 280).clamp(0, _scrollController.position.maxScrollExtent),
+      (_scrollController.offset - 280).clamp(
+        0,
+        _scrollController.position.maxScrollExtent,
+      ),
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
     );
@@ -32,7 +37,10 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
 
   void _scrollRight() {
     _scrollController.animateTo(
-      (_scrollController.offset + 280).clamp(0, _scrollController.position.maxScrollExtent),
+      (_scrollController.offset + 280).clamp(
+        0,
+        _scrollController.position.maxScrollExtent,
+      ),
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
     );
@@ -40,13 +48,66 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
 
   @override
   Widget build(BuildContext context) {
-    final viewModel = Provider.of<ProductDetailViewModel>(context);
+    final loadingOtherStores = context.select<ProductDetailViewModel, bool>(
+      (viewModel) => viewModel.loadingOtherStores,
+    );
 
-    if (viewModel.loadingOtherStores) {
-      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    if (loadingOtherStores) {
+      return Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SkeletonLoading(width: 220, height: 22, borderRadius: 8),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 170,
+              child: ListView.separated(
+                controller: _scrollController,
+                scrollDirection: Axis.horizontal,
+                itemCount: 3,
+                separatorBuilder: (context, index) => const SizedBox(width: 12),
+                itemBuilder: (context, index) => Container(
+                  width: 270,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SkeletonLoading(width: 132, height: 16, borderRadius: 6),
+                      SizedBox(height: 10),
+                      SkeletonLoading(width: 88, height: 12, borderRadius: 6),
+                      SizedBox(height: 18),
+                      SkeletonLoading(width: 110, height: 20, borderRadius: 6),
+                      Spacer(),
+                      SkeletonLoading(
+                        width: double.infinity,
+                        height: 34,
+                        borderRadius: 10,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
-    final items = viewModel.otherStoresWithProducts;
+    final items = context
+        .select<ProductDetailViewModel, List<Map<String, dynamic>>>(
+          (viewModel) => viewModel.otherStoresWithProducts,
+        );
     if (items.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -120,7 +181,7 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
                   controller: _scrollController,
                   scrollDirection: Axis.horizontal,
                   itemCount: sellers.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 10),
+                  separatorBuilder: (_, _) => const SizedBox(width: 10),
                   itemBuilder: (context, index) {
                     return _buildSellerCard(sellers[index]);
                   },
@@ -207,7 +268,9 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
                             borderRadius: BorderRadius.circular(4),
                             border: Border.all(color: Colors.grey.shade200),
                             image: DecorationImage(
-                              image: AssetImage(StoreLogoHelper.getStoreLogo(seller.name)!),
+                              image: AssetImage(
+                                StoreLogoHelper.getStoreLogo(seller.name)!,
+                              ),
                               fit: BoxFit.contain,
                             ),
                           ),
@@ -226,7 +289,11 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
                       ),
                       if (seller.isVerified) ...[
                         const SizedBox(width: 3),
-                        const Icon(Icons.verified, size: 14, color: Color(0xFF1565C0)),
+                        const Icon(
+                          Icons.verified,
+                          size: 14,
+                          color: Color(0xFF1565C0),
+                        ),
                       ],
                     ],
                   ),
@@ -235,7 +302,10 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
               if (seller.rating > 0) ...[
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: seller.ratingColor,
                     borderRadius: BorderRadius.circular(10),
@@ -259,10 +329,14 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: seller.badgeColor?.withValues(alpha: 0.1) ?? Colors.green.withValues(alpha: 0.1),
+                color:
+                    seller.badgeColor?.withValues(alpha: 0.1) ??
+                    Colors.green.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(
-                  color: seller.badgeColor?.withValues(alpha: 0.3) ?? Colors.green.withValues(alpha: 0.3),
+                  color:
+                      seller.badgeColor?.withValues(alpha: 0.3) ??
+                      Colors.green.withValues(alpha: 0.3),
                 ),
               ),
               child: Text(
@@ -286,7 +360,11 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
                 Expanded(
                   child: Text(
                     seller.urgentInfo!,
-                    style: const TextStyle(fontSize: 10, color: Colors.black87, height: 1.3),
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: Colors.black87,
+                      height: 1.3,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -310,7 +388,11 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.local_shipping_outlined, size: 10, color: Colors.grey[500]),
+                  Icon(
+                    Icons.local_shipping_outlined,
+                    size: 10,
+                    color: Colors.grey[500],
+                  ),
                   const SizedBox(width: 3),
                   Text(
                     perk,
@@ -346,7 +428,10 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   minimumSize: const Size(0, 32),
                   elevation: 0,
                 ),

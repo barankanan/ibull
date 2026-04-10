@@ -18,25 +18,125 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.">
+  <meta name="keywords" content="ibul, online alışveriş, e-ticaret, hızlı teslimat, ihız, satıcı paneli">
+  <meta name="robots" content="index, follow">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="İbul">
+  <meta property="og:locale" content="tr_TR">
+  <meta property="og:title" content="İbul | Online Alışveriş ve Hızlı Teslimat">
+  <meta property="og:description" content="İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="İbul | Online Alışveriş ve Hızlı Teslimat">
+  <meta name="twitter:description" content="İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="ibul2026">
+  <meta name="apple-mobile-web-app-title" content="İbul">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>ibul2026</title>
+  <title>İbul | Online Alışveriş ve Hızlı Teslimat</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- Firebase JS SDK -->
-  <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-storage-compat.js"></script>
+  <!-- ── Performance: preconnect to Supabase & CDN ── -->
+  <!-- Supabase hostname is injected at build-time via --dart-define so we
+       cannot hard-code it here; add it in your CDN / edge configuration. -->
+
+  <!-- ── Preloader — shown immediately, dismissed when Flutter canvas appears ── -->
+  <!-- IMPORTANT: <style> and <div> must be inside <head> for earliest possible paint. -->
+  <style>
+    /* Reset body so preloader fills the whole viewport */
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    #ibul-loader {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      z-index: 9999;
+      transition: opacity 0.3s ease;
+    }
+    #ibul-loader.fade-out { opacity: 0; pointer-events: none; }
+    #ibul-loader-logo {
+      width: 72px; height: 72px; border-radius: 20px;
+      background: linear-gradient(135deg, #7B2FBE 0%, #5B1FBF 100%);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 8px 24px rgba(123,47,190,0.30);
+      margin-bottom: 24px;
+    }
+    #ibul-loader-logo svg { width: 40px; height: 40px; fill: #fff; }
+    #ibul-loader-spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(123,47,190,0.18);
+      border-top-color: #7B2FBE;
+      border-radius: 50%;
+      animation: ibul-spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes ibul-spin { to { transform: rotate(360deg); } }
+    #ibul-loader-text {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px; color: #888; letter-spacing: 0.2px;
+    }
+  </style>
+  <div id="ibul-loader">
+    <div id="ibul-loader-logo">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 4H4v2l8 5 8-5V4zm0 4.236-8 5-8-5V20h16V8.236z"/>
+      </svg>
+    </div>
+    <div id="ibul-loader-spinner"></div>
+    <div id="ibul-loader-text" id="ibul-loader-text">
+      <!-- Show "QR kod okunuyor…" for /qr paths, generic otherwise -->
+    </div>
+  </div>
+
+  <script>
+    // ── Timing: HTML loader became visible ─────────────────────────────────
+    var _ibulT0 = performance.now();
+    console.log('[IBL-Timing] HTML loader visible at t=' + _ibulT0.toFixed(1) + 'ms (navigationStart-relative)');
+
+    // Set loader text based on route
+    (function() {
+      var path = window.location.pathname;
+      var isQr = path === '/qr' || path.startsWith('/qr?') ||
+                 window.location.search.indexOf('table_qr=') !== -1;
+      var loaderText = document.getElementById('ibul-loader-text');
+      if (loaderText) {
+        loaderText.textContent = isQr ? 'QR kod okunuyor…' : 'Yükleniyor…';
+      }
+    })();
+
+    // ── Dismiss preloader when Flutter inserts its canvas ─────────────────
+    (function () {
+      var observer = new MutationObserver(function () {
+        if (document.querySelector('flt-glass-pane')) {
+          observer.disconnect();
+          var elapsed = (performance.now() - _ibulT0).toFixed(1);
+          console.log('[IBL-Timing] Flutter first frame (flt-glass-pane) at +' + elapsed + 'ms from loader');
+          var el = document.getElementById('ibul-loader');
+          if (el) {
+            el.classList.add('fade-out');
+            setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 350);
+          }
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      // Safety net: remove after 15 s if Flutter never starts
+      setTimeout(function () {
+        observer.disconnect();
+        var el = document.getElementById('ibul-loader');
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+        console.warn('[IBL-Timing] Preloader safety-net removed after 15 s — Flutter may not have started.');
+      }, 15000);
+    })();
+  </script>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>

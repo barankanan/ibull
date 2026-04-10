@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
 import '../../core/auth/user_identity.dart';
 import '../../core/constants.dart';
+import '../../models/product_model.dart';
 import '../../screens/all_questions_page.dart';
 import '../../screens/ask_product_question_page.dart';
 import '../../services/product_question_service.dart';
@@ -42,11 +43,13 @@ class _ProductQaFullSectionState extends State<ProductQaFullSection> {
 
   @override
   Widget build(BuildContext context) {
-    final viewModel = context.watch<ProductDetailViewModel>();
-    final appState = context.watch<AppState>();
-    final product = viewModel.initialProduct;
-    final canAsk =
-        appState.isLoggedIn && !UserIdentity.isGuest(appState.currentUser);
+    final product = context.select<ProductDetailViewModel, Product>(
+      (viewModel) => viewModel.initialProduct,
+    );
+    final canAsk = context.select<AppState, bool>(
+      (appState) =>
+          appState.isLoggedIn && !UserIdentity.isGuest(appState.currentUser),
+    );
 
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _future,

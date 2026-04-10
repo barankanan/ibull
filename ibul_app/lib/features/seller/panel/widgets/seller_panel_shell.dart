@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/constants.dart';
+import '../theme/seller_panel_theme.dart';
 
 class SellerPanelMenuEntry {
   const SellerPanelMenuEntry({
@@ -28,29 +29,34 @@ class SellerPanelShell extends StatelessWidget {
   final Widget sidebar;
   final Widget content;
 
+  static const double sidebarWidth = 224;
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
-      body: SafeArea(
-        child: Column(
-          children: [
-            topBar,
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  sidebar,
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: content,
+    return Theme(
+      data: buildSellerPanelTheme(Theme.of(context)),
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF9FAFB),
+        body: SafeArea(
+          child: Column(
+            children: [
+              topBar,
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    sidebar,
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(18),
+                        child: content,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -73,9 +79,10 @@ class SellerPanelTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Container(
-      height: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      height: 54,
+      padding: const EdgeInsets.symmetric(horizontal: 18),
       decoration: const BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -90,15 +97,13 @@ class SellerPanelTopBar extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF111827),
+            style: theme.textTheme.titleLarge?.copyWith(
+              color: const Color(0xFF111827),
             ),
           ),
           const Spacer(),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
               border: Border.all(color: Colors.grey.shade300),
@@ -106,45 +111,46 @@ class SellerPanelTopBar extends StatelessWidget {
             child: Row(
               children: [
                 Container(
-                  width: 32,
-                  height: 32,
+                  width: 26,
+                  height: 26,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: AppColors.primary.withOpacity(0.1),
+                    color: AppColors.primary.withValues(alpha: 0.1),
                   ),
                   child: const Icon(
                     Icons.store,
                     color: AppColors.primary,
-                    size: 18,
+                    size: 15,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
                       storeLabel,
-                      style: const TextStyle(
-                        fontSize: 13,
+                      style: theme.textTheme.labelLarge?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     Text(
                       sellerIdLabel,
-                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: Colors.grey,
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(width: 8),
-                Icon(Icons.expand_more, size: 20, color: Colors.grey.shade600),
+                const SizedBox(width: 4),
+                Icon(Icons.expand_more, size: 16, color: Colors.grey.shade600),
               ],
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 10),
           IconButton(
             onPressed: onNotificationsTap,
-            icon: const Icon(Icons.notifications_outlined, size: 22),
+            icon: const Icon(Icons.notifications_outlined, size: 18),
           ),
         ],
       ),
@@ -167,22 +173,22 @@ class SellerPanelSidebar extends StatelessWidget {
     return Material(
       color: const Color(0xFF111827),
       child: SizedBox(
-        width: 260,
+        width: SellerPanelShell.sidebarWidth,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const _SellerPanelBrandHeader(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 6),
                 children: items
                     .map((item) => SellerPanelSidebarItem(item: item))
                     .toList(growable: false),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
               child: SellerPanelSidebarItem(
                 item: SellerPanelMenuEntry(
                   icon: Icons.logout,
@@ -206,31 +212,31 @@ class SellerPanelSidebarItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
       child: Material(
         color: item.isActive ? Colors.white : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
         child: InkWell(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(7),
           onTap: item.onTap,
           child: Container(
-            height: 42,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Row(
               children: [
                 Icon(
                   item.icon,
-                  size: 20,
+                  size: 17,
                   color: item.isActive ? AppColors.primary : Colors.white70,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 7),
                 Expanded(
                   child: Text(
                     item.label,
-                    style: TextStyle(
+                    style: theme.textTheme.bodyMedium?.copyWith(
                       color: item.isActive ? AppColors.primary : Colors.white70,
-                      fontSize: 13,
                       fontWeight: item.isActive
                           ? FontWeight.w700
                           : FontWeight.w500,
@@ -264,48 +270,57 @@ class SellerPanelMobileShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
-      endDrawer: drawer,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        foregroundColor: const Color(0xFF111827),
-        titleSpacing: 16,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+    final panelTheme = buildSellerPanelTheme(Theme.of(context));
+    return Theme(
+      data: panelTheme,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF9FAFB),
+        endDrawer: drawer,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          foregroundColor: const Color(0xFF111827),
+          toolbarHeight: 52,
+          titleSpacing: 14,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: panelTheme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                storeLabel,
+                style: panelTheme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF6B7280),
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+          actions: [
+            IconButton(
+              tooltip: 'Yenile',
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh_rounded),
             ),
-            Text(
-              storeLabel,
-              style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-              overflow: TextOverflow.ellipsis,
+            Builder(
+              builder: (context) => IconButton(
+                tooltip: 'Menü',
+                onPressed: () => Scaffold.of(context).openEndDrawer(),
+                icon: const Icon(Icons.menu_rounded),
+              ),
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Yenile',
-            onPressed: onRefresh,
-            icon: const Icon(Icons.refresh_rounded),
+        body: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: content,
           ),
-          Builder(
-            builder: (context) => IconButton(
-              tooltip: 'Menü',
-              onPressed: () => Scaffold.of(context).openEndDrawer(),
-              icon: const Icon(Icons.menu_rounded),
-            ),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-          child: content,
         ),
       ),
     );
@@ -334,17 +349,17 @@ class SellerPanelMobileDrawer extends StatelessWidget {
               const _SellerPanelBrandHeader(
                 padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
                   children: items
                       .map((item) => SellerPanelSidebarItem(item: item))
                       .toList(growable: false),
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(14),
                 child: SellerPanelSidebarItem(
                   item: SellerPanelMenuEntry(
                     icon: Icons.logout,
@@ -363,37 +378,35 @@ class SellerPanelMobileDrawer extends StatelessWidget {
 }
 
 class _SellerPanelBrandHeader extends StatelessWidget {
-  const _SellerPanelBrandHeader({
-    this.padding = const EdgeInsets.all(20),
-  });
+  const _SellerPanelBrandHeader({this.padding = const EdgeInsets.all(18)});
 
   final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
       padding: padding,
       child: Row(
         children: [
           Container(
-            width: 32,
-            height: 32,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(
               color: AppColors.primary,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(9),
             ),
             child: const Icon(
               Icons.store_outlined,
               color: Colors.white,
-              size: 18,
+              size: 15,
             ),
           ),
-          const SizedBox(width: 10),
-          const Text(
+          const SizedBox(width: 7),
+          Text(
             'Satıcı Paneli',
-            style: TextStyle(
+            style: theme.textTheme.titleMedium?.copyWith(
               color: Colors.white,
-              fontSize: 18,
               fontWeight: FontWeight.w700,
             ),
           ),

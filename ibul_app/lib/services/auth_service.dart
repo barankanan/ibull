@@ -2,10 +2,56 @@ import 'dart:convert';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show
+        TargetPlatform,
+        defaultTargetPlatform,
+        debugPrint,
+        debugPrintStack,
+        kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/config/runtime_config.dart';
+import 'store_service.dart';
+
+enum LoginResolvedRole { seller, waiter, admin, user, unknown }
+
+class LoginRouteResolution {
+  const LoginRouteResolution({
+    required this.userId,
+    required this.userEmail,
+    required this.profile,
+    required this.rawRole,
+    required this.resolvedRole,
+    required this.isSellerApproved,
+    required this.storeProfile,
+  });
+
+  final String? userId;
+  final String? userEmail;
+  final Map<String, dynamic>? profile;
+  final String? rawRole;
+  final LoginResolvedRole resolvedRole;
+  final bool isSellerApproved;
+  final Map<String, dynamic>? storeProfile;
+
+  bool get profileFound => profile != null;
+  bool get storeProfileFound => storeProfile != null;
+
+  String get chosenRoute {
+    switch (resolvedRole) {
+      case LoginResolvedRole.seller:
+        return '/seller';
+      case LoginResolvedRole.waiter:
+        return '/seller[garson]';
+      case LoginResolvedRole.admin:
+        return '/admin';
+      case LoginResolvedRole.user:
+        return '/home';
+      case LoginResolvedRole.unknown:
+        return 'unresolved';
+    }
+  }
+}
 
 class AuthService {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -30,6 +76,29 @@ class AuthService {
     return role == 'admin' ||
         role == 'super_admin' ||
         role.startsWith('admin_');
+  }
+
+  static LoginResolvedRole normalizeLoginRole(String? rawRole) {
+    final normalized = rawRole?.trim().toLowerCase();
+    if (normalized == null || normalized.isEmpty) {
+      return LoginResolvedRole.unknown;
+    }
+    if (isAdminRole(normalized)) {
+      return LoginResolvedRole.admin;
+    }
+    switch (normalized) {
+      case 'seller':
+        return LoginResolvedRole.seller;
+      case 'waiter':
+      case 'garson':
+        return LoginResolvedRole.waiter;
+      case 'user':
+      case 'customer':
+      case 'buyer':
+        return LoginResolvedRole.user;
+      default:
+        return LoginResolvedRole.unknown;
+    }
   }
 
   static String adminRoleLabel(String? role) {
@@ -132,7 +201,7 @@ class AuthService {
       await ensureCurrentUserRow(user: response.user);
       return response;
     } catch (e) {
-      print('Google Sign-In Error: $e');
+      debugPrint('Google Sign-In Error: $e');
       if (!(googleUser == null &&
           e.toString().contains('Google sign in canceled'))) {
         await _recordAuthLoginAttempt(
@@ -172,7 +241,7 @@ class AuthService {
       await ensureCurrentUserRow(user: response.user);
       return response;
     } catch (e) {
-      print('Email Sign-In Error: $e');
+      debugPrint('Email Sign-In Error: $e');
       await _recordAuthLoginAttempt(
         email: normalizedEmail,
         provider: 'password',
@@ -209,7 +278,7 @@ class AuthService {
 
       return response;
     } catch (e) {
-      print('Sign-Up Error: $e');
+      debugPrint('Sign-Up Error: $e');
       rethrow;
     }
   }
@@ -277,6 +346,101 @@ class AuthService {
     }
   }
 
+  Future<LoginRouteResolution> resolveLoginRoute({
+    String diagnosticContext = 'login',
+    bool includeStoreProfile = true,
+  }) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      const resolution = LoginRouteResolution(
+        userId: null,
+        userEmail: null,
+        profile: null,
+        rawRole: null,
+        resolvedRole: LoginResolvedRole.unknown,
+        isSellerApproved: false,
+        storeProfile: null,
+      );
+      _logLoginRouteResolution(
+        diagnosticContext: diagnosticContext,
+        resolution: resolution,
+      );
+      return resolution;
+    }
+
+    Map<String, dynamic>? profile;
+    Map<String, dynamic>? storeProfile;
+    try {
+      profile = await getUserProfile();
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[AuthRoute][$diagnosticContext] profile fetch failed for ${user.id}: $error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+    }
+
+    final rawRole = (profile?['role'] ?? user.userMetadata?['role'])
+        ?.toString()
+        .trim();
+    final resolvedRole = normalizeLoginRole(rawRole);
+    final isSellerApproved = _coerceBool(
+      profile?['is_seller_approved'] ??
+          profile?['isSellerApproved'] ??
+          user.userMetadata?['is_seller_approved'] ??
+          user.userMetadata?['isSellerApproved'],
+    );
+
+    if (includeStoreProfile &&
+        (resolvedRole == LoginResolvedRole.seller ||
+            resolvedRole == LoginResolvedRole.waiter)) {
+      try {
+        storeProfile = await StoreService().getStoreProfile();
+      } catch (error, stackTrace) {
+        debugPrint(
+          '[AuthRoute][$diagnosticContext] store fetch failed for ${user.id}: $error',
+        );
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+
+    final resolution = LoginRouteResolution(
+      userId: user.id,
+      userEmail: user.email,
+      profile: profile,
+      rawRole: rawRole,
+      resolvedRole: resolvedRole,
+      isSellerApproved: isSellerApproved,
+      storeProfile: storeProfile,
+    );
+    _logLoginRouteResolution(
+      diagnosticContext: diagnosticContext,
+      resolution: resolution,
+    );
+    return resolution;
+  }
+
+  bool _coerceBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final normalized = value?.toString().trim().toLowerCase();
+    return normalized == 'true' || normalized == '1' || normalized == 'yes';
+  }
+
+  void _logLoginRouteResolution({
+    required String diagnosticContext,
+    required LoginRouteResolution resolution,
+  }) {
+    debugPrint(
+      '[AuthRoute][$diagnosticContext] '
+      'authUserId=${resolution.userId ?? '-'} '
+      'resolvedRole=${resolution.resolvedRole.name} '
+      'rawRole=${resolution.rawRole ?? 'null'} '
+      'userProfileFound=${resolution.profileFound} '
+      'storeProfileFound=${resolution.storeProfileFound} '
+      'chosenRoute=${resolution.chosenRoute}',
+    );
+  }
+
   Future<void> _recordAuthLoginAttempt({
     String? email,
     required String provider,
@@ -312,7 +476,7 @@ class AuthService {
     try {
       await _googleSignIn?.signOut();
     } catch (e) {
-      print('Google sign-out skipped: $e');
+      debugPrint('Google sign-out skipped: $e');
     }
     await _supabase.auth.signOut();
     await clearSellerSwitchBackup();
@@ -349,7 +513,7 @@ class AuthService {
     try {
       await _googleSignIn?.signOut();
     } catch (e) {
-      print('Google sign-out skipped during seller restore: $e');
+      debugPrint('Google sign-out skipped during seller restore: $e');
     }
     await _supabase.auth.signOut();
 
@@ -545,7 +709,7 @@ class AuthService {
 
       return response;
     } catch (e) {
-      print('Seller Registration Error: $e');
+      debugPrint('Seller Registration Error: $e');
       rethrow;
     }
   }
@@ -599,12 +763,15 @@ class AuthService {
       'is_store_open': true,
       'accept_new_orders': true,
     };
-    if (appData['store_lat'] != null)
+    if (appData['store_lat'] != null) {
       storeData['store_lat'] = appData['store_lat'];
-    if (appData['store_lng'] != null)
+    }
+    if (appData['store_lng'] != null) {
       storeData['store_lng'] = appData['store_lng'];
-    if (appData['logo_url'] != null)
+    }
+    if (appData['logo_url'] != null) {
       storeData['logo_url'] = appData['logo_url'];
+    }
     await _supabase.from('stores').upsert(storeData);
   }
 

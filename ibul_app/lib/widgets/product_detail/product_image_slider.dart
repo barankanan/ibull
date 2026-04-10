@@ -155,7 +155,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
+                      color: Colors.black.withValues(alpha: 0.05),
                       blurRadius: 10,
                       offset: const Offset(0, 4),
                     ),
@@ -192,7 +192,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                             return Hero(
                               tag: widget.heroTag ?? fallbackTag,
                               transitionOnUserGestures: true,
-                              placeholderBuilder: (_, __, child) => child,
+                              placeholderBuilder: (_, _, child) => child,
                               child: imageWidget,
                             );
                           }
@@ -328,7 +328,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                         decoration: BoxDecoration(
                           color: isSelected
                               ? AppColors.primary
-                              : Colors.white.withOpacity(0.5),
+                              : Colors.white.withValues(alpha: 0.5),
                           shape: BoxShape.circle,
                         ),
                       );
@@ -385,7 +385,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: images.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
                   final isSelected = viewModel.currentImageIndex == index;
                   final imageUrl = images[index];
@@ -412,7 +412,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                         boxShadow: isSelected
                             ? [
                                 BoxShadow(
-                                  color: AppColors.primary.withOpacity(0.2),
+                                  color: AppColors.primary.withValues(alpha: 0.2),
                                   blurRadius: 4,
                                 ),
                               ]
@@ -443,7 +443,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                                 fit: BoxFit.cover,
                                 cacheWidth: 200,
                                 cacheHeight: 200,
-                                errorBuilder: (_, __, ___) => const Icon(
+                                errorBuilder: (_, _, _) => const Icon(
                                   Icons.error,
                                   color: Colors.grey,
                                   size: 20,
@@ -543,7 +543,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
       cacheWidth: 800,
       cacheHeight: 800,
       filterQuality: FilterQuality.medium,
-      errorBuilder: (_, __, ___) => _buildPlaceholder(),
+      errorBuilder: (_, _, _) => _buildPlaceholder(),
     );
   }
 
@@ -588,7 +588,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
                     top: 8,
                     right: 8,
                     child: Material(
-                      color: Colors.white.withOpacity(0.12),
+                      color: Colors.white.withValues(alpha: 0.12),
                       shape: const CircleBorder(),
                       child: IconButton(
                         icon: const Icon(
@@ -628,43 +628,17 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.9),
+            color: Colors.white.withValues(alpha: 0.9),
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
             ],
           ),
           child: Icon(icon, size: 20, color: Colors.grey[800]),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBadge(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(4),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.3),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
         ),
       ),
     );
@@ -683,7 +657,7 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
         shape: BoxShape.circle,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -714,11 +688,11 @@ class _ProductImageSliderState extends State<ProductImageSlider> {
           vertical: 5,
         ), // Reduced padding
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.9),
+          color: Colors.white.withValues(alpha: 0.9),
           borderRadius: BorderRadius.circular(16), // Slightly tighter radius
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1),
+              color: Colors.black.withValues(alpha: 0.1),
               blurRadius: 4,
               offset: const Offset(0, 2),
             ),

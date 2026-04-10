@@ -1439,7 +1439,7 @@ class _AdminSupportComplaintsPageState
                         ? 'Admin tarafindan reddedildi'
                         : noteController.text.trim(),
                   );
-                  if (!mounted) return;
+                  if (!mounted || !dialogContext.mounted) return;
                   Navigator.pop(dialogContext);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Talep reddedildi.')),

@@ -221,9 +221,11 @@ class _CampaignFormDialogState extends State<CampaignFormDialog> {
         const SnackBar(content: Text('Kampanya durduruldu.'), backgroundColor: Colors.orange),
       );
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -304,7 +306,7 @@ class _CampaignFormDialogState extends State<CampaignFormDialog> {
                             const SizedBox(width: 12),
                             Expanded(
                               child: DropdownButtonFormField<String>(
-                                value: _freeShipping ? 'Evet' : 'Hayır',
+                                initialValue: _freeShipping ? 'Evet' : 'Hayır',
                                 decoration: const InputDecoration(labelText: 'Ücretsiz Kargo?'),
                                 items: const [DropdownMenuItem(value: 'Hayır', child: Text('Hayır')), DropdownMenuItem(value: 'Evet', child: Text('Evet'))],
                                 onChanged: (v) => setState(() => _freeShipping = v == 'Evet'),
@@ -350,7 +352,7 @@ class _CampaignFormDialogState extends State<CampaignFormDialog> {
                       const SizedBox(height: 20),
                       _section('Hangi Ürünler İçin Geçerli?', Icons.shopping_bag, [
                         DropdownButtonFormField<String>(
-                          value: _scope,
+                          initialValue: _scope,
                           decoration: const InputDecoration(labelText: 'Uygulama Kapsamı'),
                           items: const [
                             DropdownMenuItem(value: 'all', child: Text('Tüm Ürünler')),
@@ -377,8 +379,11 @@ class _CampaignFormDialogState extends State<CampaignFormDialog> {
                                 return CheckboxListTile(
                                   value: selected,
                                   onChanged: (v) => setState(() {
-                                    if (v == true) _selectedProductIds.add(p.id);
-                                    else _selectedProductIds.remove(p.id);
+                                    if (v == true) {
+                                      _selectedProductIds.add(p.id);
+                                    } else {
+                                      _selectedProductIds.remove(p.id);
+                                    }
                                   }),
                                   title: Text(p.name, style: const TextStyle(fontSize: 13)),
                                   subtitle: Text('₺${p.price}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),

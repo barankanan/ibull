@@ -182,7 +182,7 @@ class _DeliveryInfoPageState extends State<DeliveryInfoPage> {
               ],
             ),
           ),
-          if (trailing != null) trailing,
+          ?trailing,
         ],
       ),
     );
@@ -286,24 +286,25 @@ class _DeliveryInfoPageState extends State<DeliveryInfoPage> {
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('Kargo Firması Seç'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: _couriers.map((courier) {
-              return RadioListTile<String>(
-                title: Text(courier),
-                value: courier,
-                groupValue: _selectedCourier,
-                activeColor: AppColors.primary,
-                onChanged: (String? value) {
-                  if (value != null) {
-                    setState(() {
-                      _selectedCourier = value;
-                    });
-                    Navigator.pop(context);
-                  }
-                },
-              );
-            }).toList(),
+          content: RadioGroup<String>(
+            groupValue: _selectedCourier,
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _selectedCourier = value;
+              });
+              Navigator.pop(context);
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: _couriers.map((courier) {
+                return RadioListTile<String>(
+                  title: Text(courier),
+                  value: courier,
+                  activeColor: AppColors.primary,
+                );
+              }).toList(),
+            ),
           ),
         );
       },

@@ -34,7 +34,6 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
   final CategoryAttributeService _categoryAttributeService =
       CategoryAttributeService.instance;
   List<Product> _filteredProducts = [];
-  String _selectedFoodCategory = '';
   String _searchQuery = '';
   bool _isLoadingAttributeFilters = false;
   List<CategoryAttributeFilterGroup> _attributeFilterGroups =
@@ -123,8 +122,8 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       _applyAllFilters();
     }
 
-    print('DEBUG: Toplam ürün sayısı: ${widget.products.length}');
-    print('DEBUG: Filtrelenmiş ürün sayısı: ${_filteredProducts.length}');
+    debugPrint('DEBUG: Toplam ürün sayısı: ${widget.products.length}');
+    debugPrint('DEBUG: Filtrelenmiş ürün sayısı: ${_filteredProducts.length}');
   }
 
   List<Product> _getDisplayProducts() {
@@ -234,48 +233,6 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
     _tabController.dispose();
     _todayProductsScrollController.dispose();
     super.dispose();
-  }
-
-  void _filterByCategory(String category) {
-    setState(() {
-      _selectedFoodCategory = category;
-      if (category == 'Tümü') {
-        _filteredProducts = _getDisplayProducts();
-      } else {
-        // Daha geniş filtreleme - kategori adı ürün adında veya kategorisinde geçiyorsa göster
-        final baseProducts = _getDisplayProducts();
-        _filteredProducts = baseProducts.where((product) {
-          final productName = product.name.toLowerCase();
-          final categoryLower = category.toLowerCase();
-          final subCat = (product.subCategory ?? '').toLowerCase();
-
-          // Kategori ismini parçala ve her kelimeyi kontrol et
-          return productName.contains(categoryLower) ||
-              subCat.contains(categoryLower) ||
-              categoryLower.contains(productName) ||
-              (category == 'Tavuk' &&
-                  (productName.contains('tavuk') ||
-                      productName.contains('chicken'))) ||
-              (category == 'Et' &&
-                  (productName.contains('et') ||
-                      productName.contains('kebap') ||
-                      productName.contains('köfte'))) ||
-              (category == 'Burger - pizza' &&
-                  (productName.contains('burger') ||
-                      productName.contains('pizza'))) ||
-              (category == 'Börek' && productName.contains('börek')) ||
-              (category == 'Salata - Diyet' &&
-                  (productName.contains('salata') ||
-                      productName.contains('diyet'))) ||
-              (category == 'Dondurma' && productName.contains('dondurma'));
-        }).toList();
-
-        // Eğer filtreleme sonucu boş ise, tüm ürünleri göster
-        if (_filteredProducts.isEmpty) {
-          _filteredProducts = baseProducts;
-        }
-      }
-    });
   }
 
   Future<void> _loadAttributeFilters() async {
@@ -1106,7 +1063,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                   ],
                 ),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.blue.withOpacity(0.1)),
+                border: Border.all(color: Colors.blue.withValues(alpha: 0.1)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1116,7 +1073,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.1),
+                          color: Colors.blue.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Icon(
@@ -1224,7 +1181,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                                 shape: BoxShape.circle,
                                 boxShadow: [
                                   BoxShadow(
-                                    color: Colors.black.withOpacity(0.1),
+                                    color: Colors.black.withValues(alpha: 0.1),
                                     blurRadius: 8,
                                     offset: const Offset(0, 2),
                                   ),
@@ -1262,7 +1219,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                                 shape: BoxShape.circle,
                                 boxShadow: [
                                   BoxShadow(
-                                    color: Colors.black.withOpacity(0.1),
+                                    color: Colors.black.withValues(alpha: 0.1),
                                     blurRadius: 8,
                                     offset: const Offset(0, 2),
                                   ),
@@ -1301,6 +1258,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
 
                 Widget grid = GridView.builder(
                   padding: const EdgeInsets.all(16),
+                  cacheExtent: 900,
                   gridDelegate: isWeb
                       ? const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 6,
@@ -1499,7 +1457,9 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         decoration: BoxDecoration(
-          color: isActive ? AppColors.primary.withOpacity(0.08) : Colors.white,
+          color: isActive
+              ? AppColors.primary.withValues(alpha: 0.08)
+              : Colors.white,
           border: Border.all(
             color: isActive ? AppColors.primary : Colors.grey.shade300,
           ),

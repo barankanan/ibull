@@ -1,6 +1,7 @@
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../store/store_mapping_helpers.dart';
 import 'media_perf_logger.dart';
 import 'product_media_types.dart';
 import 'storage_upload_service.dart';
@@ -107,7 +108,10 @@ class ProductMediaRepository {
       ..['updated_at'] = DateTime.now().toIso8601String();
 
     try {
-      await _supabase.from('products').update(payload).eq('id', productId);
+      await _updateProductMediaWithFallback(
+        productId: productId,
+        payload: payload,
+      );
     } catch (error) {
       final message = error.toString();
       if (message.contains('column') || message.contains('does not exist')) {
@@ -129,6 +133,38 @@ class ProductMediaRepository {
         watch.elapsed,
         extra: {'productId': productId},
       );
+    }
+  }
+
+  Future<void> _updateProductMediaWithFallback({
+    required String productId,
+    required Map<String, dynamic> payload,
+  }) async {
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
+      try {
+        await _supabase.from('products').update(payload).eq('id', productId);
+        return;
+      } catch (error, stackTrace) {
+        final message = error.toString();
+        if (!isOptionalProductColumnError(message)) rethrow;
+
+        final removedColumns = stripUnsupportedProductColumns(payload, message);
+        if (removedColumns.isEmpty) {
+          lastError = error;
+          lastStackTrace = stackTrace;
+          break;
+        }
+
+        lastError = error;
+        lastStackTrace = stackTrace;
+      }
+    }
+
+    if (lastError != null) {
+      Error.throwWithStackTrace(lastError, lastStackTrace!);
     }
   }
 

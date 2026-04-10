@@ -134,7 +134,7 @@ class _ProductVariantSelectorState extends State<ProductVariantSelector> {
               entry.key,
               entry.value.toList()..sort(),
             );
-          }).toList(),
+          }),
         ],
       ),
     );

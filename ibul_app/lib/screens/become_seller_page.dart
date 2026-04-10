@@ -164,7 +164,7 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
       padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)],
+          colors: [AppColors.primary, AppColors.primary.withValues(alpha: 0.8)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -196,7 +196,7 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
             'Binlerce müşteriye ulaşın, işinizi büyütün!',
             style: TextStyle(
               fontSize: 16,
-              color: Colors.white.withOpacity(0.9),
+              color: Colors.white.withValues(alpha: 0.9),
             ),
           ),
         ],
@@ -732,7 +732,7 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
               border: Border.all(color: Colors.grey.shade300),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
+                  color: Colors.black.withValues(alpha: 0.06),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),
@@ -1001,7 +1001,7 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: isUploaded
-                  ? Colors.green.withOpacity(0.1)
+                  ? Colors.green.withValues(alpha: 0.1)
                   : Colors.grey.shade100,
               borderRadius: BorderRadius.circular(8),
             ),
@@ -1564,7 +1564,7 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
         if (file != null) {
           final future = Future(() async {
             try {
-              final fileName = '${key}.jpg';
+              final fileName = '$key.jpg';
               final Uint8List fileBytes = await file.readAsBytes();
 
               // Upload using StoreService with timeout
@@ -1581,7 +1581,7 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
               documentsData['${key}Path'] = path; // Store path, not URL
               documentsData['${key}Name'] = data['name'] ?? fileName;
             } catch (e) {
-              print('Error uploading $key: $e');
+              debugPrint('Error uploading $key: $e');
               documentsData[key] = false;
             }
           });
@@ -1608,7 +1608,7 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
                 onTimeout: () => throw Exception('Logo yükleme zaman aşımı'),
               );
         } catch (e) {
-          print('Logo upload error: $e');
+          debugPrint('Logo upload error: $e');
         }
       }
 
@@ -1629,9 +1629,9 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
         'iban': _ibanController.text,
         'accountHolder': _accountHolderController.text,
         'documents': documentsData,
-        if (_storeLat != null) 'storeLat': _storeLat,
-        if (_storeLng != null) 'storeLng': _storeLng,
-        if (logoUrl != null) 'logoUrl': logoUrl,
+        'storeLat': ?_storeLat,
+        'storeLng': ?_storeLng,
+        'logoUrl': ?logoUrl,
       };
 
       // 3. Submit Application Data

@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
-import 'package:flutter/foundation.dart'; // for compute
+import 'package:flutter/foundation.dart' show compute, debugPrint;
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import '../models/db_product.dart';
@@ -83,7 +82,7 @@ class VisualMatcherService {
 
   /// Finds the top N matching products for the given image file.
   Future<List<DBProduct>> findTopMatches(File imageFile, List<DBProduct> products, {int limit = 5}) async {
-    print('VisualMatcher: Starting search for ${imageFile.path}');
+    debugPrint('VisualMatcher: Starting search for ${imageFile.path}');
     final Set<DBProduct> results = {}; // Use Set to avoid duplicates
 
     // 1. Try filename matching (Fast Path)
@@ -94,7 +93,7 @@ class VisualMatcherService {
     for (var product in products) {
       final assetName = product.imageUrl.split('/').last.toLowerCase();
       if (filename == assetName) {
-        print('VisualMatcher: Exact filename match found: ${product.name}');
+        debugPrint('VisualMatcher: Exact filename match found: ${product.name}');
         results.add(product);
       }
     }
@@ -199,7 +198,7 @@ class VisualMatcherService {
       }
       
     } catch (e) {
-      print('VisualMatcher: Error in pixel comparison: $e');
+      debugPrint('VisualMatcher: Error in pixel comparison: $e');
     }
 
     return results.take(limit).toList();

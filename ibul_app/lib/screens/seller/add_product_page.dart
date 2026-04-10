@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants.dart';
+import '../../models/product_pricing.dart';
 import '../../core/providers/category_attribute_form_provider.dart';
 import '../../models/seller_product.dart';
 import '../../services/category_attribute_service.dart';
@@ -14,8 +15,13 @@ import '../../services/media/media_picker_service.dart';
 import '../../services/media/product_media_repository.dart';
 import '../../services/media/product_media_types.dart';
 import '../../services/store_service.dart';
+import '../../utils/preparation_time_formatter.dart';
 import '../../utils/xfile_image_provider.dart';
 import '../../widgets/dynamic_category_attribute_form.dart';
+import '../../widgets/seller/pricing_type_selector.dart';
+import '../../widgets/seller/service_control_selector.dart';
+import '../../widgets/seller/service_stepper_fields.dart';
+import '../../widgets/seller/weight_pricing_fields.dart';
 
 /// Satıcı Ürün Ekleme/Düzenleme Sayfası
 /// Gelişmiş özellikler ve adım adım form yapısı
@@ -38,20 +44,35 @@ class _AddProductPageState extends State<AddProductPage> {
   final _brandController = TextEditingController();
   final _productColorController = TextEditingController();
   final _longDescController = TextEditingController();
-  final _priceController = TextEditingController();
+  final _portionPriceController = TextEditingController();
+  final _pricePerKgController = TextEditingController();
   final _discountPriceController = TextEditingController();
+  final _minPortionController = TextEditingController();
+  final _maxPortionController = TextEditingController();
+  final _portionStepController = TextEditingController();
+  final _minWeightController = TextEditingController();
+  final _weightStepController = TextEditingController();
+  final _defaultWeightController = TextEditingController();
+  final _maxWeightController = TextEditingController();
   final _stockController = TextEditingController();
   final _skuController = TextEditingController();
+  final _preparationTimeController = TextEditingController();
   // _additionalInfoController removed
 
   // Selected Values
   String? _selectedMainCategory;
   String? _selectedSubCategory;
+  ProductPricingType _selectedPricingType = ProductPricingType.portion;
+  ProductServiceControlType _selectedServiceControlType =
+      ProductServiceControlType.none;
   final TextEditingController _subCategoryController = TextEditingController();
   List<String> _productAttributes = [];
   List<Map<String, String>> _nonFoodAttributeRows = [];
   String _selectedVatRate = '%18';
   String _selectedShippingOption = 'Ücretsiz Kargo';
+  String? _selectedServiceType;
+  String? _selectedServiceTime;
+  Map<String, dynamic> _foodSpecificationSeed = <String, dynamic>{};
 
   /// Mağazanın başvuruda seçtiği kategori; sadece bu kategoride ürün eklenebilir. Null ise henüz yüklenmedi veya kısıtlama yok.
   String? _storeMainCategory;
@@ -97,12 +118,6 @@ class _AddProductPageState extends State<AddProductPage> {
   final Set<String> _selectedAccessoryIds = <String>{};
   bool _isLoadingComplementaryCandidates = false;
 
-  // Varyant tipi (kategori bazlı)
-  final String _variantType = 'Renk/Beden'; // veya 'Hafıza/RAM' gibi
-
-  // Kategori bazlı özellikler
-  Map<String, dynamic> _categoryAttributes = {};
-
   // Ek Bilgiler (Bullet Points)
   List<String> _additionalInfos = [];
 
@@ -120,6 +135,40 @@ class _AddProductPageState extends State<AddProductPage> {
     return cat == 'Yemek';
   }
 
+  bool get _isWeightPricingActive =>
+      _isFoodCategory &&
+      (_selectedServiceControlType == ProductServiceControlType.weightStepper ||
+          (_selectedServiceControlType == ProductServiceControlType.none &&
+              _selectedPricingType == ProductPricingType.weight));
+
+  bool get _usesPortionLikeServiceControl =>
+      _isFoodCategory &&
+      ProductPriceCalculator.usesPortionLikeStepper(
+        _selectedServiceControlType,
+      );
+
+  ProductPricingType get _pricingTypeForSave => !_isFoodCategory
+      ? ProductPricingType.portion
+      : _selectedServiceControlType == ProductServiceControlType.weightStepper
+      ? ProductPricingType.weight
+      : _selectedServiceControlType ==
+                ProductServiceControlType.portionStepper ||
+            _selectedServiceControlType ==
+                ProductServiceControlType.skewerStepper
+      ? ProductPricingType.portion
+      : _selectedPricingType;
+
+  TextEditingController get _activePriceController =>
+      _pricingTypeForSave == ProductPricingType.weight
+      ? _pricePerKgController
+      : _portionPriceController;
+
+  double get _portionPriceValue => _parseCurrency(_portionPriceController.text);
+
+  double get _pricePerKgValue => _parseCurrency(_pricePerKgController.text);
+
+  double get _activePriceValue => _parseCurrency(_activePriceController.text);
+
   static const List<String> _foodAttributeSuggestions = [
     'Acısız',
     'Az Acılı',
@@ -129,6 +178,42 @@ class _AddProductPageState extends State<AddProductPage> {
     'Az Tuzlu',
     'Bol Peynirli',
     'Ekstra Sos',
+  ];
+
+  static const List<String> _serviceTypeOptions = [
+    'Paket Servis',
+    'Gel-Al',
+    'Masa Servisi',
+    'Hepsi',
+  ];
+
+  static const List<int> _preparationTimeQuickOptions = [
+    10,
+    15,
+    20,
+    30,
+    45,
+    60,
+    90,
+  ];
+
+  static const List<String> _preparationTimeSpecificationKeys = [
+    'preparationTime',
+    'preparation_time',
+    'estimatedReadyTime',
+    'estimated_ready_time',
+    'readyTime',
+    'ready_time',
+    'deliveryTime',
+    'delivery_time',
+    'hazirlanma_suresi',
+    'hazirlanma',
+  ];
+
+  static const List<String> _serviceTimeOptions = [
+    'Her Zaman',
+    'Sadece Öğle',
+    'Sadece Akşam',
   ];
 
   static const List<String> _allMainCategories = [
@@ -163,9 +248,243 @@ class _AddProductPageState extends State<AddProductPage> {
     return c;
   }
 
+  void _syncWeightDefaultsIfNeeded({required bool force}) {
+    if (force || _minWeightController.text.trim().isEmpty) {
+      _minWeightController.text = ProductPriceCalculator.defaultMinWeightGrams
+          .toString();
+    }
+    if (force || _weightStepController.text.trim().isEmpty) {
+      _weightStepController.text = ProductPriceCalculator.defaultWeightStepGrams
+          .toString();
+    }
+    if (force || _defaultWeightController.text.trim().isEmpty) {
+      _defaultWeightController.text = ProductPriceCalculator
+          .defaultWeightSelectionGrams
+          .toString();
+    }
+  }
+
+  void _syncServiceControlDefaultsIfNeeded({
+    required ProductServiceControlType type,
+    required bool force,
+  }) {
+    if (!ProductPriceCalculator.usesPortionLikeStepper(type)) return;
+    final defaults = switch (type) {
+      ProductServiceControlType.skewerStepper => (
+        ProductPriceCalculator.defaultMinSkewer,
+        ProductPriceCalculator.defaultMaxSkewer,
+        ProductPriceCalculator.defaultSkewerStep,
+      ),
+      _ => (
+        ProductPriceCalculator.defaultMinPortion,
+        ProductPriceCalculator.defaultMaxPortion,
+        ProductPriceCalculator.defaultPortionStep,
+      ),
+    };
+    if (force || _minPortionController.text.trim().isEmpty) {
+      _minPortionController.text = ProductPriceCalculator.formatNumericAmount(
+        defaults.$1,
+      );
+    }
+    if (force || _maxPortionController.text.trim().isEmpty) {
+      _maxPortionController.text = ProductPriceCalculator.formatNumericAmount(
+        defaults.$2,
+      );
+    }
+    if (force || _portionStepController.text.trim().isEmpty) {
+      _portionStepController.text = ProductPriceCalculator.formatNumericAmount(
+        defaults.$3,
+      );
+    }
+  }
+
+  int? _parseOptionalWeightField(String text) {
+    final value = _parseNumber(text);
+    return value > 0 ? value : null;
+  }
+
+  double? _parseOptionalDecimalField(String text) {
+    final normalized = text.trim().replaceAll(',', '.');
+    if (normalized.isEmpty) return null;
+    final value = double.tryParse(normalized);
+    if (value == null || value <= 0) return null;
+    return value;
+  }
+
+  String? _cleanSelection(String? value) {
+    final trimmed = value?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  int? _parsePreparationMinutesFromText(String? value) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+
+    final directValue = int.tryParse(trimmed);
+    if (directValue != null) return directValue;
+
+    final matches = RegExp(r'\d+')
+        .allMatches(trimmed)
+        .map((match) => int.parse(match.group(0)!))
+        .toList(growable: false);
+    if (matches.isEmpty) return null;
+    return matches.last;
+  }
+
+  int? _preparationMinutesValue() {
+    final trimmed = _preparationTimeController.text.trim();
+    if (trimmed.isEmpty) return null;
+    return int.tryParse(trimmed);
+  }
+
+  int? _validatedPreparationMinutesValue() {
+    final minutes = _preparationMinutesValue();
+    if (minutes == null || minutes < 1 || minutes > 300) return null;
+    return minutes;
+  }
+
+  String? _preparationTimeValueForSave() {
+    final minutes = _validatedPreparationMinutesValue();
+    return minutes?.toString();
+  }
+
+  String? _preparationTimeValidationMessage() {
+    final trimmed = _preparationTimeController.text.trim();
+    if (trimmed.isEmpty) {
+      return 'Tahmini hazırlanma süresi boş olamaz';
+    }
+
+    final minutes = int.tryParse(trimmed);
+    if (minutes == null) {
+      return 'Tahmini hazırlanma süresi sadece sayı olmalı';
+    }
+    if (minutes < 1) {
+      return 'Tahmini hazırlanma süresi en az 1 dakika olmalı';
+    }
+    if (minutes > 300) {
+      return 'Tahmini hazırlanma süresi en fazla 300 dakika olabilir';
+    }
+    return null;
+  }
+
+  bool _validatePreparationTime({bool showError = true}) {
+    final validationMessage = _preparationTimeValidationMessage();
+    if (validationMessage == null) return true;
+    if (showError) {
+      _showError(validationMessage);
+    }
+    return false;
+  }
+
+  void _setPreparationMinutes(int minutes) {
+    final value = minutes.toString();
+    _preparationTimeController.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
+  }
+
+  Map<String, dynamic> _decodeSpecifications(String? raw) {
+    final text = raw?.trim() ?? '';
+    if (text.isEmpty) return <String, dynamic>{};
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map<String, dynamic>) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      if (decoded is Map) {
+        return decoded.map((key, value) => MapEntry(key.toString(), value));
+      }
+    } catch (_) {}
+    return <String, dynamic>{};
+  }
+
+  String? _firstSpecValue(Map<String, dynamic> specMap, List<String> keys) {
+    for (final key in keys) {
+      final value = _cleanSelection(specMap[key]?.toString());
+      if (value != null) return value;
+    }
+    return null;
+  }
+
+  List<String> _dropdownItems(List<String> baseItems, String? currentValue) {
+    final current = _cleanSelection(currentValue);
+    if (current == null || baseItems.contains(current)) {
+      return baseItems;
+    }
+    return <String>[current, ...baseItems];
+  }
+
+  int _parsedMinWeight() =>
+      _parseOptionalWeightField(_minWeightController.text) ??
+      ProductPriceCalculator.defaultMinWeightGrams;
+
+  int _parsedWeightStep() =>
+      _parseOptionalWeightField(_weightStepController.text) ??
+      ProductPriceCalculator.defaultWeightStepGrams;
+
+  int _parsedDefaultWeight() =>
+      _parseOptionalWeightField(_defaultWeightController.text) ??
+      ProductPriceCalculator.defaultWeightSelectionGrams;
+
+  int? _parsedMaxWeight() =>
+      _parseOptionalWeightField(_maxWeightController.text);
+
+  double _parsedMinPortion() =>
+      _parseOptionalDecimalField(_minPortionController.text) ??
+      ProductPriceCalculator.resolveMinPortionAmount(
+        _selectedServiceControlType,
+        null,
+      );
+
+  double _parsedMaxPortion() =>
+      _parseOptionalDecimalField(_maxPortionController.text) ??
+      ProductPriceCalculator.resolveMaxPortionAmount(
+        _selectedServiceControlType,
+        null,
+        minPortion: _parsedMinPortion(),
+      );
+
+  double _parsedPortionStep() =>
+      _parseOptionalDecimalField(_portionStepController.text) ??
+      ProductPriceCalculator.resolvePortionStepAmount(
+        _selectedServiceControlType,
+        null,
+      );
+
+  String _portionOptionsPreview() {
+    if (!_usesPortionLikeServiceControl) return '';
+    final options = ProductPriceCalculator.buildPresetPortionOptions(
+      type: _selectedServiceControlType,
+      minPortion: _parsedMinPortion(),
+      maxPortion: _parsedMaxPortion(),
+      portionStep: _parsedPortionStep(),
+    );
+    return options
+        .map(
+          (value) => ProductPriceCalculator.formatServiceAmountLabel(
+            type: _selectedServiceControlType,
+            amount: value,
+          ),
+        )
+        .join(' / ');
+  }
+
+  String _weightOptionsPreview() {
+    if (!_isWeightPricingActive) return '';
+    final options = ProductPriceCalculator.buildPresetWeightOptions(
+      minWeightGrams: _parsedMinWeight(),
+      defaultWeightGrams: _parsedDefaultWeight(),
+      weightStepGrams: _parsedWeightStep(),
+      maxWeightGrams: _parsedMaxWeight(),
+    );
+    return options.map(ProductPriceCalculator.formatWeight).join(' / ');
+  }
+
   @override
   void initState() {
     super.initState();
+    _syncWeightDefaultsIfNeeded(force: true);
     _attributeFormProvider = CategoryAttributeFormProvider(
       service: _categoryAttributeService,
     );
@@ -186,13 +505,54 @@ class _AddProductPageState extends State<AddProductPage> {
       if (product == null || !mounted) return;
       setState(() {
         _initialProductStatus = product.status;
+        _foodSpecificationSeed = _decodeSpecifications(product.specifications);
         _productNameController.text = product.name;
         _brandController.text = product.brand;
         _longDescController.text = product.description ?? '';
-        _priceController.text = product.price.toStringAsFixed(0);
+        _selectedPricingType = ProductPricingType.fromValue(
+          product.pricingType,
+        );
+        _selectedServiceControlType = ProductServiceControlType.fromValue(
+          product.serviceControlType,
+        );
+        final portionPriceSeed =
+            product.portionPrice ??
+            (_selectedPricingType == ProductPricingType.portion
+                ? product.price
+                : 0);
+        final kgPriceSeed =
+            product.pricePerKg ??
+            (_selectedPricingType == ProductPricingType.weight
+                ? product.price
+                : 0);
+        _portionPriceController.text = portionPriceSeed > 0
+            ? portionPriceSeed.toStringAsFixed(0)
+            : '';
+        _pricePerKgController.text = kgPriceSeed > 0
+            ? kgPriceSeed.toStringAsFixed(0)
+            : '';
         _discountPriceController.text = product.discountPrice != null
             ? product.discountPrice!.toStringAsFixed(0)
             : '';
+        _minPortionController.text = product.minPortion != null
+            ? ProductPriceCalculator.formatNumericAmount(product.minPortion!)
+            : '';
+        _maxPortionController.text = product.maxPortion != null
+            ? ProductPriceCalculator.formatNumericAmount(product.maxPortion!)
+            : '';
+        _portionStepController.text = product.portionStep != null
+            ? ProductPriceCalculator.formatNumericAmount(product.portionStep!)
+            : '';
+        _minWeightController.text =
+            product.minWeightGrams?.toString() ??
+            ProductPriceCalculator.defaultMinWeightGrams.toString();
+        _weightStepController.text =
+            product.weightStepGrams?.toString() ??
+            ProductPriceCalculator.defaultWeightStepGrams.toString();
+        _defaultWeightController.text =
+            product.defaultWeightGrams?.toString() ??
+            ProductPriceCalculator.defaultWeightSelectionGrams.toString();
+        _maxWeightController.text = product.maxWeightGrams?.toString() ?? '';
         _stockController.text = product.stock.toString();
         _skuController.text = product.sku;
         // Split by newline
@@ -203,6 +563,27 @@ class _AddProductPageState extends State<AddProductPage> {
         _faqs = List<Map<String, String>>.from(product.faq ?? []);
 
         _selectedMainCategory = product.mainCategory;
+        final initialPreparationMinutes = _parsePreparationMinutesFromText(
+          _cleanSelection(product.preparationTime) ??
+              _firstSpecValue(
+                _foodSpecificationSeed,
+                _preparationTimeSpecificationKeys,
+              ),
+        );
+        _preparationTimeController.text =
+            initialPreparationMinutes?.toString() ?? '';
+        _selectedServiceType = _firstSpecValue(_foodSpecificationSeed, const [
+          'serviceType',
+          'service_type',
+          'servisTipi',
+          'servis_tipi',
+        ]);
+        _selectedServiceTime = _firstSpecValue(_foodSpecificationSeed, const [
+          'serviceTime',
+          'service_time',
+          'servisZamani',
+          'servis_zamani',
+        ]);
         // _selectedSubCategory'i güncelle
         _selectedSubCategory = product.subCategory.isEmpty
             ? null
@@ -291,6 +672,11 @@ class _AddProductPageState extends State<AddProductPage> {
           _storeCategoryLocked = true;
         }
       });
+      _syncServiceControlDefaultsIfNeeded(
+        type: _selectedServiceControlType,
+        force: false,
+      );
+      _syncWeightDefaultsIfNeeded(force: false);
       await _refreshDynamicAttributeDefinitions(
         initialValues: _extractExistingAttributeMap(
           specificationsJson: product.specifications,
@@ -430,10 +816,19 @@ class _AddProductPageState extends State<AddProductPage> {
     _brandController.dispose();
     _productColorController.dispose();
     _longDescController.dispose();
-    _priceController.dispose();
+    _portionPriceController.dispose();
+    _pricePerKgController.dispose();
     _discountPriceController.dispose();
+    _minPortionController.dispose();
+    _maxPortionController.dispose();
+    _portionStepController.dispose();
+    _minWeightController.dispose();
+    _weightStepController.dispose();
+    _defaultWeightController.dispose();
+    _maxWeightController.dispose();
     _stockController.dispose();
     _skuController.dispose();
+    _preparationTimeController.dispose();
     _subCategoryController.dispose();
     _attributeFormProvider.dispose();
     // _additionalInfoController.dispose(); // Removed
@@ -446,14 +841,15 @@ class _AddProductPageState extends State<AddProductPage> {
     final isCompactLayout = screenWidth < 1040;
     final isPhoneLayout = screenWidth < 720;
 
-    return WillPopScope(
-      onWillPop: () async {
+    return PopScope<void>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
         if (_isMediaUploadActive) {
           _showUploadInProgressWarning();
-          return false;
+          return;
         }
         _showExitDialog();
-        return false;
       },
       child: Scaffold(
         backgroundColor: Colors.white,
@@ -710,6 +1106,7 @@ class _AddProductPageState extends State<AddProductPage> {
   // Adım 1: Temel Bilgiler
   Widget _buildBasicInfoStep() {
     final isFood = _isFoodCategory;
+    final showInlineSidePanel = MediaQuery.of(context).size.width < 1040;
     final selectedMainCategory =
         (_selectedMainCategory ?? _storeMainCategory ?? '').trim();
     final selectedSubCategory =
@@ -1002,7 +1399,7 @@ class _AddProductPageState extends State<AddProductPage> {
               ],
             ),
             const SizedBox(height: 24),
-            if (isWide)
+            if (isWide || !showInlineSidePanel)
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: mainColumn,
@@ -1465,41 +1862,41 @@ class _AddProductPageState extends State<AddProductPage> {
 
   Widget _buildDesktopRightSidebar() {
     final isFood = _isFoodCategory;
-    final categorySummary = (_selectedMainCategory ?? _storeMainCategory ?? '')
-        .trim();
-    final subCategorySummary =
+    final selectedMainCategory =
+        (_selectedMainCategory ?? _storeMainCategory ?? '').trim();
+    final selectedSubCategory =
         (_selectedSubCategory ?? _subCategoryController.text).trim();
+    final selectedColor = _productColorController.text.trim();
     final readyAttributeCount = _attributeFormProvider.definitions.length;
+    final categorySummary = selectedMainCategory.isEmpty
+        ? 'Kategori seçilmedi'
+        : selectedMainCategory;
+    final subCategorySummary = selectedSubCategory.isEmpty
+        ? 'Alt kategori bekleniyor'
+        : selectedSubCategory;
     final attributeSummary = isFood
         ? '${_productAttributes.length} servis tercihi'
         : readyAttributeCount > 0
         ? '$readyAttributeCount hazır alan'
-        : subCategorySummary.isEmpty
+        : selectedSubCategory.isEmpty
         ? 'Alt kategori seçildiğinde gelir'
         : 'Manuel giriş kullanılacak';
-    final selectedColor = _productColorController.text.trim();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildProductPreview(),
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
+        _buildBasicInfoSidePanel(
+          isFood: isFood,
+          categorySummary: categorySummary,
+          subCategorySummary: subCategorySummary,
+          attributeSummary: attributeSummary,
+          selectedColor: selectedColor,
+        ),
+        const SizedBox(height: 20),
         _buildProfitCalculator(),
-        if (_currentStep == 0) ...[
-          const SizedBox(height: 24),
-          _buildBasicInfoSidePanel(
-            isFood: isFood,
-            categorySummary: categorySummary.isEmpty
-                ? 'Kategori seçilmedi'
-                : categorySummary,
-            subCategorySummary: subCategorySummary.isEmpty
-                ? 'Alt kategori bekleniyor'
-                : subCategorySummary,
-            attributeSummary: attributeSummary,
-            selectedColor: selectedColor,
-          ),
-        ],
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
         _buildQuickTips(),
       ],
     );
@@ -1673,7 +2070,7 @@ class _AddProductPageState extends State<AddProductPage> {
                 style: BorderStyle.solid,
               ),
               borderRadius: BorderRadius.circular(8),
-              color: AppColors.primary.withOpacity(0.05),
+              color: AppColors.primary.withValues(alpha: 0.05),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1842,8 +2239,39 @@ class _AddProductPageState extends State<AddProductPage> {
           brand: _brandController.text,
           mainCategory: _selectedMainCategory ?? '',
           subCategory: _selectedSubCategory ?? '',
-          price: _parseCurrency(_priceController.text),
-          discountPrice: _discountPriceController.text.isNotEmpty
+          price: _activePriceValue,
+          pricingType: _pricingTypeForSave.storageValue,
+          portionPrice: _portionPriceValue > 0 ? _portionPriceValue : null,
+          pricePerKg: _pricePerKgValue > 0 ? _pricePerKgValue : null,
+          serviceControlType:
+              _selectedServiceControlType == ProductServiceControlType.none
+              ? null
+              : _selectedServiceControlType.storageValue,
+          minPortion: _usesPortionLikeServiceControl
+              ? _parsedMinPortion()
+              : null,
+          maxPortion: _usesPortionLikeServiceControl
+              ? _parsedMaxPortion()
+              : null,
+          portionStep: _usesPortionLikeServiceControl
+              ? _parsedPortionStep()
+              : null,
+          defaultWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+              ? _parsedDefaultWeight()
+              : null,
+          minWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+              ? _parsedMinWeight()
+              : null,
+          weightStepGrams: _pricingTypeForSave == ProductPricingType.weight
+              ? _parsedWeightStep()
+              : null,
+          maxWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+              ? _parsedMaxWeight()
+              : null,
+          discountPrice:
+              _selectedServiceControlType == ProductServiceControlType.none &&
+                  _pricingTypeForSave == ProductPricingType.portion &&
+                  _discountPriceController.text.isNotEmpty
               ? _parseCurrency(_discountPriceController.text)
               : null,
           stock: _parseNumber(_stockController.text),
@@ -1854,6 +2282,7 @@ class _AddProductPageState extends State<AddProductPage> {
           imageUrl: null,
           description: _longDescController.text,
           specifications: _finalSpecificationsForSave(),
+          preparationTime: _preparationTimeValueForSave(),
           createdAt: DateTime.now(),
           attributes: _finalAttributesForSave(),
           videoUrl: _existingVideoUrl,
@@ -1919,19 +2348,77 @@ class _AddProductPageState extends State<AddProductPage> {
         const SizedBox(height: 8),
         Text(
           isFood
-              ? 'Yemeğin porsiyon fiyatını ve stok bilgisini girin'
+              ? 'Yemeğin fiyatlandirma tipini, fiyatini ve stok bilgisini girin'
               : 'Fiyat, stok ve vergi bilgilerini girin',
           style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
         ),
         const SizedBox(height: 32),
+        if (isFood) ...[
+          PricingTypeSelector(
+            value: _pricingTypeForSave,
+            onChanged: (value) {
+              setState(() {
+                _selectedPricingType = value;
+                if (value == ProductPricingType.weight) {
+                  _selectedServiceControlType =
+                      ProductServiceControlType.weightStepper;
+                  _syncWeightDefaultsIfNeeded(force: false);
+                } else {
+                  if (_selectedServiceControlType ==
+                          ProductServiceControlType.weightStepper ||
+                      _selectedServiceControlType ==
+                          ProductServiceControlType.none) {
+                    _selectedServiceControlType =
+                        ProductServiceControlType.portionStepper;
+                  }
+                  _syncServiceControlDefaultsIfNeeded(
+                    type: _selectedServiceControlType,
+                    force: false,
+                  );
+                }
+              });
+            },
+          ),
+          const SizedBox(height: 20),
+          if (_pricingTypeForSave == ProductPricingType.portion) ...[
+            ServiceControlSelector(
+              value: _selectedServiceControlType,
+              title: 'Porsiyon Yapısı',
+              options: const <ProductServiceControlType>[
+                ProductServiceControlType.none,
+                ProductServiceControlType.portionStepper,
+                ProductServiceControlType.skewerStepper,
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedServiceControlType = value;
+                  if (value == ProductServiceControlType.none) return;
+                  _syncServiceControlDefaultsIfNeeded(
+                    type: value,
+                    force: false,
+                  );
+                });
+              },
+            ),
+            const SizedBox(height: 20),
+          ],
+        ],
 
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: _buildTextField(
-                controller: _priceController,
-                label: 'Satış Fiyatı',
+                controller: _activePriceController,
+                label: _isWeightPricingActive
+                    ? '1 Kilogram Fiyati'
+                    : _selectedServiceControlType ==
+                          ProductServiceControlType.portionStepper
+                    ? '1 Porsiyon Fiyati'
+                    : _selectedServiceControlType ==
+                          ProductServiceControlType.skewerStepper
+                    ? 'Tek Sis Fiyati'
+                    : 'Satis Fiyati',
                 hint: '0.00',
                 prefix: '₺',
                 required: true,
@@ -1943,21 +2430,25 @@ class _AddProductPageState extends State<AddProductPage> {
                 ],
               ),
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildTextField(
-                controller: _discountPriceController,
-                label: 'İndirimli Fiyat',
-                hint: 'Opsiyonel',
-                prefix: '₺',
-                keyboardType: TextInputType.number,
-                onChanged: (value) => setState(() {}),
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  ThousandsSeparatorInputFormatter(),
-                ],
+            if (!_isWeightPricingActive &&
+                _selectedServiceControlType ==
+                    ProductServiceControlType.none) ...[
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildTextField(
+                  controller: _discountPriceController,
+                  label: 'Indirimli Fiyat',
+                  hint: 'Opsiyonel',
+                  prefix: '₺',
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) => setState(() {}),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    ThousandsSeparatorInputFormatter(),
+                  ],
+                ),
               ),
-            ),
+            ],
             const SizedBox(width: 16),
             Expanded(
               child: _buildDropdownField(
@@ -1975,11 +2466,13 @@ class _AddProductPageState extends State<AddProductPage> {
           ],
         ),
 
-        if (_discountPriceController.text.isNotEmpty)
+        if (!_isWeightPricingActive &&
+            _selectedServiceControlType == ProductServiceControlType.none &&
+            _discountPriceController.text.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
-              'İndirim Oranı: ${_calculateDiscountRate()}%',
+              'Indirim Orani: ${_calculateDiscountRate()}%',
               style: const TextStyle(
                 fontSize: 12,
                 color: Colors.green,
@@ -1987,6 +2480,46 @@ class _AddProductPageState extends State<AddProductPage> {
               ),
             ),
           ),
+
+        if (_usesPortionLikeServiceControl) ...[
+          const SizedBox(height: 20),
+          ServiceStepperFields(
+            serviceControlType: _selectedServiceControlType,
+            minController: _minPortionController,
+            maxController: _maxPortionController,
+            stepController: _portionStepController,
+            onChanged: () => setState(() {}),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Onizleme: ${ProductPriceCalculator.formatCurrency(_portionPriceValue)} · ${ProductPriceCalculator.buildServiceControlSummary(type: _selectedServiceControlType, minPortion: _parsedMinPortion(), maxPortion: _parsedMaxPortion(), portionStep: _parsedPortionStep())}\nSecenekler: ${_portionOptionsPreview()}',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ],
+
+        if (_isWeightPricingActive) ...[
+          const SizedBox(height: 20),
+          WeightPricingFields(
+            minWeightController: _minWeightController,
+            weightStepController: _weightStepController,
+            defaultWeightController: _defaultWeightController,
+            maxWeightController: _maxWeightController,
+            onChanged: () => setState(() {}),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Onizleme: ${ProductPriceCalculator.formatPerKgLabel(_pricePerKgValue)} · ${ProductPriceCalculator.buildWeightRangeLabel(minWeightGrams: _parsedMinWeight(), defaultWeightGrams: _parsedDefaultWeight())}\nSecenekler: ${_weightOptionsPreview()}',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ],
 
         const SizedBox(height: 24),
 
@@ -1999,6 +2532,7 @@ class _AddProductPageState extends State<AddProductPage> {
                 hint: '0',
                 required: true,
                 keyboardType: TextInputType.number,
+                onChanged: (value) => setState(() {}),
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
                   ThousandsSeparatorInputFormatter(),
@@ -2265,10 +2799,10 @@ class _AddProductPageState extends State<AddProductPage> {
         child: Container(
           color: Colors.black,
           child: thumbUrl != null && thumbUrl.isNotEmpty
-              ? OptimizedImage(imageUrlOrPath: 
-                  thumbUrl,
+              ? OptimizedImage(
+                  imageUrlOrPath: thumbUrl,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _buildVideoFallbackPreview(),
+                  errorBuilder: (_, _, _) => _buildVideoFallbackPreview(),
                 )
               : _buildVideoFallbackPreview(),
         ),
@@ -2507,30 +3041,18 @@ class _AddProductPageState extends State<AddProductPage> {
           const SizedBox(height: 32),
           _buildDropdownField(
             label: 'Servis Tipi',
-            items: const ['Paket Servis', 'Gel-Al', 'Masa Servisi', 'Hepsi'],
-            value: null,
-            onChanged: (_) {},
-            required: true,
+            items: _dropdownItems(_serviceTypeOptions, _selectedServiceType),
+            value: _selectedServiceType,
+            onChanged: (value) => setState(() => _selectedServiceType = value),
           ),
           const SizedBox(height: 24),
-          _buildDropdownField(
-            label: 'Tahmini Hazırlanma Süresi',
-            items: const [
-              '10-15 dakika',
-              '15-25 dakika',
-              '25-35 dakika',
-              '35-45 dakika',
-            ],
-            value: null,
-            onChanged: (_) {},
-            required: true,
-          ),
+          _buildPreparationTimeField(),
           const SizedBox(height: 24),
           _buildDropdownField(
             label: 'Servis Zamanı',
-            items: const ['Her Zaman', 'Sadece Öğle', 'Sadece Akşam'],
-            value: null,
-            onChanged: (_) {},
+            items: _dropdownItems(_serviceTimeOptions, _selectedServiceTime),
+            value: _selectedServiceTime,
+            onChanged: (value) => setState(() => _selectedServiceTime = value),
           ),
           const SizedBox(height: 32),
           _buildNavigationButtons(isLastStep: true),
@@ -2702,15 +3224,15 @@ class _AddProductPageState extends State<AddProductPage> {
                             width: 140,
                             height: 140,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
+                            errorBuilder: (_, _, _) =>
                                 const Icon(Icons.image_outlined, size: 40),
                           )
-                        : OptimizedImage(imageUrlOrPath: 
-                            imageUrl!,
+                        : OptimizedImage(
+                            imageUrlOrPath: imageUrl!,
                             width: 140,
                             height: 140,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
+                            errorBuilder: (_, _, _) =>
                                 const Icon(Icons.image_outlined, size: 40),
                           ),
                   ),
@@ -2835,7 +3357,10 @@ class _AddProductPageState extends State<AddProductPage> {
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: displayNetworkUrl != null
-                          ? OptimizedImage(imageUrlOrPath: displayNetworkUrl, fit: BoxFit.cover)
+                          ? OptimizedImage(
+                              imageUrlOrPath: displayNetworkUrl,
+                              fit: BoxFit.cover,
+                            )
                           : Image(
                               image: xFileImageProvider(displayXFile!),
                               fit: BoxFit.cover,
@@ -2976,7 +3501,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.08),
+                  color: AppColors.primary.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
@@ -3052,8 +3577,8 @@ class _AddProductPageState extends State<AddProductPage> {
           boxShadow: [
             BoxShadow(
               color: isSelected
-                  ? AppColors.primary.withOpacity(0.08)
-                  : Colors.black.withOpacity(0.03),
+                  ? AppColors.primary.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.03),
               blurRadius: 12,
               offset: const Offset(0, 6),
             ),
@@ -3072,10 +3597,10 @@ class _AddProductPageState extends State<AddProductPage> {
               clipBehavior: Clip.antiAlias,
               child: imageUrl.isEmpty
                   ? Icon(Icons.image_outlined, color: Colors.grey.shade400)
-                  : OptimizedImage(imageUrlOrPath: 
-                      imageUrl,
+                  : OptimizedImage(
+                      imageUrlOrPath: imageUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Icon(
+                      errorBuilder: (_, _, _) => Icon(
                         Icons.image_outlined,
                         color: Colors.grey.shade400,
                       ),
@@ -3575,7 +4100,38 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   String? _finalSpecificationsForSave() {
-    if (_isFoodCategory) return null;
+    if (_isFoodCategory) {
+      final foodSpecs = Map<String, dynamic>.from(_foodSpecificationSeed);
+      final preparationMinutes = _validatedPreparationMinutesValue();
+      final serviceType = _cleanSelection(_selectedServiceType);
+      final serviceTime = _cleanSelection(_selectedServiceTime);
+
+      for (final key in _preparationTimeSpecificationKeys) {
+        foodSpecs.remove(key);
+      }
+      foodSpecs.remove('service_type');
+      foodSpecs.remove('service_time');
+      foodSpecs.remove('servis_tipi');
+      foodSpecs.remove('servis_zamani');
+
+      if (preparationMinutes != null) {
+        foodSpecs['preparationTime'] = preparationMinutes;
+      }
+
+      if (serviceType == null) {
+        foodSpecs.remove('serviceType');
+      } else {
+        foodSpecs['serviceType'] = serviceType;
+      }
+
+      if (serviceTime == null) {
+        foodSpecs.remove('serviceTime');
+      } else {
+        foodSpecs['serviceTime'] = serviceTime;
+      }
+
+      return foodSpecs.isEmpty ? null : jsonEncode(foodSpecs);
+    }
     final values = _finalStructuredAttributesMap();
     if (values.isEmpty) return null;
     return jsonEncode(values);
@@ -3624,7 +4180,7 @@ class _AddProductPageState extends State<AddProductPage> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF6B21A8).withOpacity(0.1),
+                  color: const Color(0xFF6B21A8).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: const Text(
@@ -3667,7 +4223,7 @@ class _AddProductPageState extends State<AddProductPage> {
                       color: selected ? const Color(0xFF6B21A8) : Colors.white,
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                        color: const Color(0xFF6B21A8).withOpacity(0.3),
+                        color: const Color(0xFF6B21A8).withValues(alpha: 0.3),
                       ),
                     ),
                     child: Row(
@@ -3710,10 +4266,10 @@ class _AddProductPageState extends State<AddProductPage> {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF6B21A8).withOpacity(0.08),
+                    color: const Color(0xFF6B21A8).withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: const Color(0xFF6B21A8).withOpacity(0.3),
+                      color: const Color(0xFF6B21A8).withValues(alpha: 0.3),
                     ),
                   ),
                   child: Row(
@@ -3820,6 +4376,79 @@ class _AddProductPageState extends State<AddProductPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildPreparationTimeField() {
+    final selectedMinutes = _preparationMinutesValue();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
+            Text(
+              'Tahmini Hazırlanma Süresi',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            Text(
+              ' *',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.red,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _preparationTimeController,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            hintText: 'Örn. 45',
+            helperText: '1 - 300 dakika arası',
+            suffixText: 'dk',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _preparationTimeQuickOptions
+              .map((minutes) {
+                final isSelected = selectedMinutes == minutes;
+                return ChoiceChip(
+                  label: Text('$minutes dk'),
+                  selected: isSelected,
+                  onSelected: (_) =>
+                      setState(() => _setPreparationMinutes(minutes)),
+                  backgroundColor: Colors.white,
+                  selectedColor: AppColors.primary.withValues(alpha: 0.12),
+                  side: BorderSide(
+                    color: isSelected
+                        ? AppColors.primary.withValues(alpha: 0.32)
+                        : Colors.grey.shade300,
+                  ),
+                  labelStyle: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: isSelected
+                        ? AppColors.primary
+                        : Colors.grey.shade800,
+                  ),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                );
+              })
+              .toList(growable: false),
+        ),
+      ],
     );
   }
 
@@ -4011,25 +4640,10 @@ class _AddProductPageState extends State<AddProductPage> {
     );
   }
 
-  Widget _buildAttributeField(Map<String, dynamic> attr) {
-    if (attr['type'] == 'dropdown') {
-      return _buildDropdownField(
-        label: attr['label'],
-        items: attr['options'],
-        onChanged: (value) {},
-        required: attr['required'] ?? false,
-      );
-    } else {
-      return _buildTextField(
-        label: attr['label'],
-        hint: attr['hint'] ?? '',
-        required: attr['required'] ?? false,
-        keyboardType: attr['numeric'] == true ? TextInputType.number : null,
-      );
-    }
-  }
-
   Widget _buildNavigationButtons({bool isLastStep = false}) {
+    final canContinue = _currentStep == 1
+        ? _validatePricingStep(showErrors: false)
+        : true;
     return Row(
       children: [
         if (_currentStep > 0)
@@ -4044,13 +4658,15 @@ class _AddProductPageState extends State<AddProductPage> {
         const Spacer(),
         if (!isLastStep)
           ElevatedButton(
-            onPressed: () {
-              if (_validateCurrentStep()) {
-                setState(() {
-                  _currentStep++;
-                });
-              }
-            },
+            onPressed: canContinue
+                ? () {
+                    if (_validateCurrentStep()) {
+                      setState(() {
+                        _currentStep++;
+                      });
+                    }
+                  }
+                : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
@@ -4088,16 +4704,7 @@ class _AddProductPageState extends State<AddProductPage> {
         return true;
 
       case 1: // Fiyat & Stok
-        if (_priceController.text.isEmpty ||
-            _parseCurrency(_priceController.text) <= 0) {
-          _showError('Geçerli bir satış fiyatı giriniz');
-          return false;
-        }
-        if (_stockController.text.isEmpty) {
-          _showError('Geçerli bir stok miktarı giriniz');
-          return false;
-        }
-        return true;
+        return _validatePricingStep(showErrors: true);
 
       case 2: // Görseller
         if (_existingImageUrls.isEmpty &&
@@ -4111,6 +4718,9 @@ class _AddProductPageState extends State<AddProductPage> {
         return true;
 
       case 4: // Kargo & Boyut (opsiyonel)
+        if (_isFoodCategory && !_validatePreparationTime()) {
+          return false;
+        }
         return true;
 
       default:
@@ -4130,6 +4740,25 @@ class _AddProductPageState extends State<AddProductPage> {
 
   // Sağ Panel - Ürün Önizleme
   Widget _buildProductPreview() {
+    final effectivePricingType = _pricingTypeForSave;
+    final currentPrice = _activePriceValue;
+    final previewPriceText = effectivePricingType == ProductPricingType.weight
+        ? ProductPriceCalculator.formatPerKgLabel(currentPrice)
+        : ProductPriceCalculator.formatCurrency(currentPrice);
+    final previewWeightInfo = _isWeightPricingActive
+        ? ProductPriceCalculator.buildWeightRangeLabel(
+            minWeightGrams: _parsedMinWeight(),
+            defaultWeightGrams: _parsedDefaultWeight(),
+          )
+        : _usesPortionLikeServiceControl
+        ? ProductPriceCalculator.buildServiceControlSummary(
+            type: _selectedServiceControlType,
+            minPortion: _parsedMinPortion(),
+            maxPortion: _parsedMaxPortion(),
+            portionStep: _parsedPortionStep(),
+          )
+        : null;
+    final previewPreparationMinutes = _preparationMinutesValue();
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -4173,15 +4802,39 @@ class _AddProductPageState extends State<AddProductPage> {
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 8),
-          if (_priceController.text.isNotEmpty)
+          if (_activePriceController.text.isNotEmpty)
             Text(
-              '₺${_priceController.text}',
+              previewPriceText,
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: AppColors.primary,
               ),
             ),
+          if (previewWeightInfo != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              previewWeightInfo,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+          ],
+          if (_isFoodCategory && previewPreparationMinutes != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(
+                  Icons.schedule_outlined,
+                  size: 16,
+                  color: Colors.grey.shade700,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Hazırlanma: ${formatPreparationTime(previewPreparationMinutes)}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -4189,8 +4842,12 @@ class _AddProductPageState extends State<AddProductPage> {
 
   // Kâr Hesaplayıcı
   Widget _buildProfitCalculator() {
-    final price = _parseCurrency(_priceController.text);
-    final discountPrice = _parseCurrency(_discountPriceController.text);
+    final price = _activePriceValue;
+    final discountPrice =
+        !_isWeightPricingActive &&
+            _selectedServiceControlType == ProductServiceControlType.none
+        ? _parseCurrency(_discountPriceController.text)
+        : 0.0;
     final finalPrice = discountPrice > 0 ? discountPrice : price;
 
     final vatRate = double.parse(_selectedVatRate.replaceAll('%', '')) / 100;
@@ -4415,286 +5072,8 @@ class _AddProductPageState extends State<AddProductPage> {
     return subCategories[mainCategory] ?? [];
   }
 
-  void _loadCategoryAttributes(String? category) {
-    // Kategori bazlı özellikler yüklenir
-    setState(() {
-      _categoryAttributes = {};
-    });
-  }
-
-  List<Map<String, dynamic>> _getCategorySpecificAttributes() {
-    // Elektronik kategorisi özellikleri
-    if (_selectedMainCategory == 'Elektronik') {
-      if (_selectedSubCategory == 'Telefon') {
-        return [
-          {
-            'label': 'Ekran Boyutu',
-            'hint': 'İnç',
-            'type': 'text',
-            'numeric': true,
-            'required': true,
-          },
-          {
-            'label': 'RAM',
-            'type': 'dropdown',
-            'options': ['4GB', '6GB', '8GB', '12GB', '16GB'],
-            'required': true,
-          },
-          {
-            'label': 'Dahili Hafıza',
-            'type': 'dropdown',
-            'options': ['64GB', '128GB', '256GB', '512GB', '1TB'],
-            'required': true,
-          },
-          {
-            'label': 'Pil Kapasitesi',
-            'hint': 'mAh',
-            'type': 'text',
-            'numeric': true,
-          },
-          {
-            'label': 'Kamera Çözünürlüğü',
-            'hint': 'MP',
-            'type': 'text',
-            'numeric': true,
-          },
-          {
-            'label': 'İşletim Sistemi',
-            'type': 'dropdown',
-            'options': ['iOS', 'Android', 'Diğer'],
-          },
-        ];
-      } else if (_selectedSubCategory == 'Bilgisayar') {
-        return [
-          {
-            'label': 'İşlemci',
-            'hint': 'Örn: Intel i7',
-            'type': 'text',
-            'required': true,
-          },
-          {
-            'label': 'RAM',
-            'type': 'dropdown',
-            'options': ['4GB', '8GB', '16GB', '32GB', '64GB'],
-            'required': true,
-          },
-          {
-            'label': 'Depolama',
-            'type': 'dropdown',
-            'options': ['256GB SSD', '512GB SSD', '1TB SSD', '1TB HDD'],
-            'required': true,
-          },
-          {
-            'label': 'Ekran Boyutu',
-            'hint': 'İnç',
-            'type': 'text',
-            'numeric': true,
-          },
-          {'label': 'Ekran Kartı', 'hint': 'Örn: RTX 3060', 'type': 'text'},
-        ];
-      } else if (_selectedSubCategory == 'Tablet') {
-        return [
-          {
-            'label': 'Ekran Boyutu',
-            'hint': 'İnç',
-            'type': 'text',
-            'numeric': true,
-            'required': true,
-          },
-          {
-            'label': 'RAM',
-            'type': 'dropdown',
-            'options': ['2GB', '4GB', '6GB', '8GB', '12GB'],
-          },
-          {
-            'label': 'Dahili Hafıza',
-            'type': 'dropdown',
-            'options': ['32GB', '64GB', '128GB', '256GB', '512GB'],
-          },
-        ];
-      }
-    }
-    // Giyim & Aksesuar kategorisi özellikleri
-    else if (_selectedMainCategory == 'Giyim & Aksesuar') {
-      return [
-        {
-          'label': 'Materyal',
-          'type': 'dropdown',
-          'options': [
-            '%100 Pamuk',
-            'Polyester',
-            'Viskon',
-            'Keten',
-            'Deri',
-            'Karma',
-          ],
-          'required': true,
-        },
-        {'label': 'Yıkama Talimatları', 'hint': 'Örn: 30°C', 'type': 'text'},
-        {
-          'label': 'Kesim',
-          'type': 'dropdown',
-          'options': [
-            'Slim Fit',
-            'Regular Fit',
-            'Oversize',
-            'Dar Kesim',
-            'Bol Kesim',
-          ],
-        },
-        {
-          'label': 'Desen',
-          'type': 'dropdown',
-          'options': [
-            'Düz',
-            'Çizgili',
-            'Kareli',
-            'Desenli',
-            'Baskılı',
-            'Çiçekli',
-          ],
-        },
-        {
-          'label': 'Mevsim',
-          'type': 'dropdown',
-          'options': ['Yaz', 'Kış', 'İlkbahar/Sonbahar', '4 Mevsim'],
-        },
-      ];
-    }
-    // Kozmetik & Kişisel Bakım kategorisi özellikleri
-    else if (_selectedMainCategory == 'Kozmetik & Kişisel Bakım') {
-      return [
-        {
-          'label': 'Cilt Tipi',
-          'type': 'dropdown',
-          'options': ['Tüm Cilt Tipleri', 'Kuru', 'Yağlı', 'Karma', 'Hassas'],
-        },
-        {'label': 'İçerik', 'hint': 'Örn: Hyaluronik Asit', 'type': 'text'},
-        {'label': 'Hacim/Ağırlık', 'hint': 'Örn: 50ml', 'type': 'text'},
-        {
-          'label': 'Paraben İçeriği',
-          'type': 'dropdown',
-          'options': ['Parabensiz', 'Parabenli'],
-        },
-        {
-          'label': 'Vegan',
-          'type': 'dropdown',
-          'options': ['Evet', 'Hayır'],
-        },
-      ];
-    }
-    // Ev & Yaşam kategorisi özellikleri
-    else if (_selectedMainCategory == 'Ev & Yaşam') {
-      if (_selectedSubCategory == 'Mobilya') {
-        return [
-          {
-            'label': 'Malzeme',
-            'type': 'dropdown',
-            'options': ['Ahşap', 'Metal', 'Cam', 'Plastik', 'Kumaş', 'Deri'],
-            'required': true,
-          },
-          {'label': 'Renk', 'hint': 'Örn: Beyaz', 'type': 'text'},
-          {
-            'label': 'Montaj',
-            'type': 'dropdown',
-            'options': ['Montajlı', 'Kendin Montaj'],
-          },
-          {
-            'label': 'Garanti Süresi',
-            'hint': 'Yıl',
-            'type': 'text',
-            'numeric': true,
-          },
-        ];
-      } else if (_selectedSubCategory == 'Dekorasyon') {
-        return [
-          {
-            'label': 'Stil',
-            'type': 'dropdown',
-            'options': ['Modern', 'Klasik', 'Rustik', 'Minimal', 'Vintage'],
-          },
-          {
-            'label': 'Malzeme',
-            'type': 'dropdown',
-            'options': ['Seramik', 'Cam', 'Ahşap', 'Metal', 'Tekstil'],
-          },
-        ];
-      }
-    }
-    // Spor & Outdoor kategorisi özellikleri
-    else if (_selectedMainCategory == 'Spor & Outdoor') {
-      return [
-        {
-          'label': 'Aktivite',
-          'type': 'dropdown',
-          'options': [
-            'Koşu',
-            'Fitness',
-            'Yoga',
-            'Kampçılık',
-            'Yüzme',
-            'Bisiklet',
-          ],
-        },
-        {
-          'label': 'Materyal',
-          'type': 'dropdown',
-          'options': ['Polyester', 'Naylon', 'Pamuk', 'Elastan', 'Su Geçirmez'],
-        },
-        {
-          'label': 'Cinsiyet',
-          'type': 'dropdown',
-          'options': ['Erkek', 'Kadın', 'Unisex', 'Çocuk'],
-        },
-      ];
-    }
-    // Anne & Bebek & Oyuncak kategorisi özellikleri
-    else if (_selectedMainCategory == 'Anne & Bebek & Oyuncak') {
-      return [
-        {'label': 'Yaş Aralığı', 'hint': 'Örn: 0-6 ay', 'type': 'text'},
-        {
-          'label': 'Cinsiyet',
-          'type': 'dropdown',
-          'options': ['Kız', 'Erkek', 'Unisex'],
-        },
-        {
-          'label': 'Güvenlik Sertifikası',
-          'type': 'dropdown',
-          'options': ['CE', 'TSE', 'ISO', 'Yok'],
-        },
-      ];
-    }
-    // Kitap & Hobi kategorisi özellikleri
-    else if (_selectedMainCategory == 'Kitap & Hobi') {
-      if (_selectedSubCategory == 'Kitap') {
-        return [
-          {'label': 'Yazar', 'hint': 'Yazar adı', 'type': 'text'},
-          {'label': 'Yayınevi', 'hint': 'Yayınevi adı', 'type': 'text'},
-          {
-            'label': 'Sayfa Sayısı',
-            'hint': 'Sayfa',
-            'type': 'text',
-            'numeric': true,
-          },
-          {
-            'label': 'Dil',
-            'type': 'dropdown',
-            'options': ['Türkçe', 'İngilizce', 'Almanca', 'Fransızca', 'Diğer'],
-          },
-          {
-            'label': 'Kapak Tipi',
-            'type': 'dropdown',
-            'options': ['Ciltli', 'Karton Kapak', 'Yumuşak Kapak'],
-          },
-        ];
-      }
-    }
-
-    return [];
-  }
-
   String _calculateDiscountRate() {
-    final price = _parseCurrency(_priceController.text);
+    final price = _portionPriceValue;
     final discountPrice = _parseCurrency(_discountPriceController.text);
 
     if (price > 0 && discountPrice > 0) {
@@ -4817,10 +5196,6 @@ class _AddProductPageState extends State<AddProductPage> {
     return '${value.toStringAsFixed(value >= 10 ? 1 : 2)} ${units[index]}';
   }
 
-  void _pickFileSingle(int index) {
-    // Deprecated
-  }
-
   Future<void> _pickVariantImage(int variantIndex) async {
     try {
       final XFile? image = await _picker.pickImage(
@@ -4850,6 +5225,7 @@ class _AddProductPageState extends State<AddProductPage> {
         maxHeight: 1080,
         imageQuality: 70,
       );
+      if (!mounted) return;
       if (images.isNotEmpty) {
         int uploadedCount = 0;
         for (var i = 0; i < images.length && i < 8; i++) {
@@ -4995,6 +5371,79 @@ class _AddProductPageState extends State<AddProductPage> {
     return int.tryParse(cleanText) ?? 0;
   }
 
+  bool _validateServiceControlConfiguration({bool showErrors = true}) {
+    if (_usesPortionLikeServiceControl) {
+      final errors = ProductPriceCalculator.validatePortionConfiguration(
+        type: _selectedServiceControlType,
+        minPortion: _parseOptionalDecimalField(_minPortionController.text),
+        maxPortion: _parseOptionalDecimalField(_maxPortionController.text),
+        portionStep: _parseOptionalDecimalField(_portionStepController.text),
+      );
+      if (errors.isNotEmpty) {
+        if (showErrors) {
+          _showError(errors.first);
+        }
+        return false;
+      }
+    }
+    if (_pricingTypeForSave == ProductPricingType.weight) {
+      final errors = ProductPriceCalculator.validateWeightConfiguration(
+        minWeightGrams: _parsedMinWeight(),
+        defaultWeightGrams: _parsedDefaultWeight(),
+        weightStepGrams: _parsedWeightStep(),
+        maxWeightGrams: _parsedMaxWeight(),
+      );
+      if (errors.isNotEmpty) {
+        if (showErrors) {
+          _showError(errors.first);
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _validatePricingStep({required bool showErrors}) {
+    final effectivePricingType = _pricingTypeForSave;
+    final priceController = effectivePricingType == ProductPricingType.weight
+        ? _pricePerKgController
+        : _portionPriceController;
+    final priceValue = effectivePricingType == ProductPricingType.weight
+        ? _pricePerKgValue
+        : _portionPriceValue;
+
+    if (priceController.text.trim().isEmpty || priceValue <= 0) {
+      if (showErrors) {
+        _showError(
+          effectivePricingType == ProductPricingType.weight
+              ? 'Geçerli bir kilogram fiyatı giriniz'
+              : 'Geçerli bir satış fiyatı giriniz',
+        );
+      }
+      return false;
+    }
+
+    if (_selectedVatRate.trim().isEmpty) {
+      if (showErrors) {
+        _showError('KDV oranı zorunludur');
+      }
+      return false;
+    }
+
+    if (!_validateServiceControlConfiguration(showErrors: showErrors)) {
+      return false;
+    }
+
+    if (_stockController.text.trim().isEmpty) {
+      if (showErrors) {
+        _showError('Geçerli bir stok miktarı giriniz');
+      }
+      return false;
+    }
+
+    return true;
+  }
+
   Future<void> _saveDraft() async {
     if (_isLoading) return;
 
@@ -5025,8 +5474,33 @@ class _AddProductPageState extends State<AddProductPage> {
       brand: _brandController.text,
       mainCategory: mainCategory,
       subCategory: subCategory,
-      price: _parseCurrency(_priceController.text),
-      discountPrice: _discountPriceController.text.isNotEmpty
+      price: _activePriceValue,
+      pricingType: _pricingTypeForSave.storageValue,
+      portionPrice: _portionPriceValue > 0 ? _portionPriceValue : null,
+      pricePerKg: _pricePerKgValue > 0 ? _pricePerKgValue : null,
+      serviceControlType:
+          _selectedServiceControlType == ProductServiceControlType.none
+          ? null
+          : _selectedServiceControlType.storageValue,
+      minPortion: _usesPortionLikeServiceControl ? _parsedMinPortion() : null,
+      maxPortion: _usesPortionLikeServiceControl ? _parsedMaxPortion() : null,
+      portionStep: _usesPortionLikeServiceControl ? _parsedPortionStep() : null,
+      defaultWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          ? _parsedDefaultWeight()
+          : null,
+      minWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          ? _parsedMinWeight()
+          : null,
+      weightStepGrams: _pricingTypeForSave == ProductPricingType.weight
+          ? _parsedWeightStep()
+          : null,
+      maxWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          ? _parsedMaxWeight()
+          : null,
+      discountPrice:
+          _selectedServiceControlType == ProductServiceControlType.none &&
+              _pricingTypeForSave == ProductPricingType.portion &&
+              _discountPriceController.text.isNotEmpty
           ? _parseCurrency(_discountPriceController.text)
           : null,
       stock: _parseNumber(_stockController.text),
@@ -5038,6 +5512,7 @@ class _AddProductPageState extends State<AddProductPage> {
       imageUrls: existingImageUrls,
       description: _longDescController.text,
       specifications: _finalSpecificationsForSave(),
+      preparationTime: _preparationTimeValueForSave(),
       createdAt: DateTime.now(),
       attributes: _finalAttributesForSave(),
       videoUrl: _existingVideoUrl,
@@ -5116,13 +5591,7 @@ class _AddProductPageState extends State<AddProductPage> {
       _showError('Detaylı açıklama zorunludur');
       return false;
     }
-    if (_priceController.text.isEmpty ||
-        _parseCurrency(_priceController.text) <= 0) {
-      _showError('Geçerli bir satış fiyatı giriniz');
-      return false;
-    }
-    if (_stockController.text.isEmpty) {
-      _showError('Geçerli bir stok miktarı giriniz');
+    if (!_validatePricingStep(showErrors: true)) {
       return false;
     }
     final hasNewImage = _productImages.any((x) => x != null);
@@ -5134,6 +5603,9 @@ class _AddProductPageState extends State<AddProductPage> {
     if (_selectedVideoMetadata != null &&
         _selectedVideoMetadata!.duration.inSeconds > 30) {
       _showError('Video süresi 30 saniyeyi aşamaz');
+      return false;
+    }
+    if (_isFoodCategory && !_validatePreparationTime()) {
       return false;
     }
     return true;
@@ -5373,8 +5845,33 @@ class _AddProductPageState extends State<AddProductPage> {
       brand: _brandController.text,
       mainCategory: _selectedMainCategory ?? '',
       subCategory: _selectedSubCategory ?? '',
-      price: _parseCurrency(_priceController.text),
-      discountPrice: _discountPriceController.text.isNotEmpty
+      price: _activePriceValue,
+      pricingType: _pricingTypeForSave.storageValue,
+      portionPrice: _portionPriceValue > 0 ? _portionPriceValue : null,
+      pricePerKg: _pricePerKgValue > 0 ? _pricePerKgValue : null,
+      serviceControlType:
+          _selectedServiceControlType == ProductServiceControlType.none
+          ? null
+          : _selectedServiceControlType.storageValue,
+      minPortion: _usesPortionLikeServiceControl ? _parsedMinPortion() : null,
+      maxPortion: _usesPortionLikeServiceControl ? _parsedMaxPortion() : null,
+      portionStep: _usesPortionLikeServiceControl ? _parsedPortionStep() : null,
+      defaultWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          ? _parsedDefaultWeight()
+          : null,
+      minWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          ? _parsedMinWeight()
+          : null,
+      weightStepGrams: _pricingTypeForSave == ProductPricingType.weight
+          ? _parsedWeightStep()
+          : null,
+      maxWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          ? _parsedMaxWeight()
+          : null,
+      discountPrice:
+          _selectedServiceControlType == ProductServiceControlType.none &&
+              _pricingTypeForSave == ProductPricingType.portion &&
+              _discountPriceController.text.isNotEmpty
           ? _parseCurrency(_discountPriceController.text)
           : null,
       stock: _parseNumber(_stockController.text),
@@ -5388,6 +5885,7 @@ class _AddProductPageState extends State<AddProductPage> {
           ? null
           : _longDescController.text,
       specifications: _finalSpecificationsForSave(),
+      preparationTime: _preparationTimeValueForSave(),
       createdAt: DateTime.now(),
       attributes: _finalAttributesForSave(),
       videoUrl: uploadedVideoUrl,

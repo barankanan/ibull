@@ -91,7 +91,7 @@ class _AddToListModalState extends State<AddToListModal> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF7C4DFF).withOpacity(0.1),
+                      color: const Color(0xFF7C4DFF).withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: const Icon(Icons.add, color: Color(0xFF7C4DFF)),
@@ -167,7 +167,7 @@ class _AddToListModalState extends State<AddToListModal> {
                                       color: isSelected
                                           ? const Color(
                                               0xFF7C4DFF,
-                                            ).withOpacity(0.12)
+                                            ).withValues(alpha: 0.12)
                                           : Colors.grey.shade50,
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(

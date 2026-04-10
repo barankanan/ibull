@@ -87,7 +87,7 @@ class _AIChatPageState extends State<AIChatPage> {
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 24,
                 offset: const Offset(0, 8),
               ),
@@ -113,7 +113,7 @@ class _AIChatPageState extends State<AIChatPage> {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.1),
+                        color: AppColors.primary.withValues(alpha: 0.1),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
@@ -206,9 +206,7 @@ class _AIChatPageState extends State<AIChatPage> {
                                           ),
                                           boxShadow: [
                                             BoxShadow(
-                                              color: Colors.black.withOpacity(
-                                                0.05,
-                                              ),
+                                              color: Colors.black.withValues(alpha: 0.05,),
                                               blurRadius: 4,
                                             ),
                                           ],
@@ -256,9 +254,7 @@ class _AIChatPageState extends State<AIChatPage> {
                                         ),
                                         boxShadow: [
                                           BoxShadow(
-                                            color: Colors.black.withOpacity(
-                                              0.05,
-                                            ),
+                                            color: Colors.black.withValues(alpha: 0.05,),
                                             blurRadius: 4,
                                           ),
                                         ],
@@ -308,7 +304,7 @@ class _AIChatPageState extends State<AIChatPage> {
                                 context,
                                 PageRouteBuilder(
                                   opaque: false,
-                                  pageBuilder: (context, _, __) =>
+                                  pageBuilder: (context, _, _) =>
                                       const AIDiscoverPage(),
                                   transitionsBuilder:
                                       (
@@ -335,7 +331,7 @@ class _AIChatPageState extends State<AIChatPage> {
                                 context,
                                 PageRouteBuilder(
                                   opaque: false,
-                                  pageBuilder: (context, _, __) =>
+                                  pageBuilder: (context, _, _) =>
                                       const CompareProductsPage(),
                                   transitionsBuilder:
                                       (
@@ -508,7 +504,7 @@ class _AIChatPageState extends State<AIChatPage> {
                                     width: 50,
                                     height: 50,
                                     decoration: BoxDecoration(
-                                      color: AppColors.primary.withOpacity(0.1),
+                                      color: AppColors.primary.withValues(alpha: 0.1),
                                       shape: BoxShape.circle,
                                     ),
                                     child: const Icon(
@@ -616,7 +612,7 @@ class _AIChatPageState extends State<AIChatPage> {
                               borderRadius: BorderRadius.circular(16),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.05),
+                                  color: Colors.black.withValues(alpha: 0.05),
                                   blurRadius: 4,
                                 ),
                               ],
@@ -653,7 +649,7 @@ class _AIChatPageState extends State<AIChatPage> {
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
+                                color: Colors.black.withValues(alpha: 0.05),
                                 blurRadius: 4,
                               ),
                             ],
@@ -690,7 +686,7 @@ class _AIChatPageState extends State<AIChatPage> {
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
+                          color: AppColors.primary.withValues(alpha: 0.1),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(

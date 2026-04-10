@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'app/app_bootstrap.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
+import 'core/app_ready.dart';
 import 'core/providers/connectivity_provider.dart';
 import 'core/review_state.dart';
 import 'core/route_observer.dart';
@@ -17,14 +18,26 @@ import 'screens/ihiz_courier_page.dart' deferred as ihiz_courier;
 import 'screens/seller/admin_panel_page.dart' deferred as admin_panel;
 import 'screens/seller_panel_page.dart';
 import 'screens/become_seller_page.dart' deferred as become_seller;
+import 'screens/qr_entry_screen.dart';
 import 'firebase_options.dart';
 import 'services/push_notification_service.dart';
+import 'core/qr_initial_params.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 final SeoRouteObserver seoRouteObserver = SeoRouteObserver();
 
 void main() async {
+  final bootWatch = Stopwatch()..start();
   WidgetsFlutterBinding.ensureInitialized();
+
+  // CRITICAL: Capture QR params from the initial URL RIGHT NOW, before any
+  // Flutter routing or Supabase auth can overwrite window.location.href.
+  // addPostFrameCallback fires too late — Uri.base may already differ.
+  QrInitialParams.captureFromUri();
+  debugPrint(
+    '[Boot] ${bootWatch.elapsedMilliseconds}ms — QR params captured. isQrPath=${QrInitialParams.isQrPath}',
+  );
+
   configureAppDiagnostics(
     startupMessage: !kIsWeb
         ? 'Starting IBUL App on Native Platform'
@@ -32,63 +45,88 @@ void main() async {
     includeErrorStackTrace: true,
   );
 
+  // ── ErrorWidget builder (unchanged) ──────────────────────────────────────
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    return Material(
+      child: Container(
+        color: Colors.white,
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                'Bir hata oluştu:',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.red,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                details.exceptionAsString(),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.black87),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  };
+
+  // ── QR web fast-path ─────────────────────────────────────────────────────
+  // When the user lands on /qr?seller=…&table=… on web we want the loading
+  // screen to appear IMMEDIATELY — before Supabase.initialize() completes.
+  // Strategy: call runApp now (zero visible delay), initialise services in the
+  // background, and let QrEntryScreen await [appServicesReady] before
+  // making any Supabase calls.  This saves 100–500 ms of blank-screen time.
+  if (kIsWeb && QrInitialParams.isQrPath) {
+    debugPrint(
+      '[Boot] ${bootWatch.elapsedMilliseconds}ms — QR web fast-path: runApp immediately',
+    );
+    _initServicesBackground(bootWatch); // fire-and-forget
+    runApp(MultiProvider(providers: buildAppProviders(), child: const MyApp()));
+    debugPrint(
+      '[Boot] ${bootWatch.elapsedMilliseconds}ms — runApp returned (first frame scheduled)',
+    );
+    return;
+  }
+
+  // ── Normal path (unchanged ordering) ─────────────────────────────────────
   try {
-    debugPrint('Bootstrap stage: initializeDateFormatting');
+    debugPrint(
+      '[Boot] ${bootWatch.elapsedMilliseconds}ms — initializeDateFormatting',
+    );
     Intl.defaultLocale = 'tr_TR';
     await initializeDateFormatting('tr_TR');
 
-    debugPrint('Bootstrap stage: initializeAppSupabase');
+    debugPrint(
+      '[Boot] ${bootWatch.elapsedMilliseconds}ms — initializeAppSupabase',
+    );
     await initializeAppSupabase();
 
-    // ReviewState singleton initializes itself in its constructor (_internal calls
-    // initialize() which is memoized). Awaiting it here only delays runApp by the
-    // SharedPreferences read time (~5-50 ms) without any benefit — the data is
-    // only needed after products load (~1-2 s later). Let it run in the background.
     ReviewState().initialize(); // fire-and-forget; memoized, safe to call again
+    if (!appServicesReadyCompleter.isCompleted) {
+      appServicesReadyCompleter.complete();
+    }
 
     if (!kIsWeb) {
-      debugPrint('Bootstrap stage: Firebase.initializeApp');
+      debugPrint(
+        '[Boot] ${bootWatch.elapsedMilliseconds}ms — Firebase.initializeApp',
+      );
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     }
 
-    // Render hatalarını ekranda göster
-    ErrorWidget.builder = (FlutterErrorDetails details) {
-      return Material(
-        child: Container(
-          color: Colors.white,
-          padding: const EdgeInsets.all(16),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.red, size: 48),
-                const SizedBox(height: 16),
-                Text(
-                  'Bir hata oluştu:',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  details.exceptionAsString(),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.black87),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    };
-
-    debugPrint('Bootstrap stage: runApp');
+    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — runApp');
     runApp(MultiProvider(providers: buildAppProviders(), child: const MyApp()));
+    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — runApp returned');
 
     if (!kIsWeb) {
       try {
@@ -107,8 +145,59 @@ void main() async {
   }
 }
 
+/// Initialises Supabase and locale formatting concurrently without blocking [runApp].
+/// Resolves [appServicesReadyCompleter] on success; completes with error on failure
+/// so [QrEntryScreen] can surface an actionable error instead of hanging forever.
+Future<void> _initServicesBackground(Stopwatch sw) async {
+  try {
+    debugPrint('[Boot] ${sw.elapsedMilliseconds}ms — background init: start');
+    Intl.defaultLocale = 'tr_TR';
+    // Run locale init and Supabase init in parallel — neither depends on the other.
+    await Future.wait<void>([
+      initializeDateFormatting('tr_TR'),
+      initializeAppSupabase(),
+    ]);
+    ReviewState().initialize(); // fire-and-forget
+    debugPrint('[Boot] ${sw.elapsedMilliseconds}ms — background init: done');
+    if (!appServicesReadyCompleter.isCompleted) {
+      appServicesReadyCompleter.complete();
+    }
+  } catch (error, stackTrace) {
+    debugPrint(
+      '[Boot] ${sw.elapsedMilliseconds}ms — background init error: $error',
+    );
+    debugPrintStack(stackTrace: stackTrace);
+    if (!appServicesReadyCompleter.isCompleted) {
+      appServicesReadyCompleter.completeError(error, stackTrace);
+    }
+  }
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+
+  Widget _buildSafeHome({required String source}) {
+    debugPrint(
+      '[Routing] home route opened — source=$source ${QrInitialParams.debugState}',
+    );
+    return const OfflineWrapper(child: HomeWrapper());
+  }
+
+  Widget _buildQrEntry({required String source}) {
+    debugPrint(
+      '[Routing] QR route opened — source=$source ${QrInitialParams.debugState}',
+    );
+    return const QrEntryScreen();
+  }
+
+  Widget _buildSellerPanel({required String source, Object? arguments}) {
+    final entryRole = parseSellerPanelEntryRole(arguments);
+    debugPrint(
+      '[SellerPanel][Init] routeEnter source=$source path=/seller '
+      'entryRole=${entryRole.name}',
+    );
+    return SellerPanelPage(entryRole: entryRole);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -116,6 +205,11 @@ class MyApp extends StatelessWidget {
     // We can use a Builder or a wrapping widget for this.
     // Since MaterialApp builds the Navigator, we should place the listener inside it or use a global key.
     // A simple way is to use a builder in MaterialApp.
+
+    final launchQrHome =
+        kIsWeb &&
+        QrInitialParams.isQrPath &&
+        !QrInitialParams.wasResetAfterQrExit;
 
     return MaterialApp(
       navigatorKey: appNavigatorKey,
@@ -130,8 +224,14 @@ class MyApp extends StatelessWidget {
       ],
       supportedLocales: const [Locale('tr'), Locale('en')],
       theme: buildAppTheme(),
-      home: const OfflineWrapper(child: HomeWrapper()),
+      // When launched from a /qr?... URL, show QrEntryScreen directly so the
+      // table ordering flow opens without any home-screen detour.
+      home: launchQrHome
+          ? _buildQrEntry(source: 'MaterialApp.home')
+          : _buildSafeHome(source: 'MaterialApp.home'),
       routes: {
+        '/home': (context) => _buildSafeHome(source: 'routes:/home'),
+        '/qr': (context) => _buildQrEntry(source: 'routes:/qr'),
         '/map': (context) {
           final args = parseMapRouteArguments(
             ModalRoute.of(context)?.settings.arguments,
@@ -149,7 +249,10 @@ class MyApp extends StatelessWidget {
           loadLibrary: admin_panel.loadLibrary,
           builder: () => admin_panel.AdminPanelPage(),
         ),
-        '/seller': (context) => const SellerPanelPage(),
+        '/seller': (context) => _buildSellerPanel(
+          source: 'routes:/seller',
+          arguments: ModalRoute.of(context)?.settings.arguments,
+        ),
         '/become-seller': (context) => DeferredScreen(
           loadLibrary: become_seller.loadLibrary,
           builder: () => become_seller.BecomeSellerPage(),
@@ -164,8 +267,22 @@ class MyApp extends StatelessWidget {
           if (path.isNotEmpty) return path;
           return rawName.split('?').first;
         }();
+        debugPrint(
+          '[Routing] route redirect source=$rawName '
+          'normalizedPath=$normalizedPath ${QrInitialParams.debugState}',
+        );
 
         switch (normalizedPath) {
+          case '/home':
+            return MaterialPageRoute(
+              settings: settings,
+              builder: (_) => _buildSafeHome(source: 'onGenerateRoute:/home'),
+            );
+          case '/qr':
+            return MaterialPageRoute(
+              settings: settings,
+              builder: (_) => _buildQrEntry(source: 'onGenerateRoute:/qr'),
+            );
           case '/map':
             final args = parseMapRouteArguments(settings.arguments);
             return MaterialPageRoute(
@@ -189,7 +306,12 @@ class MyApp extends StatelessWidget {
               ),
             );
           case '/seller':
-            return MaterialPageRoute(builder: (_) => const SellerPanelPage());
+            return MaterialPageRoute(
+              builder: (_) => _buildSellerPanel(
+                source: 'onGenerateRoute:/seller',
+                arguments: settings.arguments,
+              ),
+            );
           case '/become-seller':
             return MaterialPageRoute(
               builder: (_) => DeferredScreen(
@@ -199,15 +321,21 @@ class MyApp extends StatelessWidget {
             );
           case '/':
             return MaterialPageRoute(
-              builder: (_) => const OfflineWrapper(child: HomeWrapper()),
+              settings: settings,
+              builder: (_) => _buildSafeHome(source: 'onGenerateRoute:/'),
             );
           default:
             return null;
         }
       },
       onUnknownRoute: (settings) {
+        debugPrint(
+          '[Routing] route redirect source=${settings.name ?? 'unknown'} '
+          'normalizedPath=unknown fallback=/home ${QrInitialParams.debugState}',
+        );
         return MaterialPageRoute(
-          builder: (_) => const OfflineWrapper(child: HomeWrapper()),
+          settings: settings,
+          builder: (_) => _buildSafeHome(source: 'onUnknownRoute'),
         );
       },
       builder: (context, child) {

@@ -79,7 +79,7 @@ class AccountSidebar extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
@@ -94,7 +94,7 @@ class AccountSidebar extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 40,
-                  backgroundColor: AppColors.primary.withOpacity(0.1),
+                  backgroundColor: AppColors.primary.withValues(alpha: 0.1),
                   child: Text(
                     initials,
                     style: const TextStyle(
@@ -244,7 +244,7 @@ class AccountSidebar extends StatelessWidget {
   }) {
     return Material(
       color: isActive
-          ? AppColors.primary.withOpacity(0.05)
+          ? AppColors.primary.withValues(alpha: 0.05)
           : Colors.transparent,
       child: InkWell(
         onTap: onTap,

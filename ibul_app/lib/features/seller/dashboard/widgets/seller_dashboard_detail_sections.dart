@@ -65,17 +65,17 @@ class SellerDashboardDistributionCard extends StatelessWidget {
           const Text(
             'Sipariş Dağılımı',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 14,
               fontWeight: FontWeight.w700,
               color: Color(0xFF1E293B),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           ...rows.map((row) {
             final value = row['value'] as int;
             final total = totalOrderCount == 0 ? 1 : totalOrderCount;
             return Padding(
-              padding: const EdgeInsets.only(bottom: 18),
+              padding: const EdgeInsets.only(bottom: 14),
               child: SellerDashboardProgressRow(
                 label: row['label'] as String,
                 valueLabel: '$value / $totalOrderCount',
@@ -86,16 +86,16 @@ class SellerDashboardDistributionCard extends StatelessWidget {
           }),
           const SizedBox(height: 8),
           Container(height: 1, color: const Color(0xFFE5E7EB)),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           const Text(
             'Tamamlanma Oranı',
             style: TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 14,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -116,7 +116,7 @@ class SellerDashboardDistributionCard extends StatelessWidget {
                 '%${completionRate.toStringAsFixed(0)}',
                 style: const TextStyle(
                   color: Color(0xFF1E293B),
-                  fontSize: 24,
+                  fontSize: 18,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -154,7 +154,7 @@ class SellerDashboardProgressRow extends StatelessWidget {
                 label,
                 style: const TextStyle(
                   color: Color(0xFF475569),
-                  fontSize: 14,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -163,13 +163,13 @@ class SellerDashboardProgressRow extends StatelessWidget {
               valueLabel,
               style: const TextStyle(
                 color: Color(0xFF64748B),
-                fontSize: 14,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         ClipRRect(
           borderRadius: BorderRadius.circular(999),
           child: LinearProgressIndicator(
@@ -212,32 +212,35 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             child: Row(
               children: [
                 const Icon(
                   Icons.receipt_long_outlined,
-                  size: 18,
+                  size: 16,
                   color: Color(0xFF64748B),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 const Text(
                   'Son Siparişler',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: Color(0xFF1E293B),
                   ),
                 ),
                 const Spacer(),
-                TextButton(onPressed: onViewAll, child: const Text('Tümünü Gör')),
+                TextButton(
+                  onPressed: onViewAll,
+                  child: const Text('Tümünü Gör'),
+                ),
               ],
             ),
           ),
           Container(height: 1, color: const Color(0xFFE5E7EB)),
           if (metrics.recentOrders.isEmpty)
             Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(18),
               child: Text(
                 'Henüz sipariş bulunmuyor.',
                 style: TextStyle(color: Colors.grey.shade500),
@@ -265,8 +268,8 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
 
               return Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 14,
+                  horizontal: 16,
+                  vertical: 12,
                 ),
                 decoration: const BoxDecoration(
                   border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
@@ -274,8 +277,8 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                 child: Row(
                   children: [
                     Container(
-                      width: 28,
-                      height: 28,
+                      width: 24,
+                      height: 24,
                       decoration: BoxDecoration(
                         color: statusColor.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(999),
@@ -285,10 +288,10 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                             ? Icons.star_rounded
                             : Icons.inventory_2_outlined,
                         color: statusColor,
-                        size: 15,
+                        size: 13,
                       ),
                     ),
-                    const SizedBox(width: 14),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -299,15 +302,15 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                                 orderId,
                                 style: const TextStyle(
                                   color: Color(0xFF0F172A),
-                                  fontSize: 15,
+                                  fontSize: 13.5,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
-                              const SizedBox(width: 10),
+                              const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 3,
+                                  horizontal: 8,
+                                  vertical: 2,
                                 ),
                                 decoration: BoxDecoration(
                                   color: statusColor.withValues(alpha: 0.12),
@@ -329,7 +332,7 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                             '$customerName · $quantity ürün',
                             style: const TextStyle(
                               color: Color(0xFF64748B),
-                              fontSize: 14,
+                              fontSize: 12.5,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -343,7 +346,7 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                           formatCurrency(total),
                           style: const TextStyle(
                             color: Color(0xFF0F172A),
-                            fontSize: 15,
+                            fontSize: 13.5,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -354,7 +357,7 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                               : '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}',
                           style: const TextStyle(
                             color: Color(0xFF94A3B8),
-                            fontSize: 13,
+                            fontSize: 11.5,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -371,10 +374,7 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
 }
 
 class SellerDashboardPendingTasksCard extends StatelessWidget {
-  const SellerDashboardPendingTasksCard({
-    super.key,
-    required this.tasks,
-  });
+  const SellerDashboardPendingTasksCard({super.key, required this.tasks});
 
   final List<Map<String, dynamic>> tasks;
 
@@ -386,15 +386,15 @@ class SellerDashboardPendingTasksCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.fromLTRB(18, 16, 18, 16),
+            padding: EdgeInsets.fromLTRB(16, 14, 16, 14),
             child: Row(
               children: [
-                Icon(Icons.bolt_rounded, size: 18, color: Color(0xFFF59E0B)),
-                SizedBox(width: 10),
+                Icon(Icons.bolt_rounded, size: 16, color: Color(0xFFF59E0B)),
+                SizedBox(width: 8),
                 Text(
                   'Bekleyen İşlemler',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: Color(0xFF1E293B),
                   ),
@@ -408,7 +408,7 @@ class SellerDashboardPendingTasksCard extends StatelessWidget {
             final accent = task['accent'] as Color;
             return Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
               decoration: BoxDecoration(color: background),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -416,27 +416,27 @@ class SellerDashboardPendingTasksCard extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(task['icon'] as IconData, color: accent, size: 18),
-                      const SizedBox(width: 12),
+                      Icon(task['icon'] as IconData, color: accent, size: 16),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           task['title'] as String,
                           style: const TextStyle(
                             color: Color(0xFF334155),
-                            fontSize: 14,
+                            fontSize: 12.5,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   TextButton(
                     onPressed: task['onTap'] as VoidCallback,
                     style: TextButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                        horizontal: 10,
+                        vertical: 6,
                       ),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -448,7 +448,10 @@ class SellerDashboardPendingTasksCard extends StatelessWidget {
                     ),
                     child: Text(
                       task['actionLabel'] as String,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ],
@@ -481,19 +484,19 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.fromLTRB(18, 16, 18, 16),
+            padding: EdgeInsets.fromLTRB(16, 14, 16, 14),
             child: Row(
               children: [
                 Icon(
                   Icons.whatshot_outlined,
-                  size: 18,
+                  size: 16,
                   color: Color(0xFFF97316),
                 ),
-                SizedBox(width: 10),
+                SizedBox(width: 8),
                 Text(
                   'En Çok Satan Ürünler',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                     color: Color(0xFF1E293B),
                   ),
@@ -503,7 +506,7 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                   '- bu ay',
                   style: TextStyle(
                     color: Color(0xFF94A3B8),
-                    fontSize: 14,
+                    fontSize: 12,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -513,7 +516,7 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
           Container(height: 1, color: const Color(0xFFE5E7EB)),
           if (products.isEmpty)
             Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(18),
               child: Text(
                 'Bu ay için satış verisi bulunmuyor.',
                 style: TextStyle(color: Colors.grey.shade500),
@@ -530,8 +533,8 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
               final trendUp = stock > 5;
               return Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 14,
+                  horizontal: 16,
+                  vertical: 12,
                 ),
                 decoration: const BoxDecoration(
                   border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
@@ -539,8 +542,8 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                 child: Row(
                   children: [
                     Container(
-                      width: 28,
-                      height: 28,
+                      width: 24,
+                      height: 24,
                       decoration: BoxDecoration(
                         color: const Color(0xFFF3F4F6),
                         borderRadius: BorderRadius.circular(999),
@@ -552,11 +555,12 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                           color: index == 0
                               ? const Color(0xFFF59E0B)
                               : const Color(0xFF64748B),
+                          fontSize: 11.5,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -565,7 +569,7 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                             product['name'] as String,
                             style: const TextStyle(
                               color: Color(0xFF0F172A),
-                              fontSize: 15,
+                              fontSize: 13.5,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -574,7 +578,7 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                             product['code'] as String,
                             style: const TextStyle(
                               color: Color(0xFF94A3B8),
-                              fontSize: 13,
+                              fontSize: 11.5,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -582,7 +586,7 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                       ),
                     ),
                     SizedBox(
-                      width: 72,
+                      width: 66,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
@@ -597,14 +601,14 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                             'satış',
                             style: TextStyle(
                               color: Color(0xFF94A3B8),
-                              fontSize: 12,
+                              fontSize: 11,
                             ),
                           ),
                         ],
                       ),
                     ),
                     SizedBox(
-                      width: 92,
+                      width: 84,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
@@ -619,14 +623,14 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                             'gelir',
                             style: TextStyle(
                               color: Color(0xFF94A3B8),
-                              fontSize: 12,
+                              fontSize: 11,
                             ),
                           ),
                         ],
                       ),
                     ),
                     SizedBox(
-                      width: 72,
+                      width: 64,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
@@ -641,17 +645,18 @@ class SellerDashboardTopProductsCard extends StatelessWidget {
                             'stok',
                             style: TextStyle(
                               color: Color(0xFF94A3B8),
-                              fontSize: 12,
+                              fontSize: 11,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     Icon(
                       trendUp
                           ? Icons.trending_up_rounded
                           : Icons.trending_down_rounded,
+                      size: 18,
                       color: trendUp
                           ? const Color(0xFF10B981)
                           : const Color(0xFFEF4444),
@@ -686,45 +691,45 @@ class SellerDashboardCargoSummaryCard extends StatelessWidget {
             children: [
               Icon(
                 Icons.local_shipping_outlined,
-                size: 18,
+                size: 16,
                 color: Color(0xFF64748B),
               ),
-              SizedBox(width: 10),
+              SizedBox(width: 8),
               Text(
                 'Kargo Özeti',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF1E293B),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           ...items.map((item) {
             final success = item['success'] as double;
             final color = item['color'] as Color;
             return Padding(
-              padding: const EdgeInsets.only(bottom: 18),
+              padding: const EdgeInsets.only(bottom: 14),
               child: Column(
                 children: [
                   Row(
                     children: [
                       Container(
-                        width: 9,
-                        height: 9,
+                        width: 8,
+                        height: 8,
                         decoration: BoxDecoration(
                           color: color,
                           shape: BoxShape.circle,
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           item['name'] as String,
                           style: const TextStyle(
                             color: Color(0xFF334155),
-                            fontSize: 14,
+                            fontSize: 12.5,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -733,11 +738,11 @@ class SellerDashboardCargoSummaryCard extends StatelessWidget {
                         '${item['count']} paket',
                         style: const TextStyle(
                           color: Color(0xFF94A3B8),
-                          fontSize: 14,
+                          fontSize: 12.5,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
                       Text(
                         '%${success.toStringAsFixed(0)}',
                         style: TextStyle(
@@ -746,17 +751,18 @@ class SellerDashboardCargoSummaryCard extends StatelessWidget {
                               : success >= 80
                               ? const Color(0xFFF59E0B)
                               : const Color(0xFFEF4444),
-                          fontSize: 14,
+                          fontSize: 12.5,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(999),
                     child: LinearProgressIndicator(
-                      value: (item['count'] as int) / math.max(1, totalOrderBase),
+                      value:
+                          (item['count'] as int) / math.max(1, totalOrderBase),
                       minHeight: 6,
                       backgroundColor: const Color(0xFFE5E7EB),
                       valueColor: AlwaysStoppedAnimation<Color>(color),
@@ -771,7 +777,7 @@ class SellerDashboardCargoSummaryCard extends StatelessWidget {
             'Zamanında teslimat oranları',
             style: TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 14,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),

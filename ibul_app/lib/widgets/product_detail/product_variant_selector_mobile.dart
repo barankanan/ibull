@@ -170,7 +170,7 @@ class _ProductVariantSelectorMobileState
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: capacities.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
                       itemBuilder: (context, index) {
                         final capacity = capacities[index];
                         final selected = capacity == selectedCapacity;
@@ -269,7 +269,7 @@ class _ProductVariantSelectorMobileState
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: colors.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
                       itemBuilder: (context, index) {
                         final color = colors[index];
                         final selected = color == selectedColor;
@@ -745,7 +745,7 @@ class _ColorRow extends StatelessWidget {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: values.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        separatorBuilder: (_, _) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final v = values[index];
           final isSelected = selected == v;
@@ -911,7 +911,7 @@ class _PreviewImage extends StatelessWidget {
     return Image.asset(
       v,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade100),
+      errorBuilder: (_, _, _) => Container(color: Colors.grey.shade100),
     );
   }
 }

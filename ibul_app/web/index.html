@@ -45,6 +45,77 @@
 
   <title>İbul | Online Alışveriş ve Hızlı Teslimat</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- QR / app preloader — shown immediately while the Flutter engine loads.
+       Dismissed automatically when the Flutter canvas (flt-glass-pane) appears.
+       Keeps the user informed and prevents the blank-white-screen experience. -->
+  <style>
+    #ibul-loader {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      z-index: 9999;
+      transition: opacity 0.3s ease;
+    }
+    #ibul-loader.fade-out { opacity: 0; pointer-events: none; }
+    #ibul-loader-logo {
+      width: 72px; height: 72px; border-radius: 20px;
+      background: linear-gradient(135deg, #7B2FBE 0%, #5B1FBF 100%);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 8px 24px rgba(123,47,190,0.30);
+      margin-bottom: 24px;
+    }
+    #ibul-loader-logo svg { width: 40px; height: 40px; fill: #fff; }
+    #ibul-loader-spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(123,47,190,0.18);
+      border-top-color: #7B2FBE;
+      border-radius: 50%;
+      animation: ibul-spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes ibul-spin { to { transform: rotate(360deg); } }
+    #ibul-loader-text {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px; color: #888; letter-spacing: 0.2px;
+    }
+  </style>
+  <div id="ibul-loader">
+    <div id="ibul-loader-logo">
+      <!-- Store icon fallback while brand assets load -->
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 4H4v2l8 5 8-5V4zm0 4.236-8 5-8-5V20h16V8.236z"/>
+      </svg>
+    </div>
+    <div id="ibul-loader-spinner"></div>
+    <div id="ibul-loader-text">Yükleniyor…</div>
+  </div>
+  <script>
+    (function () {
+      // Dismiss the preloader once Flutter inserts its canvas into the DOM.
+      var observer = new MutationObserver(function () {
+        if (document.querySelector('flt-glass-pane')) {
+          observer.disconnect();
+          var el = document.getElementById('ibul-loader');
+          if (el) {
+            el.classList.add('fade-out');
+            setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 350);
+          }
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      // Safety net: remove after 15 s in case Flutter never starts
+      setTimeout(function () {
+        observer.disconnect();
+        var el = document.getElementById('ibul-loader');
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      }, 15000);
+    })();
+  </script>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>

@@ -519,21 +519,21 @@ class _ReviewImage extends StatelessWidget {
       return Image.memory(
         UriData.parse(imageUrl).contentAsBytes(),
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _fallback(),
+        errorBuilder: (_, _, _) => _fallback(),
       );
     }
     if (imageUrl.startsWith('http')) {
       return OptimizedImage(imageUrlOrPath: 
         imageUrl,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _fallback(),
+        errorBuilder: (_, _, _) => _fallback(),
       );
     }
     if (imageUrl.isEmpty) return _fallback();
     return Image.asset(
       imageUrl,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _fallback(),
+      errorBuilder: (_, _, _) => _fallback(),
     );
   }
 

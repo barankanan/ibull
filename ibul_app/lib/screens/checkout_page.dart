@@ -148,15 +148,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => AddressEditSheet(
+      builder: (sheetContext) => AddressEditSheet(
         type: 'Adres',
         initialData: address,
         onSave: (updatedAddress) async {
-          final appState = Provider.of<AppState>(context, listen: false);
+          final appState = Provider.of<AppState>(sheetContext, listen: false);
           await appState.updateDeliveryAddress(index, updatedAddress);
-          if (!mounted) return;
+          if (!mounted || !sheetContext.mounted) return;
           setState(() => _selectedAddressIndex = index);
-          ScaffoldMessenger.of(context).showSnackBar(
+          ScaffoldMessenger.of(sheetContext).showSnackBar(
             const SnackBar(
               content: Text('Adres güncellendi.'),
               backgroundColor: Colors.green,
@@ -191,9 +191,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => Padding(
+      builder: (sheetContext) => Padding(
         padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
+          bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
         ),
         child: SingleChildScrollView(
           child: Container(
@@ -213,7 +213,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       ),
                     ),
                     IconButton(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(sheetContext),
                       icon: const Icon(Icons.close),
                     ),
                   ],
@@ -227,8 +227,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   child: ElevatedButton(
                     onPressed: () async {
                       await _addNewCard(editIndex: index);
-                      if (!mounted) return;
-                      Navigator.pop(context);
+                      if (!mounted || !sheetContext.mounted) return;
+                      Navigator.pop(sheetContext);
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
@@ -252,17 +252,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => AddressEditSheet(
+      builder: (sheetContext) => AddressEditSheet(
         type: 'Adres',
         onSave: (Map<String, String> address) async {
-          final appState = Provider.of<AppState>(context, listen: false);
+          final appState = Provider.of<AppState>(sheetContext, listen: false);
           await appState.addDeliveryAddress(address);
-          if (!mounted) return;
+          if (!mounted || !sheetContext.mounted) return;
 
           setState(() {
             _selectedAddressIndex = appState.deliveryAddresses.length - 1;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
+          ScaffoldMessenger.of(sheetContext).showSnackBar(
             const SnackBar(
               content: Text('Adres başarıyla eklendi!'),
               backgroundColor: Colors.green,
@@ -491,9 +491,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => Padding(
+      builder: (sheetContext) => Padding(
         padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
+          bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
         ),
         child: SingleChildScrollView(
           child: Container(
@@ -513,7 +513,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       ),
                     ),
                     IconButton(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(sheetContext),
                       icon: const Icon(Icons.close),
                     ),
                   ],
@@ -527,8 +527,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   child: ElevatedButton.icon(
                     onPressed: () async {
                       await _addNewCard();
-                      if (!mounted) return;
-                      Navigator.pop(context);
+                      if (!mounted || !sheetContext.mounted) return;
+                      Navigator.pop(sheetContext);
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
@@ -656,7 +656,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       return OptimizedImage(imageUrlOrPath: 
         imagePath,
         fit: fit,
-        errorBuilder: (_, __, ___) => const Center(
+        errorBuilder: (_, _, _) => const Center(
           child: Icon(Icons.image, color: Colors.grey, size: 30),
         ),
       );
@@ -665,7 +665,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return Image.asset(
       imagePath,
       fit: fit,
-      errorBuilder: (_, __, ___) =>
+      errorBuilder: (_, _, _) =>
           const Center(child: Icon(Icons.image, color: Colors.grey, size: 30)),
     );
   }
@@ -764,22 +764,24 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     ),
                     child: Column(
                       children: [
-                        Row(
-                          children: [
-                            Radio(
-                              value: true,
-                              groupValue: true,
-                              onChanged: (value) {},
-                              activeColor: AppColors.primary,
-                            ),
-                            const Text(
-                              'Adresime Gönder',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey,
+                        RadioGroup<bool>(
+                          groupValue: true,
+                          onChanged: (_) {},
+                          child: Row(
+                            children: [
+                              Radio(
+                                value: true,
+                                activeColor: AppColors.primary,
                               ),
-                            ),
-                          ],
+                              const Text(
+                                'Adresime Gönder',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                         if (hasAddresses && currentAddress != null)
                           Container(
@@ -1059,32 +1061,35 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             },
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 8),
-                              child: Row(
-                                children: [
-                                  Radio<String>(
-                                    value: 'single',
-                                    groupValue: _selectedPayment,
-                                    onChanged: (value) {
-                                      setState(() {
-                                        _selectedPayment = value!;
-                                      });
-                                    },
-                                    activeColor: AppColors.primary,
-                                  ),
-                                  Expanded(
-                                    child: Text(
-                                      'Tek Çekim (Peşin)',
-                                      style: TextStyle(fontSize: 13),
+                              child: RadioGroup<String>(
+                                groupValue: _selectedPayment,
+                                onChanged: (value) {
+                                  if (value == null) return;
+                                  setState(() {
+                                    _selectedPayment = value;
+                                  });
+                                },
+                                child: Row(
+                                  children: [
+                                    Radio<String>(
+                                      value: 'single',
+                                      activeColor: AppColors.primary,
                                     ),
-                                  ),
-                                  Text(
-                                    '${(widget.totalPrice >= 300 ? widget.totalPrice : widget.totalPrice + 59.99).toStringAsFixed(2)} TL',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
+                                    Expanded(
+                                      child: Text(
+                                        'Tek Çekim (Peşin)',
+                                        style: TextStyle(fontSize: 13),
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                    Text(
+                                      '${(widget.totalPrice >= 300 ? widget.totalPrice : widget.totalPrice + 59.99).toStringAsFixed(2)} TL',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -1486,7 +1491,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.grey.withOpacity(0.2),
+                  color: Colors.grey.withValues(alpha: 0.2),
                   blurRadius: 10,
                   offset: const Offset(0, -3),
                 ),
@@ -1504,7 +1509,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.1),
+                            color: AppColors.primary.withValues(alpha: 0.1),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
@@ -1825,12 +1830,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  Widget _buildWebContent() {
-    // Deprecated method, kept for reference or removed if unused.
-    // Logic moved directly to _buildWebView
-    return const SizedBox.shrink();
-  }
-
   Widget _buildWebAddressSection() {
     final appState = Provider.of<AppState>(context);
     final hasAddresses = appState.deliveryAddresses.isNotEmpty;
@@ -1873,16 +1872,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
               decoration: BoxDecoration(
                 border: Border.all(color: AppColors.primary, width: 2),
                 borderRadius: BorderRadius.circular(12),
-                color: AppColors.primary.withOpacity(0.02),
+                color: AppColors.primary.withValues(alpha: 0.02),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Radio(
-                    value: true,
+                  RadioGroup<bool>(
                     groupValue: true,
-                    onChanged: (v) {},
-                    activeColor: AppColors.primary,
+                    onChanged: (_) {},
+                    child: Radio(
+                      value: true,
+                      activeColor: AppColors.primary,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -2059,7 +2060,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
+                      color: Colors.black.withValues(alpha: 0.3),
                       blurRadius: 15,
                       offset: const Offset(0, 8),
                     ),
@@ -2417,40 +2418,43 @@ class _CheckoutPageState extends State<CheckoutPage> {
               border: Border.all(color: Colors.grey.shade200),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Radio(
-                      value: 'single',
-                      groupValue: _selectedPayment,
-                      onChanged: (v) {},
-                      activeColor: AppColors.primary,
-                    ),
-                    const Text(
-                      'Tek Çekim',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const Spacer(),
-                    Text(
-                      '${(widget.totalPrice * 0.90).toStringAsFixed(2)} TL',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                const Divider(),
-                Row(
-                  children: [
-                    Radio(
-                      value: 'installment',
-                      groupValue: _selectedPayment,
-                      onChanged: (v) {},
-                      activeColor: AppColors.primary,
-                    ),
-                    const Text('Taksitli Ödeme Seçenekleri'),
-                  ],
-                ),
-              ],
+            child: RadioGroup<String>(
+              groupValue: _selectedPayment,
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _selectedPayment = value);
+              },
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Radio(
+                        value: 'single',
+                        activeColor: AppColors.primary,
+                      ),
+                      const Text(
+                        'Tek Çekim',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${(widget.totalPrice * 0.90).toStringAsFixed(2)} TL',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  Row(
+                    children: [
+                      Radio(
+                        value: 'installment',
+                        activeColor: AppColors.primary,
+                      ),
+                      const Text('Taksitli Ödeme Seçenekleri'),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -2474,21 +2478,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
-        children: [
-          Radio<int>(
-            value: index,
-            groupValue: _selectedCardIndex,
-            onChanged: (v) {
-              if (v == null) return;
-              setState(() => _selectedCardIndex = v);
-            },
-            activeColor: AppColors.primary,
-          ),
-          const SizedBox(width: 8),
-          Icon(Icons.credit_card, color: Colors.grey.shade700, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
+      child: RadioGroup<int>(
+        groupValue: _selectedCardIndex,
+        onChanged: (value) {
+          if (value == null) return;
+          setState(() => _selectedCardIndex = value);
+        },
+        child: Row(
+          children: [
+            Radio<int>(
+              value: index,
+              activeColor: AppColors.primary,
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.credit_card, color: Colors.grey.shade700, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2534,8 +2539,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             iconSize: 20,
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2587,18 +2593,24 @@ class _CheckoutPageState extends State<CheckoutPage> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 24),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Hızlı Teslimat
-              Expanded(
-                child: GestureDetector(
-                  onTap: () => setState(() => _selectedDeliveryType = 0),
-                  child: Container(
+          RadioGroup<int>(
+            groupValue: _selectedDeliveryType,
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _selectedDeliveryType = value);
+            },
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Hızlı Teslimat
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _selectedDeliveryType = 0),
+                    child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: _selectedDeliveryType == 0
-                          ? AppColors.primary.withOpacity(0.05)
+                          ? AppColors.primary.withValues(alpha: 0.05)
                           : Colors.white,
                       border: Border.all(
                         color: _selectedDeliveryType == 0
@@ -2647,9 +2659,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             ),
                             Radio(
                               value: 0,
-                              groupValue: _selectedDeliveryType,
-                              onChanged: (v) =>
-                                  setState(() => _selectedDeliveryType = v!),
                               activeColor: AppColors.primary,
                             ),
                           ],
@@ -2689,16 +2698,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   ),
                 ),
               ),
-              const SizedBox(width: 20),
-              // Standart Kargo
-              Expanded(
-                child: GestureDetector(
-                  onTap: () => setState(() => _selectedDeliveryType = 1),
-                  child: Container(
+                const SizedBox(width: 20),
+                // Standart Kargo
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _selectedDeliveryType = 1),
+                    child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: _selectedDeliveryType == 1
-                          ? AppColors.primary.withOpacity(0.05)
+                          ? AppColors.primary.withValues(alpha: 0.05)
                           : Colors.white,
                       border: Border.all(
                         color: _selectedDeliveryType == 1
@@ -2747,9 +2756,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             ),
                             Radio(
                               value: 1,
-                              groupValue: _selectedDeliveryType,
-                              onChanged: (v) =>
-                                  setState(() => _selectedDeliveryType = v!),
                               activeColor: AppColors.primary,
                             ),
                           ],
@@ -2780,8 +2786,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     ),
                   ),
                 ),
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -2799,7 +2806,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: daysCount,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final date = startDate.add(Duration(days: index));
           final isSelected =
@@ -2858,7 +2865,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: isSelected
-                  ? AppColors.primary.withOpacity(0.1)
+                  ? AppColors.primary.withValues(alpha: 0.1)
                   : Colors.white,
               border: Border.all(
                 color: isSelected ? AppColors.primary : Colors.grey.shade300,
@@ -2888,7 +2895,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -3109,9 +3116,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.05),
+              color: AppColors.primary.withValues(alpha: 0.05),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.primary.withOpacity(0.1)),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.1)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,

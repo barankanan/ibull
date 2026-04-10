@@ -18,6 +18,7 @@ import '../screens/login_page.dart';
 import '../screens/business_detail_page.dart';
 import 'optimized_image.dart';
 import 'premium_interactions.dart';
+import 'restaurant_order/product_quick_view_dialog.dart';
 import 'staggered_reveal.dart';
 
 class _CampaignBadgeData {
@@ -194,6 +195,7 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   void _onCardTap() {
+    InteractionFeedback.lightImpact(channel: 'product_card_open');
     // Wrap navigation in Future.delayed to avoid MouseTracker crash on Web
     Future.delayed(Duration.zero, () {
       if (!mounted) return;
@@ -206,6 +208,19 @@ class _ProductCardState extends State<ProductCard> {
         ),
       );
     });
+  }
+
+  void _showQuickView() {
+    InteractionFeedback.lightImpact(channel: 'product_quick_view');
+    showAppModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.42),
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return ProductQuickInfoSheet(product: widget.product);
+      },
+    );
   }
 
   Widget _buildOptimizedCardImage({
@@ -361,6 +376,7 @@ class _ProductCardState extends State<ProductCard> {
                   color: Colors.white,
                   child: InkWell(
                     onTap: _onCardTap,
+                    onLongPress: _showQuickView,
                     child: Padding(
                       padding: EdgeInsets.fromLTRB(
                         padding,
@@ -428,6 +444,7 @@ class _ProductCardState extends State<ProductCard> {
                   color: Colors.white,
                   child: InkWell(
                     onTap: _onCardTap,
+                    onLongPress: _showQuickView,
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                       child: Column(
@@ -476,6 +493,14 @@ class _ProductCardState extends State<ProductCard> {
             height: imageHeight,
             borderRadius: BorderRadius.circular(14),
             fallbackIconSize: 40,
+          ),
+        ),
+        Positioned(
+          top: 4,
+          left: 4,
+          child: GestureDetector(
+            onTap: _showQuickView,
+            child: _buildQuickViewButton(),
           ),
         ),
         // Heart Icon
@@ -536,6 +561,14 @@ class _ProductCardState extends State<ProductCard> {
             height: imageHeight,
             borderRadius: BorderRadius.circular(12),
             fallbackIconSize: isSmallScreen ? 25 : 30,
+          ),
+        ),
+        Positioned(
+          top: isSmallScreen ? 4 : 6,
+          left: isSmallScreen ? 4 : 6,
+          child: GestureDetector(
+            onTap: _showQuickView,
+            child: _buildQuickViewButton(compact: true),
           ),
         ),
         // Heart Icon
@@ -885,6 +918,37 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
+  Widget _buildQuickViewButton({bool compact = false}) {
+    final size = compact ? 28.0 : 30.0;
+    final iconSize = compact ? 16.0 : 17.0;
+
+    return PremiumPressable(
+      pressedScale: 0.9,
+      hoverScale: 1.04,
+      hoverLift: 0.5,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.96),
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.1),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(
+          Icons.remove_red_eye_outlined,
+          color: AppColors.primary,
+          size: iconSize,
+        ),
+      ),
+    );
+  }
+
   Widget _buildButton(BuildContext context, bool isAddedToCart) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
@@ -899,139 +963,182 @@ class _ProductCardState extends State<ProductCard> {
     final buttonHeight = widget.compact ? 28.0 : (widget.tight ? 30.0 : 34.0);
     final fontSize = widget.compact ? 9.0 : (isMobile ? 11.0 : 12.0);
 
-    // Eğer yemek kategorisi ise özel "Sipariş Ver" butonu göster
-    if (isFoodCategory) {
-      return PremiumPressable(
-        child: SizedBox(
-          key: const ValueKey('product-card-primary-button'),
-          width: double.infinity,
-          height: buttonHeight,
-          child: ElevatedButton(
-            onPressed: () {
-              InteractionFeedback.forInteraction(
-                InteractionFeedbackType.mainCta,
-              );
-              _showFoodOrderModePopup(context);
-            },
-            style: premiumButtonInteractionStyle(
-              ElevatedButton.styleFrom(
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-                alignment: Alignment.center,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
-                ),
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
+    return AnimatedSwitcher(
+      duration: AppMotion.normalTransitionDuration,
+      reverseDuration: AppMotion.normalTransitionReverseDuration,
+      switchInCurve: AppMotion.pageTransitionCurve,
+      switchOutCurve: AppMotion.pageTransitionReverseCurve,
+      transitionBuilder: (child, animation) =>
+          AppMotion.buildFadeScaleTransition(
+            animation,
+            child,
+            beginScale: 0.97,
+          ),
+      child: isFoodCategory
+          ? _buildFoodOrderButton(
+              context: context,
+              buttonHeight: buttonHeight,
+              fontSize: fontSize,
+            )
+          : isAddedToCart
+          ? _buildAddedToCartButton(
+              context: context,
+              buttonHeight: buttonHeight,
+              fontSize: fontSize,
+            )
+          : _buildAddToCartButton(
+              context: context,
+              buttonHeight: buttonHeight,
+              fontSize: fontSize,
+            ),
+    );
+  }
+
+  Widget _buildFoodOrderButton({
+    required BuildContext context,
+    required double buttonHeight,
+    required double fontSize,
+  }) {
+    return PremiumPressable(
+      key: const ValueKey('product-card-food-button'),
+      child: SizedBox(
+        width: double.infinity,
+        height: buttonHeight,
+        child: ElevatedButton(
+          onPressed: () {
+            InteractionFeedback.forInteraction(InteractionFeedbackType.mainCta);
+            _showFoodOrderModePopup(context);
+          },
+          style: premiumButtonInteractionStyle(
+            ElevatedButton.styleFrom(
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+              alignment: Alignment.center,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
               ),
-              overlayColor: Colors.white,
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
             ),
-            child: Text(
-              'Sipariş Ver',
-              style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
-            ),
+            overlayColor: Colors.white,
+          ),
+          child: Text(
+            'Sipariş Ver',
+            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
           ),
         ),
-      );
-    }
+      ),
+    );
+  }
 
-    // Eğer sepete eklendiyse, yeni tasarım (Sepete Eklendi | Sepet İkonu)
-    if (isAddedToCart) {
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final gap = widget.compact ? 6.0 : 8.0;
-          final iconButtonWidth = buttonHeight + (widget.compact ? 8 : 10);
-          final maxWidth = constraints.maxWidth.isFinite
-              ? constraints.maxWidth
-              : (widget.width ?? (widget.compact ? 140.0 : 200.0));
-          final primaryButtonWidth = math.max(
-            0.0,
-            maxWidth - iconButtonWidth - gap,
-          );
+  Widget _buildAddedToCartButton({
+    required BuildContext context,
+    required double buttonHeight,
+    required double fontSize,
+  }) {
+    return LayoutBuilder(
+      key: const ValueKey('product-card-added-button'),
+      builder: (context, constraints) {
+        final gap = widget.compact ? 6.0 : 8.0;
+        final iconButtonWidth = buttonHeight + (widget.compact ? 8 : 10);
+        final maxWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : (widget.width ?? (widget.compact ? 140.0 : 200.0));
+        final primaryButtonWidth = math.max(
+          0.0,
+          maxWidth - iconButtonWidth - gap,
+        );
 
-          return Row(
-            children: [
-              SizedBox(
-                width: primaryButtonWidth,
-                height: buttonHeight,
-                child: PremiumPressable(
-                  child: ElevatedButton(
-                    onPressed: _onCardTap,
-                    style: premiumButtonInteractionStyle(
-                      ElevatedButton.styleFrom(
-                        elevation: 0,
-                        padding: EdgeInsets.zero,
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(
-                            widget.compact ? 6 : 12,
-                          ),
+        return Row(
+          children: [
+            SizedBox(
+              width: primaryButtonWidth,
+              height: buttonHeight,
+              child: PremiumPressable(
+                child: ElevatedButton(
+                  onPressed: _onCardTap,
+                  style: premiumButtonInteractionStyle(
+                    ElevatedButton.styleFrom(
+                      elevation: 0,
+                      padding: EdgeInsets.zero,
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          widget.compact ? 6 : 12,
                         ),
                       ),
-                      overlayColor: Colors.white,
                     ),
-                    child: Text(
-                      'Sepette',
-                      style: TextStyle(
-                        fontSize: fontSize,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    overlayColor: Colors.white,
                   ),
-                ),
-              ),
-              SizedBox(width: gap),
-              SizedBox(
-                width: iconButtonWidth,
-                height: buttonHeight,
-                child: PremiumPressable(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              const HomeScreen(initialIndex: 3),
-                        ),
-                        (route) => false,
-                      );
-                    },
-                    style: premiumButtonInteractionStyle(
-                      ElevatedButton.styleFrom(
-                        elevation: 0,
-                        padding: EdgeInsets.zero,
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(
-                            widget.compact ? 6 : 12,
-                          ),
-                        ),
-                      ),
-                      overlayColor: Colors.white,
-                    ),
-                    child: Icon(
-                      Icons.shopping_cart_outlined,
-                      size: widget.compact ? 16 : 20,
+                  child: Text(
+                    'Sepette',
+                    style: TextStyle(
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.w600,
                       color: Colors.white,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ),
-            ],
-          );
-        },
-      );
-    }
+            ),
+            SizedBox(width: gap),
+            SizedBox(
+              width: iconButtonWidth,
+              height: buttonHeight,
+              child: PremiumPressable(
+                child: ElevatedButton(
+                  onPressed: () {
+                    InteractionFeedback.forInteraction(
+                      InteractionFeedbackType.mainCta,
+                      channel: 'product_card_open_cart',
+                    );
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const HomeScreen(initialIndex: 3),
+                      ),
+                      (route) => false,
+                    );
+                  },
+                  style: premiumButtonInteractionStyle(
+                    ElevatedButton.styleFrom(
+                      elevation: 0,
+                      padding: EdgeInsets.zero,
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          widget.compact ? 6 : 12,
+                        ),
+                      ),
+                    ),
+                    overlayColor: Colors.white,
+                  ),
+                  child: Icon(
+                    Icons.shopping_cart_outlined,
+                    size: widget.compact ? 16 : 20,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
-    // Normal Sepete Ekle Butonu
+  Widget _buildAddToCartButton({
+    required BuildContext context,
+    required double buttonHeight,
+    required double fontSize,
+  }) {
     return PremiumPressable(
+      key: const ValueKey('product-card-primary-button'),
       child: SizedBox(
-        key: const ValueKey('product-card-primary-button'),
         width: double.infinity,
         height: buttonHeight,
         child: ElevatedButton(
@@ -1138,16 +1245,11 @@ class _ProductCardState extends State<ProductCard> {
                   children: [
                     Expanded(
                       child: _foodModeButton(
-                        context: context,
                         icon: Icons.table_restaurant_outlined,
                         label: 'Mekanda',
                         subtitle: 'Masaya sipariş ver',
                         color: AppColors.primary,
                         onTap: () {
-                          InteractionFeedback.forInteraction(
-                            InteractionFeedbackType.mainCta,
-                            channel: 'food_dining_mode',
-                          );
                           Navigator.pop(sheetCtx);
                           _navigateToDiningMode(context);
                         },
@@ -1156,7 +1258,6 @@ class _ProductCardState extends State<ProductCard> {
                     const SizedBox(width: 14),
                     Expanded(
                       child: _foodModeButton(
-                        context: context,
                         icon: Icons.delivery_dining_outlined,
                         label: 'Online',
                         subtitle: 'Sepetten onayla',
@@ -1178,7 +1279,6 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Widget _foodModeButton({
-    required BuildContext context,
     required IconData icon,
     required String label,
     required String subtitle,
@@ -1186,36 +1286,41 @@ class _ProductCardState extends State<ProductCard> {
     required VoidCallback onTap,
   }) {
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withValues(alpha: 0.3)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 28),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: color,
+      onTap: () {
+        InteractionFeedback.forInteraction(InteractionFeedbackType.mainCta);
+        onTap();
+      },
+      child: PremiumPressable(
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 28),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              style: TextStyle(
-                fontSize: 11,
-                color: color.withValues(alpha: 0.7),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: color.withValues(alpha: 0.7),
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1249,10 +1354,6 @@ class _ProductCardState extends State<ProductCard> {
       _showLoginRequiredDialog(context);
       return;
     }
-    InteractionFeedback.forInteraction(
-      InteractionFeedbackType.mainCta,
-      channel: 'food_online_order',
-    );
     _appState.addToCart(widget.product);
     Navigator.pushAndRemoveUntil(
       context,

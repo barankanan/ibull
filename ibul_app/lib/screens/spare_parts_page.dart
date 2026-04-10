@@ -54,7 +54,7 @@ class _SparePartsPageState extends State<SparePartsPage> {
         _isLoading = false;
       });
     } catch (e) {
-      print('Error loading products: $e');
+      debugPrint('Error loading products: $e');
       setState(() {
         _isLoading = false;
       });
@@ -105,7 +105,7 @@ class _SparePartsPageState extends State<SparePartsPage> {
           .trim();
       return double.parse(cleanPrice);
     } catch (e) {
-      print('Error parsing price: $e');
+      debugPrint('Error parsing price: $e');
       return 0.0;
     }
   }
@@ -895,7 +895,7 @@ class _SparePartsPageState extends State<SparePartsPage> {
                           width: 1,
                         ),
                         backgroundColor: _addedPartIds.contains(product.name) 
-                            ? Colors.green.withOpacity(0.1) 
+                            ? Colors.green.withValues(alpha: 0.1) 
                             : null,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(6),

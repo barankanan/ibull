@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../models/seller_panel_types.dart';
@@ -11,8 +10,11 @@ bool isSellerFoodStoreCategory(String? category) {
       normalized.contains('food');
 }
 
-List<SellerModule> visibleSellerModules(String? storeCategory) {
-  if (!kIsWeb && isSellerFoodStoreCategory(storeCategory)) {
+List<SellerModule> visibleSellerModules(
+  String? storeCategory, {
+  bool garsonOnly = false,
+}) {
+  if (garsonOnly) {
     return <SellerModule>[SellerModule.garson];
   }
   return <SellerModule>[

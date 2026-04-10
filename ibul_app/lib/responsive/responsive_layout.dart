@@ -20,11 +20,11 @@ class ResponsiveLayout extends StatefulWidget {
   final Widget desktop;
 
   const ResponsiveLayout({
-    Key? key,
+    super.key,
     required this.mobile,
     this.tablet,
     required this.desktop,
-  }) : super(key: key);
+  });
 
   @override
   State<ResponsiveLayout> createState() => _ResponsiveLayoutState();
@@ -50,9 +50,9 @@ class ResponsiveBuilder extends StatelessWidget {
   final Widget Function(BuildContext context, ScreenSize screenSize) builder;
 
   const ResponsiveBuilder({
-    Key? key,
+    super.key,
     required this.builder,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -71,12 +71,12 @@ class ResponsiveGridView extends StatelessWidget {
   final double runSpacing;
 
   const ResponsiveGridView({
-    Key? key,
+    super.key,
     required this.children,
     this.padding = EdgeInsets.zero,
     this.spacing = 16.0,
     this.runSpacing = 16.0,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -119,12 +119,12 @@ class ResponsivePadding extends StatelessWidget {
   final EdgeInsetsGeometry? desktopPadding;
 
   const ResponsivePadding({
-    Key? key,
+    super.key,
     required this.child,
     this.mobilePadding,
     this.tabletPadding,
     this.desktopPadding,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -177,12 +177,12 @@ class ShowOnScreenSize extends StatelessWidget {
   final Widget? child; // Tüm screen size'larda göster
 
   const ShowOnScreenSize({
-    Key? key,
+    super.key,
     this.mobile,
     this.tablet,
     this.desktop,
     this.child,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

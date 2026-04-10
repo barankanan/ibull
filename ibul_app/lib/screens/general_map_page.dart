@@ -89,7 +89,7 @@ class _GeneralMapPageState extends State<GeneralMapPage> {
                         hintText: 'Mağaza ara',
                         hintStyle: const TextStyle(color: Colors.white70),
                         filled: true,
-                        fillColor: Colors.white.withOpacity(0.15),
+                        fillColor: Colors.white.withValues(alpha: 0.15),
                         prefixIcon: const Icon(Icons.search, color: Colors.white70, size: 20),
                         contentPadding: const EdgeInsets.symmetric(vertical: 10),
                         border: OutlineInputBorder(
@@ -153,7 +153,7 @@ class _GeneralMapPageState extends State<GeneralMapPage> {
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: (isSelected ? Colors.purple : Colors.black).withOpacity(0.08),
+                                color: (isSelected ? Colors.purple : Colors.black).withValues(alpha: 0.08),
                                 blurRadius: 6,
                                 offset: const Offset(0, 2),
                               ),
@@ -165,7 +165,7 @@ class _GeneralMapPageState extends State<GeneralMapPage> {
                                 width: 32,
                                 height: 32,
                                 decoration: BoxDecoration(
-                                  color: Colors.purple.withOpacity(0.1),
+                                  color: Colors.purple.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Center(

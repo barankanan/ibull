@@ -7,6 +7,7 @@ import '../models/db_banner.dart';
 import '../models/db_category.dart';
 import '../models/paged_result.dart';
 import '../models/product_model.dart';
+import 'store/store_mapping_helpers.dart';
 import '../utils/text_normalizer.dart';
 
 class SupabaseService {
@@ -20,8 +21,11 @@ class SupabaseService {
   // Full field set — used for product detail, search, category pages
   static const String _productSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, discount_price, stock, status, description, '
-      'attributes, video_url, variants, created_at, stores(business_name)';
+      'sub_category, price, pricing_type, portion_price, price_per_kg, '
+      'default_weight_grams, min_weight_grams, weight_step_grams, '
+      'max_weight_grams, discount_price, stock, status, description, '
+      'specifications, attributes, video_url, variants, created_at, '
+      'stores(business_name)';
   // Lightweight field set — used only for the home page product cards.
   // Omits description, attributes, video_url, variants, stock which are never
   // displayed in ProductCard, reducing payload by ~60%.
@@ -35,11 +39,15 @@ class SupabaseService {
       'stores(business_name)';
   static const String _productStorePreviewSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, price, '
-      'discount_price, description, status, created_at, '
+      'pricing_type, portion_price, price_per_kg, default_weight_grams, '
+      'min_weight_grams, weight_step_grams, max_weight_grams, '
+      'discount_price, description, specifications, status, created_at, '
       'stores(business_name)';
   static const String _categoryProductsSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, discount_price, status, description, '
+      'sub_category, price, pricing_type, portion_price, price_per_kg, '
+      'default_weight_grams, min_weight_grams, weight_step_grams, '
+      'max_weight_grams, discount_price, status, description, specifications, '
       'created_at, stores(business_name)';
 
   String _toOrIlikePattern(String value) {
@@ -300,7 +308,7 @@ class SupabaseService {
           product.id?.toString() ??
           DateTime.now().millisecondsSinceEpoch.toString();
 
-      await _supabase.from('products').upsert(data);
+      await _upsertProductMapWithFallback(data);
     } catch (e) {
       debugPrint('Error inserting product: $e');
     }
@@ -319,9 +327,76 @@ class SupabaseService {
         dataList.add(data);
       }
 
-      await _supabase.from('products').upsert(dataList);
+      await _upsertProductListWithFallback(dataList);
     } catch (e) {
       debugPrint('Error batch inserting products: $e');
+    }
+  }
+
+  Future<void> _upsertProductMapWithFallback(Map<String, dynamic> data) async {
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
+      try {
+        await _supabase.from('products').upsert(data);
+        return;
+      } catch (error, stackTrace) {
+        final message = error.toString();
+        if (!isOptionalProductColumnError(message)) rethrow;
+
+        final removedColumns = stripUnsupportedProductColumns(data, message);
+        if (removedColumns.isEmpty) {
+          lastError = error;
+          lastStackTrace = stackTrace;
+          break;
+        }
+
+        lastError = error;
+        lastStackTrace = stackTrace;
+      }
+    }
+
+    if (lastError != null) {
+      Error.throwWithStackTrace(lastError, lastStackTrace!);
+    }
+  }
+
+  Future<void> _upsertProductListWithFallback(
+    List<Map<String, dynamic>> dataList,
+  ) async {
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
+      try {
+        await _supabase.from('products').upsert(dataList);
+        return;
+      } catch (error, stackTrace) {
+        final message = error.toString();
+        if (!isOptionalProductColumnError(message)) rethrow;
+
+        var removedAny = false;
+        for (final data in dataList) {
+          final removedColumns = stripUnsupportedProductColumns(data, message);
+          if (removedColumns.isNotEmpty) {
+            removedAny = true;
+          }
+        }
+
+        if (!removedAny) {
+          lastError = error;
+          lastStackTrace = stackTrace;
+          break;
+        }
+
+        lastError = error;
+        lastStackTrace = stackTrace;
+      }
+    }
+
+    if (lastError != null) {
+      Error.throwWithStackTrace(lastError, lastStackTrace!);
     }
   }
 
@@ -978,6 +1053,17 @@ class SupabaseService {
       brand: data['brand'] ?? '',
       store: storeName,
       price: '${data['price']} TL', // DBProduct expects string "100 TL"
+      pricingType: data['pricing_type']?.toString() ?? 'portion',
+      portionPrice: (data['portion_price'] as num?)?.toDouble(),
+      pricePerKg: (data['price_per_kg'] as num?)?.toDouble(),
+      serviceControlType: data['service_control_type']?.toString(),
+      minPortion: (data['min_portion'] as num?)?.toDouble(),
+      maxPortion: (data['max_portion'] as num?)?.toDouble(),
+      portionStep: (data['portion_step'] as num?)?.toDouble(),
+      defaultWeightGrams: (data['default_weight_grams'] as num?)?.toInt(),
+      minWeightGrams: (data['min_weight_grams'] as num?)?.toInt(),
+      weightStepGrams: (data['weight_step_grams'] as num?)?.toInt(),
+      maxWeightGrams: (data['max_weight_grams'] as num?)?.toInt(),
       oldPrice: data['discount_price'] != null
           ? '${data['discount_price']} TL'
           : null,
@@ -991,6 +1077,9 @@ class SupabaseService {
       subCategory: data['sub_category'],
       tags: '[]', // Not in table
       description: data['description'],
+      specifications: data['specifications'] != null
+          ? jsonEncode(data['specifications'])
+          : null,
       stock: data['stock'],
       isActive: data['status'] == 'Aktif',
       attributes: data['attributes'] != null
@@ -1021,6 +1110,17 @@ class SupabaseService {
       'price':
           double.tryParse(product.price.replaceAll(RegExp(r'[^0-9.]'), '')) ??
           0,
+      'pricing_type': product.pricingType,
+      'portion_price': product.portionPrice,
+      'price_per_kg': product.pricePerKg,
+      'service_control_type': product.serviceControlType,
+      'min_portion': product.minPortion,
+      'max_portion': product.maxPortion,
+      'portion_step': product.portionStep,
+      'default_weight_grams': product.defaultWeightGrams,
+      'min_weight_grams': product.minWeightGrams,
+      'weight_step_grams': product.weightStepGrams,
+      'max_weight_grams': product.maxWeightGrams,
       'discount_price': product.oldPrice != null
           ? double.tryParse(
               product.oldPrice!.replaceAll(RegExp(r'[^0-9.]'), ''),
@@ -1031,6 +1131,9 @@ class SupabaseService {
           ? jsonDecode(product.imageUrls!)
           : [],
       'description': product.description,
+      'specifications': product.specifications != null
+          ? jsonDecode(product.specifications!)
+          : null,
       'stock': product.stock,
       'status': product.isActive ? 'Aktif' : 'Pasif',
       'video_url': product.videoPublicUrl ?? product.videoUrl,

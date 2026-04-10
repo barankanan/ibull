@@ -259,6 +259,7 @@ extension _HomeScreenSections on _HomeScreenState {
                         height: 290,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
+                          cacheExtent: 500,
                           itemCount: sameDayProducts.length,
                           separatorBuilder: (context, index) =>
                               const SizedBox(width: 12),
@@ -296,6 +297,7 @@ extension _HomeScreenSections on _HomeScreenState {
                   : GridView.builder(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
+                      cacheExtent: 800,
                       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                         maxCrossAxisExtent:
                             250, // Kartların aşırı genişlemesini önlemek için max genişlik
@@ -377,7 +379,7 @@ extension _HomeScreenSections on _HomeScreenState {
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.02),
+                          color: Colors.black.withValues(alpha: 0.02),
                           blurRadius: 10,
                           offset: const Offset(0, 4),
                         ),
@@ -410,6 +412,7 @@ extension _HomeScreenSections on _HomeScreenState {
                       ? GridView.builder(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
+                          cacheExtent: 800,
                           gridDelegate:
                               const SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: 5,
@@ -446,6 +449,7 @@ extension _HomeScreenSections on _HomeScreenState {
                       : GridView.builder(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
+                          cacheExtent: 800,
                           gridDelegate:
                               const SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: 5,
@@ -490,7 +494,7 @@ extension _HomeScreenSections on _HomeScreenState {
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
+                            color: Colors.black.withValues(alpha: 0.03),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -532,8 +536,8 @@ extension _HomeScreenSections on _HomeScreenState {
                                 horizontal: 16,
                                 vertical: 12,
                               ),
-                              backgroundColor: AppColors.primary.withOpacity(
-                                0.08,
+                              backgroundColor: AppColors.primary.withValues(
+                                alpha: 0.08,
                               ),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8),
@@ -689,18 +693,20 @@ extension _HomeScreenSections on _HomeScreenState {
                                     begin: Alignment.topLeft,
                                     end: Alignment.bottomRight,
                                     colors: [
-                                      AppColors.primary.withOpacity(0.06),
+                                      AppColors.primary.withValues(alpha: 0.06),
                                       Colors.white,
                                     ],
                                   ),
                                   borderRadius: BorderRadius.circular(16),
                                   border: Border.all(
-                                    color: AppColors.primary.withOpacity(0.15),
+                                    color: AppColors.primary.withValues(
+                                      alpha: 0.15,
+                                    ),
                                   ),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: AppColors.primary.withOpacity(
-                                        0.08,
+                                      color: AppColors.primary.withValues(
+                                        alpha: 0.08,
                                       ),
                                       blurRadius: 10,
                                     ),
@@ -711,7 +717,7 @@ extension _HomeScreenSections on _HomeScreenState {
                                   children: [
                                     Center(
                                       child: _isLoadingProducts
-                                          ? const ProductCardSkeleton()
+                                          ? _buildDealOfTheDaySkeleton()
                                           : popularProducts.isNotEmpty
                                           ? DealOfTheDaySlider(
                                               products: popularProducts,
@@ -741,7 +747,7 @@ extension _HomeScreenSections on _HomeScreenState {
                                           boxShadow: [
                                             BoxShadow(
                                               color: AppColors.primary
-                                                  .withOpacity(0.3),
+                                                  .withValues(alpha: 0.3),
                                               blurRadius: 8,
                                               offset: const Offset(0, 4),
                                             ),
@@ -1127,7 +1133,7 @@ extension _HomeScreenSections on _HomeScreenState {
                           Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: Colors.red.withOpacity(0.1),
+                              color: Colors.red.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: const Icon(
@@ -1168,7 +1174,7 @@ extension _HomeScreenSections on _HomeScreenState {
                               borderRadius: BorderRadius.circular(20),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.red.withOpacity(0.3),
+                                  color: Colors.red.withValues(alpha: 0.3),
                                   blurRadius: 8,
                                   offset: const Offset(0, 3),
                                 ),
@@ -1326,14 +1332,14 @@ extension _HomeScreenSections on _HomeScreenState {
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: [
-                        AppColors.primary.withOpacity(0.05),
+                        AppColors.primary.withValues(alpha: 0.05),
                         Colors.white,
-                        AppColors.primary.withOpacity(0.05),
+                        AppColors.primary.withValues(alpha: 0.05),
                       ],
                     ),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: AppColors.primary.withOpacity(0.1),
+                      color: AppColors.primary.withValues(alpha: 0.1),
                     ),
                   ),
                   child: Row(
@@ -1378,6 +1384,58 @@ extension _HomeScreenSections on _HomeScreenState {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildDealOfTheDaySkeleton() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            child: SkeletonLoading(
+              width: double.infinity,
+              height: 130,
+              borderRadius: 0,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SkeletonLoading(
+                  width: double.infinity,
+                  height: 14,
+                  borderRadius: 4,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    SkeletonLoading(width: 80, height: 22, borderRadius: 4),
+                    SkeletonLoading(width: 32, height: 32, borderRadius: 8),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1462,7 +1520,7 @@ class _MobileBannerSliver extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.grey.withOpacity(0.2),
+                        color: Colors.grey.withValues(alpha: 0.2),
                         blurRadius: 4,
                         offset: const Offset(0, 2),
                       ),
@@ -1626,7 +1684,7 @@ class _HomeProductRailSection extends StatelessWidget {
 
   Widget _buildHorizontalProductRailSkeleton() {
     return SizedBox(
-      height: 310,
+      height: 312,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const NeverScrollableScrollPhysics(),
@@ -1723,6 +1781,7 @@ class _FastDeliverySection extends StatelessWidget {
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
                       padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      cacheExtent: 500,
                       itemCount: products.length,
                       separatorBuilder: (context, index) =>
                           const SizedBox(width: 12),
@@ -1860,6 +1919,7 @@ class _OpportunityProductsSection extends StatelessWidget {
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
                       padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      cacheExtent: 500,
                       itemCount: products.length,
                       separatorBuilder: (context, index) =>
                           const SizedBox(width: 12),

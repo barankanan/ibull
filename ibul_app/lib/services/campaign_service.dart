@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class StoreCampaign {
@@ -139,7 +140,7 @@ class CampaignService {
           .order('created_at', ascending: false);
       return (list as List).map((e) => StoreCampaign.fromMap(e as Map<String, dynamic>)).toList();
     } catch (e) {
-      print('getStoreCampaignsBySellerId: $e');
+      debugPrint('getStoreCampaignsBySellerId: $e');
       return [];
     }
   }
@@ -154,7 +155,7 @@ class CampaignService {
           .order('created_at', ascending: false);
       return (list as List).map((e) => StoreCampaign.fromMap(e as Map<String, dynamic>)).toList();
     } catch (e) {
-      print('getStoreCampaignsForPanel: $e');
+      debugPrint('getStoreCampaignsForPanel: $e');
       return [];
     }
   }
@@ -194,7 +195,7 @@ class CampaignService {
       if (sellerId == null) return [];
       return getStoreCampaignsBySellerId(sellerId);
     } catch (e) {
-      print('getStoreCampaignsByBusinessName: $e');
+      debugPrint('getStoreCampaignsByBusinessName: $e');
       return [];
     }
   }

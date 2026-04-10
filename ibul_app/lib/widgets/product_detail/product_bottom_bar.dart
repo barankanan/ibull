@@ -56,7 +56,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 20,
                 offset: const Offset(0, -4),
               ),
@@ -84,7 +84,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                               margin: const EdgeInsets.only(right: 8),
                               padding: const EdgeInsets.all(4),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF7C4DFF).withOpacity(0.1),
+                                color: const Color(0xFF7C4DFF).withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Row(

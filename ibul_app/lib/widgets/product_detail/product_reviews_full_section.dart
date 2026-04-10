@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
-import '../../viewmodels/product_detail_viewmodel.dart';
-import '../../core/app_state.dart';
 import '../../services/review_repository.dart';
+import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../screens/all_reviews_page.dart';
 
 class ProductReviewsFullSection extends StatelessWidget {
@@ -11,147 +10,123 @@ class ProductReviewsFullSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final viewModel = Provider.of<ProductDetailViewModel>(context);
-    final product = viewModel.initialProduct;
-    final appState = Provider.of<AppState>(context);
-    final productName = '${product.brand} ${product.name}';
-    final localReviews = appState.getProductReviewsFor(
-      productName: product.name,
-      storeName: product.store,
+    final product = context.select<ProductDetailViewModel, dynamic>(
+      (viewModel) => viewModel.initialProduct,
     );
+    final summary = context.select<ProductDetailViewModel, ReviewSummary>(
+      (viewModel) => viewModel.reviewSummary,
+    );
+    final productName = '${product.brand} ${product.name}';
     final screenWidth = MediaQuery.of(context).size.width;
     final isWide = screenWidth > 900;
-    final initialSummary = ReviewSummary.fromReviews(
-      localReviews,
-      fallbackRating: product.rating,
-      fallbackCount: product.reviewCount,
-    );
+    final customReviews = summary.reviews;
+    final rating = summary.averageRating;
+    final reviewCount = summary.reviewCount;
+    final starDistribution = _getStarDistribution(reviewCount, customReviews);
+    final featureRatings = _getFeatureRatings(product);
+    final reviews = _getReviews(product, customReviews);
+    final totalReviews = starDistribution.values.fold<int>(0, (a, b) => a + b);
+    final hasReviews = totalReviews > 0 && reviews.isNotEmpty;
 
-    return FutureBuilder<ReviewSummary>(
-      future: ReviewRepository.instance.getProductReviewSummary(
-        productName: product.name,
-        storeName: product.store,
-        localReviews: localReviews,
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
       ),
-      initialData: initialSummary,
-      builder: (context, snapshot) {
-        final summary = snapshot.data ?? initialSummary;
-        final customReviews = summary.reviews;
-        final rating = summary.averageRating;
-        final reviewCount = summary.reviewCount;
-        final starDistribution = _getStarDistribution(
-          reviewCount,
-          customReviews,
-        );
-        final featureRatings = _getFeatureRatings(product);
-        final reviews = _getReviews(product, customReviews);
-        final totalReviews = starDistribution.values.fold<int>(
-          0,
-          (a, b) => a + b,
-        );
-        final hasReviews = totalReviews > 0 && reviews.isNotEmpty;
-
-        return Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Text(
-                      '$productName Değerlendirmeleri',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
-                      ),
-                    ),
+              Expanded(
+                child: Text(
+                  '$productName Değerlendirmeleri',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
                   ),
-                  Text(
-                    'Tüm Değerlendirmeler ($totalReviews)',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
+                ),
               ),
-              const SizedBox(height: 20),
-              hasReviews
-                  ? (isWide
-                        ? _buildWideLayout2(
-                            rating,
-                            starDistribution,
-                            featureRatings,
-                            product,
-                            reviews,
-                          )
-                        : _buildNarrowLayout2(
-                            rating,
-                            starDistribution,
-                            featureRatings,
-                            product,
-                            reviews,
-                          ))
-                  : _buildEmptyReviewsState(context, product),
-              const SizedBox(height: 16),
-              Center(
-                child: SizedBox(
-                  width: 320,
-                  height: 44,
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => AllReviewsPage(
-                            productName: product.name,
-                            brand: product.brand,
-                            rating: rating,
-                            reviewCount: reviewCount,
-                            images: List<String>.from(product.images),
-                            customReviews: customReviews,
-                          ),
-                        ),
-                      );
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.black87,
-                      side: BorderSide(color: Colors.grey[300]!),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'TÜM DEĞERLENDİRMELERİ GÖSTER',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        SizedBox(width: 4),
-                        Icon(Icons.chevron_right, size: 18),
-                      ],
-                    ),
-                  ),
+              Text(
+                'Tüm Değerlendirmeler ($totalReviews)',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
                 ),
               ),
             ],
           ),
-        );
-      },
+          const SizedBox(height: 20),
+          hasReviews
+              ? (isWide
+                    ? _buildWideLayout2(
+                        rating,
+                        starDistribution,
+                        featureRatings,
+                        product,
+                        reviews,
+                      )
+                    : _buildNarrowLayout2(
+                        rating,
+                        starDistribution,
+                        featureRatings,
+                        product,
+                        reviews,
+                      ))
+              : _buildEmptyReviewsState(context, product),
+          const SizedBox(height: 16),
+          Center(
+            child: SizedBox(
+              width: 320,
+              height: 44,
+              child: OutlinedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => AllReviewsPage(
+                        productName: product.name,
+                        brand: product.brand,
+                        rating: rating,
+                        reviewCount: reviewCount,
+                        images: List<String>.from(product.images),
+                        customReviews: customReviews,
+                      ),
+                    ),
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.black87,
+                  side: BorderSide(color: Colors.grey[300]!),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'TÜM DEĞERLENDİRMELERİ GÖSTER',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Icon(Icons.chevron_right, size: 18),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -248,7 +223,7 @@ class ProductReviewsFullSection extends StatelessWidget {
                       child: Image.asset(
                         product.images.first,
                         fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => Icon(
+                        errorBuilder: (_, _, _) => Icon(
                           Icons.phone_iphone,
                           size: 32,
                           color: Colors.grey[400],
@@ -600,7 +575,7 @@ class ProductReviewsFullSection extends StatelessWidget {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: review.photoUrls.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
                   final photoUrl = review.photoUrls[index];
                   return ClipRRect(
@@ -830,7 +805,7 @@ class _ReviewImage extends StatelessWidget {
     return Image.asset(
       url,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _fallback(),
+      errorBuilder: (_, _, _) => _fallback(),
     );
   }
 

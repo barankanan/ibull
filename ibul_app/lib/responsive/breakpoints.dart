@@ -1,3 +1,5 @@
+library;
+
 /// Responsive Design Breakpoints
 /// 
 /// Bu dosya tüm responsive breakpoint'leri tanımlar.

@@ -59,7 +59,7 @@ class _PhotoReviewDetailPageState extends State<PhotoReviewDetailPage> {
                         borderRadius: BorderRadius.circular(21),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
+                            color: Colors.black.withValues(alpha: 0.05),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -91,7 +91,7 @@ class _PhotoReviewDetailPageState extends State<PhotoReviewDetailPage> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: AppColors.primary.withOpacity(0.12),
+                        color: AppColors.primary.withValues(alpha: 0.12),
                       ),
                     ),
                     child: Text(
@@ -131,7 +131,7 @@ class _PhotoReviewDetailPageState extends State<PhotoReviewDetailPage> {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: widget.galleryItems.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                separatorBuilder: (_, _) => const SizedBox(width: 10),
                 itemBuilder: (context, index) {
                   final previewItem = widget.galleryItems[index];
                   final isSelected = index == _currentIndex;
@@ -222,7 +222,7 @@ class _GalleryPage extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 22,
-                backgroundColor: AppColors.primary.withOpacity(0.15),
+                backgroundColor: AppColors.primary.withValues(alpha: 0.15),
                 child: Text(
                   userName.isNotEmpty ? userName[0].toUpperCase() : 'K',
                   style: const TextStyle(
@@ -306,14 +306,14 @@ class _ReviewImage extends StatelessWidget {
       return Image.memory(
         UriData.parse(imageUrl).contentAsBytes(),
         fit: fit,
-        errorBuilder: (_, __, ___) => _fallback(),
+        errorBuilder: (_, _, _) => _fallback(),
       );
     }
     if (imageUrl.startsWith('http')) {
       return OptimizedImage(imageUrlOrPath: 
         imageUrl,
         fit: fit,
-        errorBuilder: (_, __, ___) => _fallback(),
+        errorBuilder: (_, _, _) => _fallback(),
       );
     }
     if (imageUrl.isEmpty) {
@@ -322,7 +322,7 @@ class _ReviewImage extends StatelessWidget {
     return Image.asset(
       imageUrl,
       fit: fit,
-      errorBuilder: (_, __, ___) => _fallback(),
+      errorBuilder: (_, _, _) => _fallback(),
     );
   }
 

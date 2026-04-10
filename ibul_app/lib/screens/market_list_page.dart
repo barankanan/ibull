@@ -19,8 +19,6 @@ class MarketListPage extends StatefulWidget {
 class _MarketListPageState extends State<MarketListPage> {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
   List<DBProduct> _allProducts = [];
-  bool _isLoading = true;
-
   // Market Kategorileri (Screenshot'a göre)
   final List<Map<String, dynamic>> _marketCategories = [
     {'name': 'Donmuş Gıda', 'icon': '🍕', 'color': Color(0xFFE3F2FD)},
@@ -70,13 +68,10 @@ class _MarketListPageState extends State<MarketListPage> {
   }
 
   Future<void> _loadProducts() async {
-    setState(() => _isLoading = true);
     try {
       _allProducts = await _dbHelper.getAllProducts();
     } catch (e) {
-      print('Ürünler yüklenirken hata: $e');
-    } finally {
-      setState(() => _isLoading = false);
+      debugPrint('Ürünler yüklenirken hata: $e');
     }
   }
 
@@ -344,7 +339,7 @@ class _MarketListPageState extends State<MarketListPage> {
                     left: 20,
                     bottom: 0,
                     top: 10,
-                    child: Icon(Icons.shopping_cart, size: 80, color: Colors.white.withOpacity(0.2)),
+                    child: Icon(Icons.shopping_cart, size: 80, color: Colors.white.withValues(alpha: 0.2)),
                   ),
                 ],
               ),
@@ -455,10 +450,10 @@ class _MarketListPageState extends State<MarketListPage> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 1),
+          border: Border.all(color: AppColors.primary.withValues(alpha: 0.3), width: 1),
           boxShadow: [
             BoxShadow(
-              color: Colors.purple.withOpacity(0.05),
+              color: Colors.purple.withValues(alpha: 0.05),
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),

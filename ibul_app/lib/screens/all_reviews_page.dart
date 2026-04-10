@@ -372,7 +372,7 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: _galleryItems.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                separatorBuilder: (_, _) => const SizedBox(width: 10),
                 itemBuilder: (context, index) {
                   final galleryItem = _galleryItems[index];
                   return GestureDetector(
@@ -745,7 +745,7 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.55),
+                    color: Colors.black.withValues(alpha: 0.55),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
@@ -806,11 +806,11 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
     if (entries.isEmpty) return;
     Navigator.of(context).push(
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) => PhotoReviewDetailPage(
+        pageBuilder: (_, _, _) => PhotoReviewDetailPage(
           galleryItems: entries,
           initialIndex: initialIndex,
         ),
-        transitionsBuilder: (_, animation, __, child) {
+        transitionsBuilder: (_, animation, _, child) {
           final offsetAnimation =
               Tween<Offset>(
                 begin: const Offset(1, 0),
@@ -894,14 +894,14 @@ class _ReviewImage extends StatelessWidget {
       return Image.memory(
         UriData.parse(imageUrl).contentAsBytes(),
         fit: fit,
-        errorBuilder: (_, __, ___) => _fallback(),
+        errorBuilder: (_, _, _) => _fallback(),
       );
     }
     if (imageUrl.startsWith('http')) {
       return OptimizedImage(imageUrlOrPath: 
         imageUrl,
         fit: fit,
-        errorBuilder: (_, __, ___) => _fallback(),
+        errorBuilder: (_, _, _) => _fallback(),
       );
     }
     if (imageUrl.isEmpty) {
@@ -910,7 +910,7 @@ class _ReviewImage extends StatelessWidget {
     return Image.asset(
       imageUrl,
       fit: fit,
-      errorBuilder: (_, __, ___) => _fallback(),
+      errorBuilder: (_, _, _) => _fallback(),
     );
   }
 

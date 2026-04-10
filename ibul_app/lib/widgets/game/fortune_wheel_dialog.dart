@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
@@ -110,7 +109,7 @@ class _FortuneWheelDialogState extends State<FortuneWheelDialog> with SingleTick
       isPercentage: item['isPerc'] ?? false,
       minPrice: 0,
       expiryDate: '24 Saat Geçerli',
-      color: (item['color'] as Color).withOpacity(0.1),
+      color: (item['color'] as Color).withValues(alpha: 0.1),
       iconColor: item['color'],
     );
     
@@ -130,7 +129,7 @@ class _FortuneWheelDialogState extends State<FortuneWheelDialog> with SingleTick
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: (item['color'] as Color).withOpacity(0.5),
+                color: (item['color'] as Color).withValues(alpha: 0.5),
                 blurRadius: 30,
                 spreadRadius: 5,
               ),
@@ -149,7 +148,7 @@ class _FortuneWheelDialogState extends State<FortuneWheelDialog> with SingleTick
                     height: 100,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: (item['color'] as Color).withOpacity(0.2),
+                      color: (item['color'] as Color).withValues(alpha: 0.2),
                     ),
                   ),
                   Icon(
@@ -206,7 +205,6 @@ class _FortuneWheelDialogState extends State<FortuneWheelDialog> with SingleTick
   Widget build(BuildContext context) {
     // Ekran boyutunu al
     final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
     
     // Çark boyutunu ekran genişliğine göre ayarla (maksimum 320, minimum 280)
     final wheelSize = (screenWidth * 0.85).clamp(280.0, 340.0);
@@ -230,7 +228,7 @@ class _FortuneWheelDialogState extends State<FortuneWheelDialog> with SingleTick
                 border: Border.all(color: const Color(0xFFFFD700), width: 8),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFFFD700).withOpacity(0.6),
+                    color: const Color(0xFFFFD700).withValues(alpha: 0.6),
                     blurRadius: 30,
                     spreadRadius: 2,
                   ),
@@ -365,11 +363,6 @@ class WheelPainter extends CustomPainter {
     
     final paint = Paint()..style = PaintingStyle.fill;
     
-    // Gölge efekti için fırça
-    final shadowPaint = Paint()
-      ..color = Colors.black.withOpacity(0.2)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-
     // Metin ressamı
     final textPainter = TextPainter(
       textDirection: TextDirection.ltr,
@@ -389,7 +382,7 @@ class WheelPainter extends CustomPainter {
       
       // 2. Kenar çizgileri
       final borderPaint = Paint()
-        ..color = const Color(0xFFFFD700).withOpacity(0.5) 
+        ..color = const Color(0xFFFFD700).withValues(alpha: 0.5) 
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5;
       canvas.drawArc(rect, startAngle, sweepAngle, true, borderPaint);
@@ -411,7 +404,7 @@ class WheelPainter extends CustomPainter {
           fontWeight: FontWeight.w900,
           shadows: [
             Shadow(
-              color: Colors.black.withOpacity(0.5),
+              color: Colors.black.withValues(alpha: 0.5),
               offset: const Offset(1, 1),
               blurRadius: 2,
             ),
@@ -432,7 +425,7 @@ class WheelPainter extends CustomPainter {
     }
     
     // Merkezdeki vida delikleri (Süs)
-    final circlePaint = Paint()..color = Colors.white.withOpacity(0.3);
+    final circlePaint = Paint()..color = Colors.white.withValues(alpha: 0.3);
     canvas.drawCircle(center, radius * 0.15, circlePaint);
   }
 

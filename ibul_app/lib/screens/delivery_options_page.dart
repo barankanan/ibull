@@ -68,7 +68,7 @@ class _DeliveryOptionsPageState extends State<DeliveryOptionsPage> {
                       border: Border.all(color: AppColors.primary, width: 2),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withOpacity(0.1),
+                          color: AppColors.primary.withValues(alpha: 0.1),
                           blurRadius: 10,
                           offset: const Offset(0, 4),
                         ),
@@ -115,7 +115,7 @@ class _DeliveryOptionsPageState extends State<DeliveryOptionsPage> {
                             Container(
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.1),
+                                color: AppColors.primary.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: const Icon(
@@ -223,7 +223,7 @@ class _DeliveryOptionsPageState extends State<DeliveryOptionsPage> {
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.orange.withOpacity(0.3),
+                            color: Colors.orange.withValues(alpha: 0.3),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -237,7 +237,7 @@ class _DeliveryOptionsPageState extends State<DeliveryOptionsPage> {
                             Container(
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.2),
+                                color: Colors.white.withValues(alpha: 0.2),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: const Icon(
@@ -301,14 +301,14 @@ class _DeliveryOptionsPageState extends State<DeliveryOptionsPage> {
                               }
                             },
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: hasFastDelivery ? Colors.white.withOpacity(0.9) : Colors.white,
+                              backgroundColor: hasFastDelivery ? Colors.white.withValues(alpha: 0.9) : Colors.white,
                               foregroundColor: hasFastDelivery ? Colors.green.shade700 : Colors.deepOrange,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               elevation: 0,
-                              disabledBackgroundColor: Colors.white.withOpacity(0.9),
+                              disabledBackgroundColor: Colors.white.withValues(alpha: 0.9),
                               disabledForegroundColor: Colors.green.shade700,
                             ),
                             child: Row(
@@ -357,7 +357,7 @@ class _DeliveryOptionsPageState extends State<DeliveryOptionsPage> {
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.1),
+            color: AppColors.primary.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(

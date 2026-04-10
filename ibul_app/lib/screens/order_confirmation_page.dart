@@ -145,7 +145,7 @@ class OrderConfirmationPage extends StatelessWidget {
                   style: TextStyle(color: Colors.black54),
                 )
               else
-                ...items.map((item) => _buildOrderItemCard(item)).toList(),
+                ...items.map((item) => _buildOrderItemCard(item)),
               const Divider(height: 26),
               _buildSummaryRow(
                 'Toplam Tutar',
@@ -171,7 +171,7 @@ class OrderConfirmationPage extends StatelessWidget {
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: helpful.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
               itemBuilder: (context, index) {
                 final p = helpful[index];
                 return Container(
@@ -328,7 +328,7 @@ class OrderConfirmationPage extends StatelessWidget {
       return OptimizedImage(imageUrlOrPath: 
         path,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) {
+        errorBuilder: (_, _, _) {
           return Container(
             color: const Color(0xFFF0F0F2),
             child: const Icon(Icons.broken_image),
@@ -339,7 +339,7 @@ class OrderConfirmationPage extends StatelessWidget {
     return Image.asset(
       path,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) {
+      errorBuilder: (_, _, _) {
         return Container(
           color: const Color(0xFFF0F0F2),
           child: const Icon(Icons.broken_image),

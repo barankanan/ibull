@@ -13,6 +13,7 @@ import '../widgets/product_card.dart';
 import '../widgets/filter_bottom_sheet.dart';
 import '../widgets/filter_sidebar.dart';
 import '../widgets/optimized_image.dart';
+import '../widgets/skeleton_loading.dart';
 import '../widgets/staggered_reveal.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
@@ -629,7 +630,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
               );
             },
           ),
-          const Expanded(child: Center(child: CircularProgressIndicator())),
+          Expanded(child: _buildResultsLoadingView(isWeb: true)),
         ],
       );
     }
@@ -972,7 +973,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
           foregroundColor: Colors.black,
           elevation: 0.5,
         ),
-        body: const Center(child: CircularProgressIndicator()),
+        body: _buildResultsLoadingView(isWeb: false),
       );
     }
 
@@ -1080,6 +1081,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
           : GridView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              cacheExtent: 900,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
                 childAspectRatio: 0.65,
@@ -1106,6 +1108,62 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                 );
               },
             ),
+    );
+  }
+
+  Widget _buildResultsLoadingView({required bool isWeb}) {
+    final horizontalPadding = isWeb ? 24.0 : 12.0;
+    final cardCount = isWeb ? 10 : 6;
+    final gridDelegate = isWeb
+        ? const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 5,
+            childAspectRatio: 0.58,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+          )
+        : const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            childAspectRatio: 0.65,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 10,
+          );
+
+    return AnimatedSwitcher(
+      duration: AppMotion.normalTransitionDuration,
+      reverseDuration: AppMotion.normalTransitionReverseDuration,
+      child: SingleChildScrollView(
+        key: ValueKey<bool>(isWeb),
+        padding: EdgeInsets.fromLTRB(
+          horizontalPadding,
+          isWeb ? 20 : 12,
+          horizontalPadding,
+          24,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SkeletonLoading(
+              width: isWeb ? 280 : 210,
+              height: 24,
+              borderRadius: 8,
+            ),
+            const SizedBox(height: 8),
+            SkeletonLoading(
+              width: isWeb ? 420 : double.infinity,
+              height: 14,
+              borderRadius: 6,
+            ),
+            const SizedBox(height: 18),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: gridDelegate,
+              itemCount: cardCount,
+              itemBuilder: (context, index) => const ProductCardSkeleton(),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

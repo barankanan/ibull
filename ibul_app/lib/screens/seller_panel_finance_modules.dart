@@ -418,7 +418,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                   : const Color(0xFFEF4444),
             ),
           ], minItemWidth: 220),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -430,7 +430,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -441,7 +441,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                                   const Text(
                                     'Kazanç Performansı',
                                     style: TextStyle(
-                                      fontSize: 16,
+                                      fontSize: 14,
                                       fontWeight: FontWeight.w700,
                                       color: Color(0xFF1E293B),
                                     ),
@@ -454,7 +454,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                                     ),
                                     style: const TextStyle(
                                       color: Color(0xFF94A3B8),
-                                      fontSize: 14,
+                                      fontSize: 12,
                                       fontWeight: FontWeight.w500,
                                     ),
                                   ),
@@ -509,7 +509,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                         ),
                       ),
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                         child: Row(
                           children: [
                             _buildOverviewMetricInline(
@@ -545,14 +545,14 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                       ),
                       Container(height: 1, color: const Color(0xFFE5E7EB)),
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
                         child: _buildFinancePerformanceChart(chartPoints),
                       ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   children: [
@@ -563,12 +563,12 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                           const Text(
                             'Ödeme Özeti',
                             style: TextStyle(
-                              fontSize: 16,
+                              fontSize: 14,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF1E293B),
                             ),
                           ),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 14),
                           _buildFinanceInfoRow(
                             'Teslim edilen sipariş',
                             '$deliveredOrders',
@@ -587,7 +587,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                               finance['averageOrderValue'] as double,
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 12),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(999),
                             child: LinearProgressIndicator(
@@ -619,14 +619,14 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                               Text(
                                 'Ödeme Takvimi',
                                 style: TextStyle(
-                                  fontSize: 16,
+                                  fontSize: 14,
                                   fontWeight: FontWeight.w700,
                                   color: Color(0xFF1E293B),
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 12),
                           _buildFinanceInfoRow(
                             'Sonraki ödeme günü',
                             finance['nextPayoutDate'] as String,
@@ -660,7 +660,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                                 child: Text(
                                   'Banka / Kurumsal Bilgi',
                                   style: TextStyle(
-                                    fontSize: 16,
+                                    fontSize: 14,
                                     fontWeight: FontWeight.w700,
                                     color: Color(0xFF1E293B),
                                   ),
@@ -673,7 +673,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 12),
                           _buildFinanceInfoRow(
                             'Şirket',
                             _companyNameController.text.trim().isEmpty
@@ -713,7 +713,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                               'Banka hesabı alanı projede henüz ayrı tutulmuyor. Mağaza profili üzerinden kurumsal/ödeme bilgilerinizi tamamlayabilirsiniz.',
                               style: TextStyle(
                                 color: Colors.grey.shade500,
-                                fontSize: 12,
+                                fontSize: 11.5,
                                 height: 1.45,
                               ),
                             ),
@@ -726,7 +726,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -738,7 +738,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
                         child: Row(
                           children: [
                             const Icon(
@@ -751,7 +751,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                               child: Text(
                                 'İşlem Geçmişi',
                                 style: TextStyle(
-                                  fontSize: 16,
+                                  fontSize: 14,
                                   fontWeight: FontWeight.w700,
                                   color: Color(0xFF1E293B),
                                 ),
@@ -771,13 +771,22 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                                   color: Color(0xFFD8C8FF),
                                 ),
                                 backgroundColor: const Color(0xFFF8F5FF),
+                                minimumSize: const Size(0, 36),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                textStyle: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ],
                         ),
                       ),
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Row(
                           children: [
                             Expanded(
@@ -796,19 +805,19 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                                 },
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: 10),
                             Expanded(
                               child: InkWell(
                                 onTap: _showFinanceRangeDialog,
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(10),
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 14,
+                                    horizontal: 12,
+                                    vertical: 10,
                                   ),
                                   decoration: BoxDecoration(
                                     color: const Color(0xFFF8FAFC),
-                                    borderRadius: BorderRadius.circular(12),
+                                    borderRadius: BorderRadius.circular(10),
                                     border: Border.all(
                                       color: const Color(0xFFE2E8F0),
                                     ),
@@ -817,22 +826,23 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                                     children: [
                                       const Icon(
                                         Icons.date_range_rounded,
-                                        size: 18,
+                                        size: 16,
                                         color: Color(0xFF7C3AED),
                                       ),
-                                      const SizedBox(width: 10),
+                                      const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
                                           _financeRangeLabel(),
                                           style: const TextStyle(
                                             color: Color(0xFF334155),
+                                            fontSize: 12,
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
                                       ),
                                       const Icon(
                                         Icons.expand_more_rounded,
-                                        size: 18,
+                                        size: 16,
                                         color: Color(0xFF64748B),
                                       ),
                                     ],
@@ -843,16 +853,16 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                       Container(height: 1, color: const Color(0xFFE5E7EB)),
                       if (transactions.isEmpty)
                         Padding(
-                          padding: const EdgeInsets.all(36),
+                          padding: const EdgeInsets.all(28),
                           child: Column(
                             children: [
                               Icon(
                                 Icons.account_balance_wallet_outlined,
-                                size: 44,
+                                size: 36,
                                 color: Colors.grey.shade300,
                               ),
                               const SizedBox(height: 12),
@@ -874,7 +884,7 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                   ),
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   children: [
@@ -885,12 +895,12 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                           const Text(
                             'Finans Sağlığı',
                             style: TextStyle(
-                              fontSize: 16,
+                              fontSize: 14,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF1E293B),
                             ),
                           ),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 14),
                           _buildFinanceHealthMetric(
                             'Net marj',
                             finance['marginRate'] as double,
@@ -919,12 +929,12 @@ extension _SellerPanelFinanceModules on _SellerPanelPageState {
                           const Text(
                             'Mutabakat Notları',
                             style: TextStyle(
-                              fontSize: 16,
+                              fontSize: 14,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF1E293B),
                             ),
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 12),
                           _buildFinanceNoteTile(
                             color: const Color(0xFFE8F0FF),
                             accent: const Color(0xFF3B82F6),

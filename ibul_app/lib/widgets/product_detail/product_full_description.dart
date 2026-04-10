@@ -277,7 +277,7 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (imageWidget != null) imageWidget,
+          ?imageWidget,
           Expanded(
             flex: 3,
             child: Column(
@@ -314,7 +314,7 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (imageWidget != null) imageWidget,
+          ?imageWidget,
           Expanded(
             flex: 3,
             child: _ZeroIntrinsicHeight(

@@ -74,7 +74,7 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
                   children: [
                     Container(
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.5),
+                        color: Colors.black.withValues(alpha: 0.5),
                         shape: BoxShape.circle,
                       ),
                       child: IconButton(
@@ -103,7 +103,7 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.6),
+                  color: Colors.black.withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Row(
@@ -111,7 +111,7 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
                     Text(
                       '0,5',
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.7),
+                        color: Colors.white.withValues(alpha: 0.7),
                         fontSize: 14,
                       ),
                     ),
@@ -169,7 +169,7 @@ class _VisualIntelligencePageState extends State<VisualIntelligencePage> {
                               style: TextStyle(
                                 color: isSelected
                                     ? Colors.orange
-                                    : Colors.white.withOpacity(0.6),
+                                    : Colors.white.withValues(alpha: 0.6),
                                 fontSize: 13,
                                 fontWeight: isSelected
                                     ? FontWeight.bold

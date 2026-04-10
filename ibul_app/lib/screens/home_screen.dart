@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/auth/user_identity.dart';
 import '../ads/enums/ad_enums.dart';
-import '../core/mobile_category_catalog.dart';
 import '../core/constants.dart';
 import '../core/app_motion.dart';
 import '../models/product_model.dart';
@@ -29,6 +28,7 @@ import '../widgets/skeleton_loading.dart';
 import '../widgets/staggered_reveal.dart';
 import '../widgets/common/custom_error_view.dart';
 import '../core/app_image_cdn.dart';
+import '../core/qr_initial_params.dart';
 import '../widgets/sponsored_product_lists_section.dart';
 import '../services/supabase_service.dart';
 import '../services/database_helper.dart';
@@ -84,14 +84,8 @@ class _HomeScreenState extends State<HomeScreen>
   final ScrollController _flashProductsScrollController = ScrollController();
   final ScrollController _todayProductsScrollController = ScrollController();
 
-  final String _currentAddress =
-      'Prefabrik ev-Gökmeydan Mah. Nazım Hikmet kültür merkezi karşısı';
   final AdminService _adminService = AdminService();
   final StoreService _storeService = StoreService();
-  String? _hairCareTitle;
-  int? _hairCareSlot;
-  Map<String, dynamic> _hairCareBrandData = {};
-  String? _hairCareSelectedBrand;
   List<Map<String, dynamic>> _hairCareLayoutsForHome = [];
   // List<Map<String, dynamic>> for campaign images
   List<Map<String, dynamic>> _mainBannerImages = [];
@@ -119,6 +113,10 @@ class _HomeScreenState extends State<HomeScreen>
   List<DBProduct>? _cachedOpportunityProducts;
   String? _scheduledAboveFoldPrecacheKey;
   bool _tableQrHandled = false;
+  /// Set to true the moment QR intent is confirmed so that concurrent home-init
+  /// callbacks (deferred loads, cache writes, setState chains) cannot visually
+  /// override or interfere with the QR navigation that follows.
+  bool _hasHandledQrIntent = false;
   int _homeLoadGeneration = 0;
 
   int get _selectedIndex => _selectedIndexNotifier.value;
@@ -207,6 +205,10 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    debugPrint('[HomeScreen] initState — mounting fresh HomeScreen. '
+        'QrInitialParams.everConsumed=${QrInitialParams.everConsumed} '
+        'isQrPath=${QrInitialParams.isQrPath} '
+        'wasResetAfterQrExit=${QrInitialParams.wasResetAfterQrExit}');
     _selectedIndexNotifier = ValueNotifier(widget.initialIndex);
     _hasSpunWheelNotifier = ValueNotifier(false);
     _spinController = AnimationController(
@@ -218,6 +220,7 @@ class _HomeScreenState extends State<HomeScreen>
     _appState.cartCountNotifier.value = _appState.cart.length;
     _loadProducts();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      debugPrint('[HomeScreen] first frame — calling _handleTableQrLaunch');
       _handleTableQrLaunch();
     });
   }
@@ -612,6 +615,10 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _handleTableQrLaunch() async {
     if (_tableQrHandled || !mounted) return;
     _tableQrHandled = true;
+    debugPrint(
+      '[QR-Bootstrap] START — source=HomeScreen '
+      'tableQrHandled=$_tableQrHandled ${QrInitialParams.debugState}',
+    );
 
     String firstNonEmptyParam(Map<String, String> source, List<String> keys) {
       for (final key in keys) {
@@ -629,23 +636,59 @@ class _HomeScreenState extends State<HomeScreen>
       return int.tryParse(match.group(0)!);
     }
 
-    final uri = Uri.base;
-    final params = <String, String>{...uri.queryParameters};
-    if (params['table_qr'] != '1') {
+    // PRIMARY: Use params captured at startup (before any Flutter navigation or
+    // auth could overwrite window.location.href / Uri.base).
+    // FALLBACK: Re-read Uri.base live (handles hot-reload or unusual startup paths).
+    final params = <String, String>{
+      ...QrInitialParams.consume(source: 'HomeScreen'),
+    };
+    if (params.isEmpty) {
+      if (QrInitialParams.shouldSkipHomeBootstrap) {
+        debugPrint(
+          '[QR-Bootstrap] SKIPPED — source=HomeScreen '
+          'reason=consumed-or-reset ${QrInitialParams.debugState}',
+        );
+        return;
+      }
+      // Fallback path — capture live Uri.base in case the startup capture
+      // was skipped (non-web, test environment, etc.).
+      final uri = Uri.base;
+      debugPrint('[QR] startup params empty — falling back to live Uri.base = $uri');
+      debugPrint('[QR] uri.queryParameters = ${uri.queryParameters}');
+      debugPrint('[QR] uri.fragment        = ${uri.fragment}');
+      params.addAll(uri.queryParameters);
       final fragment = uri.fragment;
       final queryIndex = fragment.indexOf('?');
       if (queryIndex >= 0 && queryIndex + 1 < fragment.length) {
-        final query = fragment.substring(queryIndex + 1);
         try {
-          params.addAll(Uri.splitQueryString(query));
+          params.addAll(Uri.splitQueryString(fragment.substring(queryIndex + 1)));
         } catch (_) {}
       }
+    } else {
+      debugPrint('[QR] Using startup-captured params (Uri.base immune to routing changes).');
     }
+    debugPrint('[QR] merged params = $params');
+
+    // Detect QR intent: any non-empty table_qr value OR explicit seller+table combo.
     final hasQrIntent =
-        params['table_qr'] == '1' ||
+        (params['table_qr'] ?? '').trim().isNotEmpty ||
         ((params['seller'] ?? '').trim().isNotEmpty &&
             (params['table'] ?? '').trim().isNotEmpty);
-    if (!hasQrIntent) return;
+    debugPrint('[QR] hasQrIntent = $hasQrIntent');
+    if (!hasQrIntent) {
+      debugPrint(
+        '[QR-Bootstrap] SKIPPED — source=HomeScreen reason=no-qr-intent '
+        'params=$params ${QrInitialParams.debugState}',
+      );
+      debugPrint('[QR] No QR intent detected — returning early.');
+      return;
+    }
+
+    // Lock the flag immediately so that any concurrent home-init callbacks
+    // (cache reads, deferred loads, setState chains) that are still in-flight
+    // will bail out and not override the upcoming QR navigation.
+    _hasHandledQrIntent = true;
+    debugPrint('QR HANDLED: table_qr detected, blocking home init overrides.');
 
     final sellerId = firstNonEmptyParam(params, [
       'seller',
@@ -653,19 +696,31 @@ class _HomeScreenState extends State<HomeScreen>
       'store',
       'store_seller',
     ]);
+    // 'table_qr' carries the table number when no separate 'table' param exists.
     final tableRaw = firstNonEmptyParam(params, [
       'table',
       'table_number',
       'tableNo',
       'masa',
+      'table_qr', // fallback: the table_qr value itself is the table number
     ]);
     final tableNumber = parseTableNumber(tableRaw);
     final token = firstNonEmptyParam(params, ['token', 'qr_token', 'qr', 't']);
 
-    if (sellerId.isEmpty || tableNumber == null || tableNumber <= 0) {
+    debugPrint('[QR] sellerId    = $sellerId');
+    debugPrint('[QR] tableRaw    = $tableRaw');
+    debugPrint('[QR] tableNumber = $tableNumber');
+    debugPrint('[QR] token       = $token');
+
+    if (sellerId.isEmpty) {
+      const msg = 'QR bağlantısı eksik: seller parametresi bulunamadı.';
+      debugPrint('[QR] ERROR: $msg');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('QR bağlantısı eksik veya hatalı.')),
+          const SnackBar(
+            content: Text(msg),
+            duration: Duration(seconds: 6),
+          ),
         );
       }
       return;
@@ -673,9 +728,10 @@ class _HomeScreenState extends State<HomeScreen>
 
     var qrVerified = false;
     try {
+      debugPrint('[QR] Calling resolveStoreTableQr: sellerId=$sellerId tableNumber=$tableNumber token=$token');
       // QR doğrulama ve mağaza sorgusunu paralel yap → daha hızlı açılış.
       final futures = await Future.wait<Object?>([
-        token.isNotEmpty
+        (token.isNotEmpty && tableNumber != null && tableNumber > 0)
             ? _storeService.resolveStoreTableQr(
                 sellerId: sellerId,
                 tableNumber: tableNumber,
@@ -685,29 +741,45 @@ class _HomeScreenState extends State<HomeScreen>
         _storeService.getBusinessSummaryBySellerId(sellerId),
       ]);
       final resolvedTable = futures[0] as Map<String, dynamic>?;
+      debugPrint('[QR] resolveStoreTableQr result = $resolvedTable');
+
       qrVerified = token.isNotEmpty && resolvedTable != null;
+      debugPrint('[QR] qrVerified = $qrVerified');
+
       var business = futures[1] as Map<String, dynamic>?;
-      business ??= await _storeService.getBusinessSummaryByBusinessName(
-        sellerId,
-      );
+      debugPrint('[QR] getBusinessSummaryBySellerId result = $business');
+      if (business == null) {
+        debugPrint('[QR] Seller not found by ID — trying by business name...');
+        business = await _storeService.getBusinessSummaryByBusinessName(sellerId);
+        debugPrint('[QR] getBusinessSummaryByBusinessName result = $business');
+      }
       if (!mounted || business == null) {
+        final msg = 'Bu QR için mağaza bulunamadı. seller=$sellerId';
+        debugPrint('[QR] ERROR: $msg');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Bu QR için mağaza bulunamadı.')),
+            SnackBar(
+              content: Text(msg),
+              duration: const Duration(seconds: 8),
+            ),
           );
         }
         return;
       }
       final resolvedBusiness = business;
+      debugPrint('[QR] resolved business = $resolvedBusiness');
 
       if (mounted && token.isNotEmpty && !qrVerified) {
+        debugPrint('[QR] WARNING: QR token could not be verified against store_tables. Proceeding anyway.');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('QR doğrulanamadı, masa ekranı yine de açılıyor.'),
+            duration: Duration(seconds: 4),
           ),
         );
       }
 
+      debugPrint('[QR] Pushing BusinessDetailPage — business=${resolvedBusiness["name"]} table=$tableNumber forceTableSelection=true');
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => BusinessDetailPage(
@@ -717,11 +789,17 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ),
       );
-    } catch (error) {
+      debugPrint('[QR] BusinessDetailPage pushed successfully.');
+    } catch (error, stack) {
+      debugPrint('[QR] EXCEPTION in QR flow: $error');
+      debugPrintStack(stackTrace: stack);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('QR açılamadı: $error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('QR açılamadı: $error'),
+          duration: const Duration(seconds: 8),
+        ),
+      );
     }
   }
 
@@ -792,6 +870,10 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future<void>.delayed(const Duration(milliseconds: 180), () async {
         if (!mounted || loadGeneration != _homeLoadGeneration) return;
+        if (_hasHandledQrIntent) {
+          debugPrint('HOME INIT BLOCKED: deferred section load skipped (QR active).');
+          return;
+        }
         if (!_deferredHomeSectionsEnabled) {
           setState(() {
             _deferredHomeSectionsEnabled = true;
@@ -803,12 +885,16 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _loadImmediateHomeContent() async {
+    if (_hasHandledQrIntent) {
+      debugPrint('HOME INIT BLOCKED: immediate home content skipped (QR active).');
+      return;
+    }
     try {
       await Future.wait([_loadMainBanners(), _loadAppFeatureCategories()]);
     } catch (e) {
       debugPrint('Ana sayfa üst içerikleri yüklenemedi: $e');
     } finally {
-      if (mounted) {
+      if (mounted && !_hasHandledQrIntent) {
         setState(() {
           _isLoadingHeroContent = false;
         });
@@ -817,6 +903,10 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _loadDeferredHomeContent() async {
+    if (_hasHandledQrIntent) {
+      debugPrint('HOME INIT BLOCKED: deferred home content skipped (QR active).');
+      return;
+    }
     try {
       await Future.wait([
         _loadStoreDirectoryForFastDelivery(),
@@ -825,7 +915,7 @@ class _HomeScreenState extends State<HomeScreen>
     } catch (e) {
       debugPrint('Ana sayfa yardımcı içerikleri yüklenemedi: $e');
     } finally {
-      if (mounted) {
+      if (mounted && !_hasHandledQrIntent) {
         setState(() {
           _isLoadingHomeSections = false;
         });
@@ -848,6 +938,10 @@ class _HomeScreenState extends State<HomeScreen>
           .toList();
 
       if (!mounted || cachedProducts.isEmpty) {
+        return;
+      }
+      if (_hasHandledQrIntent) {
+        debugPrint('HOME INIT BLOCKED: cached products setState skipped (QR active).');
         return;
       }
 
@@ -884,6 +978,10 @@ class _HomeScreenState extends State<HomeScreen>
                 .toList(growable: false);
 
       if (!mounted || (cachedBanners.isEmpty && cachedCategories.isEmpty)) {
+        return;
+      }
+      if (_hasHandledQrIntent) {
+        debugPrint('HOME INIT BLOCKED: cached hero content setState skipped (QR active).');
         return;
       }
 
@@ -1333,7 +1431,6 @@ class _HomeScreenState extends State<HomeScreen>
       if (layouts.isEmpty) {
         if (mounted) {
           setState(() {
-            _hairCareBrandData = {};
             _hairCareLayoutsForHome = [];
           });
         }
@@ -1532,7 +1629,6 @@ class _HomeScreenState extends State<HomeScreen>
       });
 
       setState(() {
-        _hairCareBrandData = brandData;
         _hairCareLayoutsForHome = List<Map<String, dynamic>>.from(
           effectiveLayouts,
         );
@@ -1555,13 +1651,6 @@ class _HomeScreenState extends State<HomeScreen>
       _selectedCategory = category;
       _selectedSubCategory = null;
     });
-  }
-
-  List<Product> _gatherAllProducts() {
-    // Veritabanındaki tüm ürünleri Product modeline dönüştür
-    return _dbProducts
-        .map((dbProduct) => Product.fromDBProduct(dbProduct))
-        .toList();
   }
 
   void _onSearch(String query) {
@@ -1611,93 +1700,6 @@ class _HomeScreenState extends State<HomeScreen>
       },
     );
   }
-
-  // Dummy Data for Brand Section
-  final Map<String, dynamic> _brandData = {
-    'Urban': {
-      'logo': 'assets/haircare/urbanlogo.png',
-      'adUrls': [
-        'assets/haircare/urban reklam 1.png',
-        'assets/haircare/urban reklam 2.png',
-      ],
-      'products': [
-        {
-          'name': 'Urban Care Hyaluronic',
-          'price': '199.90 TL',
-          'rating': 4.5,
-          'reviews': 63,
-          'tags': ['Hızlı Kargo', 'Ücretsiz Kargo'],
-          'images': [''],
-        },
-        {
-          'name': 'Urban Care Argan Oil',
-          'price': '220.00 TL',
-          'rating': 4.7,
-          'reviews': 120,
-          'tags': ['%30 indirim'],
-          'images': [''],
-        },
-      ],
-    },
-    'Head & Shoulders': {
-      'logo': 'assets/haircare/head&shoulderslogo.png',
-      'adUrls': [
-        'assets/haircare/head & shoulders reklam 1.png',
-        'assets/haircare/head & shoulders reklam 2.png',
-      ],
-      'products': [
-        {
-          'name': 'Head & Shoulders Menthol',
-          'price': '145.50 TL',
-          'rating': 4.6,
-          'reviews': 200,
-          'tags': ['Hızlı Kargo'],
-          'images': [''],
-        },
-      ],
-    },
-    'L\'Oreal': {
-      'logo': 'assets/haircare/loreal logo.jpeg',
-      'adUrls': ['assets/haircare/Lorel reklam.png'],
-      'products': [],
-    },
-    'Elidor': {
-      'logo': 'assets/haircare/elidorlogo.jpeg',
-      'adUrls': ['assets/haircare/Elidor reklam.png'],
-      'products': [],
-    },
-    'Dove': {
-      'logo': 'assets/haircare/dove.png',
-      'adUrls': ['assets/haircare/Dove reklam.png'],
-      'products': [
-        {
-          'name': 'Dove Beauty Bar',
-          'price': '50.00 TL',
-          'rating': 4.8,
-          'reviews': 500,
-          'tags': ['Ücretsiz Kargo'],
-          'images': [''],
-        },
-      ],
-    },
-    'Clear': {
-      'logo': 'assets/haircare/clear.jpeg',
-      'adUrls': [
-        'assets/haircare/clear reklam 1.png',
-        'assets/haircare/clear reklam 2.png',
-      ],
-      'products': [
-        {
-          'name': 'Clear Women Clarifying',
-          'price': '92.50 TL',
-          'rating': 4.3,
-          'reviews': 456,
-          'tags': ['%30 indirim'],
-          'images': [''],
-        },
-      ],
-    },
-  };
 
   // Dummy Data for Tech Brand Section
   final Map<String, dynamic> _techBrandData = {
@@ -2111,55 +2113,6 @@ class _HomeScreenState extends State<HomeScreen>
     return product;
   }
 
-  Widget _buildHairCareSection() {
-    if (_hairCareBrandData.isNotEmpty && _hairCareSelectedBrand != null) {
-      final title = _hairCareTitle ?? 'Bakımlı Saçlar';
-      return BrandSection(
-        title: title,
-        selectedBrand: _hairCareSelectedBrand!,
-        brands: _hairCareBrandData.keys.toList(),
-        brandData: _hairCareBrandData.map((key, value) {
-          final v = value as Map<String, dynamic>;
-          return MapEntry(key, {
-            'logo': v['logo'],
-            'adUrls': v['adUrls'],
-            'products': v['products'],
-          });
-        }),
-        onBrandSelected: (brand) {
-          setState(() {
-            _hairCareSelectedBrand = brand;
-          });
-        },
-        pinActionsBottom: true,
-        tightCards: true,
-        listHeight: 264,
-      );
-    }
-    return const SizedBox.shrink();
-  }
-
-  Widget _buildHairCareBlock() {
-    if (_hairCareBrandData.isEmpty || _hairCareSelectedBrand == null) {
-      return const SizedBox.shrink();
-    }
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade100),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.symmetric(vertical: 24),
-      child: _buildHairCareSection(),
-    );
-  }
 
   Widget _buildTechSection() {
     return _LocalBrandSection(
@@ -2561,13 +2514,13 @@ class _HomeScreenState extends State<HomeScreen>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppColors.primary.withOpacity(0.03),
+            AppColors.primary.withValues(alpha: 0.03),
             Colors.white,
-            AppColors.primary.withOpacity(0.05),
+            AppColors.primary.withValues(alpha: 0.05),
           ],
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.primary.withOpacity(0.1)),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.1)),
       ),
       child: Column(
         children: [
@@ -2596,7 +2549,7 @@ class _HomeScreenState extends State<HomeScreen>
                     borderRadius: BorderRadius.circular(14),
                     boxShadow: [
                       BoxShadow(
-                        color: (item['color'] as Color).withOpacity(0.1),
+                        color: (item['color'] as Color).withValues(alpha: 0.1),
                         blurRadius: 12,
                         offset: const Offset(0, 4),
                       ),
@@ -2607,7 +2560,7 @@ class _HomeScreenState extends State<HomeScreen>
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: (item['color'] as Color).withOpacity(0.1),
+                          color: (item['color'] as Color).withValues(alpha: 0.1),
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
@@ -2649,159 +2602,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // Mobil Kategori Barı (Web'deki gibi)
-  Widget _buildMobileCategoryBar() {
-    final categories = defaultMobileCategoryNamesExcluding(
-      excludedNames: const {'Yakın Lokasyon'},
-    );
-
-    return Container(
-      width: double.infinity,
-      height: 44,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE))),
-      ),
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: categories.length,
-        separatorBuilder: (context, index) => const SizedBox(width: 24),
-        itemBuilder: (context, index) {
-          final category = categories[index];
-          final isSelected = _selectedCategory == category;
-          return GestureDetector(
-            onTap: () {
-              setState(() {
-                _selectedCategory = category;
-                _selectedSubCategory = null;
-              });
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                border: isSelected
-                    ? const Border(
-                        bottom: BorderSide(color: AppColors.primary, width: 2),
-                      )
-                    : null,
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                category,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: isSelected ? AppColors.primary : Colors.grey[800],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // Mobil Alt Kategori Barı (Seçili kategoriye göre)
-  Widget _buildMobileSubCategoryBar() {
-    final seed = findDefaultMobileCategorySeed(_selectedCategory);
-    final subCategories = seed?.subCategories ?? const <MobileCategorySeed>[];
-
-    if (subCategories.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFF9FAFB),
-        border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE))),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Alt Kategoriler',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 80,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: subCategories.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 12),
-              itemBuilder: (context, index) {
-                final subCat = subCategories[index];
-                final isSelected = _selectedSubCategory == subCat.name;
-                return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _selectedSubCategory = subCat.name;
-                    });
-                  },
-                  child: Container(
-                    width: 70,
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppColors.primary.withOpacity(0.1)
-                          : Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: isSelected
-                            ? AppColors.primary
-                            : Colors.grey[300]!,
-                        width: isSelected ? 2 : 1,
-                      ),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          iconDataForCategoryName(subCat.iconName),
-                          size: 28,
-                          color: isSelected
-                              ? AppColors.primary
-                              : Colors.grey[700],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          subCat.name,
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: isSelected
-                                ? FontWeight.w600
-                                : FontWeight.w500,
-                            color: isSelected
-                                ? AppColors.primary
-                                : Colors.grey[700],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _scrollCarousel(ScrollController controller, double delta) {
     if (!controller.hasClients) return;
 
@@ -2825,7 +2625,7 @@ class _HomeScreenState extends State<HomeScreen>
     return Material(
       color: Colors.white,
       elevation: 8,
-      shadowColor: Colors.black.withOpacity(0.12),
+      shadowColor: Colors.black.withValues(alpha: 0.12),
       shape: const CircleBorder(),
       child: InkWell(
         onTap: onTap,
@@ -3101,7 +2901,7 @@ class _CouponSliderState extends State<CouponSlider> {
                           border: Border.all(color: Colors.grey.shade200),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
+                              color: Colors.black.withValues(alpha: 0.05),
                               blurRadius: 4,
                               offset: const Offset(0, 2),
                             ),
@@ -3132,7 +2932,7 @@ class _CouponSliderState extends State<CouponSlider> {
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
                                 color: (coupon['color'][0] as Color)
-                                    .withOpacity(0.1),
+                                    .withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Icon(
@@ -3217,7 +3017,7 @@ class _CouponSliderState extends State<CouponSlider> {
                                           (_usedCoupons.contains(index)
                                                   ? Colors.grey
                                                   : coupon['color'][0] as Color)
-                                              .withOpacity(0.3),
+                                              .withValues(alpha: 0.3),
                                       blurRadius: 4,
                                       offset: const Offset(0, 2),
                                     ),
@@ -3349,7 +3149,7 @@ class _DealOfTheDaySliderState extends State<DealOfTheDaySlider> {
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
+                  color: Colors.black.withValues(alpha: 0.08),
                   blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
@@ -3459,7 +3259,7 @@ class _DealOfTheDaySliderState extends State<DealOfTheDaySlider> {
                           Container(
                             padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: AppColors.primary.withOpacity(0.1),
+                              color: AppColors.primary.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: const Icon(

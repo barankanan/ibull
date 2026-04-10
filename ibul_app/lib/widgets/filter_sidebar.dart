@@ -90,7 +90,7 @@ class _FilterSidebarState extends State<FilterSidebar> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 20,
             offset: const Offset(0, 4),
           ),
@@ -202,7 +202,7 @@ class _FilterSidebarState extends State<FilterSidebar> {
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8),
                     decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primary.withOpacity(0.1) : null,
+                      color: isSelected ? AppColors.primary.withValues(alpha: 0.1) : null,
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
@@ -315,7 +315,7 @@ class _FilterSidebarState extends State<FilterSidebar> {
                       borderRadius: BorderRadius.circular(8),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
+                          color: AppColors.primary.withValues(alpha: 0.3),
                           blurRadius: 4,
                           offset: const Offset(0, 2),
                         ),
@@ -373,8 +373,8 @@ class _FilterSidebarState extends State<FilterSidebar> {
                     child: Switch(
                       value: isSelected,
                       onChanged: (v) => _toggleOption(title, option, v),
-                      activeColor: AppColors.primary,
-                      activeTrackColor: AppColors.primary.withOpacity(0.3),
+                      activeThumbColor: AppColors.primary,
+                      activeTrackColor: AppColors.primary.withValues(alpha: 0.3),
                     ),
                   ),
                 ],

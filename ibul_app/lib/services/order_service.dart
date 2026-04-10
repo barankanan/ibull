@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/config/runtime_config.dart';
+
 class OrderService {
   OrderService._();
   static final OrderService instance = OrderService._();
@@ -14,6 +16,50 @@ class OrderService {
   static const double _deliveryNightBonus = 12;
   static const double _deliveryRainBonus = 15;
   static const double _defaultDeliveryKm = 2.2;
+
+  String get _debugSupabaseUrl {
+    final raw = AppRuntimeConfig.rawSupabaseUrl.trim();
+    return raw.isEmpty ? '(missing)' : raw;
+  }
+
+  String _debugRestRequestUrl(
+    String table, {
+    Map<String, String> query = const <String, String>{},
+  }) {
+    final encodedQuery = query.isEmpty
+        ? ''
+        : '?${Uri(queryParameters: query).query}';
+    if (_debugSupabaseUrl == '(missing)') {
+      return 'supabase://$table$encodedQuery';
+    }
+    return '$_debugSupabaseUrl/rest/v1/$table$encodedQuery';
+  }
+
+  void _debugSellerOrdersFetch(
+    String branch, {
+    required String sellerId,
+    String? requestUrl,
+    String? note,
+    int? rowCount,
+    int? durationMs,
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    final section = error == null ? 'Fetch' : 'Error';
+    debugPrint(
+      '[SellerPanel][$section] service=OrderService '
+      'branch=$branch '
+      'sellerId=${sellerId.isEmpty ? '-' : sellerId} '
+      'requestUrl=${requestUrl ?? '-'} '
+      'durationMs=${durationMs ?? '-'} '
+      'rowCount=${rowCount ?? '-'} '
+      'note=${note ?? '-'}'
+      '${error != null ? ' error=$error' : ''}',
+    );
+    if (stackTrace != null) {
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
 
   Future<Map<String, dynamic>> createOrderFromCheckout({
     required String userId,
@@ -479,10 +525,10 @@ class OrderService {
       'detail': normalizedCustomerAddress,
       'city': city.trim(),
       'district': district.trim(),
-      if (customerLat != null) 'lat': customerLat,
-      if (customerLat != null) 'latitude': customerLat,
-      if (customerLng != null) 'lng': customerLng,
-      if (customerLng != null) 'longitude': customerLng,
+      'lat': ?customerLat,
+      'latitude': ?customerLat,
+      'lng': ?customerLng,
+      'longitude': ?customerLng,
       if ((note ?? '').trim().isNotEmpty) 'note': note!.trim(),
     };
 
@@ -643,7 +689,7 @@ class OrderService {
         'delivery_address': addressPayload,
         'items': [insertedItem],
         'delivery_pricing': deliveryPricing,
-        if (walletHold != null) 'wallet_hold': walletHold,
+        'wallet_hold': ?walletHold,
       };
     } catch (error) {
       if (walletHold != null) {
@@ -1605,6 +1651,22 @@ class OrderService {
 
   Future<List<Map<String, dynamic>>> getSellerOrders(String sellerId) async {
     String? sellerBusinessName;
+    final totalWatch = Stopwatch()..start();
+    final directRequestUrl = _debugRestRequestUrl(
+      'order_items',
+      query: <String, String>{
+        'select':
+            'id,order_id,seller_id,product_name,product_code,quantity,total_price,unit_price,status,store_name,created_at,tracking_number,cargo_company,shipment_step,product_image_url',
+        'seller_id': 'eq.$sellerId',
+        'order': 'created_at.desc',
+      },
+    );
+    final directWatch = Stopwatch()..start();
+    _debugSellerOrdersFetch(
+      'order_items_direct:start',
+      sellerId: sellerId,
+      requestUrl: directRequestUrl,
+    );
     final List<Map<String, dynamic>> itemRows = List<Map<String, dynamic>>.from(
       await _supabase
           .from('order_items')
@@ -1614,21 +1676,65 @@ class OrderService {
           .eq('seller_id', sellerId)
           .order('created_at', ascending: false),
     );
+    _debugSellerOrdersFetch(
+      'order_items_direct:success',
+      sellerId: sellerId,
+      requestUrl: directRequestUrl,
+      durationMs: directWatch.elapsedMilliseconds,
+      rowCount: itemRows.length,
+    );
     final seenIds = itemRows
         .map((row) => row['id']?.toString())
         .whereType<String>()
         .toSet();
 
     try {
+      final storeRequestUrl = _debugRestRequestUrl(
+        'stores',
+        query: <String, String>{
+          'select': 'business_name',
+          'seller_id': 'eq.$sellerId',
+          'limit': '1',
+        },
+      );
+      final storeWatch = Stopwatch()..start();
+      _debugSellerOrdersFetch(
+        'store_lookup:start',
+        sellerId: sellerId,
+        requestUrl: storeRequestUrl,
+      );
       final storeRow = await _supabase
           .from('stores')
           .select('business_name')
           .eq('seller_id', sellerId)
           .limit(1)
           .maybeSingle();
+      _debugSellerOrdersFetch(
+        'store_lookup:success',
+        sellerId: sellerId,
+        requestUrl: storeRequestUrl,
+        durationMs: storeWatch.elapsedMilliseconds,
+        rowCount: storeRow == null ? 0 : 1,
+      );
       final businessName = storeRow?['business_name']?.toString().trim();
       sellerBusinessName = businessName;
       if (businessName != null && businessName.isNotEmpty) {
+        final storeFallbackRequestUrl = _debugRestRequestUrl(
+          'order_items',
+          query: <String, String>{
+            'select':
+                'id,order_id,seller_id,product_name,product_code,quantity,total_price,unit_price,status,store_name,created_at,tracking_number,cargo_company,shipment_step,product_image_url',
+            'store_name': 'ilike.$businessName',
+            'order': 'created_at.desc',
+          },
+        );
+        final storeFallbackWatch = Stopwatch()..start();
+        _debugSellerOrdersFetch(
+          'order_items_store_name_fallback:start',
+          sellerId: sellerId,
+          requestUrl: storeFallbackRequestUrl,
+          note: 'businessName=$businessName',
+        );
         final fallbackRows = List<Map<String, dynamic>>.from(
           await _supabase
               .from('order_items')
@@ -1638,6 +1744,14 @@ class OrderService {
               .ilike('store_name', businessName)
               .order('created_at', ascending: false),
         );
+        _debugSellerOrdersFetch(
+          'order_items_store_name_fallback:success',
+          sellerId: sellerId,
+          requestUrl: storeFallbackRequestUrl,
+          durationMs: storeFallbackWatch.elapsedMilliseconds,
+          rowCount: fallbackRows.length,
+          note: 'businessName=$businessName',
+        );
         for (final row in fallbackRows) {
           final rowId = row['id']?.toString();
           if (rowId == null || seenIds.contains(rowId)) continue;
@@ -1645,11 +1759,31 @@ class OrderService {
           seenIds.add(rowId);
         }
 
+        final sellerProductsRequestUrl = _debugRestRequestUrl(
+          'products',
+          query: <String, String>{
+            'select': 'id,name',
+            'seller_id': 'eq.$sellerId',
+          },
+        );
+        final sellerProductsWatch = Stopwatch()..start();
+        _debugSellerOrdersFetch(
+          'seller_products_lookup:start',
+          sellerId: sellerId,
+          requestUrl: sellerProductsRequestUrl,
+        );
         final sellerProducts = List<Map<String, dynamic>>.from(
           await _supabase
               .from('products')
               .select('id, name')
               .eq('seller_id', sellerId),
+        );
+        _debugSellerOrdersFetch(
+          'seller_products_lookup:success',
+          sellerId: sellerId,
+          requestUrl: sellerProductsRequestUrl,
+          durationMs: sellerProductsWatch.elapsedMilliseconds,
+          rowCount: sellerProducts.length,
         );
         final sellerProductIds = sellerProducts
             .map((row) => row['id']?.toString())
@@ -1665,6 +1799,22 @@ class OrderService {
             .toList();
 
         if (sellerProductIds.isNotEmpty) {
+          final productIdRequestUrl = _debugRestRequestUrl(
+            'order_items',
+            query: <String, String>{
+              'select':
+                  'id,order_id,seller_id,product_id,product_name,product_code,quantity,total_price,unit_price,status,store_name,created_at,tracking_number,cargo_company,shipment_step,product_image_url',
+              'product_id': 'in.(${sellerProductIds.length} ids)',
+              'order': 'created_at.desc',
+            },
+          );
+          final productIdWatch = Stopwatch()..start();
+          _debugSellerOrdersFetch(
+            'order_items_product_id_fallback:start',
+            sellerId: sellerId,
+            requestUrl: productIdRequestUrl,
+            note: 'productIds=${sellerProductIds.length}',
+          );
           final productIdRows = List<Map<String, dynamic>>.from(
             await _supabase
                 .from('order_items')
@@ -1673,6 +1823,14 @@ class OrderService {
                 )
                 .inFilter('product_id', sellerProductIds)
                 .order('created_at', ascending: false),
+          );
+          _debugSellerOrdersFetch(
+            'order_items_product_id_fallback:success',
+            sellerId: sellerId,
+            requestUrl: productIdRequestUrl,
+            durationMs: productIdWatch.elapsedMilliseconds,
+            rowCount: productIdRows.length,
+            note: 'productIds=${sellerProductIds.length}',
           );
           for (final row in productIdRows) {
             final rowId = row['id']?.toString();
@@ -1683,6 +1841,27 @@ class OrderService {
         }
 
         if (sellerProductNames.isNotEmpty) {
+          final storeNameFilterValue = businessName.replaceAll(',', r'\,');
+          final productNameRequestUrl = _debugRestRequestUrl(
+            'order_items',
+            query: <String, String>{
+              'select':
+                  'id,order_id,seller_id,product_id,product_name,product_code,quantity,total_price,unit_price,status,store_name,created_at,tracking_number,cargo_company,shipment_step,product_image_url',
+              'product_name': 'in.(${sellerProductNames.length} names)',
+              'or':
+                  'seller_id.eq.$sellerId,store_name.ilike.$storeNameFilterValue',
+              'order': 'created_at.desc',
+            },
+          );
+          final productNameWatch = Stopwatch()..start();
+          _debugSellerOrdersFetch(
+            'order_items_product_name_fallback:start',
+            sellerId: sellerId,
+            requestUrl: productNameRequestUrl,
+            note:
+                'productNames=${sellerProductNames.length} '
+                'serverFilteredBy=seller_id|store_name',
+          );
           final productNameRows = List<Map<String, dynamic>>.from(
             await _supabase
                 .from('order_items')
@@ -1690,7 +1869,20 @@ class OrderService {
                   'id, order_id, seller_id, product_id, product_name, product_code, quantity, total_price, unit_price, status, store_name, created_at, tracking_number, cargo_company, shipment_step, product_image_url',
                 )
                 .inFilter('product_name', sellerProductNames)
+                .or(
+                  'seller_id.eq.$sellerId,store_name.ilike.$storeNameFilterValue',
+                )
                 .order('created_at', ascending: false),
+          );
+          _debugSellerOrdersFetch(
+            'order_items_product_name_fallback:success',
+            sellerId: sellerId,
+            requestUrl: productNameRequestUrl,
+            durationMs: productNameWatch.elapsedMilliseconds,
+            rowCount: productNameRows.length,
+            note:
+                'productNames=${sellerProductNames.length} '
+                'serverFilteredBy=seller_id|store_name',
           );
           for (final row in productNameRows) {
             final rowId = row['id']?.toString();
@@ -1712,12 +1904,32 @@ class OrderService {
         }
       }
     } catch (e) {
-      debugPrint('OrderService seller store-name fallback warn: $e');
+      _debugSellerOrdersFetch(
+        'legacy_fallback:warn',
+        sellerId: sellerId,
+        note: 'durationMs=${totalWatch.elapsedMilliseconds}',
+        error: e,
+      );
     }
 
+    final returnRequestsWatch = Stopwatch()..start();
+    _debugSellerOrdersFetch(
+      'return_requests_lookup:start',
+      sellerId: sellerId,
+      requestUrl: 'OrderService._getLatestReturnRequestsBySeller',
+      note: 'businessName=${sellerBusinessName ?? '-'}',
+    );
     final latestReturnRequestsByItem = await _getLatestReturnRequestsBySeller(
       sellerId: sellerId,
       businessName: sellerBusinessName,
+    );
+    _debugSellerOrdersFetch(
+      'return_requests_lookup:success',
+      sellerId: sellerId,
+      requestUrl: 'OrderService._getLatestReturnRequestsBySeller',
+      durationMs: returnRequestsWatch.elapsedMilliseconds,
+      rowCount: latestReturnRequestsByItem.length,
+      note: 'businessName=${sellerBusinessName ?? '-'}',
     );
     for (final row in itemRows) {
       final itemId = row['id']?.toString() ?? '';
@@ -1771,14 +1983,43 @@ class OrderService {
         .toList();
     List<dynamic> orders = const <dynamic>[];
     try {
+      final ordersLookupRequestUrl = _debugRestRequestUrl(
+        'orders',
+        query: <String, String>{
+          'select':
+              'id,order_number,user_id,status,total_amount,created_at,delivery_address,delivery_type,delivery_slot',
+          'id': 'in.(${orderIds.length} ids)',
+        },
+      );
+      final ordersLookupWatch = Stopwatch()..start();
+      _debugSellerOrdersFetch(
+        'orders_lookup:start',
+        sellerId: sellerId,
+        requestUrl: ordersLookupRequestUrl,
+        note: 'orderIds=${orderIds.length}',
+      );
       orders = await _supabase
           .from('orders')
           .select(
             'id, order_number, user_id, status, total_amount, created_at, delivery_address, delivery_type, delivery_slot',
           )
           .inFilter('id', orderIds);
+      _debugSellerOrdersFetch(
+        'orders_lookup:success',
+        sellerId: sellerId,
+        requestUrl: ordersLookupRequestUrl,
+        durationMs: ordersLookupWatch.elapsedMilliseconds,
+        rowCount: orders.length,
+        note: 'orderIds=${orderIds.length}',
+      );
     } catch (error) {
-      debugPrint('OrderService seller orders lookup warn: $error');
+      _debugSellerOrdersFetch(
+        'orders_lookup:warn',
+        sellerId: sellerId,
+        requestUrl: 'orders_lookup',
+        durationMs: totalWatch.elapsedMilliseconds,
+        error: error,
+      );
       if (_isPolicyRecursionError(error)) {
         debugPrint(
           'OrderService seller orders fallback: orders policies hit recursion (42P17). Returning item-based rows.',
@@ -1803,16 +2044,44 @@ class OrderService {
     final Map<String, Map<String, dynamic>> userById = {};
     if (customerIds.isNotEmpty) {
       try {
+        final usersLookupRequestUrl = _debugRestRequestUrl(
+          'users',
+          query: <String, String>{
+            'select': 'id,display_name,email,phone',
+            'id': 'in.(${customerIds.length} ids)',
+          },
+        );
+        final usersLookupWatch = Stopwatch()..start();
+        _debugSellerOrdersFetch(
+          'users_lookup:start',
+          sellerId: sellerId,
+          requestUrl: usersLookupRequestUrl,
+          note: 'customerIds=${customerIds.length}',
+        );
         final users = await _supabase
             .from('users')
             .select('id, display_name, email, phone')
             .inFilter('id', customerIds);
+        _debugSellerOrdersFetch(
+          'users_lookup:success',
+          sellerId: sellerId,
+          requestUrl: usersLookupRequestUrl,
+          durationMs: usersLookupWatch.elapsedMilliseconds,
+          rowCount: (users as List<dynamic>).length,
+          note: 'customerIds=${customerIds.length}',
+        );
         for (final raw in (users as List<dynamic>)) {
           final map = Map<String, dynamic>.from(raw as Map);
           userById[map['id'].toString()] = map;
         }
       } catch (e) {
-        debugPrint('OrderService seller user lookup warn: $e');
+        _debugSellerOrdersFetch(
+          'users_lookup:warn',
+          sellerId: sellerId,
+          requestUrl: 'users_lookup',
+          durationMs: totalWatch.elapsedMilliseconds,
+          error: e,
+        );
       }
     }
 
@@ -1884,6 +2153,14 @@ class OrderService {
                 false),
       });
     }
+    _debugSellerOrdersFetch(
+      'getSellerOrders:success',
+      sellerId: sellerId,
+      requestUrl: 'OrderService.getSellerOrders',
+      durationMs: totalWatch.elapsedMilliseconds,
+      rowCount: result.length,
+      note: 'rawItems=${itemRows.length}',
+    );
     return result;
   }
 

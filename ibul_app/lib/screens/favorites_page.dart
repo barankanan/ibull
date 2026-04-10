@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
+import '../core/app_motion.dart';
+import '../core/interaction_feedback.dart';
 import '../models/product_model.dart';
 import '../models/product_list_model.dart';
 import 'home_screen.dart';
@@ -11,6 +13,8 @@ import 'login_page.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../widgets/product_card.dart';
+import '../widgets/premium_interactions.dart';
+import '../widgets/restaurant_order/product_quick_view_dialog.dart';
 import '../widgets/account_sidebar.dart';
 
 class FavoritesPage extends StatefulWidget {
@@ -49,6 +53,29 @@ class _FavoritesPageState extends State<FavoritesPage> {
           ),
         ],
       ),
+    );
+  }
+
+  void _openProductDetail(Product product) {
+    InteractionFeedback.lightImpact(channel: 'favorites_product_open');
+    Navigator.push(
+      context,
+      buildAppPageRoute<void>(
+        builder: (context) => ProductDetailPage(product: product),
+      ),
+    );
+  }
+
+  void _showProductQuickView(Product product) {
+    InteractionFeedback.lightImpact(channel: 'favorites_product_quick_view');
+    showAppModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.42),
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return ProductQuickInfoSheet(product: product);
+      },
     );
   }
 
@@ -119,7 +146,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? AppColors.primary.withOpacity(0.08)
+                                ? AppColors.primary.withValues(alpha: 0.08)
                                 : Colors.grey.shade50,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
@@ -475,6 +502,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
+      cacheExtent: 800,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 250, // Match Home Page
         childAspectRatio: 0.65,
@@ -498,6 +526,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.all(8),
+      cacheExtent: 800,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 350,
         childAspectRatio: 0.85, // Kart oranı
@@ -523,7 +552,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: AppColors.primary.withOpacity(0.3),
+            color: AppColors.primary.withValues(alpha: 0.3),
             width: 2,
             style: BorderStyle.solid,
           ), // Dashed border is complex in Flutter without extra package, solid is fine or custom painter
@@ -535,7 +564,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
+                color: AppColors.primary.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.add, size: 32, color: AppColors.primary),
@@ -585,7 +614,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),
@@ -614,7 +643,10 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         )
                       : coverImage.startsWith('assets/')
                       ? Image.asset(coverImage, fit: BoxFit.cover)
-                      : OptimizedImage(imageUrlOrPath: coverImage, fit: BoxFit.cover),
+                      : OptimizedImage(
+                          imageUrlOrPath: coverImage,
+                          fit: BoxFit.cover,
+                        ),
                   // Gradient Overlay
                   Container(
                     decoration: BoxDecoration(
@@ -623,7 +655,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         end: Alignment.bottomCenter,
                         colors: [
                           Colors.transparent,
-                          Colors.black.withOpacity(0.6),
+                          Colors.black.withValues(alpha: 0.6),
                         ],
                       ),
                     ),
@@ -723,7 +755,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
                                     ),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withOpacity(0.1),
+                                        color: Colors.black.withValues(
+                                          alpha: 0.1,
+                                        ),
                                         blurRadius: 4,
                                       ),
                                     ],
@@ -731,8 +765,9 @@ class _FavoritesPageState extends State<FavoritesPage> {
                                   child: ClipOval(
                                     child:
                                         previewImages[index].startsWith('http')
-                                        ? OptimizedImage(imageUrlOrPath: 
-                                            previewImages[index],
+                                        ? OptimizedImage(
+                                            imageUrlOrPath:
+                                                previewImages[index],
                                             fit: BoxFit.cover,
                                           )
                                         : Image.asset(
@@ -1066,8 +1101,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
                   clipBehavior: Clip.antiAlias,
                   child: (list['coverImage']?.toString().isNotEmpty ?? false)
                       ? (list['coverImage'].toString().startsWith('http')
-                            ? OptimizedImage(imageUrlOrPath: 
-                                list['coverImage'],
+                            ? OptimizedImage(
+                                imageUrlOrPath: list['coverImage'],
                                 fit: BoxFit.cover,
                               )
                             : Image.asset(
@@ -1096,8 +1131,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         clipBehavior: Clip.antiAlias,
                         child: (list['logo']?.toString().isNotEmpty ?? false)
                             ? (list['logo'].toString().startsWith('http')
-                                  ? OptimizedImage(imageUrlOrPath: 
-                                      list['logo'],
+                                  ? OptimizedImage(
+                                      imageUrlOrPath: list['logo'],
                                       fit: BoxFit.cover,
                                     )
                                   : Image.asset(
@@ -1161,7 +1196,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 10,
               offset: const Offset(0, 2),
             ),
@@ -1196,8 +1231,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
                           height: 120,
                           fit: BoxFit.cover,
                         )
-                      : OptimizedImage(imageUrlOrPath: 
-                          coverImage,
+                      : OptimizedImage(
+                          imageUrlOrPath: coverImage,
                           width: double.infinity,
                           height: 120,
                           fit: BoxFit.cover,
@@ -1216,7 +1251,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       border: Border.all(color: Colors.white, width: 3),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
+                          color: Colors.black.withValues(alpha: 0.1),
                           blurRadius: 8,
                         ),
                       ],
@@ -1232,7 +1267,10 @@ class _FavoritesPageState extends State<FavoritesPage> {
                             )
                           : logoImage.startsWith('assets/')
                           ? Image.asset(logoImage, fit: BoxFit.cover)
-                          : OptimizedImage(imageUrlOrPath: logoImage, fit: BoxFit.cover),
+                          : OptimizedImage(
+                              imageUrlOrPath: logoImage,
+                              fit: BoxFit.cover,
+                            ),
                     ),
                   ),
                 ),
@@ -1265,7 +1303,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
+                          color: AppColors.primary.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
@@ -1410,209 +1448,226 @@ class _FavoritesPageState extends State<FavoritesPage> {
         : 0;
 
     return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                ProductDetailPage(product: product),
-            transitionsBuilder:
-                (context, animation, secondaryAnimation, child) {
-                  return FadeTransition(
-                    opacity: CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                    child: child,
-                  );
-                },
-            transitionDuration: const Duration(milliseconds: 160),
+      onTap: () => _openProductDetail(product),
+      onLongPress: () => _showProductQuickView(product),
+      child: PremiumPressable(
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade200),
           ),
-        );
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Image
-            Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(8),
-                  ),
-                  child: AspectRatio(
-                    aspectRatio: 1.0,
-                    child: Container(
-                      color: Colors.grey[100],
-                      child: image != null && image.isNotEmpty
-                          ? (image.startsWith('http')
-                                ? OptimizedImage(imageUrlOrPath: 
-                                    image,
-                                    fit: BoxFit.contain,
-                                    cacheWidth: 200,
-                                    cacheHeight: 200,
-                                    filterQuality: FilterQuality.medium,
-                                    errorBuilder:
-                                        (context, error, stackTrace) => Icon(
-                                          Icons.image_not_supported,
-                                          color: Colors.grey[400],
-                                          size: 30,
-                                        ),
-                                  )
-                                : Image.asset(
-                                    image,
-                                    fit: BoxFit.contain,
-                                    cacheWidth: 200,
-                                    cacheHeight: 200,
-                                    filterQuality: FilterQuality.medium,
-                                    errorBuilder:
-                                        (context, error, stackTrace) => Icon(
-                                          Icons.image_not_supported,
-                                          color: Colors.grey[400],
-                                          size: 30,
-                                        ),
-                                  ))
-                          : Icon(
-                              Icons.image_not_supported,
-                              color: Colors.grey[400],
-                              size: 30,
-                            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Image
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(8),
+                    ),
+                    child: AspectRatio(
+                      aspectRatio: 1.0,
+                      child: Container(
+                        color: Colors.grey[100],
+                        child: image != null && image.isNotEmpty
+                            ? (image.startsWith('http')
+                                  ? OptimizedImage(
+                                      imageUrlOrPath: image,
+                                      fit: BoxFit.contain,
+                                      cacheWidth: 200,
+                                      cacheHeight: 200,
+                                      filterQuality: FilterQuality.medium,
+                                      errorBuilder:
+                                          (context, error, stackTrace) => Icon(
+                                            Icons.image_not_supported,
+                                            color: Colors.grey[400],
+                                            size: 30,
+                                          ),
+                                    )
+                                  : Image.asset(
+                                      image,
+                                      fit: BoxFit.contain,
+                                      cacheWidth: 200,
+                                      cacheHeight: 200,
+                                      filterQuality: FilterQuality.medium,
+                                      errorBuilder:
+                                          (context, error, stackTrace) => Icon(
+                                            Icons.image_not_supported,
+                                            color: Colors.grey[400],
+                                            size: 30,
+                                          ),
+                                    ))
+                            : Icon(
+                                Icons.image_not_supported,
+                                color: Colors.grey[400],
+                                size: 30,
+                              ),
+                      ),
                     ),
                   ),
-                ),
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: GestureDetector(
-                    onTap: () {
-                      if (!_appState.isLoggedIn) {
-                        _showLoginRequiredDialog(context);
-                        return;
-                      }
-                      setState(() {
-                        _appState.toggleFavorite(product);
-                      });
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: GestureDetector(
+                      onTap: () => _showProductQuickView(product),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.96),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.1),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.remove_red_eye_outlined,
+                          color: AppColors.primary,
+                          size: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: GestureDetector(
+                      onTap: () {
+                        if (!_appState.isLoggedIn) {
+                          _showLoginRequiredDialog(context);
+                          return;
+                        }
+                        setState(() {
+                          _appState.toggleFavorite(product);
+                        });
+                      },
+                      child: PremiumPressable(
+                        pressedScale: 0.9,
+                        hoverScale: 1.04,
+                        hoverLift: 0.5,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.1),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            isFavorite ? Icons.favorite : Icons.favorite_border,
+                            color: isFavorite
+                                ? Colors.red
+                                : Colors.grey.shade400,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              // Content
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Badges
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          primaryTag,
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+
+                      // Title
+                      Text(
+                        product.name,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black87,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+
+                      // Rating
+                      Row(
+                        children: [
+                          ...List.generate(
+                            4,
+                            (index) => Icon(
+                              index < filledStars
+                                  ? Icons.star
+                                  : Icons.star_border,
+                              color: Colors.orange,
+                              size: 10,
+                            ),
+                          ),
+                          const SizedBox(width: 3),
+                          Flexible(
+                            child: Text(
+                              '(${product.reviewCount})',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: Colors.grey,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ],
                       ),
-                      child: Icon(
-                        isFavorite ? Icons.favorite : Icons.favorite_border,
-                        color: isFavorite ? Colors.red : Colors.grey.shade400,
-                        size: 16,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+                      const Spacer(),
 
-            // Content
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Badges
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        primaryTag,
-                        textAlign: TextAlign.center,
+                      // Price
+                      Text(
+                        product.price,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 8,
-                          fontWeight: FontWeight.w600,
-                        ),
                       ),
-                    ),
-                    const SizedBox(height: 3),
-
-                    // Title
-                    Text(
-                      product.name,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.black87,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-
-                    // Rating
-                    Row(
-                      children: [
-                        ...List.generate(
-                          4,
-                          (index) => Icon(
-                            index < filledStars
-                                ? Icons.star
-                                : Icons.star_border,
-                            color: Colors.orange,
-                            size: 10,
-                          ),
-                        ),
-                        const SizedBox(width: 3),
-                        Flexible(
-                          child: Text(
-                            '(${product.reviewCount})',
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.grey,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Spacer(),
-
-                    // Price
-                    Text(
-                      product.price,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

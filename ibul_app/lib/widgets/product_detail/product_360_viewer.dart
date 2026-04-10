@@ -22,7 +22,6 @@ class Product360Viewer extends StatefulWidget {
 class _Product360ViewerState extends State<Product360Viewer> {
   int _currentIndex = 0;
   double _dragAccumulator = 0.0;
-  bool _isLoaded = false;
 
   @override
   void initState() {
@@ -48,9 +47,6 @@ class _Product360ViewerState extends State<Product360Viewer> {
         precacheImage(AssetImage(url), context);
       }
     }
-    setState(() {
-      _isLoaded = true;
-    });
   }
 
   void _handleDrag(DragUpdateDetails details) {
@@ -100,7 +96,7 @@ class _Product360ViewerState extends State<Product360Viewer> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.5),
+                color: Colors.black.withValues(alpha: 0.5),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: const Row(

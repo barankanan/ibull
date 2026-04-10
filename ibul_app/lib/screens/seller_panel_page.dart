@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kDebugMode, kIsWeb, listEquals;
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
@@ -19,9 +20,9 @@ import 'package:video_player/video_player.dart';
 import '../widgets/image_cropper_widget.dart';
 import '../core/app_state.dart';
 import '../core/app_motion.dart';
+import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/web_seo.dart';
-import '../widgets/premium_interactions.dart';
 import '../services/store_service.dart';
 import '../services/auth_service.dart';
 import '../services/support_service.dart';
@@ -31,14 +32,28 @@ import '../services/order_print_job_service.dart';
 import '../services/product_question_service.dart';
 import '../services/seller_dashboard_service.dart';
 import '../services/seller_wallet_service.dart';
-import 'seller/campaign_form_dialog.dart';
+import '../services/local_print_service.dart';
 import 'seller/collections_management_page.dart';
 import 'seller/kitchen_print_management_page.dart';
+import 'seller/kitchen_display_screen.dart';
+import 'seller/table_history_screen.dart';
+import 'seller/waiter_performance_screen.dart';
+import '../models/restaurant_ops_models.dart';
+import '../models/garson_operation_rules.dart';
+import '../widgets/garson/transfer_table_modal.dart';
+import '../widgets/garson/payment_bottom_sheet.dart';
+import '../widgets/garson/undo_action_controller.dart';
+import '../widgets/garson/order_preview_sheet.dart';
+import '../models/mixed_service_order.dart';
 import '../models/seller_product.dart';
+import '../models/product_pricing.dart';
 import 'seller/add_product_page.dart';
 import '../models/sub_admin.dart';
 import '../widgets/common/video_player_widget.dart';
 import '../widgets/province_district_picker_dialog.dart';
+import '../widgets/restaurant_order/mixed_service_dialog.dart';
+import '../widgets/restaurant_order/mixed_service_template_editor_dialog.dart';
+import '../widgets/restaurant_order/product_quantity_stepper.dart';
 import '../utils/browser_file_download.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
@@ -49,6 +64,12 @@ import '../features/seller/panel/widgets/seller_panel_common_widgets.dart';
 import '../features/seller/panel/widgets/seller_panel_detail_widgets.dart';
 import '../features/seller/panel/widgets/seller_panel_shell.dart';
 import '../ads/presentation/pages/seller_ads_manager_content.dart';
+import 'seller/product_management/bulk_product_price_stock_update_button.dart';
+import 'seller/product_management/bulk_product_upload_button.dart';
+import 'seller/product_management/product_quick_edit_button.dart';
+import 'seller/product_management/product_quick_edit_models.dart';
+import 'seller/product_management/product_quick_edit_row.dart';
+import 'seller/product_management/product_quick_edit_service.dart';
 
 // Satıcı Admin Paneli
 // Satıcıların mağazalarını yönettikleri panel
@@ -56,9 +77,70 @@ part 'seller_panel_dashboard_modules.dart';
 part 'seller_panel_orders_modules.dart';
 part 'seller_panel_finance_modules.dart';
 part 'seller_panel_support_modules.dart';
+part 'seller_panel_page_preview.dart';
+
+enum _ProductHealthFilter {
+  all,
+  missingImage,
+  pending,
+  lowStock,
+  missingDescription,
+  invalidPrice,
+}
+
+enum _TemplateCreationFlow { menu, service }
+
+enum SellerPanelEntryRole { seller, waiter }
+
+class _SellerDashboardSnapshot {
+  const _SellerDashboardSnapshot({
+    required this.metrics,
+    required this.statusCounts,
+    required this.weeklyStats,
+    required this.monthlyStats,
+    required this.totalOrderCount,
+    required this.completionRate,
+    required this.averageOrderChange,
+    required this.topProducts,
+    required this.cargoSummary,
+    required this.pendingTasks,
+  });
+
+  final SellerDashboardMetrics metrics;
+  final Map<String, int> statusCounts;
+  final (double, int, double) weeklyStats;
+  final (double, int) monthlyStats;
+  final int totalOrderCount;
+  final double completionRate;
+  final double averageOrderChange;
+  final List<Map<String, dynamic>> topProducts;
+  final List<Map<String, dynamic>> cargoSummary;
+  final List<Map<String, dynamic>> pendingTasks;
+}
+
+SellerPanelEntryRole parseSellerPanelEntryRole(Object? arguments) {
+  if (arguments is SellerPanelEntryRole) {
+    return arguments;
+  }
+  final rawValue = arguments is Map<String, dynamic>
+      ? arguments['entryRole']?.toString()
+      : arguments?.toString();
+  switch (rawValue?.trim().toLowerCase()) {
+    case 'waiter':
+    case 'garson':
+      return SellerPanelEntryRole.waiter;
+    default:
+      return SellerPanelEntryRole.seller;
+  }
+}
 
 class SellerPanelPage extends StatefulWidget {
-  const SellerPanelPage({super.key});
+  const SellerPanelPage({
+    super.key,
+    this.entryRole = SellerPanelEntryRole.seller,
+  });
+
+  final SellerPanelEntryRole entryRole;
 
   @override
   State<SellerPanelPage> createState() => _SellerPanelPageState();
@@ -86,40 +168,35 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   String _selectedFeedbackTab = 'Tum';
   String _selectedFeedbackRatingFilter = 'Tum';
   final Map<String, String> _feedbackComplaintStatuses = <String, String>{};
-  final List<String> _complaintStatuses = [
-    'Bekliyor',
-    'İnceleniyor',
-    'Çözüldü',
-    'Bekliyor',
-    'İnceleniyor',
-  ];
   String _selectedSupportTab = 'Tümü';
-  final List<String> _supportTicketStatuses = [
-    'Açık',
-    'Açık',
-    'Açık',
-    'Kapalı',
-    'Kapalı',
-    'Kapalı',
-  ];
 
   // Store Service & State
   final StoreService _storeService = StoreService();
+  final ProductQuickEditService _productQuickEditService =
+      ProductQuickEditService();
   final AuthService _authService = AuthService();
-  final OrderPrintJobService _orderPrintJobService = OrderPrintJobService();
   final SupportService _supportService = SupportService();
   final SellerWalletService _sellerWalletService = SellerWalletService.instance;
   bool _isLoading = false;
   List<SellerProduct> _products = [];
+  final TextEditingController _productSearchController =
+      TextEditingController();
+  String _productSearchQuery = '';
+  _ProductHealthFilter _selectedProductHealthFilter = _ProductHealthFilter.all;
+  bool _isProductQuickEditMode = false;
+  Map<String, ProductQuickEditDraft> _productQuickEditDrafts =
+      <String, ProductQuickEditDraft>{};
+  final Set<String> _deletingProductIds = <String>{};
   StreamSubscription<List<SellerProduct>>? _productsSubscription;
   List<StoreCampaign> _campaigns = [];
-  bool _isLoadingCampaigns = false;
   List<SubAdmin> _subAdmins = [];
   StreamSubscription<List<SubAdmin>>? _subAdminsSubscription;
   StreamSubscription<List<SupportTicket>>? _supportTicketsSubscription;
   StreamSubscription<List<Map<String, dynamic>>>?
   _cancelAppealNotificationsSubscription;
   final Map<int, DateTime> _webGarsonClosedTableAt = <int, DateTime>{};
+  // null = tümü, 'occupied' = dolu, 'preparing' = hazırlanıyor, 'payment_pending' = ödeme bekliyor
+  String? _garsonStatusFilter;
   final Map<int, List<Map<String, dynamic>>> _mobileGarsonDraftItemsByTable =
       <int, List<Map<String, dynamic>>>{};
   final Map<int, DateTime> _mobileGarsonDraftUpdatedAtByTable =
@@ -128,6 +205,15 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       <int, DateTime>{};
   final Map<int, List<Map<String, dynamic>>>
   _mobileGarsonOptimisticItemsByTable = <int, List<Map<String, dynamic>>>{};
+  bool? _isLocalPrintAvailable;
+  String _localPrintStatusLabel = 'Yazıcı kontrol ediliyor';
+  String _localPrintStatusMessage = 'Yazıcı durumu kontrol ediliyor.';
+  bool _isLocalPrintRefreshing = false;
+  bool _isLocalPrintTesting = false;
+  final Map<String, String> _localPrintStatusRenderSignatures =
+      <String, String>{};
+  final Map<String, String> _localPrintPanelRenderSignatures =
+      <String, String>{};
   List<Map<String, dynamic>> _storeTables = <Map<String, dynamic>>[];
   bool _isLoadingStoreTables = false;
   bool _isMutatingStoreTables = false;
@@ -215,6 +301,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   final _customerServiceController = TextEditingController();
   final _companyTitleController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
+  final Stopwatch _sellerPanelLifetime = Stopwatch()..start();
   SellerDashboardRangePreset _dashboardRangePreset =
       SellerDashboardRangePreset.last7Days;
   DateTimeRange? _dashboardCustomRange;
@@ -222,7 +309,12 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       SellerDashboardRangePreset.last30Days;
   DateTimeRange? _financeCustomRange;
   String _financeTransactionTypeFilter = 'Tum Islemler';
+  int _sellerPanelBuildCount = 0;
+  int _sellerPanelStateUpdateCount = 0;
   int _ordersVersion = 0;
+  int _productsVersion = 0;
+  int _campaignsVersion = 0;
+  int _supportTicketsVersion = 0;
   int _sellerQuestionsVersion = 0;
   Map<String, Map<String, dynamic>> _sellerOrderById =
       <String, Map<String, dynamic>>{};
@@ -234,16 +326,18 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   Map<String, dynamic>? _financeSummaryCache;
   String? _feedbackDataCacheKey;
   Map<String, dynamic>? _feedbackDataCache;
+  String? _dashboardSnapshotCacheKey;
+  _SellerDashboardSnapshot? _dashboardSnapshotCache;
   String? _tableOrdersStreamSellerId;
   Stream<List<Map<String, dynamic>>>? _tableOrdersStream;
+  String? _tableOrdersFallbackSellerId;
+  Future<List<Map<String, dynamic>>>? _tableOrdersFallbackFuture;
   double _storeRating = 0.0;
-  bool _isStoreVerified = false;
 
   // Store Profile Values
   String _selectedCity = '';
   String _selectedDistrict = '';
   String _companyType = 'Limited Şirket';
-  String _selectedCompanyType = 'Limited Şirket';
   String _storeCategory = '';
   String _workingHours = '09:00 - 18:00';
   bool _isStoreOpen = true;
@@ -257,21 +351,121 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   String? _storeLogoUrl;
   String? _storeCoverUrl;
   Uint8List? _localLogoBytes;
-  Uint8List? _localCoverBytes;
   final List<String?> _storeImages = List.filled(6, null);
   final List<String?> _announcementBanners = List.filled(3, null);
   List<String> _sellerVideos = []; // List of video URLs
   bool _isUploadingVideo = false;
 
+  bool get _isWaiterEntry => widget.entryRole == SellerPanelEntryRole.waiter;
+
+  String get _sellerPanelSupabaseUrl {
+    final raw = AppRuntimeConfig.rawSupabaseUrl.trim();
+    return raw.isEmpty ? '(missing)' : raw;
+  }
+
+  String _sellerPanelRestRequestUrl(
+    String table, {
+    Map<String, String> query = const <String, String>{},
+  }) {
+    final encodedQuery = query.isEmpty
+        ? ''
+        : '?${Uri(queryParameters: query).query}';
+    if (_sellerPanelSupabaseUrl == '(missing)') {
+      return 'supabase://$table$encodedQuery';
+    }
+    return '$_sellerPanelSupabaseUrl/rest/v1/$table$encodedQuery';
+  }
+
+  void _logSellerPanel(
+    String section,
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    final elapsedMs = _sellerPanelLifetime.elapsedMilliseconds;
+    debugPrint(
+      '[SellerPanel][$section] +${elapsedMs}ms '
+      'activeTab=${_selectedModule.name} '
+      '$message'
+      '${error != null ? ' error=$error' : ''}',
+    );
+    if (stackTrace != null) {
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  void _logSellerPanelStateUpdate(String branch, {String? note}) {
+    _sellerPanelStateUpdateCount += 1;
+    _logSellerPanel(
+      'State',
+      'update=$_sellerPanelStateUpdateCount '
+          'branch=$branch '
+          'note=${note ?? '-'}',
+    );
+  }
+
+  void _invalidateDashboardSnapshot() {
+    _dashboardSnapshotCacheKey = null;
+    _dashboardSnapshotCache = null;
+  }
+
+  void _debugLogSellerBootstrap({
+    required String branch,
+    String? requestUrl,
+    String? note,
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    final sellerId = _authService.currentUser?.id.trim() ?? '';
+    final section = error != null || branch.contains(':catch')
+        ? 'Error'
+        : branch.contains(':success') || branch.contains(':null_result')
+        ? 'State'
+        : 'Fetch';
+    _logSellerPanel(
+      section,
+      'branch=$branch '
+      'entryRole=${widget.entryRole.name} '
+      'sellerId=${sellerId.isEmpty ? '-' : sellerId} '
+      'requestUrl=${requestUrl ?? '-'} '
+      'note=${note ?? '-'}',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    if (_isWaiterEntry) {
+      _selectedModule = SellerModule.garson;
+    }
+    _logSellerPanel(
+      'Init',
+      'phase=initState '
+          'entryRole=${widget.entryRole.name} '
+          'authUserId=${_authService.currentUser?.id ?? '-'} '
+          'initialTab=${_selectedModule.name}',
+    );
     _applySellerSeo();
     unawaited(_restoreLastSelectedModule());
+    _logSellerPanel(
+      'Init',
+      'branch=store_profile trigger=initState requestUrl=${_sellerPanelRestRequestUrl('stores', query: <String, String>{'select': '*', 'seller_id': 'eq.${_authService.currentUser?.id.trim().isNotEmpty == true ? _authService.currentUser!.id.trim() : '<missing>'}'})}',
+    );
     _loadStoreProfile();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _logSellerPanel(
+        'Init',
+        'phase=postFrame activeTab=${_selectedModule.name} '
+            'action=ensureModuleDataLoaded',
+      );
       unawaited(_ensureModuleDataLoaded(_selectedModule));
+      _scheduleLocalPrintStatusRefreshIfNeeded(
+        module: _selectedModule,
+        reason: 'seller_panel_init',
+      );
     });
   }
 
@@ -281,8 +475,17 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       prefs.getString(_sellerPanelLastModulePrefKey),
     );
     if (restored == null || restored == SellerModule.dashboard) {
+      _logSellerPanel(
+        'Tab',
+        'action=restoreLastSelectedModule restored=${restored?.name ?? '-'} '
+            'applied=false',
+      );
       return;
     }
+    _logSellerPanel(
+      'Tab',
+      'action=restoreLastSelectedModule restored=${restored.name} applied=false',
+    );
     await prefs.remove(_sellerPanelLastModulePrefKey);
   }
 
@@ -355,93 +558,163 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   }
 
   void _setSelectedModule(SellerModule module) {
+    final previousModule = _selectedModule;
+    _logSellerPanel(
+      'Tab',
+      'action=select from=${previousModule.name} to=${module.name} '
+          'changed=${previousModule != module}',
+    );
     if (_selectedModule != module) {
       setState(() {
         _selectedModule = module;
       });
+      _logSellerPanelStateUpdate(
+        'selected_module',
+        note: 'from=${previousModule.name} to=${module.name}',
+      );
     }
     if (module == SellerModule.system && _isFoodStoreCategory(_storeCategory)) {
       unawaited(_loadStoreTables());
     }
     unawaited(_ensureModuleDataLoaded(module));
+    _scheduleLocalPrintStatusRefreshIfNeeded(
+      module: module,
+      reason: 'module_selected',
+    );
     _applySellerSeo(module);
     unawaited(_persistSelectedModule(module));
   }
 
   Future<void> _ensureModuleDataLoaded(SellerModule module) async {
+    void logDecision(String fetchName, bool scheduled) {
+      _logSellerPanel(
+        'Tab',
+        'module=${module.name} fetch=$fetchName refetch=$scheduled',
+      );
+    }
+
+    _logSellerPanel(
+      'Init',
+      'phase=ensureModuleDataLoaded module=${module.name} activeTab=${_selectedModule.name}',
+    );
     switch (module) {
       case SellerModule.dashboard:
-        if (!_hasLoadedCampaignsData) {
+        final shouldLoadCampaigns = !_hasLoadedCampaignsData;
+        logDecision('campaigns', shouldLoadCampaigns);
+        if (shouldLoadCampaigns) {
           _hasLoadedCampaignsData = true;
           unawaited(_loadCampaigns());
         }
-        if (!_hasLoadedSellerOrdersData) {
+        final shouldLoadSellerOrders = !_hasLoadedSellerOrdersData;
+        logDecision('seller_orders', shouldLoadSellerOrders);
+        if (shouldLoadSellerOrders) {
           _hasLoadedSellerOrdersData = true;
           unawaited(_loadSellerOrders());
         }
-        if (!_hasLoadedSellerWalletData) {
+        final shouldLoadSellerWallet = !_hasLoadedSellerWalletData;
+        logDecision('seller_wallet', shouldLoadSellerWallet);
+        if (shouldLoadSellerWallet) {
           _hasLoadedSellerWalletData = true;
           unawaited(_loadSellerWalletBalance(silent: true));
         }
         break;
       case SellerModule.products:
-        if (!_hasLoadedProductsData) {
+        final shouldLoadProducts = !_hasLoadedProductsData;
+        logDecision('products', shouldLoadProducts);
+        if (shouldLoadProducts) {
           _hasLoadedProductsData = true;
           _loadProducts();
         }
         break;
       case SellerModule.collections:
+        _logSellerPanel(
+          'Tab',
+          'module=${module.name} fetch=none refetch=false',
+        );
         break;
       case SellerModule.orders:
-        if (!_hasLoadedSellerOrdersData) {
+        final shouldLoadSellerOrders = !_hasLoadedSellerOrdersData;
+        logDecision('seller_orders', shouldLoadSellerOrders);
+        if (shouldLoadSellerOrders) {
           _hasLoadedSellerOrdersData = true;
           unawaited(_loadSellerOrders());
         }
         break;
       case SellerModule.garson:
       case SellerModule.system:
-        if (!_hasLoadedStoreTablesData) {
+        final shouldLoadStoreTables = !_hasLoadedStoreTablesData;
+        logDecision('store_tables', shouldLoadStoreTables);
+        if (shouldLoadStoreTables) {
           _hasLoadedStoreTablesData = true;
           unawaited(_loadStoreTables());
         }
+        // Pre-load products so widget.products snapshot is always valid when
+        // a garson flow is opened for the first time.
+        final shouldLoadProducts = !_hasLoadedProductsData;
+        logDecision('products', shouldLoadProducts);
+        if (shouldLoadProducts) {
+          _hasLoadedProductsData = true;
+          _loadProducts();
+        }
         break;
       case SellerModule.store:
-        if (!_hasLoadedStoreProfile && !_isLoading) {
+        final shouldReloadStoreProfile = !_hasLoadedStoreProfile && !_isLoading;
+        logDecision('store_profile', shouldReloadStoreProfile);
+        if (shouldReloadStoreProfile) {
           unawaited(_loadStoreProfile());
         }
-        if (!_hasLoadedPendingLocationRequestData) {
+        final shouldLoadPendingLocation = !_hasLoadedPendingLocationRequestData;
+        logDecision(
+          'pending_location_change_request',
+          shouldLoadPendingLocation,
+        );
+        if (shouldLoadPendingLocation) {
           _hasLoadedPendingLocationRequestData = true;
           unawaited(_loadPendingLocationChangeRequest());
         }
         break;
       case SellerModule.team:
-        if (!_hasLoadedSubAdminsData) {
+        final shouldLoadSubAdmins = !_hasLoadedSubAdminsData;
+        logDecision('sub_admins', shouldLoadSubAdmins);
+        if (shouldLoadSubAdmins) {
           _hasLoadedSubAdminsData = true;
           _loadSubAdmins();
         }
         break;
       case SellerModule.campaigns:
-        if (!_hasLoadedCampaignsData) {
+        final shouldLoadCampaigns = !_hasLoadedCampaignsData;
+        logDecision('campaigns', shouldLoadCampaigns);
+        if (shouldLoadCampaigns) {
           _hasLoadedCampaignsData = true;
           unawaited(_loadCampaigns());
         }
         break;
       case SellerModule.finance:
-        if (!_hasLoadedSellerOrdersData) {
+        final shouldLoadSellerOrders = !_hasLoadedSellerOrdersData;
+        logDecision('seller_orders', shouldLoadSellerOrders);
+        if (shouldLoadSellerOrders) {
           _hasLoadedSellerOrdersData = true;
           unawaited(_loadSellerOrders());
         }
-        if (!_hasLoadedSellerWalletData) {
+        final shouldLoadSellerWallet = !_hasLoadedSellerWalletData;
+        logDecision('seller_wallet', shouldLoadSellerWallet);
+        if (shouldLoadSellerWallet) {
           _hasLoadedSellerWalletData = true;
           unawaited(_loadSellerWalletBalance(silent: true));
         }
         break;
       case SellerModule.reviews:
       case SellerModule.support:
-        if (!_hasLoadedSellerQuestionsData) {
+        final shouldLoadSellerQuestions = !_hasLoadedSellerQuestionsData;
+        logDecision('seller_questions', shouldLoadSellerQuestions);
+        if (shouldLoadSellerQuestions) {
           _hasLoadedSellerQuestionsData = true;
           unawaited(_loadSellerQuestions());
         }
+        _logSellerPanel(
+          'Tab',
+          'module=${module.name} fetch=support_subscriptions refetch=true',
+        );
         _subscribeSupportTickets();
         _subscribeCancelAppealNotifications();
         break;
@@ -468,6 +741,19 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   void _subscribeSupportTickets() {
     final sellerId = _authService.currentUser?.id;
     if (sellerId == null || sellerId.isEmpty) return;
+    final requestUrl = _sellerPanelRestRequestUrl(
+      'support_tickets',
+      query: <String, String>{
+        'select': '*',
+        'user_id': 'eq.$sellerId',
+        'order': 'created_at.desc',
+      },
+    );
+    _logSellerPanel(
+      'Fetch',
+      'branch=support_tickets:stream_subscribe '
+          'requestUrl=$requestUrl',
+    );
     _supportTicketsSubscription?.cancel();
     _supportTicketsSubscription = _supportService
         .getUserTickets(sellerId)
@@ -476,8 +762,14 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
             if (!mounted) return;
             setState(() {
               _supportTickets = tickets;
+              _supportTicketsVersion += 1;
+              _invalidateDashboardSnapshot();
               _hasShownSupportSchemaError = false;
             });
+            _logSellerPanelStateUpdate(
+              'support_tickets_stream',
+              note: 'tickets=${tickets.length}',
+            );
           },
           onError: (error) {
             if (!mounted) return;
@@ -490,6 +782,11 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
             }
             if (_hasShownSupportSchemaError) return;
             _hasShownSupportSchemaError = true;
+            _logSellerPanel(
+              'Error',
+              'branch=support_tickets:stream_error requestUrl=$requestUrl',
+              error: error,
+            );
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(error.toString().replaceFirst('Exception: ', '')),
@@ -552,20 +849,56 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   Future<void> _loadSupportTicketsSnapshot() async {
     final sellerId = _authService.currentUser?.id;
     if (sellerId == null || sellerId.isEmpty) return;
+    final requestUrl = _sellerPanelRestRequestUrl(
+      'support_tickets',
+      query: <String, String>{
+        'select': '*',
+        'user_id': 'eq.$sellerId',
+        'order': 'created_at.desc',
+      },
+    );
+    final watch = Stopwatch()..start();
     try {
       final tickets = await _supportService.getUserTicketsSnapshot(sellerId);
       if (!mounted) return;
       setState(() {
         _supportTickets = tickets;
+        _supportTicketsVersion += 1;
+        _invalidateDashboardSnapshot();
       });
+      _logSellerPanel(
+        'Fetch',
+        'branch=support_tickets:snapshot_success '
+            'requestUrl=$requestUrl '
+            'durationMs=${watch.elapsedMilliseconds} '
+            'rowCount=${tickets.length}',
+      );
+      _logSellerPanelStateUpdate(
+        'support_tickets_snapshot',
+        note: 'tickets=${tickets.length}',
+      );
     } catch (error) {
-      debugPrint('SellerPanel support snapshot warn: $error');
+      _logSellerPanel(
+        'Error',
+        'branch=support_tickets:snapshot_error requestUrl=$requestUrl '
+            'durationMs=${watch.elapsedMilliseconds}',
+        error: error,
+      );
     }
   }
 
   Future<void> _loadCancelAppealNotificationsSnapshot() async {
     final sellerId = _authService.currentUser?.id;
     if (sellerId == null || sellerId.isEmpty) return;
+    final requestUrl = _sellerPanelRestRequestUrl(
+      'user_notifications',
+      query: <String, String>{
+        'select': '*',
+        'user_id': 'eq.$sellerId',
+        'order': 'created_at.desc',
+      },
+    );
+    final watch = Stopwatch()..start();
     try {
       final rows = await Supabase.instance.client
           .from('user_notifications')
@@ -578,8 +911,25 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
         _cancelAppealNotifications = filtered;
         _invalidateFeedbackDerivedState();
       });
+      _logSellerPanel(
+        'Fetch',
+        'branch=cancel_appeal_notifications:snapshot_success '
+            'requestUrl=$requestUrl '
+            'durationMs=${watch.elapsedMilliseconds} '
+            'rowCount=${filtered.length}',
+      );
+      _logSellerPanelStateUpdate(
+        'cancel_appeal_notifications_snapshot',
+        note: 'rows=${filtered.length}',
+      );
     } catch (error) {
-      debugPrint('SellerPanel cancel_appeal snapshot warn: $error');
+      _logSellerPanel(
+        'Error',
+        'branch=cancel_appeal_notifications:snapshot_error '
+            'requestUrl=$requestUrl '
+            'durationMs=${watch.elapsedMilliseconds}',
+        error: error,
+      );
     }
   }
 
@@ -587,6 +937,15 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     final normalized = error.toString().toLowerCase();
     return normalized.contains('realtimesubscribeexception') &&
         normalized.contains('timedout');
+  }
+
+  bool _isRealtimeConnectionError(Object error) {
+    final normalized = error.toString().toLowerCase();
+    return normalized.contains('realtimesubscribeexception') &&
+        (normalized.contains('timedout') ||
+            normalized.contains('channelerror') ||
+            normalized.contains('websocket') ||
+            normalized.contains('connection failed'));
   }
 
   void _showRealtimeFallbackWarning(String message) {
@@ -610,6 +969,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     _filteredSellerOrdersCache = null;
     _financeSummaryCacheKey = null;
     _financeSummaryCache = null;
+    _invalidateDashboardSnapshot();
   }
 
   void _invalidateFeedbackDerivedState() {
@@ -685,11 +1045,60 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   Stream<List<Map<String, dynamic>>> _getSellerTableOrdersStream(
     String sellerId,
   ) {
+    final normalizedSellerId = sellerId.trim();
+    debugPrint(
+      '[GarsonRealtime] mode=screen_stream_request '
+      'supabaseUrl=${AppRuntimeConfig.rawSupabaseUrl.trim().isEmpty ? '(missing)' : AppRuntimeConfig.rawSupabaseUrl.trim()} '
+      'storeId=$normalizedSellerId '
+      'sellerId=$normalizedSellerId '
+      'waiterId=${_authService.currentUser?.id ?? '-'} '
+      'schema=public table=table_orders channel=auto:stream(table_orders) '
+      'filter=seller_id=eq.$normalizedSellerId',
+    );
     if (_tableOrdersStream == null || _tableOrdersStreamSellerId != sellerId) {
       _tableOrdersStreamSellerId = sellerId;
       _tableOrdersStream = _storeService.getTableOrdersStream(sellerId);
     }
     return _tableOrdersStream!;
+  }
+
+  Future<List<Map<String, dynamic>>> _getSellerTableOrdersFallbackFuture(
+    String sellerId,
+  ) {
+    final normalizedSellerId = sellerId.trim();
+    if (_tableOrdersFallbackFuture == null ||
+        _tableOrdersFallbackSellerId != normalizedSellerId) {
+      _tableOrdersFallbackSellerId = normalizedSellerId;
+      _tableOrdersFallbackFuture = _storeService.getTableOrdersSnapshot(
+        normalizedSellerId,
+      );
+    }
+    return _tableOrdersFallbackFuture!;
+  }
+
+  void _invalidateSellerTableOrdersFallbackFuture() {
+    _tableOrdersFallbackFuture = null;
+  }
+
+  void _handleGarsonRealtimeError(Object error, {required String sellerId}) {
+    final normalizedSellerId = sellerId.trim();
+    debugPrint(
+      '[GarsonRealtime] mode=stream_error '
+      'supabaseUrl=${AppRuntimeConfig.rawSupabaseUrl.trim().isEmpty ? '(missing)' : AppRuntimeConfig.rawSupabaseUrl.trim()} '
+      'storeId=$normalizedSellerId '
+      'sellerId=$normalizedSellerId '
+      'waiterId=${_authService.currentUser?.id ?? '-'} '
+      'schema=public table=table_orders channel=auto:stream(table_orders) '
+      'filter=seller_id=eq.$normalizedSellerId '
+      'error=$error',
+    );
+    if (_isRealtimeConnectionError(error)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showRealtimeFallbackWarning(
+          'Canlı sipariş akışı bağlanamadı. Garson ekranı sorgu verisi ile çalışıyor.',
+        );
+      });
+    }
   }
 
   Map<String, int> _sellerOrderStatusCounts() {
@@ -813,10 +1222,16 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   }
 
   Future<void> _exitSellerPanel() async {
+    debugPrint(
+      '[SellerExit] _exitSellerPanel triggered — beginning auth restore',
+    );
     setState(() => _isLoading = true);
     try {
       final restoredUserSession = await _authService
           .restoreUserSessionAfterSellerExit();
+      debugPrint(
+        '[SellerExit] restoreUserSessionAfterSellerExit = $restoredUserSession',
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -827,7 +1242,13 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           ),
         ),
       );
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      debugPrint(
+        '[SellerExit] navigating pushNamedAndRemoveUntil → /  (all routes cleared)',
+      );
+      Navigator.of(
+        context,
+        rootNavigator: true,
+      ).pushNamedAndRemoveUntil('/', (route) => false);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -844,8 +1265,18 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     final sellerId = _authService.currentUser?.id;
     if (sellerId == null || sellerId.isEmpty) return;
     final requestId = ++_sellerOrdersLoadRequestId;
+    final requestUrl = 'OrderService.getSellerOrders(sellerId=$sellerId)';
+    final watch = Stopwatch()..start();
     setState(() => _isLoadingSellerOrders = true);
+    _logSellerPanelStateUpdate(
+      'seller_orders_loading_start',
+      note: 'requestId=$requestId',
+    );
     try {
+      _debugLogSellerBootstrap(
+        branch: 'seller_orders:start',
+        requestUrl: requestUrl,
+      );
       final orders = await OrderService.instance.getSellerOrders(sellerId);
       if (!mounted || requestId != _sellerOrdersLoadRequestId) return;
       final previousIds = _sellerOrders
@@ -873,6 +1304,19 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           }
         }
       });
+      _debugLogSellerBootstrap(
+        branch: 'seller_orders:success',
+        requestUrl: requestUrl,
+        note:
+            'requestId=$requestId durationMs=${watch.elapsedMilliseconds} '
+            'orders=${orders.length} newIds=${newIds.length}',
+      );
+      _logSellerPanelStateUpdate(
+        'seller_orders_loaded',
+        note:
+            'requestId=$requestId durationMs=${watch.elapsedMilliseconds} '
+            'orders=${orders.length} newIds=${newIds.length}',
+      );
       final selectedItemId =
           _selectedSellerOrderItemId ??
           _selectedSellerOrderDetail?['id']?.toString();
@@ -887,10 +1331,16 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           });
         });
       }
-    } catch (error) {
+    } catch (error, stackTrace) {
       if (requestId != _sellerOrdersLoadRequestId) return;
       _hasLoadedSellerOrdersData = false;
-      debugPrint('SellerPanel load seller orders warn: $error');
+      _debugLogSellerBootstrap(
+        branch: 'seller_orders:catch',
+        requestUrl: requestUrl,
+        note: 'requestId=$requestId durationMs=${watch.elapsedMilliseconds}',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -898,6 +1348,10 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     } finally {
       if (mounted && requestId == _sellerOrdersLoadRequestId) {
         setState(() => _isLoadingSellerOrders = false);
+        _logSellerPanelStateUpdate(
+          'seller_orders_loading_end',
+          note: 'requestId=$requestId durationMs=${watch.elapsedMilliseconds}',
+        );
       }
     }
   }
@@ -916,26 +1370,62 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   Future<void> _loadCampaigns() async {
     final userId = _authService.currentUser?.id;
     if (userId == null) return;
-    setState(() => _isLoadingCampaigns = true);
+    final requestUrl =
+        'CampaignService.getStoreCampaignsForPanel(userId=$userId)';
+    final watch = Stopwatch()..start();
     try {
+      _debugLogSellerBootstrap(
+        branch: 'campaigns:start',
+        requestUrl: requestUrl,
+      );
       final list = await CampaignService().getStoreCampaignsForPanel(userId);
-      if (mounted)
+      if (mounted) {
         setState(() {
           _campaigns = list;
-          _isLoadingCampaigns = false;
+          _campaignsVersion += 1;
+          _invalidateDashboardSnapshot();
         });
+        _debugLogSellerBootstrap(
+          branch: 'campaigns:success',
+          requestUrl: requestUrl,
+          note:
+              'durationMs=${watch.elapsedMilliseconds} campaigns=${list.length}',
+        );
+        _logSellerPanelStateUpdate(
+          'campaigns_loaded',
+          note:
+              'durationMs=${watch.elapsedMilliseconds} campaigns=${list.length}',
+        );
+      }
       _hasLoadedCampaignsData = true;
-    } catch (_) {
+    } catch (error, stackTrace) {
       _hasLoadedCampaignsData = false;
-      if (mounted) setState(() => _isLoadingCampaigns = false);
+      _debugLogSellerBootstrap(
+        branch: 'campaigns:catch',
+        requestUrl: requestUrl,
+        note: 'durationMs=${watch.elapsedMilliseconds}',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
   Future<void> _loadSellerQuestions() async {
     final sellerId = _authService.currentUser?.id;
     if (sellerId == null || sellerId.isEmpty) return;
+    final requestUrl =
+        'ProductQuestionService.getSellerQuestions(sellerId=$sellerId,storeName=${_storeNameController.text.trim()})';
+    final watch = Stopwatch()..start();
     setState(() => _isLoadingSellerQuestions = true);
+    _logSellerPanelStateUpdate(
+      'seller_questions_loading_start',
+      note: 'storeName=${_storeNameController.text.trim()}',
+    );
     try {
+      _debugLogSellerBootstrap(
+        branch: 'seller_questions:start',
+        requestUrl: requestUrl,
+      );
       final questions = await ProductQuestionService.instance
           .getSellerQuestions(
             sellerId: sellerId,
@@ -946,14 +1436,36 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
         _sellerQuestions = questions;
         _sellerQuestionsVersion++;
         _invalidateFeedbackDerivedState();
+        _invalidateDashboardSnapshot();
       });
+      _debugLogSellerBootstrap(
+        branch: 'seller_questions:success',
+        requestUrl: requestUrl,
+        note:
+            'durationMs=${watch.elapsedMilliseconds} questions=${questions.length}',
+      );
+      _logSellerPanelStateUpdate(
+        'seller_questions_loaded',
+        note:
+            'durationMs=${watch.elapsedMilliseconds} questions=${questions.length}',
+      );
       _hasLoadedSellerQuestionsData = true;
-    } catch (error) {
+    } catch (error, stackTrace) {
       _hasLoadedSellerQuestionsData = false;
-      debugPrint('SellerPanel load seller questions warn: $error');
+      _debugLogSellerBootstrap(
+        branch: 'seller_questions:catch',
+        requestUrl: requestUrl,
+        note: 'durationMs=${watch.elapsedMilliseconds}',
+        error: error,
+        stackTrace: stackTrace,
+      );
     } finally {
       if (mounted) {
         setState(() => _isLoadingSellerQuestions = false);
+        _logSellerPanelStateUpdate(
+          'seller_questions_loading_end',
+          note: 'durationMs=${watch.elapsedMilliseconds}',
+        );
       }
     }
   }
@@ -961,12 +1473,23 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   Future<void> _loadSellerWalletBalance({bool silent = false}) async {
     final sellerId = _authService.currentUser?.id ?? '';
     if (sellerId.isEmpty) return;
+    final requestUrl =
+        'SellerWalletService.getWalletBalance(sellerId=$sellerId)';
+    final watch = Stopwatch()..start();
     if (!silent && mounted) {
       setState(() {
         _isLoadingSellerWallet = true;
       });
+      _logSellerPanelStateUpdate(
+        'seller_wallet_loading_start',
+        note: 'silent=$silent',
+      );
     }
     try {
+      _debugLogSellerBootstrap(
+        branch: 'seller_wallet:start',
+        requestUrl: requestUrl,
+      );
       final response = await _sellerWalletService.getWalletBalance(
         sellerId: sellerId,
       );
@@ -979,19 +1502,43 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
         _sellerWalletReady = true;
         _sellerWalletError = null;
       });
+      _debugLogSellerBootstrap(
+        branch: 'seller_wallet:success',
+        requestUrl: requestUrl,
+        note:
+            'durationMs=${watch.elapsedMilliseconds} '
+            'available=$available reserved=$reserved silent=$silent',
+      );
+      _logSellerPanelStateUpdate(
+        'seller_wallet_loaded',
+        note:
+            'durationMs=${watch.elapsedMilliseconds} '
+            'available=$available reserved=$reserved silent=$silent',
+      );
       _hasLoadedSellerWalletData = true;
-    } catch (error) {
+    } catch (error, stackTrace) {
       _hasLoadedSellerWalletData = false;
+      _debugLogSellerBootstrap(
+        branch: 'seller_wallet:catch',
+        requestUrl: requestUrl,
+        note: 'durationMs=${watch.elapsedMilliseconds} silent=$silent',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) return;
       setState(() {
         _sellerWalletReady = false;
         _sellerWalletError = _mapSellerWalletError(error);
       });
     } finally {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() {
           _isLoadingSellerWallet = false;
         });
+        _logSellerPanelStateUpdate(
+          'seller_wallet_loading_end',
+          note: 'durationMs=${watch.elapsedMilliseconds} silent=$silent',
+        );
       }
     }
   }
@@ -1173,6 +1720,17 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
 
   @override
   void dispose() {
+    _logSellerPanel(
+      'Dispose',
+      'productsSubscription=${_productsSubscription != null} '
+          'subAdminsSubscription=${_subAdminsSubscription != null} '
+          'supportTicketsSubscription=${_supportTicketsSubscription != null} '
+          'cancelAppealSubscription=${_cancelAppealNotificationsSubscription != null} '
+          'sellerOrderSearchDebounce=${_sellerOrderSearchDebounce != null} '
+          'feedbackSearchDebounce=${_feedbackSearchDebounce != null} '
+          'supportSearchDebounce=${_supportSearchDebounce != null} '
+          'packagingUploadTimer=${_packagingVideoUploadProgressTimer != null}',
+    );
     _productsSubscription?.cancel();
     _subAdminsSubscription?.cancel();
     _supportTicketsSubscription?.cancel();
@@ -1197,6 +1755,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     _facebookController.dispose();
     _twitterController.dispose();
     _websiteController.dispose();
+    _productSearchController.dispose();
     _sellerOrderSearchController.dispose();
     _supportSearchController.dispose();
     _feedbackSearchController.dispose();
@@ -1206,12 +1765,26 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   }
 
   Future<void> _loadStoreProfile() async {
+    final sellerId = _authService.currentUser?.id.trim() ?? '';
+    final requestUrl = _sellerPanelRestRequestUrl(
+      'stores',
+      query: <String, String>{
+        'select': '*',
+        'seller_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+      },
+    );
+    final watch = Stopwatch()..start();
     if (!mounted) return;
     setState(() {
       _isLoading = true;
       _storeProfileLoadError = null;
     });
+    _logSellerPanelStateUpdate('store_profile_loading_start');
     try {
+      _debugLogSellerBootstrap(
+        branch: 'store_profile:start',
+        requestUrl: requestUrl,
+      );
       final data = await _storeService.getStoreProfile();
       if (data != null) {
         if (data['isDeleted'] == true) {
@@ -1224,8 +1797,12 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
             await _authService.restoreUserSessionAfterSellerExit();
             await Future.delayed(const Duration(milliseconds: 200));
             if (mounted) {
+              debugPrint(
+                '[SellerExit] store deleted — navigating to / via rootNavigator',
+              );
               Navigator.of(
                 context,
+                rootNavigator: true,
               ).pushNamedAndRemoveUntil('/', (route) => false);
             }
           }
@@ -1235,10 +1812,10 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           (data['category'] ?? '').toString(),
         );
         final fallbackFromFoodModulesToDashboard =
+            !_isWaiterEntry &&
             !isFoodStore &&
             (_selectedModule == SellerModule.garson ||
                 _selectedModule == SellerModule.system);
-        final forceMobileGarsonModule = !kIsWeb && isFoodStore;
         setState(() {
           _storeNameController.text = data['storeName'] ?? '';
           _storeUrlController.text = data['storeUrl'] ?? '';
@@ -1263,12 +1840,9 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           _selectedCity = (data['city'] ?? '').toString().trim();
           _selectedDistrict = (data['district'] ?? '').toString().trim();
           _companyType = data['companyType'] ?? 'Limited Şirket';
-          _selectedCompanyType =
-              data['businessType'] ?? data['companyType'] ?? 'Limited Şirket';
           _storeCategory = (data['category'] ?? '').toString();
           _storeRating = (data['rating'] as num?)?.toDouble() ?? 0.0;
-          _isStoreVerified = data['isVerified'] == true;
-          if (forceMobileGarsonModule) {
+          if (_isWaiterEntry) {
             _selectedModule = SellerModule.garson;
           } else if (fallbackFromFoodModulesToDashboard) {
             _selectedModule = SellerModule.dashboard;
@@ -1312,7 +1886,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           }
         });
         _applySellerSeo();
-        if (isFoodStore &&
+        if ((_isWaiterEntry || isFoodStore) &&
             (_selectedModule == SellerModule.garson ||
                 _selectedModule == SellerModule.system)) {
           unawaited(_loadStoreTables(silent: true));
@@ -1325,14 +1899,48 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           unawaited(_persistSelectedModule(SellerModule.dashboard));
         }
         _hasLoadedStoreProfile = true;
+        _debugLogSellerBootstrap(
+          branch: 'store_profile:success',
+          requestUrl: requestUrl,
+          note:
+              'durationMs=${watch.elapsedMilliseconds} '
+              'storeCategory=${_storeCategory.isEmpty ? '-' : _storeCategory} '
+              'hasLogo=${_storeLogoUrl?.isNotEmpty == true} '
+              'galleryCount=${_storeImages.whereType<String>().length} '
+              'bannerCount=${_announcementBanners.whereType<String>().length}',
+        );
+        _logSellerPanelStateUpdate(
+          'store_profile_loaded',
+          note:
+              'durationMs=${watch.elapsedMilliseconds} '
+              'storeCategory=${_storeCategory.isEmpty ? '-' : _storeCategory}',
+        );
       } else if (mounted) {
+        _debugLogSellerBootstrap(
+          branch: 'store_profile:null_result',
+          requestUrl: requestUrl,
+          note:
+              'durationMs=${watch.elapsedMilliseconds} '
+              'StoreService.getStoreProfile returned null',
+        );
         setState(() {
-          _storeProfileLoadError = 'Magaza profili bulunamadi.';
+          _storeProfileLoadError =
+              'Magaza profili bulunamadi. stores kaydi eksik veya seller_id eslesmiyor.';
           _hasLoadedStoreProfile = false;
         });
+        _logSellerPanelStateUpdate(
+          'store_profile_null_result',
+          note: 'durationMs=${watch.elapsedMilliseconds}',
+        );
       }
-    } catch (e) {
-      debugPrint('Profil yuklenirken hata: $e');
+    } catch (e, stackTrace) {
+      _debugLogSellerBootstrap(
+        branch: 'store_profile:catch',
+        requestUrl: requestUrl,
+        note: 'durationMs=${watch.elapsedMilliseconds}',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (mounted) {
         setState(() {
           _storeProfileLoadError = _mapStoreProfileLoadError(e);
@@ -1342,6 +1950,10 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
+        _logSellerPanelStateUpdate(
+          'store_profile_loading_end',
+          note: 'durationMs=${watch.elapsedMilliseconds}',
+        );
       }
     }
   }
@@ -1351,6 +1963,10 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     if (raw.toLowerCase().contains('permission') ||
         raw.toLowerCase().contains('rls')) {
       return 'Magaza profili alinamadi. Yetki veya RLS ayarlarinizi kontrol edin.';
+    }
+    if (raw.toLowerCase().contains('404') ||
+        raw.toLowerCase().contains('not found')) {
+      return 'Magaza profili alinamadi. Gerekli kayit veya bagli kaynak bulunamadi (404).';
     }
     return 'Magaza profili yuklenemedi: $raw';
   }
@@ -1451,6 +2067,10 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     if (!_isFoodStoreCategory(_storeCategory)) {
       if (mounted && _storeTables.isNotEmpty) {
         setState(() => _storeTables = <Map<String, dynamic>>[]);
+        _logSellerPanelStateUpdate(
+          'store_tables_cleared_non_food_store',
+          note: 'silent=$silent',
+        );
       }
       return;
     }
@@ -1467,7 +2087,21 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     }
 
     final loadFuture = () async {
+      final requestUrl = _sellerPanelRestRequestUrl(
+        'store_tables',
+        query: <String, String>{
+          'select': '*',
+          'seller_id': 'eq.$sellerId',
+          'is_active': 'eq.true',
+        },
+      );
+      final watch = Stopwatch()..start();
       try {
+        _debugLogSellerBootstrap(
+          branch: 'store_tables:start',
+          requestUrl: requestUrl,
+          note: 'silent=$silent',
+        );
         final tables = await _storeService.getStoreTables(sellerId: sellerId);
         if (!mounted) return;
         tables.sort(
@@ -1476,9 +2110,29 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
         setState(() {
           _storeTables = tables;
         });
+        _debugLogSellerBootstrap(
+          branch: 'store_tables:success',
+          requestUrl: requestUrl,
+          note:
+              'silent=$silent durationMs=${watch.elapsedMilliseconds} '
+              'tables=${tables.length}',
+        );
+        _logSellerPanelStateUpdate(
+          'store_tables_loaded',
+          note:
+              'silent=$silent durationMs=${watch.elapsedMilliseconds} '
+              'tables=${tables.length}',
+        );
         _hasLoadedStoreTablesData = true;
-      } catch (error) {
+      } catch (error, stackTrace) {
         _hasLoadedStoreTablesData = false;
+        _debugLogSellerBootstrap(
+          branch: 'store_tables:catch',
+          requestUrl: requestUrl,
+          note: 'silent=$silent durationMs=${watch.elapsedMilliseconds}',
+          error: error,
+          stackTrace: stackTrace,
+        );
         if (!mounted || silent) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1489,6 +2143,10 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
         _storeTablesLoadFuture = null;
         if (mounted && _isLoadingStoreTables) {
           setState(() => _isLoadingStoreTables = false);
+          _logSellerPanelStateUpdate(
+            'store_tables_loading_end',
+            note: 'silent=$silent',
+          );
         }
       }
     }();
@@ -1691,16 +2349,18 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     final normalizedOrigin = origin.endsWith('/')
         ? origin.substring(0, origin.length - 1)
         : origin;
+    // Use a dedicated /qr path with clean query parameters.
+    // Firebase Hosting rewrites /qr → index.html, so the Flutter app always
+    // loads. QrInitialParams captures seller/table/token from uri.queryParameters
+    // before any routing occurs, and QrEntryScreen opens the table flow directly.
     final query = Uri(
       queryParameters: <String, String>{
-        'table_qr': '1',
         'seller': sellerId,
         'table': '$tableNumber',
         'token': token,
       },
     ).query;
-    // Hash query prevents route parsing differences across mobile browsers.
-    return '$normalizedOrigin/#/?$query';
+    return '$normalizedOrigin/qr?$query';
   }
 
   String _buildTableQrImageUrl(String qrData) {
@@ -1992,8 +2652,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         setState(() {
           if (type == 'logo') {
             _localLogoBytes = previewBytes;
-          } else if (type == 'cover') {
-            _localCoverBytes = previewBytes;
           }
         });
       }
@@ -2005,14 +2663,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
     try {
       String folder = 'general';
-      if (type == 'logo')
+      if (type == 'logo') {
         folder = 'logos';
-      else if (type == 'cover')
+      } else if (type == 'cover') {
         folder = 'covers';
-      else if (type == 'gallery')
+      } else if (type == 'gallery') {
         folder = 'gallery';
-      else if (type == 'banner')
+      } else if (type == 'banner') {
         folder = 'banners';
+      }
 
       final url = await _storeService.uploadStoreImage(imageToUpload, folder);
 
@@ -2025,7 +2684,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             _localLogoBytes = null; // Clear local preview once uploaded
           } else if (type == 'cover') {
             _storeCoverUrl = url;
-            _localCoverBytes = null;
           } else if (type == 'gallery' && index != null) {
             _storeImages[index] = url;
           } else if (type == 'banner' && index != null) {
@@ -2040,10 +2698,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       if (mounted) {
         // Revert local preview on error
         setState(() {
-          if (type == 'logo')
+          if (type == 'logo') {
             _localLogoBytes = null;
-          else if (type == 'cover')
-            _localCoverBytes = null;
+          }
         });
 
         ScaffoldMessenger.of(
@@ -2056,18 +2713,39 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   void _loadProducts() {
+    final sellerId = _authService.currentUser?.id ?? '';
+    final requestUrl = _sellerPanelRestRequestUrl(
+      'products',
+      query: <String, String>{
+        'select': '*',
+        'seller_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+        'order': 'created_at.desc',
+      },
+    );
+    _logSellerPanel(
+      'Fetch',
+      'branch=products:subscribe requestUrl=$requestUrl',
+    );
     _productsSubscription?.cancel();
     unawaited(_loadProductsSnapshot());
     _productsSubscription = _storeService.getSellerProducts().listen(
       (products) {
         if (mounted) {
           setState(() {
-            _products = products;
+            _applySellerProducts(products);
           });
+          _logSellerPanelStateUpdate(
+            'products_stream',
+            note: 'products=${products.length}',
+          );
         }
       },
       onError: (error) {
-        debugPrint('SellerPanel products stream warn: $error');
+        _logSellerPanel(
+          'Error',
+          'branch=products:stream_error requestUrl=$requestUrl',
+          error: error,
+        );
         if (_isRealtimeTimeoutError(error)) {
           _showRealtimeFallbackWarning(
             'Ürün canlı akışı zaman aşımına uğradı. Veriler sorgu ile yenileniyor.',
@@ -2079,6 +2757,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   void _loadSubAdmins() {
+    final sellerId = _authService.currentUser?.id ?? '';
+    final requestUrl = _sellerPanelRestRequestUrl(
+      'store_sub_admins',
+      query: <String, String>{
+        'select': '*',
+        'store_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+        'order': 'created_at.desc',
+      },
+    );
+    _logSellerPanel(
+      'Fetch',
+      'branch=sub_admins:subscribe requestUrl=$requestUrl',
+    );
     _subAdminsSubscription?.cancel();
     unawaited(_loadSubAdminsSnapshot());
     _subAdminsSubscription = _storeService.getSubAdmins().listen(
@@ -2087,10 +2778,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           setState(() {
             _subAdmins = items;
           });
+          _logSellerPanelStateUpdate(
+            'sub_admins_stream',
+            note: 'subAdmins=${items.length}',
+          );
         }
       },
       onError: (error) {
-        debugPrint('SellerPanel sub-admin stream warn: $error');
+        _logSellerPanel(
+          'Error',
+          'branch=sub_admins:stream_error requestUrl=$requestUrl',
+          error: error,
+        );
         if (_isRealtimeTimeoutError(error)) {
           _showRealtimeFallbackWarning(
             'Alt yönetici canlı akışı zaman aşımına uğradı. Veriler sorgu ile yenileniyor.',
@@ -2102,26 +2801,103 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Future<void> _loadProductsSnapshot() async {
+    final sellerId = _authService.currentUser?.id ?? '';
+    final requestUrl = _sellerPanelRestRequestUrl(
+      'products',
+      query: <String, String>{
+        'select': '*',
+        'seller_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+        'order': 'created_at.desc',
+      },
+    );
+    final watch = Stopwatch()..start();
     try {
       final products = await _storeService.getSellerProductsSnapshot();
       if (!mounted) return;
       setState(() {
-        _products = products;
+        _applySellerProducts(products);
       });
+      _logSellerPanel(
+        'Fetch',
+        'branch=products:snapshot_success requestUrl=$requestUrl '
+            'durationMs=${watch.elapsedMilliseconds} '
+            'rowCount=${products.length}',
+      );
+      _logSellerPanelStateUpdate(
+        'products_snapshot',
+        note:
+            'durationMs=${watch.elapsedMilliseconds} '
+            'products=${products.length}',
+      );
     } catch (error) {
-      debugPrint('SellerPanel products snapshot warn: $error');
+      _logSellerPanel(
+        'Error',
+        'branch=products:snapshot_error requestUrl=$requestUrl '
+            'durationMs=${watch.elapsedMilliseconds}',
+        error: error,
+      );
     }
   }
 
+  void _applySellerProducts(List<SellerProduct> products) {
+    _products = products;
+    _productsVersion += 1;
+    _invalidateDashboardSnapshot();
+    if (_isProductQuickEditMode) {
+      _syncProductQuickEditDrafts(products);
+    }
+  }
+
+  void _syncProductQuickEditDrafts(List<SellerProduct> products) {
+    final Map<String, ProductQuickEditDraft> nextDrafts =
+        <String, ProductQuickEditDraft>{};
+    for (final product in products) {
+      final existing = _productQuickEditDrafts[product.id];
+      if (existing != null && (existing.isDirty || existing.isSaving)) {
+        nextDrafts[product.id] = existing;
+      } else {
+        nextDrafts[product.id] = ProductQuickEditDraft.fromProduct(product);
+      }
+    }
+    _productQuickEditDrafts = nextDrafts;
+  }
+
   Future<void> _loadSubAdminsSnapshot() async {
+    final sellerId = _authService.currentUser?.id ?? '';
+    final requestUrl = _sellerPanelRestRequestUrl(
+      'store_sub_admins',
+      query: <String, String>{
+        'select': '*',
+        'store_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+        'order': 'created_at.desc',
+      },
+    );
+    final watch = Stopwatch()..start();
     try {
       final items = await _storeService.getSubAdminsSnapshot();
       if (!mounted) return;
       setState(() {
         _subAdmins = items;
       });
+      _logSellerPanel(
+        'Fetch',
+        'branch=sub_admins:snapshot_success requestUrl=$requestUrl '
+            'durationMs=${watch.elapsedMilliseconds} '
+            'rowCount=${items.length}',
+      );
+      _logSellerPanelStateUpdate(
+        'sub_admins_snapshot',
+        note:
+            'durationMs=${watch.elapsedMilliseconds} '
+            'subAdmins=${items.length}',
+      );
     } catch (error) {
-      debugPrint('SellerPanel sub-admin snapshot warn: $error');
+      _logSellerPanel(
+        'Error',
+        'branch=sub_admins:snapshot_error requestUrl=$requestUrl '
+            'durationMs=${watch.elapsedMilliseconds}',
+        error: error,
+      );
     }
   }
 
@@ -2133,12 +2909,789 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   @override
   void didUpdateWidget(SellerPanelPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Widget güncellendiğinde ürün listesini yenile
-    setState(() {});
+    if (oldWidget.entryRole == widget.entryRole) {
+      _logSellerPanel(
+        'Build',
+        'branch=didUpdateWidget action=noop entryRole=${widget.entryRole.name}',
+      );
+      return;
+    }
+    final nextModule = _isWaiterEntry ? SellerModule.garson : _selectedModule;
+    setState(() {
+      _selectedModule = nextModule;
+    });
+    _logSellerPanelStateUpdate(
+      'did_update_widget',
+      note:
+          'entryRole=${oldWidget.entryRole.name}->${widget.entryRole.name} '
+          'nextTab=${nextModule.name}',
+    );
+    unawaited(_ensureModuleDataLoaded(nextModule));
+    _scheduleLocalPrintStatusRefreshIfNeeded(
+      module: nextModule,
+      reason: 'did_update_widget',
+    );
+  }
+
+  List<SellerProduct> _productsMatchingSearch([List<SellerProduct>? source]) {
+    final List<SellerProduct> products = source ?? _products;
+    final String query = _productSearchQuery.trim().toLowerCase();
+    if (query.isEmpty) {
+      return List<SellerProduct>.from(products, growable: false);
+    }
+
+    return products
+        .where((SellerProduct product) {
+          final List<String> haystack = <String>[
+            product.name,
+            product.sku,
+            product.brand,
+            product.mainCategory,
+            product.subCategory,
+            product.description ?? '',
+          ];
+          return haystack.any(
+            (String value) => value.toLowerCase().contains(query),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  List<SellerProduct> _displayedProducts() {
+    final List<SellerProduct> searchedProducts = _productsMatchingSearch();
+    if (_selectedProductHealthFilter == _ProductHealthFilter.all) {
+      return searchedProducts;
+    }
+    return searchedProducts
+        .where(
+          (SellerProduct product) => _matchesProductHealthFilter(
+            product,
+            _selectedProductHealthFilter,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Map<_ProductHealthFilter, int> _productHealthCounts() {
+    final List<SellerProduct> searchedProducts = _productsMatchingSearch();
+    return <_ProductHealthFilter, int>{
+      _ProductHealthFilter.all: searchedProducts.length,
+      _ProductHealthFilter.missingImage: searchedProducts
+          .where(
+            (SellerProduct product) => _matchesProductHealthFilter(
+              product,
+              _ProductHealthFilter.missingImage,
+            ),
+          )
+          .length,
+      _ProductHealthFilter.pending: searchedProducts
+          .where(
+            (SellerProduct product) => _matchesProductHealthFilter(
+              product,
+              _ProductHealthFilter.pending,
+            ),
+          )
+          .length,
+      _ProductHealthFilter.lowStock: searchedProducts
+          .where(
+            (SellerProduct product) => _matchesProductHealthFilter(
+              product,
+              _ProductHealthFilter.lowStock,
+            ),
+          )
+          .length,
+      _ProductHealthFilter.missingDescription: searchedProducts
+          .where(
+            (SellerProduct product) => _matchesProductHealthFilter(
+              product,
+              _ProductHealthFilter.missingDescription,
+            ),
+          )
+          .length,
+      _ProductHealthFilter.invalidPrice: searchedProducts
+          .where(
+            (SellerProduct product) => _matchesProductHealthFilter(
+              product,
+              _ProductHealthFilter.invalidPrice,
+            ),
+          )
+          .length,
+    };
+  }
+
+  List<_ProductHealthFilter> _productHealthFilters() {
+    return const <_ProductHealthFilter>[
+      _ProductHealthFilter.all,
+      _ProductHealthFilter.missingImage,
+      _ProductHealthFilter.pending,
+      _ProductHealthFilter.lowStock,
+      _ProductHealthFilter.missingDescription,
+      _ProductHealthFilter.invalidPrice,
+    ];
+  }
+
+  bool _matchesProductHealthFilter(
+    SellerProduct product,
+    _ProductHealthFilter filter,
+  ) {
+    switch (filter) {
+      case _ProductHealthFilter.all:
+        return true;
+      case _ProductHealthFilter.missingImage:
+        return _primaryProductImage(product) == null;
+      case _ProductHealthFilter.pending:
+        return _isPendingProductStatus(product.status);
+      case _ProductHealthFilter.lowStock:
+        return _isLowStockProduct(product);
+      case _ProductHealthFilter.missingDescription:
+        return _isMissingProductDescription(product);
+      case _ProductHealthFilter.invalidPrice:
+        return _hasInvalidDisplayedPrice(product);
+    }
+  }
+
+  String _productHealthFilterLabel(_ProductHealthFilter filter) {
+    switch (filter) {
+      case _ProductHealthFilter.all:
+        return 'Tümü';
+      case _ProductHealthFilter.missingImage:
+        return 'Görselsiz';
+      case _ProductHealthFilter.pending:
+        return 'Beklemede';
+      case _ProductHealthFilter.lowStock:
+        return 'Düşük Stok';
+      case _ProductHealthFilter.missingDescription:
+        return 'Açıklama Eksik';
+      case _ProductHealthFilter.invalidPrice:
+        return 'Fiyat Eksik';
+    }
+  }
+
+  IconData _productHealthFilterIcon(_ProductHealthFilter filter) {
+    switch (filter) {
+      case _ProductHealthFilter.all:
+        return Icons.grid_view_rounded;
+      case _ProductHealthFilter.missingImage:
+        return Icons.image_not_supported_outlined;
+      case _ProductHealthFilter.pending:
+        return Icons.hourglass_top_rounded;
+      case _ProductHealthFilter.lowStock:
+        return Icons.inventory_2_outlined;
+      case _ProductHealthFilter.missingDescription:
+        return Icons.subject_outlined;
+      case _ProductHealthFilter.invalidPrice:
+        return Icons.sell_outlined;
+    }
+  }
+
+  String? _primaryProductImage(SellerProduct product) {
+    final List<String?> candidates = <String?>[
+      product.imageUrl,
+      ...product.imageUrls,
+    ];
+    for (final String? candidate in candidates) {
+      final String? normalized = _normalizeProductImageValue(candidate);
+      if (normalized != null) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  String? _normalizeProductImageValue(String? value) {
+    final String trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+    final String normalized = trimmed.toLowerCase();
+    if (const <String>{
+      'null',
+      '[]',
+      '{}',
+      '-',
+      '_',
+      'n/a',
+      'na',
+      'none',
+      'placeholder',
+      'about:blank',
+    }.contains(normalized)) {
+      return null;
+    }
+    if (normalized.contains('via.placeholder.com') ||
+        normalized.contains('placeholder.com')) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  String _normalizeProductStatusKey(String? status) {
+    final String normalized = (status ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll(' ', '_')
+        .replaceAll('-', '_');
+    if (normalized.isEmpty) return '';
+    if (normalized == 'active' || normalized == 'aktif') {
+      return 'active';
+    }
+    if (normalized == 'inactive' || normalized == 'pasif') {
+      return 'inactive';
+    }
+    if (normalized == 'draft' || normalized == 'taslak') {
+      return 'draft';
+    }
+    if (normalized == 'rejected' || normalized == 'reddedildi') {
+      return 'rejected';
+    }
+    if (normalized == 'pending' ||
+        normalized == 'pending_approval' ||
+        normalized == 'bekleniyor' ||
+        normalized == 'beklemede' ||
+        normalized == 'duzenlendi' ||
+        normalized == 'düzenlendi' ||
+        normalized == 'uploading' ||
+        normalized.contains('review') ||
+        normalized.contains('approval') ||
+        normalized.contains('onay') ||
+        normalized.contains('bekle')) {
+      return 'pending';
+    }
+    return normalized;
+  }
+
+  bool _isPendingProductStatus(String? status) {
+    return _normalizeProductStatusKey(status) == 'pending';
+  }
+
+  bool _isLowStockProduct(SellerProduct product) {
+    return product.stock <= 10;
+  }
+
+  bool _isMissingProductDescription(SellerProduct product) {
+    final String normalizedDescription = (product.description ?? '')
+        .replaceAll(RegExp(r'<[^>]*>'), ' ')
+        .replaceAll('&nbsp;', ' ')
+        .trim();
+    return normalizedDescription.isEmpty;
+  }
+
+  double _productDisplayedMainPrice(SellerProduct product) {
+    if (product.hasDiscount) {
+      return product.discountPrice ?? 0;
+    }
+    if (product.isWeightPriced) {
+      return product.pricePerKg ?? 0;
+    }
+    return product.price;
+  }
+
+  bool _hasInvalidDisplayedPrice(SellerProduct product) {
+    return ProductPriceCalculator.sanitizePrice(
+          _productDisplayedMainPrice(product),
+        ) <=
+        0;
+  }
+
+  bool _isMixedServiceTemplateProduct(SellerProduct product) {
+    return MixedServiceOrder.isTemplateProduct(product);
+  }
+
+  bool _isMenuTemplateProduct(SellerProduct product) {
+    return MixedServiceOrder.isMenuTemplateProduct(product);
+  }
+
+  String _templateTypeLabel(SellerProduct product) {
+    return MixedServiceOrder.templateTypeLabelFromProduct(product);
+  }
+
+  Color _templateAccentColor(SellerProduct product) {
+    return _isMenuTemplateProduct(product)
+        ? const Color(0xFF0F766E)
+        : AppColors.primary;
+  }
+
+  Widget _templateTypeBadge(
+    SellerProduct product, {
+    double fontSize = 9.5,
+    EdgeInsetsGeometry padding = const EdgeInsets.symmetric(
+      horizontal: 7,
+      vertical: 3,
+    ),
+  }) {
+    final accent = _templateAccentColor(product);
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        _templateTypeLabel(product),
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.w800,
+          color: accent,
+        ),
+      ),
+    );
+  }
+
+  String _templateCategoryLabel(SellerProduct product) {
+    if (_isMixedServiceTemplateProduct(product)) {
+      return _isMenuTemplateProduct(product)
+          ? 'Yemek > Menü'
+          : 'Yemek > Servis';
+    }
+    return product.subCategory.isNotEmpty
+        ? '${product.mainCategory} > ${product.subCategory}'
+        : product.mainCategory;
+  }
+
+  String _templatePreviewPriceLabel(SellerProduct product) {
+    if (_isMixedServiceTemplateProduct(product)) {
+      final preview = MixedServiceOrder.templatePreviewPriceFromProduct(
+        product,
+        availableProducts: _products,
+      );
+      return '₺${preview.toStringAsFixed(0)}';
+    }
+    return product.displayPrice;
+  }
+
+  String _templateProductTypeForFlow(_TemplateCreationFlow flow) {
+    return flow == _TemplateCreationFlow.menu
+        ? MixedServiceOrder.menuTemplateProductType
+        : MixedServiceOrder.serviceTemplateProductType;
+  }
+
+  String _templateCreationTypeLabel(String templateProductType) {
+    return templateProductType == MixedServiceOrder.menuTemplateProductType
+        ? 'Menü'
+        : 'Servis';
+  }
+
+  Future<_TemplateCreationFlow?> _showTemplateCreationPicker() {
+    return showDialog<_TemplateCreationFlow>(
+      context: context,
+      builder: (dialogContext) {
+        Widget optionCard({
+          required _TemplateCreationFlow flow,
+          required IconData icon,
+          required String title,
+          required String subtitle,
+          required Color accent,
+        }) {
+          return InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => Navigator.of(dialogContext).pop(flow),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: accent.withValues(alpha: 0.20)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(icon, color: accent),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return Dialog(
+          backgroundColor: const Color(0xFFF8FAFC),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Ne oluşturmak istiyorsun?',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Tek giriş noktasından devam et. Sonraki adımda Menü veya Servis akışı ayrı açılacak.',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                optionCard(
+                  flow: _TemplateCreationFlow.menu,
+                  icon: Icons.restaurant_menu_outlined,
+                  title: 'Menü Oluştur',
+                  subtitle: 'Hazır set mantığıyla tek tuşta siparişe eklensin.',
+                  accent: const Color(0xFF0F766E),
+                ),
+                const SizedBox(height: 10),
+                optionCard(
+                  flow: _TemplateCreationFlow.service,
+                  icon: Icons.tune_rounded,
+                  title: 'Servis Oluştur',
+                  subtitle:
+                      'İçerik seçilerek, porsiyon ve gramaj ayarlanarak eklensin.',
+                  accent: AppColors.primary,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openTemplateEditor({
+    SellerProduct? existingProduct,
+    String? templateProductType,
+  }) async {
+    final resolvedTemplateProductType = existingProduct == null
+        ? MixedServiceOrder.normalizeTemplateProductType(templateProductType)
+        : MixedServiceOrder.productTypeFromProduct(existingProduct);
+    final result = await showMixedServiceTemplateEditorDialog(
+      context: context,
+      products: List<SellerProduct>.from(_products),
+      initialProduct: existingProduct,
+      templateProductType: resolvedTemplateProductType,
+    );
+    if (result == null) return;
+
+    final templateLabel = _templateCreationTypeLabel(
+      result.templateProductType,
+    );
+    final productId =
+        existingProduct?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
+    final normalizedTemplateItems = MixedServiceOrder.normalizeTemplateItems(
+      result.templateItems,
+    );
+    final templateStationIds = normalizedTemplateItems
+        .map((item) => item['station_id']?.toString().trim() ?? '')
+        .where((stationId) => stationId.isNotEmpty)
+        .toSet();
+    final templatePrinterRoutingEnabled = normalizedTemplateItems.any(
+      (item) => item['printer_routing_enabled'] != false,
+    );
+    final previewPrice = MixedServiceOrder.childItemsAutoTotal(
+      MixedServiceOrder.templateConfigToChildItems(result.templateItems),
+    );
+    final baseProduct = SellerProduct(
+      id: productId,
+      name: result.name,
+      brand: existingProduct?.brand ?? _storeNameController.text.trim(),
+      mainCategory: 'Yemek',
+      subCategory: templateLabel,
+      price: previewPrice,
+      pricingType: ProductPricingType.portion.storageValue,
+      portionPrice: previewPrice,
+      serviceControlType: null,
+      minPortion: null,
+      maxPortion: null,
+      portionStep: null,
+      stock: 999,
+      sku: existingProduct?.sku.isNotEmpty == true
+          ? existingProduct!.sku
+          : 'MIX-${DateTime.now().millisecondsSinceEpoch}',
+      status: result.action == MixedServiceTemplateSubmitAction.publish
+          ? 'Aktif'
+          : 'Taslak',
+      imageUrl: result.coverImageUrl,
+      imageUrls: result.coverImageUrl == null
+          ? const <String>[]
+          : <String>[result.coverImageUrl!],
+      description: result.description.trim().isEmpty
+          ? null
+          : result.description,
+      specifications: MixedServiceOrder.encodeTemplateSpecifications(
+        productType: result.templateProductType,
+        pricingMode: result.pricingMode,
+        fixedPrice: result.fixedPrice,
+        manualPriceAllowed:
+            result.pricingMode == MixedServiceOrder.manualAllowedPriceMode,
+        templateItems: result.templateItems,
+      ),
+      createdAt: existingProduct?.createdAt ?? DateTime.now(),
+      attributes: existingProduct?.attributes ?? const <String>[],
+      stationId: templateStationIds.length == 1
+          ? templateStationIds.first
+          : existingProduct?.stationId,
+      printerRoutingEnabled: templatePrinterRoutingEnabled,
+      accessories: existingProduct?.accessories,
+    );
+    final draftProduct = SellerProduct(
+      id: baseProduct.id,
+      name: baseProduct.name,
+      brand: baseProduct.brand,
+      mainCategory: baseProduct.mainCategory,
+      subCategory: baseProduct.subCategory,
+      price: baseProduct.price,
+      pricingType: baseProduct.pricingType,
+      portionPrice: baseProduct.portionPrice,
+      pricePerKg: baseProduct.pricePerKg,
+      serviceControlType: baseProduct.serviceControlType,
+      minPortion: baseProduct.minPortion,
+      maxPortion: baseProduct.maxPortion,
+      portionStep: baseProduct.portionStep,
+      defaultWeightGrams: baseProduct.defaultWeightGrams,
+      minWeightGrams: baseProduct.minWeightGrams,
+      weightStepGrams: baseProduct.weightStepGrams,
+      maxWeightGrams: baseProduct.maxWeightGrams,
+      discountPrice: baseProduct.discountPrice,
+      stock: baseProduct.stock,
+      sku: baseProduct.sku,
+      status: 'Taslak',
+      imageUrl: baseProduct.imageUrl,
+      imageUrls: baseProduct.imageUrls,
+      description: baseProduct.description,
+      specifications: baseProduct.specifications,
+      preparationTime: baseProduct.preparationTime,
+      createdAt: baseProduct.createdAt,
+      attributes: baseProduct.attributes,
+      storeName: baseProduct.storeName,
+      videoUrl: baseProduct.videoUrl,
+      videoPath: baseProduct.videoPath,
+      videoPublicUrl: baseProduct.videoPublicUrl,
+      thumbnailPath: baseProduct.thumbnailPath,
+      thumbnailPublicUrl: baseProduct.thumbnailPublicUrl,
+      videoDurationSeconds: baseProduct.videoDurationSeconds,
+      videoSizeBytes: baseProduct.videoSizeBytes,
+      thumbnailSizeBytes: baseProduct.thumbnailSizeBytes,
+      videoStatus: baseProduct.videoStatus,
+      variants: baseProduct.variants,
+      accessories: baseProduct.accessories,
+      additionalInfo: baseProduct.additionalInfo,
+      additionalInfoItems: baseProduct.additionalInfoItems,
+      faq: baseProduct.faq,
+      stationId: baseProduct.stationId,
+      printerRoutingEnabled: baseProduct.printerRoutingEnabled,
+    );
+    final publishedProduct = SellerProduct(
+      id: baseProduct.id,
+      name: baseProduct.name,
+      brand: baseProduct.brand,
+      mainCategory: baseProduct.mainCategory,
+      subCategory: baseProduct.subCategory,
+      price: baseProduct.price,
+      pricingType: baseProduct.pricingType,
+      portionPrice: baseProduct.portionPrice,
+      pricePerKg: baseProduct.pricePerKg,
+      serviceControlType: baseProduct.serviceControlType,
+      minPortion: baseProduct.minPortion,
+      maxPortion: baseProduct.maxPortion,
+      portionStep: baseProduct.portionStep,
+      defaultWeightGrams: baseProduct.defaultWeightGrams,
+      minWeightGrams: baseProduct.minWeightGrams,
+      weightStepGrams: baseProduct.weightStepGrams,
+      maxWeightGrams: baseProduct.maxWeightGrams,
+      discountPrice: baseProduct.discountPrice,
+      stock: baseProduct.stock,
+      sku: baseProduct.sku,
+      status: 'Aktif',
+      imageUrl: baseProduct.imageUrl,
+      imageUrls: baseProduct.imageUrls,
+      description: baseProduct.description,
+      specifications: baseProduct.specifications,
+      preparationTime: baseProduct.preparationTime,
+      createdAt: baseProduct.createdAt,
+      attributes: baseProduct.attributes,
+      storeName: baseProduct.storeName,
+      videoUrl: baseProduct.videoUrl,
+      videoPath: baseProduct.videoPath,
+      videoPublicUrl: baseProduct.videoPublicUrl,
+      thumbnailPath: baseProduct.thumbnailPath,
+      thumbnailPublicUrl: baseProduct.thumbnailPublicUrl,
+      videoDurationSeconds: baseProduct.videoDurationSeconds,
+      videoSizeBytes: baseProduct.videoSizeBytes,
+      thumbnailSizeBytes: baseProduct.thumbnailSizeBytes,
+      videoStatus: baseProduct.videoStatus,
+      variants: baseProduct.variants,
+      accessories: baseProduct.accessories,
+      additionalInfo: baseProduct.additionalInfo,
+      additionalInfoItems: baseProduct.additionalInfoItems,
+      faq: baseProduct.faq,
+      stationId: baseProduct.stationId,
+      printerRoutingEnabled: baseProduct.printerRoutingEnabled,
+    );
+
+    try {
+      _debugLogServiceTemplateSavePayload(baseProduct);
+      if (result.action == MixedServiceTemplateSubmitAction.draft) {
+        await _storeService.saveProductDraft(draftProduct);
+        await _debugLogServiceTemplateReadback(
+          phase: 'after_draft_save',
+          productId: draftProduct.id,
+        );
+      } else {
+        // bypassApproval yalnızca template ürünlerde kullanılmalı.
+        assert(
+          MixedServiceOrder.isTemplateProduct(publishedProduct),
+          'bypassApproval: true yalnızca template ürünlerde kullanılabilir.',
+        );
+        await _storeService.saveProductDraft(draftProduct);
+        await _debugLogServiceTemplateReadback(
+          phase: 'after_draft_save',
+          productId: draftProduct.id,
+        );
+        await _storeService.updateProduct(
+          publishedProduct,
+          bypassApproval: true,
+        );
+        await _debugLogServiceTemplateReadback(
+          phase: 'after_publish_update',
+          productId: publishedProduct.id,
+        );
+        // DB'ye yazılan status değerini doğrula (geçici debug).
+        assert(() {
+          debugPrint(
+            '[MixedService] publishedProduct.status → DB: "${publishedProduct.status}"'
+            ' (beklenen: "Aktif")',
+          );
+          return true;
+        }());
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.action == MixedServiceTemplateSubmitAction.publish
+                ? '$templateLabel yayınlandı.'
+                : '$templateLabel taslak olarak kaydedildi.',
+          ),
+        ),
+      );
+      // TODO(manuel-test): Yayın sonrası şunları kontrol et:
+      //   1. Seller ürün listesinde menü "Aktif" olarak görünüyor mu?
+      //   2. Garson ekranında (business_detail_page) menü sipariş listesinde çıkıyor mu?
+      _refreshProducts();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$templateLabel kaydedilemedi: $error')),
+      );
+    }
+  }
+
+  List<String> _templateLinkedIdsSummary(List<Map<String, dynamic>> items) {
+    final ids = <String>{};
+    for (final item in items) {
+      for (final candidate in <Object?>[
+        item['product_id'],
+        item['seller_product_id'],
+        item['linked_product_id'],
+      ]) {
+        final value = candidate?.toString().trim() ?? '';
+        if (value.isNotEmpty) {
+          ids.add(value);
+        }
+      }
+      final rawLinkedIds = item['linked_product_ids'];
+      if (rawLinkedIds is List) {
+        for (final candidate in rawLinkedIds) {
+          final value = candidate?.toString().trim() ?? '';
+          if (value.isNotEmpty) {
+            ids.add(value);
+          }
+        }
+      }
+    }
+    return ids.toList(growable: false);
+  }
+
+  void _debugLogServiceTemplateSavePayload(SellerProduct product) {
+    if (!MixedServiceOrder.isServiceTemplateProduct(product)) return;
+    final config = MixedServiceOrder.templateConfigFromProduct(product);
+    final templateItems = MixedServiceOrder.normalizeTemplateItems(
+      config?['template_items'],
+    );
+    debugPrint(
+      '[SERVICE_SAVE_PAYLOAD] '
+      'serviceId=${product.id} '
+      'serviceName="${product.name}" '
+      'templateItemsCount=${templateItems.length} '
+      'linkedIds=${_templateLinkedIdsSummary(templateItems)} '
+      'pricingMode=${config?['pricing_mode']} '
+      'specificationsLength=${product.specifications?.length ?? 0}',
+    );
+  }
+
+  Future<void> _debugLogServiceTemplateReadback({
+    required String phase,
+    required String productId,
+  }) async {
+    final fetched = await _storeService.getProductById(productId);
+    if (fetched == null) {
+      debugPrint(
+        '[SERVICE_DB_READBACK] phase=$phase productId=$productId found=false',
+      );
+      return;
+    }
+    if (!MixedServiceOrder.isServiceTemplateProduct(fetched)) {
+      return;
+    }
+    final config = MixedServiceOrder.templateConfigFromProduct(fetched);
+    final templateItems = MixedServiceOrder.normalizeTemplateItems(
+      config?['template_items'],
+    );
+    debugPrint(
+      '[SERVICE_DB_READBACK] '
+      'phase=$phase '
+      'serviceId=${fetched.id} '
+      'serviceName="${fetched.name}" '
+      'persisted=${config != null} '
+      'templateItemsCount=${templateItems.length} '
+      'linkedIds=${_templateLinkedIdsSummary(templateItems)} '
+      'status=${fetched.status}',
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final buildId = ++_sellerPanelBuildCount;
+    final buildWatch = Stopwatch()..start();
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 800;
     final storeLabel = _storeNameController.text.trim().isEmpty
@@ -2149,8 +3702,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ? 'Satıcı ID: -'
         : 'Satıcı ID: ${sellerId.substring(0, sellerId.length < 8 ? sellerId.length : 8)}';
 
+    _logSellerPanel(
+      'Build',
+      'phase=start buildId=$buildId '
+          'branch=${isMobile ? 'mobile_shell' : 'desktop_shell'} '
+          'orders=${_sellerOrders.length} '
+          'products=${_products.length} '
+          'isLoading=$_isLoading '
+          'storeProfileLoaded=$_hasLoadedStoreProfile',
+    );
+
+    late final Widget result;
     if (isMobile) {
-      return SellerPanelMobileShell(
+      result = SellerPanelMobileShell(
         title: _moduleLabel(_selectedModule),
         storeLabel: storeLabel,
         drawer: SellerPanelMobileDrawer(
@@ -2165,24 +3729,55 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         content: _buildMobileContentArea(),
         onRefresh: () => unawaited(_refreshDashboardData()),
       );
+    } else {
+      result = SellerPanelShell(
+        topBar: SellerPanelTopBar(
+          title: _moduleLabel(_selectedModule),
+          storeLabel: storeLabel,
+          sellerIdLabel: sellerIdLabel,
+          onNotificationsTap: () {},
+        ),
+        sidebar: SellerPanelSidebar(
+          items: _buildPanelMenuEntries(),
+          onLogoutTap: _exitSellerPanel,
+        ),
+        content: _buildContent(),
+      );
     }
 
-    return SellerPanelShell(
-      topBar: SellerPanelTopBar(
-        title: _moduleLabel(_selectedModule),
-        storeLabel: storeLabel,
-        sellerIdLabel: sellerIdLabel,
-        onNotificationsTap: () {},
-      ),
-      sidebar: SellerPanelSidebar(
-        items: _buildPanelMenuEntries(),
-        onLogoutTap: _exitSellerPanel,
-      ),
-      content: _buildContent(),
+    _logSellerPanel(
+      'Build',
+      'phase=end buildId=$buildId '
+          'durationMs=${buildWatch.elapsedMilliseconds} '
+          'branch=${isMobile ? 'mobile_shell' : 'desktop_shell'}',
     );
+    return result;
   }
 
   Widget _buildMobileContentArea() {
+    if (_isLoading && !_hasLoadedStoreProfile) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_storeProfileLoadError != null && !_hasLoadedStoreProfile) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildStoreStateCard(
+            icon: Icons.error_outline_rounded,
+            title: 'Magaza profili acilamadi',
+            message: _storeProfileLoadError!,
+            isError: true,
+            onRetry: _loadStoreProfile,
+          ),
+        ],
+      );
+    }
+    // Guard: wait until store category is known before rendering seller modules.
+    // This keeps mobile seller accounts from rendering the wrong panel while
+    // the async store/profile chain is still resolving.
+    if (!_hasLoadedStoreProfile) {
+      return const Center(child: CircularProgressIndicator());
+    }
     return AnimatedSwitcher(
       duration: AppMotion.normalTransitionDuration,
       reverseDuration: AppMotion.normalTransitionReverseDuration,
@@ -3024,6 +4619,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildMobileProductsModule() {
+    final List<SellerProduct> displayedProducts = _displayedProducts();
+    final Map<_ProductHealthFilter, int> healthCounts = _productHealthCounts();
+    final bool hasProductFilters =
+        _productSearchQuery.trim().isNotEmpty ||
+        _selectedProductHealthFilter != _ProductHealthFilter.all;
+
     return ListView(
       padding: const EdgeInsets.only(bottom: 8),
       physics: const BouncingScrollPhysics(),
@@ -3036,43 +4637,121 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           secondary: const Color(0xFF14B8A6),
         ),
         const SizedBox(height: 12),
-        Row(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: _buildMobileSectionTitle(
-                'Ürün Listesi',
-                icon: Icons.widgets_outlined,
-              ),
+            _buildMobileSectionTitle(
+              'Ürün Listesi',
+              icon: Icons.widgets_outlined,
             ),
-            ElevatedButton.icon(
-              onPressed: () async {
-                final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const AddProductPage(),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                BulkProductUploadButton(
+                  isCompact: true,
+                  onImportCompleted: _refreshProducts,
+                ),
+                BulkProductPriceStockUpdateButton(
+                  onUpdateCompleted: _refreshProducts,
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final flow = await _showTemplateCreationPicker();
+                    if (flow == null || !mounted) return;
+                    await _openTemplateEditor(
+                      templateProductType: _templateProductTypeForFlow(flow),
+                    );
+                  },
+                  icon: const Icon(Icons.add_box_outlined, size: 18),
+                  label: const Text('Oluştur'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F766E),
+                    foregroundColor: Colors.white,
                   ),
-                );
-                if (result == true) {
-                  _refreshProducts();
-                }
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AddProductPage(),
+                      ),
+                    );
+                    if (result == true) {
+                      _refreshProducts();
+                    }
+                  },
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Yeni'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _productSearchController,
+              onChanged: (String value) {
+                setState(() {
+                  _productSearchQuery = value;
+                });
               },
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Yeni'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
+              decoration: InputDecoration(
+                hintText: 'Ürün ara...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _productSearchQuery.trim().isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _productSearchController.clear();
+                          setState(() {
+                            _productSearchQuery = '';
+                          });
+                        },
+                        icon: const Icon(Icons.close, size: 18),
+                      ),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey.shade200),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey.shade200),
+                ),
+                focusedBorder: const OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                  borderSide: BorderSide(color: AppColors.primary, width: 1.2),
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 12),
         _mobileSurfaceCard(
+          child: _buildProductHealthCenter(
+            counts: healthCounts,
+            totalVisibleProducts: displayedProducts.length,
+            compact: true,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _mobileSurfaceCard(
           child: Row(
             children: [
               const Icon(Icons.inventory_2_outlined, color: AppColors.primary),
               const SizedBox(width: 8),
               Text(
-                'Toplam ${_products.length} ürün',
+                'Toplam ${displayedProducts.length} ürün',
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ],
@@ -3081,20 +4760,25 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         const SizedBox(height: 10),
         if (_products.isEmpty)
           _mobileSurfaceCard(child: _buildEmptyProductList())
+        else if (displayedProducts.isEmpty)
+          _mobileSurfaceCard(
+            child: _buildFilteredProductListEmptyState(
+              hasProductFilters: hasProductFilters,
+            ),
+          )
         else
-          ..._products.map(_buildMobileProductCard),
+          ...displayedProducts.map(_buildMobileProductCard),
         const SizedBox(height: 6),
       ],
     );
   }
 
   Widget _buildMobileProductCard(SellerProduct product) {
-    final isLowStock = product.stock < 10;
+    final isLowStock = _isLowStockProduct(product);
     final isOutOfStock = product.stock == 0;
-    var image = product.imageUrl;
-    if ((image == null || image.isEmpty) && product.imageUrls.isNotEmpty) {
-      image = product.imageUrls.first;
-    }
+    final isTemplate = _isMixedServiceTemplateProduct(product);
+    final String? image = _primaryProductImage(product);
+    final bool isDeleting = _deletingProductIds.contains(product.id);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: _mobileSurfaceCard(
@@ -3139,8 +4823,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         ),
                       ),
                       const SizedBox(height: 4),
+                      if (isTemplate) ...[
+                        _templateTypeBadge(
+                          product,
+                          fontSize: 10,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
                       Text(
-                        product.subCategory.isNotEmpty
+                        isTemplate
+                            ? _templateCategoryLabel(product)
+                            : product.subCategory.isNotEmpty
                             ? '${product.mainCategory} • ${product.subCategory}'
                             : product.mainCategory,
                         style: TextStyle(
@@ -3152,13 +4849,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       Row(
                         children: [
                           Text(
-                            product.displayPrice,
+                            isTemplate
+                                ? _templatePreviewPriceLabel(product)
+                                : product.displayPrice,
                             style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
-                          if (product.hasDiscount) ...[
+                          if (product.hasDiscount && !isTemplate) ...[
                             const SizedBox(width: 6),
                             Text(
                               product.originalPrice,
@@ -3182,7 +4881,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               runSpacing: 8,
               children: [
                 _mobileBadge('SKU', product.sku),
-                _mobileBadge('Stok', '${product.stock}'),
+                _mobileBadge(
+                  isTemplate ? 'Tip' : 'Stok',
+                  isTemplate ? _templateTypeLabel(product) : '${product.stock}',
+                ),
                 _mobileBadge('Durum', _getStatusLabel(product.status)),
                 if (isOutOfStock)
                   _mobileBadge('Uyarı', 'Stok bitti', color: Colors.red.shade50)
@@ -3200,6 +4902,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () async {
+                      if (isTemplate) {
+                        await _openTemplateEditor(existingProduct: product);
+                        return;
+                      }
                       final result = await Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -3220,13 +4926,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _deleteProduct(product.id),
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      size: 16,
-                      color: Colors.red,
-                    ),
-                    label: const Text('Sil'),
+                    onPressed: isDeleting
+                        ? null
+                        : () => _deleteProduct(product.id),
+                    icon: isDeleting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(
+                            Icons.delete_outline,
+                            size: 16,
+                            color: Colors.red,
+                          ),
+                    label: Text(isDeleting ? 'Siliniyor' : 'Sil'),
                   ),
                 ),
               ],
@@ -4266,6 +5980,51 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 icon: const Icon(Icons.print_outlined),
                 label: const Text('Yazıcı Ayarları'),
               ),
+              OutlinedButton.icon(
+                onPressed: sellerId.isEmpty
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                KitchenDisplayScreen(sellerId: sellerId),
+                          ),
+                        );
+                      },
+                icon: const Icon(Icons.restaurant_menu_outlined),
+                label: const Text('Mutfak Ekranı'),
+              ),
+              OutlinedButton.icon(
+                onPressed: sellerId.isEmpty
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                TableHistoryScreen(sellerId: sellerId),
+                          ),
+                        );
+                      },
+                icon: const Icon(Icons.history_outlined),
+                label: const Text('Geçmiş Masalar'),
+              ),
+              OutlinedButton.icon(
+                onPressed: sellerId.isEmpty
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                WaiterPerformanceScreen(sellerId: sellerId),
+                          ),
+                        );
+                      },
+                icon: const Icon(Icons.people_alt_outlined),
+                label: const Text('Garson Analitik'),
+              ),
               if (tables.isEmpty)
                 OutlinedButton.icon(
                   onPressed: _isMutatingStoreTables
@@ -4372,12 +6131,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             const SizedBox(height: 6),
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: OptimizedImage(imageUrlOrPath: 
-                qrImageUrl,
+              child: OptimizedImage(
+                imageUrlOrPath: qrImageUrl,
                 width: double.infinity,
                 height: 86,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
+                errorBuilder: (_, _, _) => Container(
                   height: 86,
                   color: Colors.grey.shade100,
                   alignment: Alignment.center,
@@ -4484,12 +6243,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: OptimizedImage(imageUrlOrPath: 
-              qrImageUrl,
+            child: OptimizedImage(
+              imageUrlOrPath: qrImageUrl,
               width: double.infinity,
               height: 210,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
+              errorBuilder: (_, _, _) => Container(
                 height: 210,
                 color: Colors.grey.shade100,
                 alignment: Alignment.center,
@@ -4570,9 +6329,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   void _onMobileGarsonOrderSubmitted(
     int tableNumber,
     List<Map<String, dynamic>> items,
+    Map<String, dynamic> submittedOrder,
   ) {
     if (!mounted) return;
     setState(() {
+      _invalidateSellerTableOrdersFallbackFuture();
       _mobileGarsonDraftItemsByTable.remove(tableNumber);
       _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
       _mobileGarsonOptimisticSentAtByTable[tableNumber] = DateTime.now();
@@ -4596,6 +6357,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           secondary: const Color(0xFFF97316),
         ),
         const SizedBox(height: 10),
+        if (kIsWeb) ...[
+          _buildLocalPrintServicePanel(uiBranch: 'mobile_garson_panel'),
+          const SizedBox(height: 10),
+        ],
         if (sellerId.isEmpty)
           _mobileSurfaceCard(
             child: const Center(child: Text('Satıcı oturumu bulunamadı.')),
@@ -4605,8 +6370,185 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             stream: _getSellerTableOrdersStream(sellerId),
             builder: (ctx, snapshot) {
               if (snapshot.hasError) {
-                return _mobileSurfaceCard(
-                  child: Text('Hata: ${snapshot.error}'),
+                _handleGarsonRealtimeError(snapshot.error!, sellerId: sellerId);
+                return FutureBuilder<List<Map<String, dynamic>>>(
+                  future: _getSellerTableOrdersFallbackFuture(sellerId),
+                  builder: (context, fallbackSnapshot) {
+                    if (fallbackSnapshot.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (fallbackSnapshot.hasError) {
+                      return _mobileSurfaceCard(
+                        child: Text('Hata: ${fallbackSnapshot.error}'),
+                      );
+                    }
+                    final allOrders =
+                        fallbackSnapshot.data ?? const <Map<String, dynamic>>[];
+                    final orders = allOrders;
+                    final now = DateTime.now();
+
+                    final maxOrderTableNumber = orders.fold<int>(
+                      0,
+                      (maxValue, order) => math.max(
+                        maxValue,
+                        _garsonTableNumberFromOrder(order),
+                      ),
+                    );
+                    final totalTables = _storeTables.isNotEmpty
+                        ? _storeTables.length
+                        : maxOrderTableNumber;
+                    if (totalTables <= 0) {
+                      return _mobileSurfaceCard(
+                        child: Text(
+                          'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      );
+                    }
+
+                    final ordersByTable = <int, List<Map<String, dynamic>>>{};
+                    for (final order in orders) {
+                      final tableNo = _garsonTableNumberFromOrder(order);
+                      if (tableNo <= 0) continue;
+                      ordersByTable
+                          .putIfAbsent(tableNo, () => <Map<String, dynamic>>[])
+                          .add(order);
+                    }
+                    for (final entry in ordersByTable.entries) {
+                      entry.value.sort(
+                        (a, b) =>
+                            _garsonOrderCreatedAt(
+                              b['created_at']?.toString(),
+                            ).compareTo(
+                              _garsonOrderCreatedAt(
+                                a['created_at']?.toString(),
+                              ),
+                            ),
+                      );
+                    }
+                    final selectedOrderByTable = <int, Map<String, dynamic>>{};
+                    for (final entry in ordersByTable.entries) {
+                      final preferred = entry.value.firstWhere(
+                        (order) => !_isGarsonCompletedStatus(
+                          order['status']?.toString(),
+                        ),
+                        orElse: () => entry.value.first,
+                      );
+                      selectedOrderByTable[entry.key] = preferred;
+                    }
+
+                    final draftTableNumbers = _mobileGarsonDraftItemsByTable
+                        .entries
+                        .where((entry) => entry.value.isNotEmpty)
+                        .map((entry) => entry.key)
+                        .toSet();
+                    final optimisticTableNumbers =
+                        _mobileGarsonOptimisticSentAtByTable.entries
+                            .where((entry) {
+                              final at = entry.value;
+                              return now.difference(at) <=
+                                  const Duration(seconds: 25);
+                            })
+                            .map((entry) => entry.key)
+                            .toSet();
+
+                    final tableNumbers = _sortedStoreTableNumbers().isNotEmpty
+                        ? _sortedStoreTableNumbers()
+                        : List<int>.generate(totalTables, (i) => i + 1);
+                    final activeTableNumbers = <int>{};
+                    for (final entry in ordersByTable.entries) {
+                      final hasActiveOrder = entry.value.any(
+                        (order) => !_isGarsonCompletedStatus(
+                          order['status']?.toString(),
+                        ),
+                      );
+                      if (hasActiveOrder) activeTableNumbers.add(entry.key);
+                    }
+                    activeTableNumbers.addAll(draftTableNumbers);
+                    activeTableNumbers.addAll(optimisticTableNumbers);
+                    final activeTableCount = activeTableNumbers.length;
+                    final waitingCount = orders
+                        .where(
+                          (o) =>
+                              _isGarsonWaitingStatus(o['status']?.toString()),
+                        )
+                        .map(_garsonTableNumberFromOrder)
+                        .where((tableNo) => tableNo > 0)
+                        .toSet()
+                        .length;
+                    final preparingCount = orders
+                        .where(
+                          (o) => (o['status']?.toString() ?? '') == 'preparing',
+                        )
+                        .map(_garsonTableNumberFromOrder)
+                        .where((tableNo) => tableNo > 0)
+                        .toSet()
+                        .length;
+                    final mutfaktaCount = orders
+                        .where((o) {
+                          final s = (o['status']?.toString() ?? '')
+                              .toLowerCase();
+                          return s == 'sent' || s == 'done';
+                        })
+                        .map(_garsonTableNumberFromOrder)
+                        .where((n) => n > 0)
+                        .toSet()
+                        .length;
+
+                    return Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _mobileBadge('Dolu Masa', '$activeTableCount'),
+                              _mobileBadge('Yeni', '$waitingCount'),
+                              _mobileBadge('Mutfakta', '$mutfaktaCount'),
+                              _mobileBadge('Hazırlanıyor', '$preparingCount'),
+                              _buildLocalPrintStatusBadge(
+                                uiBranch: 'mobile_garson_fallback_summary',
+                              ),
+                            ],
+                          ),
+                        ),
+                        GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: _mobileGarsonGridColumns(
+                                  MediaQuery.of(context).size.width,
+                                ),
+                                crossAxisSpacing: 10,
+                                mainAxisSpacing: 10,
+                                childAspectRatio: _mobileGarsonGridAspectRatio(
+                                  MediaQuery.of(context).size.width,
+                                  _mobileGarsonGridColumns(
+                                    MediaQuery.of(context).size.width,
+                                  ),
+                                ),
+                              ),
+                          itemCount: tableNumbers.length,
+                          itemBuilder: (context, index) {
+                            final tableNumber = tableNumbers[index];
+                            final tableOrders =
+                                ordersByTable[tableNumber] ??
+                                const <Map<String, dynamic>>[];
+                            final order = selectedOrderByTable[tableNumber];
+                            return _buildMobileGarsonTableCard(
+                              tableNumber: tableNumber,
+                              order: order,
+                              orderCount: tableOrders.length,
+                            );
+                          },
+                        ),
+                      ],
+                    );
+                  },
                 );
               }
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -4682,6 +6624,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 if (hasActiveOrder) activeTableNumbers.add(entry.key);
               }
               activeTableNumbers.addAll(draftTableNumbers);
+              activeTableNumbers.addAll(optimisticTableNumbers);
               final activeTableCount = activeTableNumbers.length;
               final waitingTableNumbers = orders
                   .where((o) => _isGarsonWaitingStatus(o['status']?.toString()))
@@ -4693,18 +6636,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               final preparingCount = orders
                   .where((o) => (o['status']?.toString() ?? '') == 'preparing')
                   .length;
-              final doneCount =
-                  orders
-                      .where(
-                        (o) =>
-                            _isGarsonCompletedStatus(o['status']?.toString()),
-                      )
-                      .length +
-                  optimisticTableNumbers
-                      .where(
-                        (tableNo) => (ordersByTable[tableNo] ?? []).isEmpty,
-                      )
-                      .length;
+              final mutfaktaCount = orders
+                  .where((o) {
+                    final s = (o['status']?.toString() ?? '').toLowerCase();
+                    return s == 'sent' || s == 'done';
+                  })
+                  .map(_garsonTableNumberFromOrder)
+                  .where((n) => n > 0)
+                  .toSet()
+                  .length;
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -4715,10 +6655,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       runSpacing: 8,
                       children: [
                         _mobileBadge('Toplam Masa', '$totalTables'),
-                        _mobileBadge('Aktif Masa', '$activeTableCount'),
-                        _mobileBadge('Bekleniyor', '$newCount'),
+                        _mobileBadge('Dolu Masa', '$activeTableCount'),
+                        _mobileBadge('Yeni Sipariş', '$newCount'),
+                        _mobileBadge('Mutfakta', '$mutfaktaCount'),
                         _mobileBadge('Hazırlanıyor', '$preparingCount'),
-                        _mobileBadge('Gönderildi', '$doneCount'),
+                        _buildLocalPrintStatusBadge(
+                          uiBranch: 'mobile_garson_summary',
+                        ),
                       ],
                     ),
                   ),
@@ -4828,11 +6771,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return normalized == 'new' || normalized == 'waiting';
   }
 
+  /// Masa tamamen kapatıldığında true döner.
+  /// 'sent'/'done' siparişleri garson ekranında aktif kalmaya devam eder
+  /// (servis bekliyor), masa yalnızca [closeTableOrders] ile silinince boşalır.
   bool _isGarsonCompletedStatus(String? status) {
     final normalized = (status ?? '').toLowerCase();
-    return normalized == 'done' ||
-        normalized == 'sent' ||
-        normalized == 'closed';
+    return normalized == 'closed';
   }
 
   bool _isGarsonClosedStatus(String? status) {
@@ -4861,28 +6805,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     if (raw is! List) return const <Map<String, dynamic>>[];
     return raw
         .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
+        .map(
+          (e) => MixedServiceOrder.normalizeOrderItem(
+            Map<String, dynamic>.from(e),
+          ),
+        )
         .toList(growable: false);
-  }
-
-  double _garsonParsePrice(dynamic raw) {
-    if (raw is num) return raw.toDouble();
-    final text = (raw ?? '').toString().trim();
-    if (text.isEmpty) return 0;
-    var normalized = text.replaceAll(RegExp(r'[^0-9,.-]'), '');
-    if (normalized.isEmpty) return 0;
-    final hasComma = normalized.contains(',');
-    final hasDot = normalized.contains('.');
-    if (hasComma && hasDot) {
-      if (normalized.lastIndexOf(',') > normalized.lastIndexOf('.')) {
-        normalized = normalized.replaceAll('.', '').replaceAll(',', '.');
-      } else {
-        normalized = normalized.replaceAll(',', '');
-      }
-    } else if (hasComma) {
-      normalized = normalized.replaceAll('.', '').replaceAll(',', '.');
-    }
-    return double.tryParse(normalized) ?? 0;
   }
 
   String _garsonFormatMoney(double amount) {
@@ -4905,10 +6833,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   double _garsonOrderTotal(Map<String, dynamic> order) {
     final items = _garsonExtractItems(order);
     return items.fold<double>(0, (sum, item) {
-      final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-      final unitPrice = _garsonParsePrice(item['price']);
-      return sum + (qty * unitPrice);
+      return sum + MixedServiceOrder.itemLineTotal(item);
     });
+  }
+
+  List<MixedServiceDisplayEntry> _garsonItemDetailLines(
+    Map<String, dynamic> item,
+  ) {
+    final lines = <MixedServiceDisplayEntry>[];
+    final gramaj = item['gramaj']?.toString().trim() ?? '';
+    final notes = item['notes']?.toString().trim() ?? '';
+    if (gramaj.isNotEmpty) {
+      lines.add(MixedServiceDisplayEntry.item(gramaj));
+    }
+    if (notes.isNotEmpty) {
+      lines.add(MixedServiceDisplayEntry.item(notes));
+    }
+    lines.addAll(MixedServiceOrder.childItemDisplayEntries(item));
+    return lines;
   }
 
   double _garsonOrdersTotal(List<Map<String, dynamic>> orders) {
@@ -4918,89 +6860,609 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  String? _currentWaiterName() {
-    return _orderPrintJobService.safeUserDisplayName(_authService.currentUser);
+  Future<Map<String, String>> _loadGarsonReceiptStoreContext(
+    String sellerId,
+  ) async {
+    const storeContextSelect =
+        'seller_id, business_name, phone, district, city';
+    final storeRow = await Supabase.instance.client
+        .from('stores')
+        .select(storeContextSelect)
+        .eq('seller_id', sellerId)
+        .maybeSingle();
+
+    final storeName = _storeNameController.text.trim().isNotEmpty
+        ? _storeNameController.text.trim()
+        : (storeRow?['business_name']?.toString().trim().isNotEmpty ?? false)
+        ? storeRow!['business_name'].toString().trim()
+        : 'Mağaza';
+
+    final phone = _phoneController.text.trim().isNotEmpty
+        ? _phoneController.text.trim()
+        : (storeRow?['phone']?.toString().trim().isNotEmpty ?? false)
+        ? storeRow!['phone'].toString().trim()
+        : '-';
+
+    final branchSource = _selectedDistrict.trim().isNotEmpty
+        ? _selectedDistrict.trim()
+        : (storeRow?['district']?.toString().trim().isNotEmpty ?? false)
+        ? storeRow!['district'].toString().trim()
+        : (_selectedCity.trim().isNotEmpty
+              ? _selectedCity.trim()
+              : ((storeRow?['city']?.toString().trim().isNotEmpty ?? false)
+                    ? storeRow!['city'].toString().trim()
+                    : 'Merkez'));
+
+    final upperBranchSource = branchSource.toUpperCase();
+    final branch =
+        (upperBranchSource.contains('ŞUBE') ||
+            upperBranchSource.contains('SUBE'))
+        ? upperBranchSource
+        : '$upperBranchSource ŞUBE';
+
+    return <String, String>{
+      'store_id': storeRow?['seller_id']?.toString() ?? sellerId,
+      'store_name': storeName,
+      'branch': branch,
+      'phone': phone,
+    };
   }
 
-  Future<bool> _dispatchKitchenPrintJobs({
-    required String sellerId,
+  void _scheduleLocalPrintStatusRefreshIfNeeded({
+    required SellerModule module,
+    required String reason,
+  }) {
+    if (!kIsWeb || module != SellerModule.garson) return;
+    unawaited(_refreshLocalPrintStatus(reason: reason));
+  }
+
+  Future<LocalPrintHealthStatus?> _refreshLocalPrintStatus({
+    required String reason,
+  }) async {
+    if (!kIsWeb) return null;
+    final printService = LocalPrintService();
+    try {
+      final status = await printService.checkAvailability();
+      _applyLocalPrintStatus(status, reason: reason);
+      return status;
+    } finally {
+      printService.dispose();
+    }
+  }
+
+  void _applyLocalPrintStatus(
+    LocalPrintHealthStatus status, {
+    required String reason,
+  }) {
+    final nextLabel = status.isAvailable
+        ? 'Yazıcı bağlı'
+        : 'Yazıcı servisi kapalı';
+    final nextMessage = _localPrintHealthMessage(status);
+    final requiresUpdate =
+        _isLocalPrintAvailable != status.isAvailable ||
+        _localPrintStatusLabel != nextLabel ||
+        _localPrintStatusMessage != nextMessage;
+    if (!mounted) {
+      _isLocalPrintAvailable = status.isAvailable;
+      _localPrintStatusLabel = nextLabel;
+      _localPrintStatusMessage = nextMessage;
+    } else if (requiresUpdate) {
+      setState(() {
+        _isLocalPrintAvailable = status.isAvailable;
+        _localPrintStatusLabel = nextLabel;
+        _localPrintStatusMessage = nextMessage;
+      });
+    } else {
+      _isLocalPrintAvailable = status.isAvailable;
+      _localPrintStatusLabel = nextLabel;
+      _localPrintStatusMessage = nextMessage;
+    }
+    debugPrint(
+      '[LocalPrint][Status] uiUpdated reason=$reason '
+      'available=${status.isAvailable} label=$nextLabel '
+      'message=$nextMessage requestUrl=${status.url} '
+      'durationMs=${status.durationMs} statusCode=${status.statusCode ?? '-'} '
+      'stateUpdated=$requiresUpdate',
+    );
+  }
+
+  String _localPrintHealthMessage(LocalPrintHealthStatus status) {
+    switch (status.reason) {
+      case 'ok':
+        return 'Yazıcı servisi bu bilgisayarda hazır.';
+      case 'connection_error':
+        return 'Yazıcı servisi kapalı. Lütfen bu bilgisayarda yazıcı servisini başlatın.';
+      case 'timeout':
+        return 'Yazıcı servisi yanıt vermiyor. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+      case 'server_error':
+        return 'Yazıcı servisi hazır değil. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+      default:
+        return 'Yazıcı servisine erişilemedi. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+    }
+  }
+
+  Color _localPrintStatusColor(bool? isAvailable) {
+    return isAvailable == true
+        ? const Color(0xFF16A34A)
+        : isAvailable == false
+        ? const Color(0xFFDC2626)
+        : const Color(0xFF6B7280);
+  }
+
+  void _setLocalPrintPanelBusy({bool? refreshing, bool? testing}) {
+    final nextRefreshing = refreshing ?? _isLocalPrintRefreshing;
+    final nextTesting = testing ?? _isLocalPrintTesting;
+    final requiresUpdate =
+        _isLocalPrintRefreshing != nextRefreshing ||
+        _isLocalPrintTesting != nextTesting;
+    if (!mounted) {
+      _isLocalPrintRefreshing = nextRefreshing;
+      _isLocalPrintTesting = nextTesting;
+      return;
+    }
+    if (requiresUpdate) {
+      setState(() {
+        _isLocalPrintRefreshing = nextRefreshing;
+        _isLocalPrintTesting = nextTesting;
+      });
+      return;
+    }
+    _isLocalPrintRefreshing = nextRefreshing;
+    _isLocalPrintTesting = nextTesting;
+  }
+
+  Future<void> _handleLocalPrintPanelRefresh({required String uiBranch}) async {
+    debugPrint('[LocalPrint][Panel] refreshPressed uiBranch=$uiBranch');
+    if (!kIsWeb || _isLocalPrintRefreshing || _isLocalPrintTesting) return;
+    _setLocalPrintPanelBusy(refreshing: true);
+    try {
+      await _refreshLocalPrintStatus(reason: 'panel_refresh_button');
+    } finally {
+      _setLocalPrintPanelBusy(refreshing: false);
+    }
+  }
+
+  Future<void> _handleLocalPrintPanelTest({required String uiBranch}) async {
+    debugPrint('[LocalPrint][Panel] testPressed uiBranch=$uiBranch');
+    if (!kIsWeb || _isLocalPrintRefreshing || _isLocalPrintTesting) return;
+    _setLocalPrintPanelBusy(testing: true);
+    try {
+      final healthStatus = await _refreshLocalPrintStatus(
+        reason: 'panel_test_preflight',
+      );
+      if (healthStatus?.isAvailable != true) {
+        debugPrint(
+          '[LocalPrint][Panel] testBlockedServiceUnavailable '
+          'uiBranch=$uiBranch reason=${healthStatus?.reason ?? 'unknown'}',
+        );
+        await _showLocalPrintPanelMessage(
+          message: 'Bu bilgisayarda yazıcı servisini başlatın.',
+        );
+        return;
+      }
+
+      final printService = LocalPrintService();
+      try {
+        await printService.printTest();
+        debugPrint(
+          '[LocalPrint][Panel] testSuccess '
+          'uiBranch=$uiBranch route=/print/test',
+        );
+        await _showLocalPrintPanelMessage(message: 'Test fişi yazdırıldı');
+      } catch (error, stackTrace) {
+        debugPrint(
+          '[LocalPrint][Panel] testFail uiBranch=$uiBranch exception=$error',
+        );
+        debugPrint('$stackTrace');
+        await _showLocalPrintPanelMessage(message: 'Test fişi yazdırılamadı');
+      } finally {
+        printService.dispose();
+      }
+    } finally {
+      _setLocalPrintPanelBusy(testing: false);
+    }
+  }
+
+  Future<void> _showLocalPrintPanelMessage({required String message}) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Widget _buildLocalPrintServicePanel({required String uiBranch}) {
+    final isAvailable = _isLocalPrintAvailable;
+    final statusColor = _localPrintStatusColor(isAvailable);
+    final statusDetail = isAvailable == false
+        ? 'Bu bilgisayarda yazıcı servisini başlatın.'
+        : _localPrintStatusMessage;
+    final signature =
+        '$uiBranch|${isAvailable ?? 'unknown'}|$_localPrintStatusLabel|'
+        '$statusDetail|$_isLocalPrintRefreshing|$_isLocalPrintTesting';
+    if (_localPrintPanelRenderSignatures[uiBranch] != signature) {
+      _localPrintPanelRenderSignatures[uiBranch] = signature;
+      debugPrint(
+        '[LocalPrint][Panel] build uiBranch=$uiBranch '
+        'available=${isAvailable ?? 'unknown'} '
+        'label=$_localPrintStatusLabel '
+        'refreshing=$_isLocalPrintRefreshing testing=$_isLocalPrintTesting',
+      );
+    }
+    final isBusy = _isLocalPrintRefreshing || _isLocalPrintTesting;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0F0F172A),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                alignment: Alignment.center,
+                child: Icon(Icons.print_outlined, color: statusColor, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Yazıcı Servisi',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Durum ve kısa test işlemleri',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isBusy)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: statusColor.withValues(alpha: 0.18)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Durum',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _localPrintStatusLabel,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: statusColor,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  statusDetail,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade700,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: isBusy
+                      ? null
+                      : () => _handleLocalPrintPanelRefresh(uiBranch: uiBranch),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Yenile'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: isBusy
+                      ? null
+                      : () => _handleLocalPrintPanelTest(uiBranch: uiBranch),
+                  icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                  label: const Text('Test Yazdır'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Bu bilgisayarda yazıcı servisi açık olmalıdır.',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade700,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Servis kapalıysa kurulum dökümanındaki tek seferlik başlatma adımlarını uygulayın.',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade700,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocalPrintStatusBadge({required String uiBranch}) {
+    final isAvailable = _isLocalPrintAvailable;
+    final color = _localPrintStatusColor(isAvailable);
+    final signature =
+        '$uiBranch|${isAvailable ?? 'unknown'}|$_localPrintStatusLabel|$_localPrintStatusMessage';
+    if (_localPrintStatusRenderSignatures[uiBranch] != signature) {
+      _localPrintStatusRenderSignatures[uiBranch] = signature;
+      debugPrint(
+        '[LocalPrint][Status] uiUpdated reason=build '
+        'uiBranch=$uiBranch available=${isAvailable ?? 'unknown'} '
+        'label=$_localPrintStatusLabel message=$_localPrintStatusMessage '
+        'stateUpdated=false',
+      );
+    }
+    return Tooltip(
+      message: _localPrintStatusMessage,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withValues(alpha: 0.24)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              _localPrintStatusLabel,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  double _garsonRoundMoney(num amount) {
+    final safe = amount.isFinite ? amount.toDouble() : 0.0;
+    return double.parse(safe.toStringAsFixed(2));
+  }
+
+  Map<String, dynamic> _buildGarsonReceiptPayload({
     required int tableNumber,
-    required List<Map<String, dynamic>> items,
-    bool showSuccess = false,
-  }) async {
-    if (items.isEmpty) return false;
-    try {
-      final result = await _orderPrintJobService.dispatchNewOrder(
-        restaurantId: sellerId,
-        tableNumber: tableNumber,
-        items: items,
-        waiterId: _authService.currentUser?.id,
-        waiterName: _currentWaiterName(),
-        jobType: 'new_order',
+    required List<Map<String, dynamic>> tableOrders,
+    required Map<String, String> storeContext,
+    DateTime? createdAt,
+  }) {
+    final items = <Map<String, dynamic>>[];
+    var subtotal = 0.0;
+
+    for (final order in tableOrders) {
+      for (final item in _garsonExtractItems(order)) {
+        var qty = (item['quantity'] as num?)?.toInt() ?? 1;
+        if (qty <= 0) qty = 1;
+        final rawLineTotal = MixedServiceOrder.itemLineTotal(item);
+        final lineTotal = _garsonRoundMoney(rawLineTotal);
+        final unitPrice = _garsonRoundMoney(rawLineTotal / qty);
+        subtotal += rawLineTotal;
+        items.add(<String, dynamic>{
+          'name': (item['name']?.toString().trim().isNotEmpty ?? false)
+              ? item['name'].toString().trim()
+              : '-',
+          'qty': qty,
+          'price': unitPrice,
+          'total': lineTotal,
+        });
+      }
+    }
+
+    const discount = 0.0;
+    final roundedSubtotal = _garsonRoundMoney(subtotal);
+    final grandTotal = _garsonRoundMoney(roundedSubtotal - discount);
+
+    return <String, dynamic>{
+      'store_name': storeContext['store_name'] ?? 'Mağaza',
+      'branch': storeContext['branch'] ?? 'MERKEZ ŞUBE',
+      'phone': storeContext['phone'] ?? '-',
+      'table_no': tableNumber.toString(),
+      'datetime': (createdAt ?? DateTime.now()).toLocal().toIso8601String(),
+      'items': items,
+      'subtotal': roundedSubtotal,
+      'discount': _garsonRoundMoney(discount),
+      'grand_total': grandTotal,
+    };
+  }
+
+  String _localReceiptPayloadSummary(Map<String, dynamic> payload) {
+    final items = payload['items'];
+    final itemCount = items is List ? items.length : 0;
+    final keys = payload.keys.toList(growable: false)..sort();
+    return 'keys=${keys.join(",")} items=$itemCount '
+        'grandTotal=${payload['grand_total'] ?? '-'}';
+  }
+
+  void _logLocalReceiptEvent(
+    String event, {
+    required String uiAction,
+    String? sellerId,
+    String? storeId,
+    String? guard,
+    String? guardResult,
+    String? emptyBranch,
+    String? mappingStatus,
+    bool? localPrintCallReached,
+    int? durationMs,
+    int? tableNumber,
+    List<Map<String, dynamic>>? orders,
+    Map<String, dynamic>? payload,
+    String? queryTable,
+    String? query,
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    final itemCount = payload?['items'] is List
+        ? (payload!['items'] as List).length
+        : (orders?.length ?? 0);
+    final payloadSummary = payload == null
+        ? '-'
+        : _localReceiptPayloadSummary(payload);
+    debugPrint(
+      '[LocalPrint][Receipt] $event uiAction=$uiAction '
+      'sellerId=${sellerId ?? '-'} storeId=${storeId ?? '-'} '
+      'guard=${guard ?? '-'} guardResult=${guardResult ?? '-'} '
+      'emptyBranch=${emptyBranch ?? '-'} mappingStatus=${mappingStatus ?? '-'} '
+      'localPrintCallReached=${localPrintCallReached ?? false} '
+      'durationMs=${durationMs ?? '-'} '
+      'queryTable=${queryTable ?? '-'} query=${query ?? '-'} '
+      'tableNo=${tableNumber ?? '-'} itemCount=$itemCount '
+      'payloadSummary=$payloadSummary',
+    );
+    if (error != null) {
+      debugPrint(
+        '[LocalPrint][Error] event=$event uiAction=$uiAction '
+        'sellerId=${sellerId ?? '-'} storeId=${storeId ?? '-'} '
+        'guard=${guard ?? '-'} guardResult=${guardResult ?? '-'} '
+        'emptyBranch=${emptyBranch ?? '-'} mappingStatus=${mappingStatus ?? '-'} '
+        'localPrintCallReached=${localPrintCallReached ?? false} '
+        'durationMs=${durationMs ?? '-'} '
+        'queryTable=${queryTable ?? '-'} query=${query ?? '-'} '
+        'tableNo=${tableNumber ?? '-'} exception=$error',
       );
-      _orderPrintJobService.debugLogResult(result);
-      if (showSuccess && mounted) {
-        final jobCount = result.printJobCount;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              jobCount > 0
-                  ? 'Sipariş mutfağa iletildi. ($jobCount print job)'
-                  : 'Sipariş kaydedildi. Print job oluşturulmadı.',
-            ),
-          ),
-        );
-      }
-      return true;
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Sipariş kaydedildi fakat mutfak kuyruğuna iletilemedi: $error',
-            ),
-            backgroundColor: Colors.orange.shade700,
-          ),
-        );
-      }
-      return false;
+    }
+    if (stackTrace != null) {
+      debugPrint('$stackTrace');
     }
   }
 
-  Future<void> _markTableOrderSentWithKitchenRouting(
-    Map<String, dynamic> order, {
-    List<Map<String, dynamic>>? overrideItems,
-  }) async {
-    final orderId = order['id']?.toString() ?? '';
-    final sellerId = _authService.currentUser?.id ?? '';
-    final tableNumber = _garsonTableNumberFromOrder(order);
-    if (orderId.isEmpty || sellerId.isEmpty || tableNumber <= 0) return;
-    final items = overrideItems ?? _garsonExtractItems(order);
-    try {
-      await _storeService.updateTableOrder(
-        orderId,
-        status: 'sent',
-        items: overrideItems,
-      );
-      await _dispatchKitchenPrintJobs(
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-        items: items,
-        showSuccess: true,
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Sipariş güncellenemedi: $error')));
+  String _localPrintUserMessage(
+    Object error, {
+    required bool localPrintCallReached,
+  }) {
+    if (!localPrintCallReached) {
+      final normalized = error.toString().toLowerCase();
+      if (normalized.contains('stores') ||
+          normalized.contains('business_name')) {
+        return 'Mağaza bilgisi alınamadı. Adisyon hazırlanamadı.';
+      }
     }
+    if (error is LocalPrintServiceException) {
+      final normalized = error.message.toLowerCase();
+      if (normalized.contains('baglanilamadi')) {
+        return 'Yazıcı servisi kapalı. Lütfen bu bilgisayarda yazıcı servisini başlatın.';
+      }
+      if (normalized.contains('zaman asimina')) {
+        return 'Yazıcı servisi yanıt vermiyor. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+      }
+      if (error.statusCode != null) {
+        return 'Adisyon yazdırılamadı. Lütfen yazıcı servisini kontrol edin.';
+      }
+      return localPrintCallReached
+          ? 'Adisyon yazdırılamadı. Lütfen yazıcı servisini kontrol edin.'
+          : 'Yazıcı servisine erişilemedi. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+    }
+    final rawMessage = error.toString().replaceFirst('Exception: ', '').trim();
+    if (rawMessage.isEmpty) {
+      return localPrintCallReached
+          ? 'Adisyon yazdırılamadı. Lütfen yazıcı servisini kontrol edin.'
+          : 'Yazıcı servisine erişilemedi. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+    }
+    return localPrintCallReached
+        ? 'Adisyon yazdırılamadı. $rawMessage'
+        : 'Adisyon yazdırılamadı: $rawMessage';
   }
 
   Future<void> _printGarsonAdisyon({
     required int tableNumber,
     List<Map<String, dynamic>>? orders,
+    String uiAction = 'adisyon_button',
   }) async {
+    final watch = Stopwatch()..start();
+    _logLocalReceiptEvent(
+      'buttonPressed',
+      uiAction: uiAction,
+      tableNumber: tableNumber,
+      orders: orders,
+      guard: 'button_press',
+      guardResult: 'started',
+      mappingStatus: 'not_checked_yet',
+    );
     if (!kIsWeb) {
+      _logLocalReceiptEvent(
+        'guardFail',
+        uiAction: uiAction,
+        tableNumber: tableNumber,
+        orders: orders,
+        guard: 'platform_web_only',
+        guardResult: 'blocked_non_web',
+        mappingStatus: 'not_applicable',
+        durationMs: watch.elapsedMilliseconds,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -5012,6 +7474,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
     final sellerId = _authService.currentUser?.id ?? '';
     if (sellerId.isEmpty) {
+      _logLocalReceiptEvent(
+        'guardFail',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        orders: orders,
+        guard: 'seller_session',
+        guardResult: 'blocked_empty_seller',
+        mappingStatus: 'not_applicable',
+        durationMs: watch.elapsedMilliseconds,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Satıcı oturumu bulunamadı.')),
@@ -5019,14 +7492,58 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       return;
     }
 
+    final printService = LocalPrintService();
+    var localPrintCallReached = false;
+    var storeId = '';
+    const storeContextQuery =
+        'select=seller_id,business_name,phone,district,city '
+        'filter=seller_id=eq.{sellerId}';
     try {
-      final tableOrders =
-          orders ??
-          await _storeService.getTableOrdersByTable(
-            sellerId: sellerId,
-            tableNumber: tableNumber,
-          );
+      _logLocalReceiptEvent(
+        'ordersFetchStart',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        orders: orders,
+        guard: 'table_orders_fetch',
+        guardResult: 'started',
+        mappingStatus: 'not_required_local_print',
+        durationMs: watch.elapsedMilliseconds,
+      );
+      final liveTableOrders = await _storeService.getTableOrdersByTable(
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+      );
+      final tableOrders = liveTableOrders.isNotEmpty
+          ? liveTableOrders
+          : (orders ?? const <Map<String, dynamic>>[]);
+      _logLocalReceiptEvent(
+        'ordersFetchDone',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        orders: tableOrders,
+        guard: 'table_orders_fetch',
+        guardResult: 'resolved',
+        emptyBranch: tableOrders.isEmpty
+            ? 'table_orders_empty_after_live_and_fallback'
+            : 'table_orders_available',
+        mappingStatus: 'not_required_local_print',
+        durationMs: watch.elapsedMilliseconds,
+      );
       if (tableOrders.isEmpty) {
+        _logLocalReceiptEvent(
+          'guardFail',
+          uiAction: uiAction,
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          orders: tableOrders,
+          guard: 'table_orders_non_empty',
+          guardResult: 'blocked_empty_orders',
+          emptyBranch: 'table_orders_empty_after_live_and_fallback',
+          mappingStatus: 'not_required_local_print',
+          durationMs: watch.elapsedMilliseconds,
+        );
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Masa $tableNumber için adisyon yok.')),
@@ -5034,128 +7551,201 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return;
       }
 
-      final htmlEscape = const HtmlEscape();
-      final createdAt = DateTime.now().toLocal();
-      final dateLabel =
-          '${createdAt.day.toString().padLeft(2, '0')}.${createdAt.month.toString().padLeft(2, '0')}.${createdAt.year}';
-      final timeLabel =
-          '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
-      final storeRow = await Supabase.instance.client
-          .from('stores')
-          .select('business_name, phone, district, city')
-          .eq('seller_id', sellerId)
-          .maybeSingle();
-      final storeName = _storeNameController.text.trim().isNotEmpty
-          ? _storeNameController.text.trim()
-          : (storeRow?['business_name']?.toString().trim().isNotEmpty ?? false)
-          ? storeRow!['business_name'].toString().trim()
-          : 'Mağaza';
-      final rawPhone = _phoneController.text.trim().isNotEmpty
-          ? _phoneController.text.trim()
-          : (storeRow?['phone']?.toString().trim().isNotEmpty ?? false)
-          ? storeRow!['phone'].toString().trim()
-          : '-';
-      final branchSource = _selectedDistrict.trim().isNotEmpty
-          ? _selectedDistrict.trim()
-          : (storeRow?['district']?.toString().trim().isNotEmpty ?? false)
-          ? storeRow!['district'].toString().trim()
-          : (_selectedCity.trim().isNotEmpty
-                ? _selectedCity.trim()
-                : ((storeRow?['city']?.toString().trim().isNotEmpty ?? false)
-                      ? storeRow!['city'].toString().trim()
-                      : 'Merkez'));
-      final upperBranchSource = branchSource.toUpperCase();
-      final branchLabel =
-          (upperBranchSource.contains('ŞUBE') ||
-              upperBranchSource.contains('SUBE'))
-          ? upperBranchSource
-          : '$upperBranchSource ŞUBE';
-      final rows = <String>[];
-      double grandTotal = 0;
-
-      for (final order in tableOrders) {
-        for (final item in _garsonExtractItems(order)) {
-          final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-          final unit = _garsonParsePrice(item['price']);
-          final lineTotal = qty * unit;
-          grandTotal += lineTotal;
-          final notes = <String>[
-            if ((item['gramaj']?.toString() ?? '').trim().isNotEmpty)
-              item['gramaj'].toString().trim(),
-            if ((item['notes']?.toString() ?? '').trim().isNotEmpty)
-              item['notes'].toString().trim(),
-          ].join(' · ');
-          rows.add('''
-            <tr>
-              <td style="padding:7px 4px;border-bottom:1px solid #e5e7eb;">
-                <div style="font-weight:700;color:#111827;">${htmlEscape.convert(item['name']?.toString() ?? '-')}</div>
-                ${notes.isEmpty ? '' : '<div style="font-size:11px;color:#6b7280;margin-top:2px;">${htmlEscape.convert(notes)}</div>'}
-              </td>
-              <td style="padding:7px 4px;border-bottom:1px solid #e5e7eb;text-align:center;white-space:nowrap;">$qty ADET</td>
-              <td style="padding:7px 4px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;white-space:nowrap;">${_garsonFormatMoney(lineTotal)}</td>
-            </tr>
-          ''');
-        }
+      _logLocalReceiptEvent(
+        'preflightHealthCheck',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        orders: tableOrders,
+        guard: 'local_print_service.health',
+        guardResult: 'started',
+        mappingStatus: 'not_required_local_print',
+        durationMs: watch.elapsedMilliseconds,
+      );
+      final healthStatus = await printService.checkAvailability();
+      _applyLocalPrintStatus(healthStatus, reason: 'adisyon_preflight');
+      if (!healthStatus.isAvailable) {
+        _logLocalReceiptEvent(
+          'blockedByUnavailableService',
+          uiAction: uiAction,
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          orders: tableOrders,
+          guard: 'local_print_service.health',
+          guardResult: 'blocked_unavailable_service',
+          emptyBranch: 'service_unavailable_preflight',
+          mappingStatus: 'not_required_local_print',
+          localPrintCallReached: false,
+          durationMs: watch.elapsedMilliseconds,
+          error: _localPrintHealthMessage(healthStatus),
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_localPrintHealthMessage(healthStatus))),
+        );
+        return;
       }
 
-      const discountTotal = 0.0;
-      final netTotal = grandTotal - discountTotal;
-      final htmlBody =
-          '''
-        <div style="max-width:420px;margin:0 auto;color:#111827;font-family:Arial,sans-serif;">
-          <div style="text-align:center;font-size:28px;font-weight:900;letter-spacing:0.5px;">${htmlEscape.convert(storeName)}</div>
-          <div style="margin-top:8px;padding:6px 0;border-top:1px dashed #111827;border-bottom:1px dashed #111827;display:flex;justify-content:space-between;font-size:16px;font-weight:700;">
-            <span>${htmlEscape.convert(branchLabel)}</span>
-            <span>Tel: ${htmlEscape.convert(rawPhone)}</span>
-          </div>
-          <div style="margin-top:8px;padding:6px 0;border-bottom:1px solid #d1d5db;display:flex;justify-content:space-between;font-size:15px;font-weight:700;">
-            <span>Tarih: $dateLabel &nbsp; Saat: $timeLabel</span>
-            <span>Masa No: $tableNumber</span>
-          </div>
-          <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;">
-            <thead>
-              <tr>
-                <th style="text-align:left;padding:7px 4px;border-bottom:2px solid #111827;">Ürünler</th>
-                <th style="text-align:center;padding:7px 4px;border-bottom:2px solid #111827;width:100px;">Adet</th>
-                <th style="text-align:right;padding:7px 4px;border-bottom:2px solid #111827;width:120px;">Tutar</th>
-              </tr>
-            </thead>
-            <tbody>${rows.join()}</tbody>
-          </table>
-          <div style="margin-top:10px;border-top:1px dashed #111827;padding-top:8px;font-size:15px;">
-            <div style="display:flex;justify-content:space-between;padding:2px 0;">
-              <span>Adisyon Toplam</span>
-              <span>${_garsonFormatMoney(grandTotal)}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;padding:2px 0;">
-              <span>İndirim</span>
-              <span>${_garsonFormatMoney(discountTotal)}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;padding:2px 0;font-weight:700;">
-              <span>Net Toplam</span>
-              <span>${_garsonFormatMoney(netTotal)}</span>
-            </div>
-          </div>
-          <div style="margin-top:14px;padding-top:10px;border-top:2px solid #111827;text-align:center;">
-            <div style="font-size:28px;font-weight:900;">Ödenecek Toplam : ${_garsonFormatMoney(netTotal)}</div>
-            <div style="margin-top:8px;font-size:18px;">Teşekkür Ederiz</div>
-          </div>
-        </div>
-      ''';
+      _logLocalReceiptEvent(
+        'storeContextFetchStart',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+        orders: tableOrders,
+        guard: 'stores.select',
+        guardResult: 'started',
+        emptyBranch: 'store_context_fetch_started',
+        mappingStatus: 'not_required_local_print',
+        durationMs: watch.elapsedMilliseconds,
+        queryTable: 'stores',
+        query: storeContextQuery.replaceFirst('{sellerId}', sellerId),
+      );
+      late final Map<String, String> storeContext;
+      try {
+        storeContext = await _loadGarsonReceiptStoreContext(sellerId);
+      } catch (error, stackTrace) {
+        _logLocalReceiptEvent(
+          'storeContextFetchFail',
+          uiAction: uiAction,
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          orders: tableOrders,
+          error: error,
+          stackTrace: stackTrace,
+          guard: 'stores.select',
+          guardResult: 'failed',
+          emptyBranch: 'store_context_fetch_failed',
+          mappingStatus: 'not_required_local_print',
+          durationMs: watch.elapsedMilliseconds,
+          queryTable: 'stores',
+          query: storeContextQuery.replaceFirst('{sellerId}', sellerId),
+        );
+        rethrow;
+      }
+      storeId = storeContext['store_id'] ?? '';
+      _logLocalReceiptEvent(
+        'payloadBuildStart',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        storeId: storeId,
+        tableNumber: tableNumber,
+        orders: tableOrders,
+        guard: 'payload_build',
+        guardResult: 'started',
+        emptyBranch: 'payload_build_started',
+        mappingStatus: 'not_required_local_print',
+        durationMs: watch.elapsedMilliseconds,
+      );
+      late final Map<String, dynamic> payload;
+      try {
+        payload = _buildGarsonReceiptPayload(
+          tableNumber: tableNumber,
+          tableOrders: tableOrders,
+          storeContext: storeContext,
+        );
+      } catch (error, stackTrace) {
+        _logLocalReceiptEvent(
+          'payloadBuildFail',
+          uiAction: uiAction,
+          sellerId: sellerId,
+          storeId: storeId,
+          tableNumber: tableNumber,
+          orders: tableOrders,
+          error: error,
+          stackTrace: stackTrace,
+          guard: 'payload_build',
+          guardResult: 'failed',
+          emptyBranch: 'payload_build_failed',
+          mappingStatus: 'not_required_local_print',
+          durationMs: watch.elapsedMilliseconds,
+        );
+        rethrow;
+      }
+      _logLocalReceiptEvent(
+        'payloadPrepared',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        storeId: storeId,
+        tableNumber: tableNumber,
+        orders: tableOrders,
+        payload: payload,
+        guard: 'payload_build',
+        guardResult: 'passed',
+        mappingStatus: 'not_required_local_print',
+        durationMs: watch.elapsedMilliseconds,
+      );
+      localPrintCallReached = true;
+      _logLocalReceiptEvent(
+        'serviceCallStart',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        storeId: storeId,
+        tableNumber: tableNumber,
+        orders: tableOrders,
+        payload: payload,
+        guard: 'local_print_service.printReceipt',
+        guardResult: 'reached',
+        mappingStatus: 'not_required_local_print',
+        localPrintCallReached: localPrintCallReached,
+        durationMs: watch.elapsedMilliseconds,
+      );
+      await printService.printReceipt(payload);
+      _logLocalReceiptEvent(
+        'requestSuccess',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        storeId: storeId,
+        tableNumber: tableNumber,
+        orders: tableOrders,
+        payload: payload,
+        guard: 'local_print_service.printReceipt',
+        guardResult: 'completed',
+        mappingStatus: 'not_required_local_print',
+        localPrintCallReached: localPrintCallReached,
+        durationMs: watch.elapsedMilliseconds,
+      );
 
-      BrowserFileDownload.openPrintHtml(
-        title: 'Adisyon Masa $tableNumber',
-        htmlBody: htmlBody,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Adisyon yazdırma penceresi açıldı.')),
-      );
-    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Adisyon oluşturulamadı: $error')));
+      ).showSnackBar(const SnackBar(content: Text('Adisyon yazdırıldı')));
+    } catch (error, stackTrace) {
+      _logLocalReceiptEvent(
+        'requestFail',
+        uiAction: uiAction,
+        sellerId: sellerId,
+        storeId: storeId,
+        tableNumber: tableNumber,
+        orders: orders,
+        error: error,
+        stackTrace: stackTrace,
+        guard: localPrintCallReached
+            ? 'local_print_service.printReceipt'
+            : 'pre_print_guard_or_fetch',
+        guardResult: 'failed',
+        emptyBranch: localPrintCallReached ? 'local_print_request_failed' : '-',
+        mappingStatus: 'not_required_local_print',
+        localPrintCallReached: localPrintCallReached,
+        durationMs: watch.elapsedMilliseconds,
+      );
+      debugPrint(
+        'SellerPanel local receipt print failed for table '
+        '$tableNumber: $error',
+      );
+      debugPrint('$stackTrace');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _localPrintUserMessage(
+              error,
+              localPrintCallReached: localPrintCallReached,
+            ),
+          ),
+        ),
+      );
+    } finally {
+      printService.dispose();
     }
   }
 
@@ -5221,6 +7811,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
       if (!mounted) return;
       setState(() {
+        _invalidateSellerTableOrdersFallbackFuture();
         _webGarsonClosedTableAt[tableNumber] = DateTime.now();
         _mobileGarsonDraftItemsByTable.remove(tableNumber);
         _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
@@ -5278,16 +7869,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Color _mobileGarsonStatusColor(String? status, {required bool hasOrder}) {
     if (!hasOrder) return const Color(0xFF94A3B8);
     switch ((status ?? '').toLowerCase()) {
+      case 'call_waiter':
+        return const Color(0xFFEA580C); // turuncu-kırmızı – garson çağrısı
       case 'draft':
-        return const Color(0xFFD97706);
+        return const Color(0xFFD97706); // amber – taslak
       case 'waiting':
       case 'new':
-        return const Color(0xFFEF4444);
-      case 'preparing':
-        return const Color(0xFFF59E0B);
+        return const Color(0xFFEF4444); // kırmızı – yeni sipariş
       case 'sent':
       case 'done':
-        return const Color(0xFF16A34A);
+        return const Color(0xFFF97316); // turuncu – mutfağa iletildi
+      case 'preparing':
+        return const Color(0xFF0891B2); // teal – hazırlanıyor
+      case 'served':
+        return const Color(0xFF16A34A); // yeşil – servis edildi
       default:
         return AppColors.primary;
     }
@@ -5296,16 +7891,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   String _mobileGarsonStatusLabel(String? status, {required bool hasOrder}) {
     if (!hasOrder) return 'Boş Masa';
     switch ((status ?? '').toLowerCase()) {
+      case 'call_waiter':
+        return '🔔 Garson Çağrıldı!';
       case 'draft':
         return 'Taslak Sipariş';
       case 'waiting':
       case 'new':
-        return 'Sipariş Bekleniliyor';
-      case 'preparing':
-        return 'Hazırlanıyor';
+        return 'Yeni Sipariş';
       case 'sent':
       case 'done':
-        return 'Sipariş Gönderildi';
+        return 'Mutfağa İletildi';
+      case 'preparing':
+        return 'Hazırlanıyor';
+      case 'served':
+        return 'Servis Edildi';
       default:
         return 'Sipariş Var';
     }
@@ -5487,7 +8086,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required int tableNumber,
     Map<String, dynamic>? initialOrder,
   }) {
-    final sellerId = _authService.currentUser?.id ?? '';
+    final sellerId =
+        initialOrder?['seller_id']?.toString().trim().isNotEmpty == true
+        ? initialOrder!['seller_id'].toString().trim()
+        : (_storeTables
+                  .firstWhere(
+                    (row) =>
+                        (row['seller_id']?.toString().trim() ?? '').isNotEmpty,
+                    orElse: () => const <String, dynamic>{},
+                  )['seller_id']
+                  ?.toString()
+                  .trim() ??
+              _authService.currentUser?.id ??
+              '');
     if (sellerId.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5509,6 +8120,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       editItemSettings: _editGarsonItemSettings,
       onDraftChanged: _onMobileGarsonDraftChanged,
       onOrderSubmitted: _onMobileGarsonOrderSubmitted,
+      onPrintAdisyon: (selectedTableNumber, orders) => _printGarsonAdisyon(
+        tableNumber: selectedTableNumber,
+        orders: orders,
+        uiAction: 'table_flow_adisyon_button',
+      ),
+      onTableClosed: (closedTableNumber) {
+        if (!mounted) return;
+        setState(() {
+          _invalidateSellerTableOrdersFallbackFuture();
+          _webGarsonClosedTableAt[closedTableNumber] = DateTime.now();
+          _mobileGarsonDraftItemsByTable.remove(closedTableNumber);
+          _mobileGarsonDraftUpdatedAtByTable.remove(closedTableNumber);
+          _mobileGarsonOptimisticSentAtByTable.remove(closedTableNumber);
+          _mobileGarsonOptimisticItemsByTable.remove(closedTableNumber);
+        });
+      },
     );
 
     if (kIsWeb) {
@@ -5536,331 +8163,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
 
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => flowPage));
-  }
-
-  Future<void> _showGarsonCreateOrderDialog({required int tableNumber}) async {
-    final sellerId = _authService.currentUser?.id ?? '';
-    if (sellerId.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Satıcı oturumu bulunamadı.')),
-      );
-      return;
-    }
-    if (_products.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sipariş girmek için önce ürün ekleyin.')),
-      );
-      return;
-    }
-
-    final editableItems = <Map<String, dynamic>>[];
-    var isSubmitting = false;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            return Dialog(
-              backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: 520,
-                  maxHeight: 640,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.table_restaurant_outlined,
-                            color: AppColors.primary,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Masa $tableNumber • Yeni Sipariş',
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            onPressed: () => Navigator.pop(dialogContext),
-                            icon: const Icon(Icons.close),
-                            splashRadius: 18,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Sipariş Kalemleri',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: editableItems.isEmpty
-                            ? Center(
-                                child: Text(
-                                  'Henüz ürün eklenmedi.',
-                                  style: TextStyle(color: Colors.grey.shade500),
-                                ),
-                              )
-                            : ListView.builder(
-                                itemCount: editableItems.length,
-                                itemBuilder: (ctx, index) {
-                                  final item = editableItems[index];
-                                  final name = item['name']?.toString() ?? '-';
-                                  final price = item['price']?.toString() ?? '';
-                                  final quantity =
-                                      (item['quantity'] as num?)?.toInt() ?? 1;
-                                  return Container(
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 8,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFF8FAFC),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: const Color(0xFFE2E8F0),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 7,
-                                            vertical: 4,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFEDE9FE),
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            '$quantity',
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w800,
-                                              color: AppColors.primary,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: Text(
-                                            name,
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                        ),
-                                        if (price.isNotEmpty)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              right: 4,
-                                            ),
-                                            child: Text(
-                                              price,
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w700,
-                                                color: AppColors.primary,
-                                              ),
-                                            ),
-                                          ),
-                                        IconButton(
-                                          onPressed: () {
-                                            setDialogState(() {
-                                              editableItems.removeAt(index);
-                                            });
-                                          },
-                                          icon: const Icon(
-                                            Icons.delete_outline_rounded,
-                                            size: 18,
-                                          ),
-                                          splashRadius: 16,
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: isSubmitting
-                              ? null
-                              : () async {
-                                  final newItem =
-                                      await _pickProductForGarsonOrder(
-                                        dialogContext,
-                                      );
-                                  if (newItem != null && mounted) {
-                                    setDialogState(() {
-                                      editableItems.add(newItem);
-                                    });
-                                  }
-                                },
-                          icon: const Icon(Icons.add_rounded),
-                          label: const Text('Ürün Ekle'),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          TextButton(
-                            onPressed: isSubmitting
-                                ? null
-                                : () => Navigator.pop(dialogContext),
-                            child: const Text('Vazgeç'),
-                          ),
-                          const Spacer(),
-                          FilledButton.icon(
-                            onPressed: isSubmitting
-                                ? null
-                                : () async {
-                                    if (editableItems.isEmpty) {
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Sipariş için en az bir ürün ekleyin.',
-                                          ),
-                                        ),
-                                      );
-                                      return;
-                                    }
-                                    setDialogState(() {
-                                      isSubmitting = true;
-                                    });
-                                    try {
-                                      final created = await StoreService()
-                                          .submitTableOrder(
-                                            sellerId: sellerId,
-                                            tableNumber: tableNumber,
-                                            items: editableItems,
-                                            status: 'sent',
-                                          );
-                                      if (!mounted) return;
-                                      Navigator.pop(dialogContext);
-                                      _showGarsonOrderDialog(
-                                        created,
-                                        _mobileGarsonStatusColor(
-                                          created['status']?.toString(),
-                                          hasOrder: true,
-                                        ),
-                                        tableOrders: [created],
-                                      );
-                                    } catch (error) {
-                                      if (!mounted) return;
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            'Sipariş oluşturulamadı: $error',
-                                          ),
-                                        ),
-                                      );
-                                      setDialogState(() {
-                                        isSubmitting = false;
-                                      });
-                                    }
-                                  },
-                            icon: isSubmitting
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.white,
-                                      ),
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.check_circle_outline_rounded,
-                                  ),
-                            label: Text(
-                              isSubmitting
-                                  ? 'Kaydediliyor...'
-                                  : 'Siparişi Oluştur',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildMobileGarsonGroup(
-    String title,
-    List<Map<String, dynamic>> orders,
-    Color color,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: _mobileSurfaceCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _mobileBadge('Adet', '${orders.length}'),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (orders.isEmpty)
-              Text(
-                'Bu durumda sipariş yok.',
-                style: TextStyle(color: Colors.grey.shade500),
-              )
-            else
-              ...orders.map(
-                (order) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _buildGarsonOrderCard(order, color),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildMobileStoreModule() {
@@ -6213,14 +8515,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         if (filteredItems.isEmpty)
           _mobileSurfaceCard(child: _buildFeedbackEmptyState())
         else
-          ...filteredItems
-              .map(
-                (item) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _buildFeedbackTimelineCard(item),
-                ),
-              )
-              .toList(growable: false),
+          ...filteredItems.map(
+            (item) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _buildFeedbackTimelineCard(item),
+            ),
+          ),
       ],
     );
   }
@@ -6246,6 +8546,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildContent() {
+    _logSellerPanel(
+      'Build',
+      'branch=content_switch selectedTab=${_selectedModule.name}',
+    );
     switch (_selectedModule) {
       case SellerModule.dashboard:
         return _buildDashboard();
@@ -6256,7 +8560,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       case SellerModule.orders:
         return _buildOrdersModule();
       case SellerModule.garson:
-        return _isFoodStoreCategory(_storeCategory)
+        return (_isWaiterEntry || _isFoodStoreCategory(_storeCategory))
             ? _buildGarsonModule()
             : _buildDashboard();
       case SellerModule.system:
@@ -6283,7 +8587,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   List<SellerModule> _visibleSellerModules() {
-    return visibleSellerModules(_storeCategory);
+    return visibleSellerModules(_storeCategory, garsonOnly: _isWaiterEntry);
   }
 
   DateTimeRange get _dashboardDateRange {
@@ -6331,16 +8635,83 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
-  SellerDashboardMetrics get _dashboardMetrics => SellerDashboardService.build(
-    orders: _sellerOrders,
-    products: _products,
-    supportTickets: _supportTickets,
-    sellerQuestions: _sellerQuestions,
-    campaigns: _campaigns,
-    rangeStart: _dashboardDateRange.start,
-    rangeEnd: _dashboardDateRange.end,
-    storeRating: _storeRating,
-  );
+  _SellerDashboardSnapshot get _dashboardSnapshot {
+    final range = _dashboardDateRange;
+    final cacheKey = [
+      _ordersVersion,
+      _productsVersion,
+      _campaignsVersion,
+      _supportTicketsVersion,
+      _sellerQuestionsVersion,
+      _storeRating.toStringAsFixed(2),
+      range.start.toIso8601String(),
+      range.end.toIso8601String(),
+    ].join('|');
+    if (_dashboardSnapshotCacheKey == cacheKey &&
+        _dashboardSnapshotCache != null) {
+      return _dashboardSnapshotCache!;
+    }
+
+    final watch = Stopwatch()..start();
+    final metrics = SellerDashboardService.build(
+      orders: _sellerOrders,
+      products: _products,
+      supportTickets: _supportTickets,
+      sellerQuestions: _sellerQuestions,
+      campaigns: _campaigns,
+      rangeStart: range.start,
+      rangeEnd: range.end,
+      storeRating: _storeRating,
+    );
+    final statusCounts = _dashboardStatusCounts();
+    final weeklyStats = _dashboardRollingPeriodStats(7);
+    final monthlyStats = _dashboardMonthStats();
+    final totalOrderCount = _sellerOrders.length;
+    final deliveredCount = statusCounts['delivered'] ?? 0;
+    final completionRate = totalOrderCount == 0
+        ? 0.0
+        : (deliveredCount / totalOrderCount) * 100;
+    final averageOrderChange = (() {
+      final previousOrderCount = metrics.previousOrderCount;
+      final previousAverage = previousOrderCount == 0
+          ? 0.0
+          : metrics.previousRevenue / previousOrderCount;
+      return SellerDashboardService.calculateChangePercent(
+        current: metrics.averageOrderValue,
+        previous: previousAverage,
+      );
+    })();
+    final topProducts = _dashboardTopProducts();
+    final cargoSummary = _dashboardCargoSummary();
+    final pendingTasks = _dashboardPendingTasks(metrics, statusCounts);
+    final snapshot = _SellerDashboardSnapshot(
+      metrics: metrics,
+      statusCounts: statusCounts,
+      weeklyStats: weeklyStats,
+      monthlyStats: monthlyStats,
+      totalOrderCount: totalOrderCount,
+      completionRate: completionRate,
+      averageOrderChange: averageOrderChange,
+      topProducts: topProducts,
+      cargoSummary: cargoSummary,
+      pendingTasks: pendingTasks,
+    );
+    _dashboardSnapshotCacheKey = cacheKey;
+    _dashboardSnapshotCache = snapshot;
+    _logSellerPanel(
+      'Build',
+      'branch=dashboard_snapshot cache=miss '
+          'durationMs=${watch.elapsedMilliseconds} '
+          'orders=${_sellerOrders.length} '
+          'products=${_products.length} '
+          'campaigns=${_campaigns.length} '
+          'supportTickets=${_supportTickets.length} '
+          'questions=${_sellerQuestions.length}',
+    );
+    return snapshot;
+  }
+
+  SellerDashboardMetrics get _dashboardMetrics => _dashboardSnapshot.metrics;
 
   Future<void> _setDashboardRangePreset(
     SellerDashboardRangePreset preset,
@@ -6531,103 +8902,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     await _setDashboardRangePreset(selected);
   }
 
-  String _dashboardRangeLabel() {
-    switch (_dashboardRangePreset) {
-      case SellerDashboardRangePreset.last7Days:
-        return 'Son 7 Gun';
-      case SellerDashboardRangePreset.last30Days:
-        return 'Son 30 Gun';
-      case SellerDashboardRangePreset.monthToDate:
-        return 'Son 30 Gun';
-      case SellerDashboardRangePreset.yearToDate:
-        return 'Bu Yil';
-      case SellerDashboardRangePreset.custom:
-        final range = _dashboardDateRange;
-        return '${_formatDateShort(range.start)} - ${_formatDateShort(range.end)}';
-    }
-  }
-
   String _formatDateShort(DateTime value) {
     final day = value.day.toString().padLeft(2, '0');
     final month = value.month.toString().padLeft(2, '0');
     return '$day.$month.${value.year}';
   }
 
-  String _formatCurrency(double value) {
-    final amount = value.isFinite ? value : 0;
-    if (amount.abs() >= 1000) {
-      return '₺${amount.toStringAsFixed(0)}';
-    }
-    return '₺${amount.toStringAsFixed(2).replaceAll('.00', '')}';
-  }
-
   String _formatChangeLabel(double percent) {
     final sign = percent > 0 ? '+' : '';
     return '$sign${percent.toStringAsFixed(0)}%';
-  }
-
-  String _formatRelativeTime(DateTime value) {
-    final diff = DateTime.now().difference(value);
-    if (diff.inMinutes < 1) return 'az once';
-    if (diff.inHours < 1) return '${diff.inMinutes} dk once';
-    if (diff.inDays < 1) return '${diff.inHours} sa once';
-    if (diff.inDays < 7) return '${diff.inDays} gun once';
-    return _formatDateShort(value);
-  }
-
-  String _orderStatusLabel(String rawStatus) {
-    switch (rawStatus.toLowerCase()) {
-      case 'confirmed':
-        return 'Onaylandi';
-      case 'preparing':
-        return 'Hazirlaniyor';
-      case 'shipped':
-        return 'Kargoda';
-      case 'delivered':
-        return 'Teslim Edildi';
-      case 'cancelled':
-        return 'Iptal';
-      case 'return_requested':
-        return 'Iade Talebi';
-      case 'return_approved':
-        return 'Iade Onaylandi';
-      case 'return_shipped_back':
-        return 'Iade Yolda';
-      case 'return_received':
-        return 'Iade Alindi';
-      case 'refunded':
-      case 'returned':
-        return 'Iade Tamamlandi';
-      default:
-        return rawStatus.isEmpty ? 'Beklemede' : rawStatus;
-    }
-  }
-
-  Color _orderStatusColor(String rawStatus) {
-    switch (rawStatus.toLowerCase()) {
-      case 'confirmed':
-      case 'preparing':
-        return Colors.orange;
-      case 'shipped':
-        return Colors.blue;
-      case 'delivered':
-        return Colors.green;
-      case 'cancelled':
-        return Colors.red;
-      case 'return_requested':
-        return const Color(0xFFFF8A00);
-      case 'return_approved':
-        return const Color(0xFF6D38FF);
-      case 'return_shipped_back':
-        return const Color(0xFFAF4BFF);
-      case 'return_received':
-        return const Color(0xFF006AA6);
-      case 'refunded':
-      case 'returned':
-        return const Color(0xFFD93E53);
-      default:
-        return Colors.grey;
-    }
   }
 
   List<SellerDashboardSeriesPoint> _dashboardChartPoints(
@@ -6672,6 +8955,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Widget _buildDashboard() => _buildDashboardImpl();
 
   Future<void> _refreshDashboardData() async {
+    final watch = Stopwatch()..start();
+    _logSellerPanel(
+      'Init',
+      'phase=refreshDashboardData '
+          'requestUrl=dashboard:parallel_refresh',
+    );
     await Future.wait([
       _loadStoreProfile(),
       _loadSellerOrders(),
@@ -6679,9 +8968,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     ]);
     _refreshProducts();
     _subscribeSupportTickets();
-    if (mounted) {
-      setState(() {});
-    }
+    _logSellerPanel(
+      'State',
+      'branch=refresh_dashboard_data_complete '
+          'durationMs=${watch.elapsedMilliseconds}',
+    );
   }
 
   Widget _buildDashboardSectionLabel(String label) {
@@ -6907,17 +9198,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return counts;
   }
 
-  double _dashboardAverageOrderChange() {
-    final previousOrderCount = _dashboardMetrics.previousOrderCount;
-    final previousAverage = previousOrderCount == 0
-        ? 0.0
-        : _dashboardMetrics.previousRevenue / previousOrderCount;
-    return SellerDashboardService.calculateChangePercent(
-      current: _dashboardMetrics.averageOrderValue,
-      previous: previousAverage,
-    );
-  }
-
   List<Map<String, dynamic>> _dashboardPendingTasks(
     SellerDashboardMetrics metrics,
     Map<String, int> statusCounts,
@@ -7011,6 +9291,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       DateTime(now.year, now.month, 1),
       DateTime(now.year, now.month, now.day, 23, 59, 59),
     );
+    final stockBySku = <String, int>{};
+    final stockByName = <String, int>{};
+    for (final product in _products) {
+      if (product.sku.trim().isNotEmpty) {
+        stockBySku[product.sku] = product.stock;
+      }
+      stockByName[product.name] = product.stock;
+    }
     final aggregated = <String, Map<String, dynamic>>{};
     for (final order in monthOrders) {
       final name = (order['product_name'] ?? order['productName'] ?? 'Ürün')
@@ -7027,20 +9315,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       0)
                   as num)
               .toDouble();
-      final matchingProduct = _products.cast<SellerProduct?>().firstWhere(
-        (product) =>
-            product != null &&
-            ((product.sku.trim().isNotEmpty && product.sku == code) ||
-                product.name == name),
-        orElse: () => null,
-      );
       final entry = aggregated.putIfAbsent(key, () {
         return {
           'name': name,
           'code': code,
           'quantity': 0,
           'revenue': 0.0,
-          'stock': matchingProduct?.stock ?? 0,
+          'stock': stockBySku[code] ?? stockByName[name] ?? 0,
         };
       });
       entry['quantity'] = (entry['quantity'] as int) + quantity;
@@ -7247,265 +9528,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return '₺${_formatDashboardNumber(value.round())}';
   }
 
-  Widget _buildEnhancedKPICard(
-    String title,
-    String value,
-    IconData icon,
-    Color color,
-    String change,
-    String subtitle,
-    bool isPositive,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: color, size: 22),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: isPositive
-                      ? Colors.green.withOpacity(0.1)
-                      : Colors.orange.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isPositive ? Icons.arrow_upward : Icons.warning,
-                      size: 12,
-                      color: isPositive ? Colors.green : Colors.orange,
-                    ),
-                    const SizedBox(width: 2),
-                    Text(
-                      change,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: isPositive ? Colors.green : Colors.orange,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF111827),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeroDataPill(IconData icon, String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDashboardInsightStrip(SellerDashboardMetrics metrics) {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildQuickInsightCard(
-            'Aktif Kampanya',
-            '${metrics.activeCampaigns}',
-            Icons.local_offer_rounded,
-            const Color(0xFFEC4899),
-            '${_campaigns.length} toplam kampanya',
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildQuickInsightCard(
-            'Yanit Bekleyen Soru',
-            '${metrics.unansweredQuestions}',
-            Icons.forum_outlined,
-            const Color(0xFFF59E0B),
-            'Musteri sorularini hizla cevaplayin',
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildQuickInsightCard(
-            'Dusuk Stok',
-            '${metrics.lowStockProducts}',
-            Icons.inventory_2_outlined,
-            const Color(0xFFEF4444),
-            '5 adet ve alti urunler',
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildQuickInsightCard(
-            'Aktif Urun',
-            '${metrics.activeProducts}',
-            Icons.widgets_outlined,
-            const Color(0xFF0EA5E9),
-            '${metrics.totalProducts} urunun icinde',
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickInsightCard(
-    String title,
-    String value,
-    IconData icon,
-    Color color,
-    String subtitle,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF111827),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPerformanceBadge(String title, String value, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: RichText(
-        text: TextSpan(
-          children: [
-            TextSpan(
-              text: '$title: ',
-              style: TextStyle(
-                color: Colors.grey.shade700,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            TextSpan(
-              text: value,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildEnhancedSalesChart(SellerDashboardMetrics metrics) {
     final points = _dashboardChartPoints(metrics);
     final hasData = points.any((point) => point.revenue > 0);
@@ -7629,416 +9651,428 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return '₺${value.toStringAsFixed(0)}';
   }
 
-  Widget _buildQuickStatCard(
-    String title,
-    String value,
-    IconData icon,
-    Color color,
-    String subtitle,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+  void _toggleProductQuickEditMode() {
+    setState(() {
+      _isProductQuickEditMode = !_isProductQuickEditMode;
+      if (_isProductQuickEditMode) {
+        _syncProductQuickEditDrafts(_products);
+      } else {
+        _productQuickEditDrafts = <String, ProductQuickEditDraft>{};
+      }
+    });
+  }
+
+  ProductQuickEditDraft _draftForProduct(SellerProduct product) {
+    return _productQuickEditDrafts[product.id] ??
+        ProductQuickEditDraft.fromProduct(product);
+  }
+
+  SellerProduct? _findSellerProductById(String productId) {
+    for (final product in _products) {
+      if (product.id == productId) return product;
+    }
+    return null;
+  }
+
+  int _indexOfSellerProduct(String productId) {
+    return _products.indexWhere(
+      (SellerProduct product) => product.id == productId,
     );
   }
 
-  Widget _buildEnhancedRecentOrdersList(SellerDashboardMetrics metrics) {
-    if (metrics.recentOrders.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 24.0),
-          child: Column(
-            children: [
-              Icon(
-                Icons.shopping_bag_outlined,
-                size: 48,
-                color: Colors.grey.shade300,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Henuz siparisiniz bulunmuyor',
-                style: TextStyle(color: Colors.grey.shade500),
-              ),
-            ],
-          ),
-        ),
+  SellerProduct _copySellerProductWith(
+    SellerProduct product, {
+    String? name,
+    double? price,
+    String? status,
+    int? stock,
+  }) {
+    final double resolvedPrice = price ?? product.price;
+    return SellerProduct(
+      id: product.id,
+      name: name ?? product.name,
+      brand: product.brand,
+      mainCategory: product.mainCategory,
+      subCategory: product.subCategory,
+      price: resolvedPrice,
+      pricingType: product.pricingType,
+      portionPrice: product.isWeightPriced
+          ? product.portionPrice
+          : resolvedPrice,
+      pricePerKg: product.isWeightPriced ? resolvedPrice : product.pricePerKg,
+      serviceControlType: product.serviceControlType,
+      minPortion: product.minPortion,
+      maxPortion: product.maxPortion,
+      portionStep: product.portionStep,
+      defaultWeightGrams: product.defaultWeightGrams,
+      minWeightGrams: product.minWeightGrams,
+      weightStepGrams: product.weightStepGrams,
+      maxWeightGrams: product.maxWeightGrams,
+      discountPrice: product.discountPrice,
+      stock: stock ?? product.stock,
+      sku: product.sku,
+      status: status ?? product.status,
+      imageUrl: product.imageUrl,
+      imageUrls: product.imageUrls,
+      description: product.description,
+      specifications: product.specifications,
+      preparationTime: product.preparationTime,
+      createdAt: product.createdAt,
+      attributes: product.attributes,
+      storeName: product.storeName,
+      videoUrl: product.videoUrl,
+      videoPath: product.videoPath,
+      videoPublicUrl: product.videoPublicUrl,
+      thumbnailPath: product.thumbnailPath,
+      thumbnailPublicUrl: product.thumbnailPublicUrl,
+      videoDurationSeconds: product.videoDurationSeconds,
+      videoSizeBytes: product.videoSizeBytes,
+      thumbnailSizeBytes: product.thumbnailSizeBytes,
+      videoStatus: product.videoStatus,
+      variants: product.variants,
+      accessories: product.accessories,
+      additionalInfo: product.additionalInfo,
+      additionalInfoItems: product.additionalInfoItems,
+      faq: product.faq,
+      stationId: product.stationId,
+      printerRoutingEnabled: product.printerRoutingEnabled,
+    );
+  }
+
+  void _replaceProductInLocalState(SellerProduct updatedProduct) {
+    _products = _products
+        .map(
+          (SellerProduct product) =>
+              product.id == updatedProduct.id ? updatedProduct : product,
+        )
+        .toList(growable: false);
+  }
+
+  SellerProduct? _removeProductFromLocalState(String productId) {
+    final SellerProduct? removedProduct = _findSellerProductById(productId);
+    if (removedProduct == null) return null;
+    _products = _products
+        .where((SellerProduct product) => product.id != productId)
+        .toList(growable: false);
+    _productQuickEditDrafts.remove(productId);
+    return removedProduct;
+  }
+
+  void _restoreProductInLocalState(int index, SellerProduct product) {
+    final List<SellerProduct> nextProducts = List<SellerProduct>.from(
+      _products,
+    );
+    if (index >= 0 && index <= nextProducts.length) {
+      nextProducts.insert(index, product);
+    } else {
+      nextProducts.add(product);
+    }
+    _products = nextProducts;
+  }
+
+  void _updateProductQuickEditDraft(ProductQuickEditDraft draft) {
+    setState(() {
+      _productQuickEditDrafts[draft.productId] = draft;
+    });
+  }
+
+  void _resetProductQuickEditDraft(String productId) {
+    final product = _findSellerProductById(productId);
+    if (product == null) return;
+    setState(() {
+      _productQuickEditDrafts[productId] = ProductQuickEditDraft.fromProduct(
+        product,
       );
+    });
+  }
+
+  String _friendlyQuickEditError(Object error) {
+    final raw = error.toString().replaceFirst('Exception: ', '').trim();
+    if (raw.isEmpty) return 'Satır kaydedilemedi.';
+    return raw;
+  }
+
+  Future<void> _saveProductQuickEditDraft(String productId) async {
+    final existingDraft = _productQuickEditDrafts[productId];
+    final previousProduct = _findSellerProductById(productId);
+    if (existingDraft == null ||
+        previousProduct == null ||
+        existingDraft.isSaving) {
+      return;
     }
 
-    return Column(
-      children: metrics.recentOrders.map((order) {
-        final status = _orderStatusLabel((order['status'] ?? '').toString());
-        final statusColor = _orderStatusColor(
-          (order['status'] ?? '').toString(),
+    final validationError = existingDraft.validationError;
+    if (validationError != null) {
+      setState(() {
+        _productQuickEditDrafts[productId] = existingDraft.copyWith(
+          errorMessage: validationError,
+          successMessage: null,
         );
-        final productName =
-            (order['product_name'] ?? order['productName'] ?? 'Urun')
-                .toString();
-        final orderId =
-            (order['order_id'] ?? order['orderId'] ?? order['id'] ?? '-')
-                .toString();
-        final createdAt = DateTime.tryParse(
-          (order['created_at'] ?? order['createdAt'] ?? '').toString(),
-        );
-        final total =
-            (order['total_price'] ??
-                    order['totalPrice'] ??
-                    order['total_amount'] ??
-                    order['totalAmount'] ??
-                    0)
-                as num;
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.shopping_bag_outlined,
-                  color: statusColor,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      productName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '#$orderId • ${createdAt == null ? '-' : _formatDateShort(createdAt)}',
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    _formatCurrency(total.toDouble()),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      status,
-                      style: TextStyle(
-                        color: statusColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildActivityList(SellerDashboardMetrics metrics) {
-    if (metrics.activities.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 24.0),
-          child: Column(
-            children: [
-              Icon(
-                Icons.notifications_none,
-                size: 48,
-                color: Colors.grey.shade300,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Henuz bir aktivite yok',
-                style: TextStyle(color: Colors.grey.shade500),
-              ),
-            ],
-          ),
-        ),
-      );
+      });
+      return;
     }
 
-    return Column(
-      children: metrics.activities.map((activity) {
-        final color = switch (activity.type) {
-          'support' => const Color(0xFF7C3AED),
-          'question' => const Color(0xFFF59E0B),
-          _ => const Color(0xFF0EA5E9),
-        };
-        final icon = switch (activity.type) {
-          'support' => Icons.support_agent_rounded,
-          'question' => Icons.forum_outlined,
-          _ => Icons.local_shipping_outlined,
-        };
+    final SellerProduct optimisticProduct = _copySellerProductWith(
+      previousProduct,
+      name: existingDraft.trimmedName,
+      price: existingDraft.parsedPrice,
+      stock: existingDraft.parsedStock,
+      status: existingDraft.storageStatus,
+    );
+    final bool hasPendingImageSelection =
+        existingDraft.hasPendingImageSelection;
+    final String optimisticMessage = hasPendingImageSelection
+        ? 'Metin, fiyat ve stok aninda guncellendi. Gorsel degisikligi bu hizli kayda dahil edilmedi.'
+        : 'Satır anında güncellendi.';
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: color, size: 18),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      activity.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      activity.subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                _formatRelativeTime(activity.timestamp),
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-              ),
-            ],
+    setState(() {
+      _replaceProductInLocalState(optimisticProduct);
+      _productQuickEditDrafts[productId] =
+          ProductQuickEditDraft.fromProduct(optimisticProduct).copyWith(
+            isSaving: true,
+            errorMessage: null,
+            successMessage: optimisticMessage,
+          );
+    });
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text('${optimisticProduct.name} anında güncellendi')),
+      );
+
+    try {
+      final savedProduct = await _productQuickEditService.save(existingDraft);
+      if (!mounted) return;
+      setState(() {
+        _replaceProductInLocalState(savedProduct);
+        _productQuickEditDrafts[productId] =
+            ProductQuickEditDraft.fromProduct(savedProduct).copyWith(
+              successMessage: hasPendingImageSelection
+                  ? 'Metin, fiyat ve stok kaydedildi. Gorsel icin urun duzenleme ekranini kullanin.'
+                  : 'Satır kaydedildi.',
+            );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _replaceProductInLocalState(previousProduct);
+        _productQuickEditDrafts[productId] = existingDraft.copyWith(
+          isSaving: false,
+          errorMessage: _friendlyQuickEditError(error),
+          successMessage: null,
+        );
+      });
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              '${previousProduct.name} geri alindi: ${_friendlyQuickEditError(error)}',
+            ),
+            backgroundColor: Colors.red.shade600,
           ),
         );
-      }).toList(),
-    );
-  }
-
-  Widget _buildQuickActionButton(
-    String label,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) {
-    return Expanded(
-      child: PremiumPressable(
-        hoverLift: 1.5,
-        hoverScale: 1.01,
-        child: Material(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Column(
-                children: [
-                  Icon(icon, color: color, size: 28),
-                  const SizedBox(height: 8),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: color,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+    }
   }
 
   Widget _buildProductsModule() {
+    const double imageColumnWidth = 88;
+    const double priceColumnWidth = 116;
+    const double stockColumnWidth = 84;
+    const double statusColumnWidth = 120;
+    const double actionColumnWidth = 120;
+    final List<SellerProduct> displayedProducts = _displayedProducts();
+    final Map<_ProductHealthFilter, int> healthCounts = _productHealthCounts();
+    final bool hasProductFilters =
+        _productSearchQuery.trim().isNotEmpty ||
+        _selectedProductHealthFilter != _ProductHealthFilter.all;
+
     return Column(
       children: [
         // Üst Bar: Arama, Filtre, Yeni Ürün
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Ürün ara...',
-                    prefixIcon: const Icon(Icons.search, size: 20),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.filter_list, size: 18),
-                label: const Text('Filtrele'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const AddProductPage(),
+              LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  final bool compactToolbar = constraints.maxWidth < 1320;
+                  final Widget searchField = TextField(
+                    controller: _productSearchController,
+                    onChanged: (String value) {
+                      setState(() {
+                        _productSearchQuery = value;
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Ürün ara...',
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      suffixIcon: _productSearchQuery.trim().isEmpty
+                          ? null
+                          : IconButton(
+                              onPressed: () {
+                                _productSearchController.clear();
+                                setState(() {
+                                  _productSearchQuery = '';
+                                });
+                              },
+                              icon: const Icon(Icons.close, size: 18),
+                              tooltip: 'Aramayı temizle',
+                            ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(
+                          color: AppColors.primary,
+                          width: 1.3,
+                        ),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
                     ),
                   );
-                  if (result == true) {
-                    _refreshProducts();
+                  final List<Widget> actionButtons = <Widget>[
+                    OutlinedButton.icon(
+                      onPressed: () {},
+                      icon: const Icon(Icons.filter_list, size: 18),
+                      label: const Text('Filtrele'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                    ProductQuickEditButton(
+                      isActive: _isProductQuickEditMode,
+                      onPressed: _products.isEmpty
+                          ? null
+                          : _toggleProductQuickEditMode,
+                    ),
+                    BulkProductUploadButton(
+                      onImportCompleted: _refreshProducts,
+                    ),
+                    BulkProductPriceStockUpdateButton(
+                      onUpdateCompleted: _refreshProducts,
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final flow = await _showTemplateCreationPicker();
+                        if (flow == null || !mounted) return;
+                        await _openTemplateEditor(
+                          templateProductType: _templateProductTypeForFlow(
+                            flow,
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.add_box_outlined, size: 18),
+                      label: const Text('Oluştur'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F766E),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AddProductPage(),
+                          ),
+                        );
+                        if (result == true) {
+                          _refreshProducts();
+                        }
+                      },
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Yeni Ürün'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                  ];
+
+                  if (!compactToolbar) {
+                    return Row(
+                      children: [
+                        Expanded(child: searchField),
+                        const SizedBox(width: 10),
+                        ...actionButtons
+                            .expand<Widget>(
+                              (Widget button) => <Widget>[
+                                button,
+                                const SizedBox(width: 10),
+                              ],
+                            )
+                            .toList()
+                          ..removeLast(),
+                      ],
+                    );
                   }
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      searchField,
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: actionButtons,
+                      ),
+                    ],
+                  );
                 },
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Yeni Ürün'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                ),
+              ),
+              const SizedBox(height: 12),
+              _buildProductHealthCenter(
+                counts: healthCounts,
+                totalVisibleProducts: displayedProducts.length,
+                compact: displayedProducts.length > 12,
               ),
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
 
         // Ürün Listesi
         Expanded(
           child: Container(
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(10),
             ),
             child: Column(
               children: [
                 // Tablo Başlıkları
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+                    horizontal: 14,
+                    vertical: 10,
                   ),
                   decoration: BoxDecoration(
                     border: Border(
@@ -8048,12 +10082,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   child: Row(
                     children: [
                       const SizedBox(
-                        width: 60,
+                        width: imageColumnWidth,
                         child: Text(
                           'Görsel',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 12,
+                            fontSize: 11.5,
                           ),
                         ),
                       ),
@@ -8064,7 +10098,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           'Ürün Adı',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 12,
+                            fontSize: 11.5,
                           ),
                         ),
                       ),
@@ -8074,51 +10108,51 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           'Kategori',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 12,
+                            fontSize: 11.5,
                           ),
                         ),
                       ),
                       const SizedBox(width: 16),
                       const SizedBox(
-                        width: 100,
+                        width: priceColumnWidth,
                         child: Text(
                           'Fiyat',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 12,
+                            fontSize: 11.5,
                           ),
                         ),
                       ),
                       const SizedBox(width: 16),
                       const SizedBox(
-                        width: 80,
+                        width: stockColumnWidth,
                         child: Text(
                           'Stok',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 12,
+                            fontSize: 11.5,
                           ),
                         ),
                       ),
                       const SizedBox(width: 16),
                       const SizedBox(
-                        width: 100,
+                        width: statusColumnWidth,
                         child: Text(
                           'Durum',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 12,
+                            fontSize: 11.5,
                           ),
                         ),
                       ),
                       const SizedBox(width: 16),
-                      const SizedBox(
-                        width: 80,
+                      SizedBox(
+                        width: actionColumnWidth,
                         child: Text(
-                          'İşlemler',
+                          _isProductQuickEditMode ? 'Kaydet' : 'İşlemler',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 12,
+                            fontSize: 11.5,
                           ),
                         ),
                       ),
@@ -8130,15 +10164,40 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 Expanded(
                   child: Builder(
                     builder: (context) {
-                      final products = _products;
-                      if (products.isEmpty) {
+                      if (_products.isEmpty) {
                         return _buildEmptyProductList();
                       }
+                      if (displayedProducts.isEmpty) {
+                        return _buildFilteredProductListEmptyState(
+                          hasProductFilters: hasProductFilters,
+                        );
+                      }
                       return ListView.builder(
-                        itemCount: products.length,
+                        itemCount: displayedProducts.length,
                         itemBuilder: (context, index) {
-                          final product = products[index];
-                          return _buildProductRowReal(product);
+                          final product = displayedProducts[index];
+                          if (!_isProductQuickEditMode ||
+                              _isMixedServiceTemplateProduct(product)) {
+                            return _buildProductRowReal(product);
+                          }
+                          final draft = _draftForProduct(product);
+                          return ProductQuickEditRow(
+                            key: ValueKey('quick-edit-${product.id}'),
+                            draft: draft,
+                            categoryLabel: product.subCategory.isNotEmpty
+                                ? '${product.mainCategory} > ${product.subCategory}'
+                                : product.mainCategory,
+                            imageColumnWidth: imageColumnWidth,
+                            priceColumnWidth: priceColumnWidth,
+                            stockColumnWidth: stockColumnWidth,
+                            statusColumnWidth: statusColumnWidth,
+                            actionsColumnWidth: actionColumnWidth,
+                            onChanged: _updateProductQuickEditDraft,
+                            onSave: () =>
+                                _saveProductQuickEditDraft(product.id),
+                            onCancel: () =>
+                                _resetProductQuickEditDraft(product.id),
+                          );
                         },
                       );
                     },
@@ -8152,195 +10211,182 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  Widget _buildProductRow(int index) {
-    final stockCount = [45, 12, 0, 23, 156, 8, 34, 67, 2, 89][index];
-    final isLowStock = stockCount < 10;
-    final isOutOfStock = stockCount == 0;
+  Widget _buildProductHealthCenter({
+    required Map<_ProductHealthFilter, int> counts,
+    required int totalVisibleProducts,
+    required bool compact,
+  }) {
+    final String helperText = _productSearchQuery.trim().isEmpty
+        ? 'Eksik veya aksiyon gerektiren ürünleri tek dokunuşla filtreleyin.'
+        : 'Arama sonucundaki ürünler içinde hızlıca aksiyon gerektirenleri ayıklayın.';
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+        color: const Color(0xFFF8F5FF),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE7D8FF)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Ürün Görseli
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: const Icon(
-              Icons.image_outlined,
-              color: Colors.grey,
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Ürün Adı
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'iPhone 15 Pro Max 256GB',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: const Icon(
+                  Icons.health_and_safety_outlined,
+                  size: 16,
+                  color: AppColors.primary,
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Eksik İçerik Merkezi',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'SKU: PRD${10000 + index}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Kategori
-          Expanded(
-            child: Text(
-              'Elektronik > Telefon',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Fiyat
-          SizedBox(
-            width: 100,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '₺${(index + 1) * 1250}',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (index % 3 == 0)
                   Text(
-                    '₺${(index + 1) * 1500}',
+                    helperText,
                     style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade500,
-                      decoration: TextDecoration.lineThrough,
+                      fontSize: 11.5,
+                      color: Colors.grey.shade700,
                     ),
                   ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Stok
-          SizedBox(
-            width: 80,
-            child: Row(
-              children: [
+                ],
+              ),
+              if (!compact)
                 Container(
-                  width: 8,
-                  height: 8,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
-                    color: isOutOfStock
-                        ? Colors.red
-                        : isLowStock
-                        ? Colors.orange
-                        : Colors.green,
-                    shape: BoxShape.circle,
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: const Color(0xFFE7D8FF)),
+                  ),
+                  child: Text(
+                    '$totalVisibleProducts ürün listeleniyor',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF5B21B6),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  '$stockCount',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: isOutOfStock
-                        ? Colors.red
-                        : isLowStock
-                        ? Colors.orange
-                        : Colors.grey.shade800,
-                  ),
-                ),
-              ],
-            ),
+            ],
           ),
-          const SizedBox(width: 16),
-
-          // Durum
-          SizedBox(
-            width: 100,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: index % 2 == 0
-                    ? Colors.green.shade50
-                    : Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                index % 2 == 0 ? 'Aktif' : 'Taslak',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: index % 2 == 0
-                      ? Colors.green.shade700
-                      : Colors.grey.shade700,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // İşlemler
-          SizedBox(
-            width: 80,
-            child: Row(
-              children: [
-                IconButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            const AddProductPage(isEdit: true),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.edit_outlined, size: 18),
-                  tooltip: 'Düzenle',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: () {},
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    size: 18,
-                    color: Colors.red,
-                  ),
-                  tooltip: 'Sil',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-              ],
-            ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _productHealthFilters()
+                .map((filter) {
+                  return _buildProductHealthFilterChip(
+                    filter: filter,
+                    count: counts[filter] ?? 0,
+                  );
+                })
+                .toList(growable: false),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildProductHealthFilterChip({
+    required _ProductHealthFilter filter,
+    required int count,
+  }) {
+    final bool isSelected = _selectedProductHealthFilter == filter;
+    final Color borderColor = isSelected
+        ? AppColors.primary
+        : const Color(0xFFD7C9F7);
+    final Color backgroundColor = isSelected
+        ? const Color(0xFFF1EAFF)
+        : Colors.white;
+    final Color labelColor = isSelected
+        ? const Color(0xFF5B21B6)
+        : const Color(0xFF475467);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          if (_selectedProductHealthFilter == filter) return;
+          setState(() {
+            _selectedProductHealthFilter = filter;
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: borderColor),
+            boxShadow: isSelected
+                ? const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x14000000),
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ]
+                : const <BoxShadow>[],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _productHealthFilterIcon(filter),
+                size: 15,
+                color: labelColor,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _productHealthFilterLabel(filter),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: labelColor,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? AppColors.primary.withValues(alpha: 0.14)
+                      : const Color(0xFFF4F1FB),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    color: isSelected
+                        ? const Color(0xFF5B21B6)
+                        : const Color(0xFF667085),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -8375,32 +10421,89 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  Widget _buildFilteredProductListEmptyState({
+    required bool hasProductFilters,
+  }) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              hasProductFilters
+                  ? Icons.filter_alt_off_outlined
+                  : Icons.search_off_rounded,
+              size: 64,
+              color: Colors.grey.shade300,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Bu kriterlere uygun ürün bulunamadı',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              hasProductFilters
+                  ? 'Arama veya Eksik İçerik Merkezi filtresini temizleyerek tüm ürünleri tekrar görebilirsiniz.'
+                  : 'Arama terimini güncelleyerek ürünleri tekrar deneyin.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () {
+                _productSearchController.clear();
+                setState(() {
+                  _productSearchQuery = '';
+                  _selectedProductHealthFilter = _ProductHealthFilter.all;
+                });
+              },
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('Filtreleri Temizle'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _getStatusLabel(String status) {
-    switch (status) {
+    switch (_normalizeProductStatusKey(status)) {
       case 'active':
-      case 'Aktif':
         return 'Aktif';
-      case 'pending_approval':
-        return 'Bekleniyor';
+      case 'inactive':
+        return 'Pasif';
+      case 'pending':
+        return 'Beklemede';
       case 'rejected':
         return 'Reddedildi';
       case 'draft':
-      case 'Taslak':
         return 'Taslak';
       default:
-        return status;
+        final String trimmed = status.trim();
+        return trimmed.isEmpty ? 'Bilinmiyor' : trimmed;
     }
   }
 
   Color _getStatusColor(String status, {bool isBackground = true}) {
-    switch (status) {
+    switch (_normalizeProductStatusKey(status)) {
       case 'active':
-      case 'Aktif':
         return isBackground ? Colors.green.shade50 : Colors.green.shade700;
-      case 'pending_approval':
+      case 'inactive':
+        return isBackground ? Colors.grey.shade100 : Colors.grey.shade700;
+      case 'pending':
         return isBackground ? Colors.orange.shade50 : Colors.orange.shade700;
       case 'rejected':
         return isBackground ? Colors.red.shade50 : Colors.red.shade700;
+      case 'draft':
+        return isBackground
+            ? Colors.blueGrey.shade50
+            : Colors.blueGrey.shade700;
       default:
         return isBackground ? Colors.grey.shade100 : Colors.grey.shade700;
     }
@@ -8408,18 +10511,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   // Gerçek ürün verisiyle satır oluşturma
   Widget _buildProductRowReal(SellerProduct product) {
-    final isLowStock = product.stock < 10;
+    final isLowStock = _isLowStockProduct(product);
     final isOutOfStock = product.stock == 0;
-
-    // Use first image from imageUrls if imageUrl is null or empty
-    String? displayImage = product.imageUrl;
-    if ((displayImage == null || displayImage.isEmpty) &&
-        product.imageUrls.isNotEmpty) {
-      displayImage = product.imageUrls.first;
-    }
+    final isTemplate = _isMixedServiceTemplateProduct(product);
+    final bool isDeleting = _deletingProductIds.contains(product.id);
+    const double imageColumnWidth = 80;
+    const double priceColumnWidth = 108;
+    const double stockColumnWidth = 84;
+    const double statusColumnWidth = 120;
+    const double actionColumnWidth = 120;
+    final String? displayImage = _primaryProductImage(product);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
       ),
@@ -8427,21 +10531,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         children: [
           // Ürün Görseli
           Container(
-            width: 60,
-            height: 60,
+            width: imageColumnWidth,
+            height: 64,
             decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8),
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.grey.shade200),
             ),
             child: (displayImage != null && displayImage.isNotEmpty)
                 ? ClipRRect(
-                    borderRadius: BorderRadius.circular(7),
+                    borderRadius: BorderRadius.circular(9),
                     child: OptimizedImage(
                       imageUrlOrPath: displayImage,
                       fit: BoxFit.cover,
-                      cacheWidth: 120,
-                      cacheHeight: 120,
+                      cacheWidth: 176,
+                      cacheHeight: 144,
                       placeholder: const Center(
                         child: SizedBox(
                           width: 20,
@@ -8456,10 +10560,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       ),
                     ),
                   )
-                : const Icon(
-                    Icons.image_outlined,
-                    color: Colors.grey,
-                    size: 24,
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.image_outlined,
+                        color: Colors.grey,
+                        size: 24,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Görsel yok',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
                   ),
           ),
           const SizedBox(width: 16),
@@ -8473,16 +10591,27 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 Text(
                   product.name.isEmpty ? 'İsimsiz Ürün' : product.name,
                   style: const TextStyle(
-                    fontSize: 13,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  'SKU: ${product.sku}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      'SKU: ${product.sku}',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    if (isTemplate) _templateTypeBadge(product),
+                  ],
                 ),
               ],
             ),
@@ -8492,10 +10621,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           // Kategori
           Expanded(
             child: Text(
-              product.subCategory.isNotEmpty
-                  ? '${product.mainCategory} > ${product.subCategory}'
-                  : product.mainCategory,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              _templateCategoryLabel(product),
+              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -8504,22 +10631,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
           // Fiyat
           SizedBox(
-            width: 100,
+            width: priceColumnWidth,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  product.displayPrice,
+                  _templatePreviewPriceLabel(product),
                   style: const TextStyle(
-                    fontSize: 13,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                if (product.hasDiscount)
+                if (product.hasDiscount && !isTemplate)
                   Text(
                     product.originalPrice,
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 10.5,
                       color: Colors.grey.shade500,
                       decoration: TextDecoration.lineThrough,
                     ),
@@ -8531,7 +10658,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
           // Stok
           SizedBox(
-            width: 80,
+            width: stockColumnWidth,
             child: Row(
               children: [
                 Container(
@@ -8548,9 +10675,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  '${product.stock}',
+                  isTemplate ? _templateTypeLabel(product) : '${product.stock}',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w600,
                     color: isOutOfStock
                         ? Colors.red
@@ -8566,17 +10693,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
           // Durum
           SizedBox(
-            width: 100,
+            width: statusColumnWidth,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
               decoration: BoxDecoration(
                 color: _getStatusColor(product.status, isBackground: true),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(5),
               ),
               child: Text(
                 _getStatusLabel(product.status),
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 10.5,
                   fontWeight: FontWeight.w600,
                   color: _getStatusColor(product.status, isBackground: false),
                 ),
@@ -8588,11 +10715,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
           // İşlemler
           SizedBox(
-            width: 80,
+            width: actionColumnWidth,
             child: Row(
               children: [
                 IconButton(
                   onPressed: () async {
+                    if (isTemplate) {
+                      await _openTemplateEditor(existingProduct: product);
+                      return;
+                    }
                     final result = await Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -8604,22 +10735,34 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   },
                   icon: const Icon(Icons.edit_outlined, size: 18),
                   tooltip: 'Düzenle',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: () {
-                    _deleteProduct(product.id);
-                  },
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    size: 18,
-                    color: Colors.red,
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 30,
+                    height: 30,
                   ),
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  onPressed: isDeleting
+                      ? null
+                      : () => _deleteProduct(product.id),
+                  icon: isDeleting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: Colors.red,
+                        ),
                   tooltip: 'Sil',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 30,
+                    height: 30,
+                  ),
                 ),
               ],
             ),
@@ -8630,390 +10773,73 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   void _deleteProduct(String productId) {
+    if (_deletingProductIds.contains(productId)) return;
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Ürünü Sil'),
         content: const Text('Bu ürünü silmek istediğinize emin misiniz?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('İptal'),
           ),
           ElevatedButton(
             onPressed: () async {
-              await _storeService.deleteProduct(productId);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Ürün silindi')));
+              final messenger = ScaffoldMessenger.of(context);
+              final int originalIndex = _indexOfSellerProduct(productId);
+              final SellerProduct? deletedProduct = _findSellerProductById(
+                productId,
+              );
+              final ProductQuickEditDraft? deletedDraft =
+                  _productQuickEditDrafts[productId];
+              if (deletedProduct == null) {
+                Navigator.pop(dialogContext);
+                return;
+              }
+
+              setState(() {
+                _deletingProductIds.add(productId);
+                _removeProductFromLocalState(productId);
+              });
+              Navigator.pop(dialogContext);
+              messenger
+                ..hideCurrentSnackBar()
+                ..showSnackBar(
+                  SnackBar(
+                    content: Text('${deletedProduct.name} listeden kaldırıldı'),
+                  ),
+                );
+
+              try {
+                await _storeService.deleteProduct(productId);
+                if (!mounted) return;
+                setState(() {
+                  _deletingProductIds.remove(productId);
+                });
+              } catch (error) {
+                if (!mounted) return;
+                setState(() {
+                  _deletingProductIds.remove(productId);
+                  _restoreProductInLocalState(originalIndex, deletedProduct);
+                  if (deletedDraft != null) {
+                    _productQuickEditDrafts[productId] = deletedDraft;
+                  }
+                });
+                messenger
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '${deletedProduct.name} geri yüklendi: ${error.toString().replaceFirst('Exception: ', '').trim()}',
+                      ),
+                      backgroundColor: Colors.red.shade600,
+                    ),
+                  );
+              }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Sil'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddProductDialog({bool isEdit = false}) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        child: Container(
-          width: 900,
-          constraints: const BoxConstraints(maxHeight: 700),
-          child: Column(
-            children: [
-              // Dialog Header
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: Colors.grey.shade200),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      isEdit ? Icons.edit : Icons.add_box,
-                      color: AppColors.primary,
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      isEdit ? 'Ürün Düzenle' : 'Yeni Ürün Ekle',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Dialog Content
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [_buildProductFormSection()],
-                  ),
-                ),
-              ),
-
-              // Dialog Footer
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('İptal'),
-                    ),
-                    const SizedBox(width: 12),
-                    OutlinedButton(
-                      onPressed: () {},
-                      child: const Text('Taslak Olarak Kaydet'),
-                    ),
-                    const SizedBox(width: 12),
-                    ElevatedButton(
-                      onPressed: () {},
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: Text(isEdit ? 'Güncelle' : 'Ürünü Yayınla'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProductFormSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Temel Bilgiler
-        _buildFormSectionTitle('Temel Bilgiler', Icons.info_outline),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              flex: 2,
-              child: _buildTextField('Ürün Adı *', 'Ürün adını giriniz'),
-            ),
-            const SizedBox(width: 16),
-            Expanded(child: _buildTextField('Marka *', 'Marka seçiniz')),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDropdown('Ana Kategori *', [
-                'Elektronik',
-                'Giyim',
-                'Ev & Yaşam',
-              ]),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildDropdown('Alt Kategori *', [
-                'Telefon',
-                'Bilgisayar',
-                'Tablet',
-              ]),
-            ),
-            const SizedBox(width: 16),
-            Expanded(child: _buildTextField('Model/Kod', 'Opsiyonel')),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _buildTextField(
-          'Detaylı Açıklama *',
-          'Ürün detaylarını giriniz',
-          maxLines: 5,
-        ),
-        const SizedBox(height: 16),
-        _buildTextField(
-          'Etiketler',
-          'virgül ile ayırarak etiket ekleyin (örn: yeni, popüler)',
-        ),
-
-        const SizedBox(height: 32),
-
-        // Fiyat ve Stok
-        _buildFormSectionTitle('Fiyat ve Stok', Icons.attach_money),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _buildTextField('Satış Fiyatı *', '0.00', prefix: '₺'),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildTextField(
-                'İndirimli Fiyat',
-                'Opsiyonel',
-                prefix: '₺',
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(child: _buildTextField('Stok Miktarı *', '0')),
-            const SizedBox(width: 16),
-            Expanded(child: _buildTextField('SKU/Barkod', 'Opsiyonel')),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDropdown('KDV Oranı *', ['%1', '%8', '%18', '%20']),
-            ),
-            const SizedBox(width: 16),
-            Expanded(child: Container()),
-            const SizedBox(width: 16),
-            Expanded(child: Container()),
-            const SizedBox(width: 16),
-            Expanded(child: Container()),
-          ],
-        ),
-
-        const SizedBox(height: 32),
-
-        // Kargo Bilgileri
-        _buildFormSectionTitle('Kargo ve Boyut', Icons.local_shipping_outlined),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(child: _buildTextField('Ağırlık (kg)', '0.0')),
-            const SizedBox(width: 16),
-            Expanded(child: _buildTextField('En (cm)', '0')),
-            const SizedBox(width: 16),
-            Expanded(child: _buildTextField('Boy (cm)', '0')),
-            const SizedBox(width: 16),
-            Expanded(child: _buildTextField('Yükseklik (cm)', '0')),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDropdown('Kargo Seçeneği *', [
-                'Ücretsiz Kargo',
-                'Alıcı Öder',
-                'Sabit Ücret',
-              ]),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildTextField('Kargo Ücreti', '0.00', prefix: '₺'),
-            ),
-            const SizedBox(width: 16),
-            Expanded(child: Container()),
-            const SizedBox(width: 16),
-            Expanded(child: Container()),
-          ],
-        ),
-
-        const SizedBox(height: 32),
-
-        // Görseller
-        _buildFormSectionTitle('Ürün Görselleri', Icons.image_outlined),
-        const SizedBox(height: 16),
-        Text(
-          'En az 1, en fazla 8 görsel ekleyebilirsiniz. İlk görsel ana görsel olarak kullanılacaktır.',
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            _buildImageUploadBox(isMain: true),
-            _buildImageUploadBox(),
-            _buildImageUploadBox(),
-            _buildImageUploadBox(),
-            _buildImageUploadBox(),
-          ],
-        ),
-
-        const SizedBox(height: 32),
-
-        // Varyantlar
-        _buildFormSectionTitle(
-          'Ürün Varyantları (Opsiyonel)',
-          Icons.palette_outlined,
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _buildTextField(
-                'Renkler',
-                'Virgül ile ayırın (örn: Siyah, Beyaz, Mavi)',
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildTextField(
-                'Bedenler/Boyutlar',
-                'Virgül ile ayırın (örn: S, M, L, XL)',
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFormSectionTitle(String title, IconData icon) {
-    return SellerPanelFormSectionTitle(title: title, icon: icon);
-  }
-
-  Widget _buildTextField(
-    String label,
-    String hint, {
-    int maxLines = 1,
-    String? prefix,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          maxLines: maxLines,
-          decoration: InputDecoration(
-            hintText: hint,
-            prefixText: prefix,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 12,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDropdown(String label, List<String> items) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          decoration: InputDecoration(
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 12,
-            ),
-          ),
-          items: items
-              .map((item) => DropdownMenuItem(value: item, child: Text(item)))
-              .toList(),
-          onChanged: (value) {},
-          hint: const Text('Seçiniz'),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildImageUploadBox({bool isMain = false}) {
-    return Container(
-      width: 120,
-      height: 120,
-      decoration: BoxDecoration(
-        border: Border.all(
-          color: isMain ? AppColors.primary : Colors.grey.shade300,
-          width: 2,
-        ),
-        borderRadius: BorderRadius.circular(8),
-        color: Colors.grey.shade50,
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.add_photo_alternate_outlined,
-            size: 32,
-            color: isMain ? AppColors.primary : Colors.grey.shade400,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            isMain ? 'Ana Görsel' : 'Görsel Ekle',
-            style: TextStyle(
-              fontSize: 11,
-              color: isMain ? AppColors.primary : Colors.grey.shade600,
-              fontWeight: isMain ? FontWeight.w600 : FontWeight.normal,
-            ),
           ),
         ],
       ),
@@ -9112,6 +10938,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   Future<void> _showSellerExternalCargoDialog() async {
     await _loadSellerWalletBalance(silent: true);
+    if (!mounted) return;
     final formKey = GlobalKey<FormState>();
     final customerNameController = TextEditingController();
     final customerPhoneController = TextEditingController();
@@ -10830,8 +12657,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final response = await http
         .get(uri, headers: _cargoGeocodeHeaders())
         .timeout(const Duration(seconds: 7));
-    if (response.statusCode != 200)
+    if (response.statusCode != 200) {
       return const <_SellerCargoGeocodeSuggestion>[];
+    }
 
     final decoded = jsonDecode(response.body);
     if (decoded is! List) return const <_SellerCargoGeocodeSuggestion>[];
@@ -11056,7 +12884,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       }
 
       final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+        ),
       ).timeout(const Duration(seconds: 7));
       final reverse = await _cargoReverseGeocode(
         lat: pos.latitude,
@@ -11176,7 +13006,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
+                    color: Colors.black.withValues(alpha: 0.05),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -11336,35 +13166,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return 'Teslimat Planlanacak';
   }
 
-  String _sellerDeliveryPlanHint(Map<String, dynamic> order) {
-    final label = _sellerDeliveryTypeLabel(order);
-    if (label == 'Ihiz Kurye' || label == 'Ihiz Kurye (Bekleniyor)') {
-      return 'Siparisi direkt Ihiz kurye havuzuna gonder, takip no kurye teslim aldiginda olussun.';
-    }
-    if (label == 'Kargo Subeleri (Ihiz Teslim)') {
-      return 'Ihiz kargoyu adresten alip secili subeye birakacak sekilde Kargo Teslim cagrisi ac.';
-    }
-    if (label == 'Kargo Subeleri (Kendim Goturecegim)') {
-      return 'Paketi subeye kendin birak ve takip numarasini zorunlu olarak kaydet.';
-    }
-    if (label == 'Kargo Subeleri (Firma Adresten Alir)') {
-      return 'Anlasmali kargo adresten alana kadar siparisi firma bekleniyor asamasinda tut.';
-    }
-    if (label == 'Yakın Lokasyon') {
-      return 'Müşteriye kurye ile ulaştır veya şubeye bırakma çağrısı planla.';
-    }
-    if (label == 'Kurye Teslim') {
-      return 'Kurye çıkışı planla ve canlı teslim saatini netleştir.';
-    }
-    if (label == 'Şubeye Teslim') {
-      return 'Paketleri toplatıp kargo şubesine bırakacak kurye planla.';
-    }
-    if (label == 'Standart Kargo') {
-      return 'Etiket oluştur, şube teslim veya pickup kurye seç.';
-    }
-    return 'Teslimat modeli seçilmedi. Hazırlık sonrası sevkiyat yöntemi belirle.';
-  }
-
   String _sellerDeliverySlotLabel(Map<String, dynamic> order) {
     final slot = order['delivery_slot']?.toString().trim();
     return (slot != null && slot.isNotEmpty) ? slot : 'Saat seçilmedi';
@@ -11520,10 +13321,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       _sellerOrderCustomerPhone(order),
     );
     final safeSender = const HtmlEscape().convert(_sellerSenderLabel());
-    final safeSenderPhone = const HtmlEscape().convert(_sellerSenderPhone());
-    final safeSenderAddress = const HtmlEscape().convert(
-      _sellerSenderAddress(),
-    );
     final safeProduct = const HtmlEscape().convert(
       order['product_name']?.toString() ?? 'Ürün',
     );
@@ -11828,10 +13625,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: accent.withOpacity(0.12),
+                                  color: accent.withValues(alpha: 0.12),
                                   borderRadius: BorderRadius.circular(999),
                                   border: Border.all(
-                                    color: accent.withOpacity(0.25),
+                                    color: accent.withValues(alpha: 0.25),
                                   ),
                                 ),
                                 child: Row(
@@ -13520,496 +15317,26 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   List<String> _sellerOrderPreviewTags(Map<String, dynamic> order) {
     final tags = <String>[];
     final productName = order['product_name']?.toString().trim();
-    if (productName != null && productName.isNotEmpty) tags.add(productName);
+    if (productName != null && productName.isNotEmpty) {
+      tags.add(productName);
+    }
     final secondary = order['secondary_product_name']?.toString().trim();
-    if (secondary != null && secondary.isNotEmpty && secondary != productName)
+    if (secondary != null && secondary.isNotEmpty && secondary != productName) {
       tags.add(secondary);
+    }
     final tertiary = order['third_product_name']?.toString().trim();
     if (tertiary != null &&
         tertiary.isNotEmpty &&
         tertiary != productName &&
-        tertiary != secondary)
+        tertiary != secondary) {
       tags.add(tertiary);
+    }
     final itemCount = _sellerOrderItemCount(order);
     if (itemCount > tags.length) {
       tags.add('+${itemCount - tags.length} daha');
     }
     if (tags.isEmpty) tags.add('Ürün yok');
     return tags.take(3).toList();
-  }
-
-  Widget _buildSellerTimelinePill({
-    required IconData icon,
-    required String text,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F2FF),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: AppColors.primary),
-          const SizedBox(width: 6),
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF5D5480),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSellerOrderMetaCard({
-    required String label,
-    required String value,
-  }) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 132),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFAF9FE),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE9E3F8)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(fontSize: 11, color: Color(0xFF8A84A3)),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF221B39),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSellerOrderSlaBadge(Map<String, dynamic> order) {
-    final createdAt = DateTime.tryParse(
-      order['order_created_at']?.toString() ?? '',
-    );
-    if (createdAt == null) {
-      return const SizedBox.shrink();
-    }
-    final elapsed = DateTime.now().difference(createdAt);
-    final remaining = const Duration(minutes: 30) - elapsed;
-    final isRisk = remaining.inMinutes <= 10;
-    final label = remaining.isNegative
-        ? 'SLA aşıldı'
-        : '${remaining.inMinutes} dk kaldı';
-    final background = isRisk
-        ? const Color(0xFFFFF0F1)
-        : const Color(0xFFEAF8EE);
-    final foreground = isRisk
-        ? const Color(0xFFD93E53)
-        : const Color(0xFF1FA55B);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(color: foreground, fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-
-  Future<void> _showSellerOrderSummary(Map<String, dynamic> order) async {
-    final status = order['status']?.toString();
-    final isExternalOrder = _isSellerExternalOrder(order);
-    final stageStatus = status;
-    final amount =
-        (order['order_total_amount'] as num? ??
-                order['total_price'] as num? ??
-                0)
-            .toDouble();
-    final itemCount = _sellerOrderItemCount(order);
-    final customerName = _sellerOrderCustomerName(order);
-    final customerPhone = _sellerOrderCustomerPhone(order);
-    final customerEmail = order['customer_email']?.toString().isNotEmpty == true
-        ? order['customer_email'].toString()
-        : 'eposta belirtilmedi';
-    final showCustomerEmail = !isExternalOrder;
-    final region = _sellerOrderRegion(order);
-    final addressPreview = _sellerOrderAddressPreview(order);
-    final tracking = order['tracking_number']?.toString().isNotEmpty == true
-        ? order['tracking_number'].toString()
-        : '-';
-    final cargoCompany = order['cargo_company']?.toString().isNotEmpty == true
-        ? order['cargo_company'].toString()
-        : 'ihız';
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) => Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 48, vertical: 28),
-        backgroundColor: const Color(0xFFF8FAFC),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1460, maxHeight: 920),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(30),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.arrow_back_rounded),
-                    ),
-                    const Text(
-                      'Siparişler',
-                      style: TextStyle(fontSize: 15, color: Color(0xFF667085)),
-                    ),
-                    const SizedBox(width: 10),
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      color: Color(0xFF98A2B3),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      order['order_number']?.toString() ?? '-',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF344054),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    if (_isSellerOrderPriority(order))
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFF3E5),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: const Color(0xFFFFD19C)),
-                        ),
-                        child: const Text(
-                          'Öncelikli',
-                          style: TextStyle(
-                            color: Color(0xFFFF7A00),
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 22),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(28),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: const Color(0xFFE4E7EC)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  order['order_number']?.toString() ?? '-',
-                                  style: const TextStyle(
-                                    fontSize: 28,
-                                    fontWeight: FontWeight.w800,
-                                    color: Color(0xFF101828),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  _formatSellerOrderDate(
-                                    order['order_created_at']?.toString(),
-                                  ),
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    color: Color(0xFF667085),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '₺${amount.toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                  fontSize: 30,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF101828),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                '$itemCount ürün',
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  color: Color(0xFF98A2B3),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                      _buildSellerOrderStageStepper(stageStatus),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: Column(
-                        children: [
-                          _buildSellerSummaryPanel(
-                            title: 'Sipariş Ürünleri',
-                            icon: Icons.inventory_2_outlined,
-                            child: Column(
-                              children: [
-                                _buildSellerSummaryProductRow(
-                                  title:
-                                      order['product_name']?.toString() ??
-                                      'Ürün',
-                                  sku: order['product_code']?.toString() ?? '-',
-                                  amount: (order['total_price'] as num? ?? 0)
-                                      .toDouble(),
-                                  quantity:
-                                      order['quantity']?.toString() ?? '1',
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 28,
-                                    vertical: 22,
-                                  ),
-                                  decoration: const BoxDecoration(
-                                    border: Border(
-                                      top: BorderSide(color: Color(0xFFEAECF0)),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      const Text(
-                                        'Toplam',
-                                        style: TextStyle(
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w600,
-                                          color: Color(0xFF344054),
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      Text(
-                                        '₺${amount.toStringAsFixed(2)}',
-                                        style: const TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w800,
-                                          color: Color(0xFF101828),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          _buildSellerSummaryPanel(
-                            title: 'Sipariş İşlemleri',
-                            icon: Icons.local_shipping_outlined,
-                            child: _buildSellerSummaryOperationContent(
-                              order,
-                              status,
-                              tracking,
-                              cargoCompany,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 24),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          _buildSellerSummaryPanel(
-                            title: 'Müşteri',
-                            icon: Icons.person_outline_rounded,
-                            child: Padding(
-                              padding: const EdgeInsets.all(28),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  CircleAvatar(
-                                    radius: 28,
-                                    backgroundColor: const Color(0xFF635BFF),
-                                    child: Text(
-                                      customerName.isNotEmpty
-                                          ? customerName.characters.first
-                                                .toUpperCase()
-                                          : 'M',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 22,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 18),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          customerName,
-                                          style: const TextStyle(
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.w800,
-                                            color: Color(0xFF101828),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 18),
-                                        if (showCustomerEmail) ...[
-                                          _buildSellerContactRow(
-                                            Icons.mail_outline_rounded,
-                                            customerEmail,
-                                          ),
-                                          const SizedBox(height: 10),
-                                        ],
-                                        _buildSellerContactRow(
-                                          Icons.call_outlined,
-                                          customerPhone,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          _buildSellerSummaryPanel(
-                            title: 'Teslimat Adresi',
-                            icon: Icons.location_on_outlined,
-                            child: Padding(
-                              padding: const EdgeInsets.all(28),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    customerName,
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF101828),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    addressPreview,
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      color: Color(0xFF475467),
-                                      height: 1.55,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    region,
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      color: Color(0xFF475467),
-                                      height: 1.55,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  const Text(
-                                    'Türkiye',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      color: Color(0xFF475467),
-                                      height: 1.55,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 26),
-                                  OutlinedButton.icon(
-                                    onPressed: () {
-                                      final data =
-                                          '$customerName\n$addressPreview\n$region\nTürkiye';
-                                      Clipboard.setData(
-                                        ClipboardData(text: data),
-                                      );
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Adres kopyalandı.'),
-                                        ),
-                                      );
-                                    },
-                                    icon: const Icon(Icons.copy_all_outlined),
-                                    label: const Text('Adresi Kopyala'),
-                                    style: OutlinedButton.styleFrom(
-                                      minimumSize: const Size(
-                                        double.infinity,
-                                        56,
-                                      ),
-                                      foregroundColor: const Color(0xFF667085),
-                                      side: const BorderSide(
-                                        color: Color(0xFFD0D5DD),
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(16),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   bool _isSellerReturnFlowStatus(String? status) {
@@ -14236,7 +15563,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: evidenceImages.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
                   return ClipRRect(
                     borderRadius: BorderRadius.circular(10),
@@ -14412,7 +15739,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
-                      value: selectedReason,
+                      initialValue: selectedReason,
                       decoration: const InputDecoration(
                         labelText: 'Red gerekçesi',
                         border: OutlineInputBorder(),
@@ -15018,7 +16345,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ),
             if (isBranchSelected) ...[
               DropdownButtonFormField<String>(
-                value: selectedCargoCompany,
+                initialValue: selectedCargoCompany,
                 decoration: InputDecoration(
                   labelText: 'Kargo Firmasi',
                   border: OutlineInputBorder(
@@ -15050,7 +16377,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: selectedBranchName,
+                initialValue: selectedBranchName,
                 decoration: InputDecoration(
                   labelText: 'Sube Secimi',
                   border: OutlineInputBorder(
@@ -15077,51 +16404,50 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 },
               ),
               const SizedBox(height: 12),
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFE4E7EC)),
-                  color: const Color(0xFFFCFCFD),
-                ),
-                child: Column(
-                  children: [
-                    RadioListTile<String>(
-                      value: 'ihiz_to_branch',
-                      groupValue: _sellerDetailBranchOperation,
-                      title: const Text('Ihiz adresimden subeye gotursun'),
-                      dense: true,
-                      onChanged: (_) {
-                        setState(() {
-                          _sellerDetailBranchOperation = 'ihiz_to_branch';
-                          _sellerDetailDeliveryMode = 'branch_ihiz_pool';
-                        });
-                      },
-                    ),
-                    RadioListTile<String>(
-                      value: 'self_dropoff',
-                      groupValue: _sellerDetailBranchOperation,
-                      title: const Text('Kendim goturecegim'),
-                      dense: true,
-                      onChanged: (_) {
-                        setState(() {
-                          _sellerDetailBranchOperation = 'self_dropoff';
-                          _sellerDetailDeliveryMode = 'branch_self_dropoff';
-                        });
-                      },
-                    ),
-                    RadioListTile<String>(
-                      value: 'cargo_pickup',
-                      groupValue: _sellerDetailBranchOperation,
-                      title: const Text('Kargo firmasi adresimden alsin'),
-                      dense: true,
-                      onChanged: (_) {
-                        setState(() {
-                          _sellerDetailBranchOperation = 'cargo_pickup';
-                          _sellerDetailDeliveryMode = 'branch_company_pickup';
-                        });
-                      },
-                    ),
-                  ],
+              RadioGroup<String>(
+                groupValue: _sellerDetailBranchOperation,
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _sellerDetailBranchOperation = value;
+                    switch (value) {
+                      case 'ihiz_to_branch':
+                        _sellerDetailDeliveryMode = 'branch_ihiz_pool';
+                        break;
+                      case 'self_dropoff':
+                        _sellerDetailDeliveryMode = 'branch_self_dropoff';
+                        break;
+                      case 'cargo_pickup':
+                        _sellerDetailDeliveryMode = 'branch_company_pickup';
+                        break;
+                    }
+                  });
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE4E7EC)),
+                    color: const Color(0xFFFCFCFD),
+                  ),
+                  child: Column(
+                    children: [
+                      RadioListTile<String>(
+                        value: 'ihiz_to_branch',
+                        title: const Text('Ihiz adresimden subeye gotursun'),
+                        dense: true,
+                      ),
+                      RadioListTile<String>(
+                        value: 'self_dropoff',
+                        title: const Text('Kendim goturecegim'),
+                        dense: true,
+                      ),
+                      RadioListTile<String>(
+                        value: 'cargo_pickup',
+                        title: const Text('Kargo firmasi adresimden alsin'),
+                        dense: true,
+                      ),
+                    ],
+                  ),
                 ),
               ),
               if (isSelfDropoff) ...[
@@ -15576,530 +16902,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
   }
 
-  Future<void> _showSellerOrderActions(Map<String, dynamic> order) async {
-    final currentStatus = (order['status'] ?? '').toString().toLowerCase();
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        final trackingController = TextEditingController(
-          text: order['tracking_number']?.toString() ?? '',
-        );
-        final cargoController = TextEditingController(text: 'İHız');
-        return StatefulBuilder(
-          builder: (context, _) {
-            String effectiveCargoCompany() {
-              return 'İHız';
-            }
-
-            String operationDescription(String baseDescription) {
-              return '$baseDescription İHız kurye çağrısı sipariş havuzuna düşürüldü.';
-            }
-
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                20,
-                20,
-                MediaQuery.of(context).viewInsets.bottom + 20,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      order['product_name']?.toString() ?? 'Sipariş',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Durum: ${_sellerOrderStatusLabel(order['status']?.toString())} • ${_sellerOrderCustomerName(order)}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8F6FF),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFFE7DEFF)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Teslimat Operasyonu',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF231C3B),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '${_sellerOrderRegion(order)} • ${_sellerOrderAddressPreview(order)}',
-                            style: const TextStyle(
-                              color: Color(0xFF716A89),
-                              height: 1.4,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: [
-                              _buildSellerOperationChip(
-                                label: 'İHız kurye teslimatı',
-                                icon: Icons.delivery_dining_outlined,
-                                selected: true,
-                                onTap: () {},
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        if (currentStatus == 'new')
-                          _buildOrderActionButton(
-                            label: 'Siparişi Kabul Et',
-                            icon: Icons.check_circle_outline,
-                            color: Colors.green,
-                            onTap: () => _updateOrderStatus(
-                              order,
-                              status: 'confirmed',
-                              title: 'Sipariş kabul edildi',
-                              description: operationDescription(
-                                'Satıcı siparişi kabul etti.',
-                              ),
-                            ),
-                          ),
-                        if (currentStatus == 'new' ||
-                            currentStatus == 'confirmed')
-                          _buildOrderActionButton(
-                            label: 'Hazırlanıyor',
-                            icon: Icons.inventory_2_outlined,
-                            color: Colors.orange,
-                            onTap: () => _updateOrderStatus(
-                              order,
-                              status: 'preparing',
-                              title: 'Sipariş hazırlanıyor',
-                              description: operationDescription(
-                                'Satıcı siparişi hazırlamaya başladı.',
-                              ),
-                            ),
-                          ),
-                        if (currentStatus == 'preparing')
-                          _buildOrderActionButton(
-                            label: 'Kurye çağır',
-                            icon: Icons.delivery_dining_outlined,
-                            color: const Color(0xFF00A67D),
-                            onTap: () {
-                              setState(() {
-                                _sellerDetailDeliveryMode = 'courier';
-                              });
-                              final trackingNo = trackingController.text.trim();
-                              _updateOrderStatus(
-                                order,
-                                status: 'ready_to_ship',
-                                trackingNumber: trackingNo.isEmpty
-                                    ? null
-                                    : trackingNo,
-                                cargoCompany: effectiveCargoCompany(),
-                                title: 'Kurye çağrısı açıldı',
-                                description: operationDescription(
-                                  'Sipariş İHız teslimat havuzuna aktarıldı.',
-                                ),
-                                deliveryTypeOverride: 'ihiz_kurye_bekleniyor',
-                              );
-                            },
-                          ),
-                        if (currentStatus == 'ready_to_ship')
-                          _buildOrderActionButton(
-                            label: 'Kurye çağrısını yenile',
-                            icon: Icons.refresh_rounded,
-                            color: Colors.purple,
-                            onTap: () {
-                              final trackingNo = trackingController.text.trim();
-                              _updateOrderStatus(
-                                order,
-                                status: 'ready_to_ship',
-                                trackingNumber: trackingNo.isEmpty
-                                    ? null
-                                    : trackingNo,
-                                cargoCompany: effectiveCargoCompany(),
-                                title: 'Kurye çağrısı güncellendi',
-                                description: operationDescription(
-                                  'Sipariş yeniden İHız teslimat havuzuna alındı.',
-                                ),
-                                deliveryTypeOverride: 'ihiz_kurye_bekleniyor',
-                                forceUpdate: true,
-                              );
-                            },
-                          ),
-                        if (currentStatus == 'out_for_delivery')
-                          _buildOrderActionButton(
-                            label: 'Teslim Edildi',
-                            icon: Icons.check_circle,
-                            color: Colors.green,
-                            onTap: () => _updateOrderStatus(
-                              order,
-                              status: 'delivered',
-                              trackingNumber: trackingController.text.trim(),
-                              cargoCompany: effectiveCargoCompany(),
-                              description: operationDescription(
-                                'Sipariş başarıyla teslim edildi.',
-                              ),
-                            ),
-                          ),
-                        if (currentStatus == 'return_requested' ||
-                            currentStatus == 'return_approved')
-                          _buildOrderActionButton(
-                            label: 'İade Talebini İncele',
-                            icon: Icons.assignment_return_outlined,
-                            color: const Color(0xFFB45309),
-                            onTap: () async {
-                              Navigator.of(context).pop();
-                              await _showSellerReturnRequestDialog(order);
-                            },
-                          ),
-                        if (currentStatus == 'return_shipped_back')
-                          _buildOrderActionButton(
-                            label: 'İade Ürününü Teslim Aldım',
-                            icon: Icons.inventory_2_rounded,
-                            color: const Color(0xFF0E7490),
-                            onTap: () => _updateOrderStatus(
-                              order,
-                              status: 'return_received',
-                              title: 'İade ürünü mağazaya ulaştı',
-                              description:
-                                  'İade ürünü mağaza tarafından teslim alındı.',
-                            ),
-                          ),
-                        if (currentStatus == 'return_received')
-                          _buildOrderActionButton(
-                            label: 'İade Tamamlandı',
-                            icon: Icons.check_circle_outline,
-                            color: const Color(0xFFD93E53),
-                            onTap: () => _updateOrderStatus(
-                              order,
-                              status: 'refunded',
-                              title: 'İade tamamlandı',
-                              description:
-                                  'İade süreci tamamlandı ve geri ödeme akışına aktarıldı.',
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: cargoController,
-                      readOnly: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Kurye Firması',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: trackingController,
-                      decoration: const InputDecoration(
-                        labelText: 'Takip Numarası',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _showSellerReturnRequestDialog(
-    Map<String, dynamic> order,
-  ) async {
-    final sellerId = _authService.currentUser?.id ?? '';
-    final orderItemId = order['id']?.toString() ?? '';
-    if (sellerId.isEmpty || orderItemId.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('İade inceleme kaydı açılamadı.')),
-      );
-      return;
-    }
-
-    final request = await OrderService.instance.getLatestReturnRequestForItem(
-      orderItemId: orderItemId,
-    );
-    if (request == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Bu sipariş için iade talebi bulunamadı.'),
-        ),
-      );
-      return;
-    }
-
-    final requestId = request['id']?.toString() ?? '';
-    if (requestId.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('İade talebi ID bilgisi eksik.')),
-      );
-      return;
-    }
-
-    final issueTags = ((request['issue_tags'] as List?) ?? const [])
-        .map((e) => e.toString())
-        .toList();
-    final evidenceImages =
-        ((request['evidence_image_urls'] as List?) ?? const [])
-            .map((e) => e.toString())
-            .where((url) => url.trim().isNotEmpty)
-            .toList();
-    final reason = request['reason']?.toString() ?? 'Belirtilmedi';
-    final detail = request['detail']?.toString() ?? '';
-    final damageLevel = request['damage_level']?.toString() ?? 'Belirsiz';
-    final damageDescription =
-        request['damage_description']?.toString().trim() ?? '';
-    final dueAt = DateTime.tryParse(
-      request['seller_decision_due_at']?.toString() ?? '',
-    );
-    final createdAt = DateTime.tryParse(
-      request['created_at']?.toString() ?? '',
-    );
-    final noteController = TextEditingController(
-      text: request['seller_decision_note']?.toString() ?? '',
-    );
-
-    if (!mounted) return;
-    var isSubmitting = false;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            Future<void> submitDecision(String decision) async {
-              final note = noteController.text.trim();
-              if (decision == 'reject' && note.isEmpty) {
-                ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'İBUL incelemesine yönlendirme için açıklama zorunlu.',
-                    ),
-                  ),
-                );
-                return;
-              }
-              setDialogState(() => isSubmitting = true);
-              try {
-                await OrderService.instance.sellerReviewReturnRequest(
-                  sellerId: sellerId,
-                  returnRequestId: requestId,
-                  decision: decision,
-                  note: note,
-                );
-                if (!mounted) return;
-                await _reloadAndKeepSellerOrderDetail(orderItemId);
-                if (!dialogContext.mounted) return;
-                Navigator.of(dialogContext).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      decision == 'approve'
-                          ? 'İade talebi onaylandı. Kullanıcı kurye zamanını seçecek.'
-                          : 'İade red talebi İBUL incelemesine yönlendirildi.',
-                    ),
-                  ),
-                );
-              } catch (e) {
-                if (!dialogContext.mounted) return;
-                ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  SnackBar(
-                    content: Text(e.toString().replaceFirst('Exception: ', '')),
-                  ),
-                );
-              } finally {
-                if (dialogContext.mounted) {
-                  setDialogState(() => isSubmitting = false);
-                }
-              }
-            }
-
-            return AlertDialog(
-              title: const Text('İade Talebi İncele'),
-              content: SizedBox(
-                width: 640,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        order['product_name']?.toString() ?? 'Ürün',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${order['order_number'] ?? '-'} • ${createdAt == null ? '-' : _formatDateShort(createdAt)}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF6B7280),
-                        ),
-                      ),
-                      if (dueAt != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'Karar son tarihi: ${_formatDateShort(dueAt)}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFFB45309),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 14),
-                      _buildSellerReturnInfoRow('İade nedeni', reason),
-                      _buildSellerReturnInfoRow('Hasar sınıfı', damageLevel),
-                      if (damageDescription.isNotEmpty)
-                        _buildSellerReturnInfoRow(
-                          'Hasar detayı',
-                          damageDescription,
-                        ),
-                      if (detail.isNotEmpty)
-                        _buildSellerReturnInfoRow('Müşteri notu', detail),
-                      if (issueTags.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: issueTags
-                              .map(
-                                (tag) => Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFEE2E2),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    tag,
-                                    style: const TextStyle(
-                                      color: Color(0xFFB91C1C),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      ],
-                      const SizedBox(height: 14),
-                      const Text(
-                        'Kanıt Görselleri',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 8),
-                      if (evidenceImages.isEmpty)
-                        const Text(
-                          'Müşteri görsel yüklememiş.',
-                          style: TextStyle(color: Color(0xFF6B7280)),
-                        )
-                      else
-                        SizedBox(
-                          height: 84,
-                          child: ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: evidenceImages.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(width: 8),
-                            itemBuilder: (context, index) {
-                              return ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: SizedBox(
-                                  width: 84,
-                                  child: _sellerReturnEvidenceImage(
-                                    evidenceImages[index],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      const SizedBox(height: 14),
-                      TextField(
-                        controller: noteController,
-                        maxLines: 3,
-                        decoration: const InputDecoration(
-                          labelText: 'Karar açıklaması',
-                          hintText:
-                              'Onay, red veya İBUL bildirimi için açıklama ekleyin.',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isSubmitting
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Kapat'),
-                ),
-                TextButton.icon(
-                  onPressed: isSubmitting
-                      ? null
-                      : () => submitDecision('reject'),
-                  icon: const Icon(Icons.block_outlined),
-                  label: const Text('İBUL İncelemeye Gönder'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFB91C1C),
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: isSubmitting
-                      ? null
-                      : () => submitDecision('approve'),
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: Text(isSubmitting ? 'Kaydediliyor...' : 'Onayla'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF16A34A),
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    noteController.dispose();
-  }
-
   Widget _buildSellerReturnInfoRow(String label, String value) {
     return SellerReturnInfoRow(label: label, value: value);
   }
@@ -16116,52 +16918,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
       }
     }
-    return OptimizedImage(imageUrlOrPath: 
-      url,
+    return OptimizedImage(
+      imageUrlOrPath: url,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Container(
+      errorBuilder: (_, _, _) => Container(
         color: Colors.grey.shade100,
         child: const Icon(Icons.broken_image_outlined),
-      ),
-    );
-  }
-
-  Widget _buildSellerOperationChip({
-    required String label,
-    required IconData icon,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return SellerOperationChip(
-      label: label,
-      icon: icon,
-      selected: selected,
-      onTap: onTap,
-    );
-  }
-
-  Widget _buildOrderActionButton({
-    required String label,
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return PremiumPressable(
-      child: ElevatedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, size: 18),
-        label: Text(label),
-        style: premiumButtonInteractionStyle(
-          ElevatedButton.styleFrom(
-            backgroundColor: color.withOpacity(0.12),
-            foregroundColor: color,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-          overlayColor: color,
-        ),
       ),
     );
   }
@@ -16250,10 +17012,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       } else {
         await _loadSellerOrders();
       }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${order['order_number']} durumu güncellendi.')),
       );
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Sipariş güncellenemedi: $e')));
@@ -16456,519 +17220,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     _showSellerQuestionsDialog();
   }
 
-  Widget _buildStatusChip(
-    String label,
-    int count,
-    bool isSelected, {
-    Color? color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: isSelected
-            ? AppColors.primary.withOpacity(0.1)
-            : (color?.withOpacity(0.1) ?? Colors.grey.shade100),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isSelected
-              ? AppColors.primary
-              : (color ?? Colors.grey.shade300),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-              color: isSelected
-                  ? AppColors.primary
-                  : (color ?? Colors.grey.shade700),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? AppColors.primary
-                  : (color ?? Colors.grey.shade300),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              '$count',
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOrderRow(int index) {
-    final orderStatuses = [
-      'Yeni',
-      'Hazırlanıyor',
-      'Kargoda',
-      'Tamamlandı',
-      'İptal',
-    ];
-    final orderStatus = orderStatuses[index % orderStatuses.length];
-    final statusColors = {
-      'Yeni': Colors.blue,
-      'Hazırlanıyor': Colors.orange,
-      'Kargoda': Colors.purple,
-      'Tamamlandı': Colors.green,
-      'İptal': Colors.red,
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
-      ),
-      child: Row(
-        children: [
-          // Sipariş Numarası
-          SizedBox(
-            width: 120,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '#${10000 + index}',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${index + 1} ürün',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Müşteri Bilgisi
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Ahmet Yılmaz',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'ahmet@example.com',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Ürünler
-          Expanded(
-            child: Text(
-              'iPhone 15 Pro, AirPods Pro',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Tutar
-          SizedBox(
-            width: 100,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '₺${(index + 1) * 1580}',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Text(
-                  'KDV Dahil',
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Durum
-          SizedBox(
-            width: 120,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: statusColors[orderStatus]!.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: statusColors[orderStatus]!.withOpacity(0.3),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: statusColors[orderStatus],
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    orderStatus,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: statusColors[orderStatus],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // Tarih
-          SizedBox(
-            width: 100,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${18 - (index % 5)} Şub',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  '14:${20 + index}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-
-          // İşlemler
-          SizedBox(
-            width: 100,
-            child: Row(
-              children: [
-                IconButton(
-                  onPressed: () => _showOrderDetails(index),
-                  icon: const Icon(Icons.visibility_outlined, size: 18),
-                  tooltip: 'Detaylar',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-                const SizedBox(width: 8),
-                if (orderStatus == 'Yeni')
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(
-                      Icons.check_circle_outline,
-                      size: 18,
-                      color: Colors.green,
-                    ),
-                    tooltip: 'Onayla',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                if (orderStatus == 'Hazırlanıyor')
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(
-                      Icons.local_shipping_outlined,
-                      size: 18,
-                      color: Colors.purple,
-                    ),
-                    tooltip: 'Kargoya Ver',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showOrderDetails(int orderIndex) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        child: Container(
-          width: 800,
-          constraints: const BoxConstraints(maxHeight: 700),
-          child: Column(
-            children: [
-              // Dialog Header
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: Colors.grey.shade200),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.shopping_bag,
-                      color: AppColors.primary,
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      'Sipariş Detayları - #${10000 + orderIndex}',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Dialog Content
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Sipariş Bilgileri
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: _buildInfoCard(
-                              'Müşteri Bilgileri',
-                              Icons.person_outline,
-                              [
-                                'Ad Soyad: Ahmet Yılmaz',
-                                'Telefon: +90 555 123 4567',
-                                'E-posta: ahmet@example.com',
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildInfoCard(
-                              'Teslimat Adresi',
-                              Icons.location_on_outlined,
-                              [
-                                'Barbaros Mah. Mor Sümbül Sok.',
-                                'No: 5/3 Kadıköy',
-                                'İstanbul, 34746',
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Ürünler
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade200),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(Icons.shopping_cart_outlined, size: 20),
-                                SizedBox(width: 8),
-                                Text(
-                                  'Sipariş Edilen Ürünler',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            _buildOrderProduct(
-                              'iPhone 15 Pro Max 256GB',
-                              1,
-                              45000,
-                            ),
-                            const Divider(),
-                            _buildOrderProduct(
-                              'AirPods Pro (2. Nesil)',
-                              1,
-                              8500,
-                            ),
-                            const Divider(height: 24),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Ara Toplam:',
-                                  style: TextStyle(color: Colors.grey.shade600),
-                                ),
-                                const Text('₺53,500'),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Kargo:',
-                                  style: TextStyle(color: Colors.grey.shade600),
-                                ),
-                                const Text(
-                                  'Ücretsiz',
-                                  style: TextStyle(color: Colors.green),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text(
-                                  'Toplam:',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const Text(
-                                  '₺53,500',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Dialog Footer
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () {},
-                      child: const Text('Fatura İndir'),
-                    ),
-                    const SizedBox(width: 12),
-                    ElevatedButton.icon(
-                      onPressed: () {},
-                      icon: const Icon(Icons.local_shipping, size: 18),
-                      label: const Text('Kargo Bilgilerini Görüntüle'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInfoCard(String title, IconData icon, List<String> items) {
-    return SellerPanelInfoCard(title: title, icon: icon, items: items);
-  }
-
-  Widget _buildOrderProduct(String name, int quantity, double price) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.phone_iphone, color: Colors.grey),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Adet: $quantity',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ),
-          Text(
-            '₺${price.toStringAsFixed(0)}',
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─── SİSTEM MODÜLÜ (MASA + QR) ────────────────────────────────────────────
-
   Widget _buildSystemModule() {
     final sellerId = _authService.currentUser?.id ?? '';
     final tables = List<Map<String, dynamic>>.from(
@@ -17030,7 +17281,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.08),
+                    color: AppColors.primary.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
@@ -17062,6 +17313,51 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         },
                   icon: const Icon(Icons.print_outlined),
                   label: const Text('Yazıcı Ayarları'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: sellerId.isEmpty
+                      ? null
+                      : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  KitchenDisplayScreen(sellerId: sellerId),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.restaurant_menu_outlined),
+                  label: const Text('Mutfak Ekranı'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: sellerId.isEmpty
+                      ? null
+                      : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  TableHistoryScreen(sellerId: sellerId),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.history_outlined),
+                  label: const Text('Geçmiş Masalar'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: sellerId.isEmpty
+                      ? null
+                      : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  WaiterPerformanceScreen(sellerId: sellerId),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.people_alt_outlined),
+                  label: const Text('Garson Analitik'),
                 ),
                 if (tables.isEmpty)
                   OutlinedButton.icon(
@@ -17145,7 +17441,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -17185,12 +17481,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           Center(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: OptimizedImage(imageUrlOrPath: 
-                qrImageUrl,
+              child: OptimizedImage(
+                imageUrlOrPath: qrImageUrl,
                 width: 170,
                 height: 170,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
+                errorBuilder: (_, _, _) => Container(
                   width: 170,
                   height: 170,
                   color: Colors.grey.shade100,
@@ -17280,12 +17576,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   const SizedBox(height: 12),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: OptimizedImage(imageUrlOrPath: 
-                      qrImageUrl,
+                    child: OptimizedImage(
+                      imageUrlOrPath: qrImageUrl,
                       width: 250,
                       height: 250,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
+                      errorBuilder: (_, _, _) => Container(
                         width: 250,
                         height: 250,
                         color: Colors.grey.shade100,
@@ -17333,63 +17629,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Header
-        Row(
-          children: [
-            const Icon(
-              Icons.table_restaurant_outlined,
-              color: AppColors.primary,
-              size: 22,
-            ),
-            const SizedBox(width: 10),
-            const Text(
-              'Garson — Masa Siparişleri',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF111827),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Müşterilerin masadan gönderdiği siparişleri buradan takip edebilirsiniz.',
-          style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            OutlinedButton.icon(
-              onPressed: () async {
-                final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AddProductPage()),
-                );
-                if (result == true) {
-                  _refreshProducts();
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Ürün eklendi. Garson ekranı güncellendi.'),
-                    ),
-                  );
-                }
-              },
-              icon: const Icon(Icons.add_box_outlined, size: 16),
-              label: const Text('Webden Ürün Yükle'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(0, 34),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
+        // ── Garson Üst Bar ────────────────────────────────────────────────
+        _buildGarsonTopBar(sellerId: sellerId),
+        const SizedBox(height: 12),
+        if (kIsWeb) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: _buildLocalPrintServicePanel(
+                  uiBranch: 'web_garson_panel',
                 ),
               ),
             ),
-            const Spacer(),
-          ],
-        ),
-        const SizedBox(height: 16),
+          ),
+          const SizedBox(height: 12),
+        ],
 
         Expanded(
           child: sellerId.isEmpty
@@ -17403,7 +17660,175 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   stream: _getSellerTableOrdersStream(sellerId),
                   builder: (ctx, snapshot) {
                     if (snapshot.hasError) {
-                      return Center(child: Text('Hata: ${snapshot.error}'));
+                      _handleGarsonRealtimeError(
+                        snapshot.error!,
+                        sellerId: sellerId,
+                      );
+                      return FutureBuilder<List<Map<String, dynamic>>>(
+                        future: _getSellerTableOrdersFallbackFuture(sellerId),
+                        builder: (context, fallbackSnapshot) {
+                          if (fallbackSnapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          if (fallbackSnapshot.hasError) {
+                            return Center(
+                              child: Text('Hata: ${fallbackSnapshot.error}'),
+                            );
+                          }
+                          final allOrders = fallbackSnapshot.data ?? const [];
+                          if (allOrders.isEmpty && _storeTables.isEmpty) {
+                            return Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Container(
+                                    width: 80,
+                                    height: 80,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primary.withValues(
+                                        alpha: 0.07,
+                                      ),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: const Icon(
+                                      Icons.table_restaurant_outlined,
+                                      color: AppColors.primary,
+                                      size: 40,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  const Text(
+                                    'Henüz masa siparişi yok',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF374151),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Müşteriler sipariş verdiğinde burada görünecek.',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+
+                          var orders = allOrders
+                              .where(
+                                (order) => !_isGarsonClosedStatus(
+                                  order['status']?.toString(),
+                                ),
+                              )
+                              .toList(growable: false);
+                          orders = orders
+                              .where((order) {
+                                final tableNo = _garsonTableNumberFromOrder(
+                                  order,
+                                );
+                                final closedAt =
+                                    _webGarsonClosedTableAt[tableNo];
+                                if (closedAt == null) return true;
+                                final createdAt = _garsonOrderCreatedAt(
+                                  order['created_at']?.toString(),
+                                );
+                                return createdAt.isAfter(closedAt);
+                              })
+                              .toList(growable: false);
+
+                          final tableNumbers = _sortedStoreTableNumbers();
+                          if (tableNumbers.isEmpty && orders.isEmpty) {
+                            return Center(
+                              child: Text(
+                                'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
+                                style: TextStyle(color: Colors.grey.shade600),
+                              ),
+                            );
+                          }
+
+                          final ordersByTable =
+                              <int, List<Map<String, dynamic>>>{};
+                          for (final order in orders) {
+                            final tableNo = _garsonTableNumberFromOrder(order);
+                            if (tableNo <= 0) continue;
+                            ordersByTable
+                                .putIfAbsent(
+                                  tableNo,
+                                  () => <Map<String, dynamic>>[],
+                                )
+                                .add(order);
+                          }
+                          for (final entry in ordersByTable.entries) {
+                            entry.value.sort(
+                              (a, b) =>
+                                  _garsonOrderCreatedAt(
+                                    b['created_at']?.toString(),
+                                  ).compareTo(
+                                    _garsonOrderCreatedAt(
+                                      a['created_at']?.toString(),
+                                    ),
+                                  ),
+                            );
+                          }
+
+                          final displayTableNumbers =
+                              tableNumbers.isNotEmpty
+                                    ? tableNumbers
+                                    : ordersByTable.keys.toList(growable: false)
+                                ..sort();
+
+                          return LayoutBuilder(
+                            builder: (context, constraints) {
+                              final webColumns = _webGarsonGridColumns(
+                                constraints.maxWidth,
+                              );
+                              final webAspectRatio = _webGarsonGridAspectRatio(
+                                constraints.maxWidth,
+                                webColumns,
+                              );
+                              return GridView.builder(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: webColumns,
+                                      crossAxisSpacing: 14,
+                                      mainAxisSpacing: 14,
+                                      childAspectRatio: webAspectRatio,
+                                    ),
+                                itemCount: displayTableNumbers.length,
+                                itemBuilder: (context, index) {
+                                  final tableNumber =
+                                      displayTableNumbers[index];
+                                  final tableOrders =
+                                      ordersByTable[tableNumber] ??
+                                      const <Map<String, dynamic>>[];
+                                  final order = tableOrders.firstWhere(
+                                    (order) => !_isGarsonCompletedStatus(
+                                      order['status']?.toString(),
+                                    ),
+                                    orElse: () => tableOrders.isNotEmpty
+                                        ? tableOrders.first
+                                        : <String, dynamic>{},
+                                  );
+                                  return _buildWebGarsonTableCard(
+                                    tableNumber: tableNumber,
+                                    order: order.isEmpty ? null : order,
+                                    orderCount: tableOrders.length,
+                                    tableOrders: tableOrders,
+                                  );
+                                },
+                              );
+                            },
+                          );
+                        },
+                      );
                     }
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(child: CircularProgressIndicator());
@@ -17418,7 +17843,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               width: 80,
                               height: 80,
                               decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.07),
+                                color: AppColors.primary.withValues(
+                                  alpha: 0.07,
+                                ),
                                 borderRadius: BorderRadius.circular(20),
                               ),
                               child: const Icon(
@@ -17527,64 +17954,182 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         )
                         .length;
 
+                    final preparingCount = tableNumbers.where((tableNo) {
+                      final tOrders = ordersByTable[tableNo] ?? [];
+                      return tOrders.any(
+                        (o) => (o['status']?.toString() ?? '') == 'preparing',
+                      );
+                    }).length;
+
+                    final paymentPendingCount = tableNumbers.where((tableNo) {
+                      final tOrders = ordersByTable[tableNo] ?? [];
+                      return tOrders.any((o) {
+                        final s = (o['status']?.toString() ?? '');
+                        return s == 'ready' || s == 'served';
+                      });
+                    }).length;
+
+                    // Apply status filter
+                    final displayTableNumbers = tableNumbers
+                        .where((tableNo) {
+                          final tOrders = ordersByTable[tableNo] ?? [];
+                          switch (_garsonStatusFilter) {
+                            case 'occupied':
+                              return tOrders.isNotEmpty;
+                            case 'preparing':
+                              return tOrders.any(
+                                (o) =>
+                                    (o['status']?.toString() ?? '') ==
+                                    'preparing',
+                              );
+                            case 'payment_pending':
+                              return tOrders.any((o) {
+                                final s = (o['status']?.toString() ?? '');
+                                return s == 'ready' || s == 'served';
+                              });
+                            default:
+                              return true;
+                          }
+                        })
+                        .toList(growable: false);
+
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            _mobileBadge(
-                              'Toplam Masa',
-                              '${tableNumbers.length}',
-                            ),
-                            _mobileBadge('Dolu Masa', '$filledCount'),
-                          ],
+                        // Status filter badges row
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              _garsonFilterBadge(
+                                label: 'Toplam Masa',
+                                value: '${tableNumbers.length}',
+                                filterKey: null,
+                                activeFilter: _garsonStatusFilter,
+                                onTap: () =>
+                                    setState(() => _garsonStatusFilter = null),
+                              ),
+                              const SizedBox(width: 6),
+                              _garsonFilterBadge(
+                                label: 'Dolu Masa',
+                                value: '$filledCount',
+                                filterKey: 'occupied',
+                                activeFilter: _garsonStatusFilter,
+                                activeColor: const Color(0xFF16A34A),
+                                onTap: () => setState(
+                                  () => _garsonStatusFilter =
+                                      _garsonStatusFilter == 'occupied'
+                                      ? null
+                                      : 'occupied',
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              _garsonFilterBadge(
+                                label: 'Hazırlanıyor',
+                                value: '$preparingCount',
+                                filterKey: 'preparing',
+                                activeFilter: _garsonStatusFilter,
+                                activeColor: const Color(0xFF0D9488),
+                                onTap: () => setState(
+                                  () => _garsonStatusFilter =
+                                      _garsonStatusFilter == 'preparing'
+                                      ? null
+                                      : 'preparing',
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              _garsonFilterBadge(
+                                label: 'Ödeme Bekliyor',
+                                value: '$paymentPendingCount',
+                                filterKey: 'payment_pending',
+                                activeFilter: _garsonStatusFilter,
+                                activeColor: const Color(0xFFD97706),
+                                onTap: () => setState(
+                                  () => _garsonStatusFilter =
+                                      _garsonStatusFilter == 'payment_pending'
+                                      ? null
+                                      : 'payment_pending',
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 10),
                         Expanded(
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              final webColumns = _webGarsonGridColumns(
-                                constraints.maxWidth,
-                              );
-                              final webAspectRatio = _webGarsonGridAspectRatio(
-                                constraints.maxWidth,
-                                webColumns,
-                              );
-                              return GridView.builder(
-                                itemCount: tableNumbers.length,
-                                gridDelegate:
-                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: webColumns,
-                                      crossAxisSpacing: 10,
-                                      mainAxisSpacing: 10,
-                                      childAspectRatio: webAspectRatio,
-                                    ),
-                                itemBuilder: (context, index) {
-                                  final tableNumber = tableNumbers[index];
-                                  final tableOrders =
-                                      ordersByTable[tableNumber] ??
-                                      const <Map<String, dynamic>>[];
-                                  Map<String, dynamic>? selectedOrder;
-                                  if (tableOrders.isNotEmpty) {
-                                    selectedOrder = tableOrders.firstWhere(
-                                      (order) => !_isGarsonCompletedStatus(
-                                        order['status']?.toString(),
+                          child: displayTableNumbers.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.filter_alt_outlined,
+                                        size: 36,
+                                        color: Colors.grey.shade400,
                                       ),
-                                      orElse: () => tableOrders.first,
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Bu filtreyle eşleşen masa yok.',
+                                        style: TextStyle(
+                                          color: Colors.grey.shade500,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      TextButton(
+                                        onPressed: () => setState(
+                                          () => _garsonStatusFilter = null,
+                                        ),
+                                        child: const Text('Filtreyi Temizle'),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final webColumns = _webGarsonGridColumns(
+                                      constraints.maxWidth,
                                     );
-                                  }
-                                  return _buildWebGarsonTableCard(
-                                    tableNumber: tableNumber,
-                                    order: selectedOrder,
-                                    orderCount: tableOrders.length,
-                                    tableOrders: tableOrders,
-                                  );
-                                },
-                              );
-                            },
-                          ),
+                                    final webAspectRatio =
+                                        _webGarsonGridAspectRatio(
+                                          constraints.maxWidth,
+                                          webColumns,
+                                        );
+                                    return GridView.builder(
+                                      itemCount: displayTableNumbers.length,
+                                      gridDelegate:
+                                          SliverGridDelegateWithFixedCrossAxisCount(
+                                            crossAxisCount: webColumns,
+                                            crossAxisSpacing: 10,
+                                            mainAxisSpacing: 10,
+                                            childAspectRatio: webAspectRatio,
+                                          ),
+                                      itemBuilder: (context, index) {
+                                        final tableNumber =
+                                            displayTableNumbers[index];
+                                        final tableOrders =
+                                            ordersByTable[tableNumber] ??
+                                            const <Map<String, dynamic>>[];
+                                        Map<String, dynamic>? selectedOrder;
+                                        if (tableOrders.isNotEmpty) {
+                                          selectedOrder = tableOrders
+                                              .firstWhere(
+                                                (order) =>
+                                                    !_isGarsonCompletedStatus(
+                                                      order['status']
+                                                          ?.toString(),
+                                                    ),
+                                                orElse: () => tableOrders.first,
+                                              );
+                                        }
+                                        return _buildWebGarsonTableCard(
+                                          tableNumber: tableNumber,
+                                          order: selectedOrder,
+                                          orderCount: tableOrders.length,
+                                          tableOrders: tableOrders,
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
                         ),
                       ],
                     );
@@ -17611,6 +18156,167 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     if (cardWidth >= 250) return 1.18;
     if (cardWidth >= 220) return 1.05;
     return 0.92;
+  }
+
+  // ── Garson Desktop Üst Bar ─────────────────────────────────────────────────
+  // 3 bölüm: Sol (aksiyonlar), Orta (navigasyon), Sağ (yenile/bildirim/profil)
+  Widget _buildGarsonTopBar({required String sellerId}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          bottom: BorderSide(color: Colors.grey.shade200, width: 1),
+        ),
+      ),
+      child: Row(
+        children: [
+          // ── ORTA: Navigasyon aksiyonları ─────────────────────────────────
+          _garsonTopBarAction(
+            icon: Icons.history_outlined,
+            label: 'Geçmiş Masalar',
+            onTap: sellerId.isEmpty
+                ? null
+                : () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => TableHistoryScreen(sellerId: sellerId),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 6),
+          _garsonTopBarAction(
+            icon: Icons.restaurant_menu_outlined,
+            label: 'Mutfak Ekranı',
+            onTap: sellerId.isEmpty
+                ? null
+                : () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => KitchenDisplayScreen(sellerId: sellerId),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 6),
+          _garsonTopBarAction(
+            icon: Icons.bar_chart_outlined,
+            label: 'Garson Analitik',
+            onTap: sellerId.isEmpty
+                ? null
+                : () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          WaiterPerformanceScreen(sellerId: sellerId),
+                    ),
+                  ),
+          ),
+          const Spacer(),
+          _buildLocalPrintStatusBadge(uiBranch: 'web_garson_topbar'),
+          const SizedBox(width: 8),
+          // ── SAĞ: Sistem aksiyonları ────────────────────────────────────
+          IconButton(
+            tooltip: 'Yenile',
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            onPressed: () {
+              setState(() {
+                _tableOrdersFallbackFuture = null;
+              });
+              unawaited(_loadStoreTables(silent: true));
+              _scheduleLocalPrintStatusRefreshIfNeeded(
+                module: SellerModule.garson,
+                reason: 'garson_refresh_button',
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Bildirimler',
+            icon: const Icon(Icons.notifications_outlined, size: 20),
+            onPressed: () {},
+          ),
+          IconButton(
+            tooltip: 'Profil',
+            icon: const Icon(Icons.account_circle_outlined, size: 20),
+            onPressed: () {},
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _garsonTopBarAction({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 15),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 32),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        side: BorderSide(color: Colors.grey.shade300),
+        foregroundColor: const Color(0xFF374151),
+      ),
+    );
+  }
+
+  /// Clickable status badge for the garson grid filter bar.
+  Widget _garsonFilterBadge({
+    required String label,
+    required String value,
+    required String? filterKey,
+    required String? activeFilter,
+    required VoidCallback onTap,
+    Color? activeColor,
+  }) {
+    final isActive = activeFilter == filterKey;
+    final accentColor = activeColor ?? AppColors.primary;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isActive ? accentColor.withValues(alpha: 0.12) : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isActive ? accentColor : Colors.grey.shade300,
+            width: isActive ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: isActive ? accentColor : const Color(0xFF374151),
+              ),
+            ),
+            const SizedBox(width: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: isActive ? accentColor : Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                value,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: isActive ? Colors.white : const Color(0xFF374151),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildWebGarsonTableCard({
@@ -17733,51 +18439,96 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           .map((item) {
                             final qty =
                                 (item['quantity'] as num?)?.toInt() ?? 1;
-                            final unitPrice = _garsonParsePrice(item['price']);
-                            final lineTotal = qty * unitPrice;
+                            final lineTotal = MixedServiceOrder.itemLineTotal(
+                              item,
+                            );
+                            final detailLines = _garsonItemDetailLines(item);
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 3),
-                              child: Row(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Container(
-                                    width: 17,
-                                    height: 17,
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      color: color.withValues(alpha: 0.18),
-                                      borderRadius: BorderRadius.circular(5),
-                                    ),
-                                    child: Text(
-                                      '$qty',
-                                      style: TextStyle(
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.w800,
-                                        color: color,
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 17,
+                                        height: 17,
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: color.withValues(alpha: 0.18),
+                                          borderRadius: BorderRadius.circular(
+                                            5,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '$qty',
+                                          style: TextStyle(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w800,
+                                            color: color,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 5),
-                                  Expanded(
-                                    child: Text(
-                                      item['name']?.toString() ?? '-',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF1F2937),
+                                      const SizedBox(width: 5),
+                                      Expanded(
+                                        child: Text(
+                                          item['name']?.toString() ?? '-',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                            color: Color(0xFF1F2937),
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        _garsonFormatMoney(lineTotal),
+                                        style: const TextStyle(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w700,
+                                          color: AppColors.primary,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _garsonFormatMoney(lineTotal),
-                                    style: const TextStyle(
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700,
-                                      color: AppColors.primary,
-                                    ),
-                                  ),
+                                  if (detailLines.isNotEmpty) ...[
+                                    const SizedBox(height: 2),
+                                    ...detailLines
+                                        .take(2)
+                                        .map(
+                                          (entry) => Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 22,
+                                            ),
+                                            child: entry.isGroupHeader
+                                                ? Text(
+                                                    entry.label,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      fontSize: 9,
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                      color: Color(0xFF334155),
+                                                    ),
+                                                  )
+                                                : Text(
+                                                    '• ${entry.label}',
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      fontSize: 9,
+                                                      color:
+                                                          Colors.grey.shade700,
+                                                    ),
+                                                  ),
+                                          ),
+                                        ),
+                                  ],
                                 ],
                               ),
                             );
@@ -17808,6 +18559,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         onPressed: () => _printGarsonAdisyon(
                           tableNumber: tableNumber,
                           orders: tableOrders,
+                          uiAction: 'table_card_adisyon_button',
                         ),
                         style: OutlinedButton.styleFrom(
                           minimumSize: const Size(0, 44),
@@ -17846,1064 +18598,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  Widget _buildGarsonColumn(
-    String title,
-    List<Map<String, dynamic>> orders,
-    Color color,
-    IconData icon,
-  ) {
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                Icon(icon, color: color, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: color,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: Text(
-                      '${orders.length}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: orders.isEmpty
-                ? Center(
-                    child: Text(
-                      'Yok',
-                      style: TextStyle(
-                        color: Colors.grey.shade400,
-                        fontSize: 13,
-                      ),
-                    ),
-                  )
-                : GridView.builder(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 1,
-                          mainAxisSpacing: 8,
-                          childAspectRatio: 1,
-                        ),
-                    itemCount: orders.length,
-                    itemBuilder: (ctx, i) =>
-                        _buildGarsonOrderCard(orders[i], color),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGarsonOrderCard(Map<String, dynamic> order, Color statusColor) {
-    final orderId = order['id']?.toString() ?? '';
-    final tableNumber = _garsonTableNumberFromOrder(order);
-    final status = order['status']?.toString() ?? 'new';
-    final createdAt = order['created_at']?.toString() ?? '';
-    final items = _garsonExtractItems(order);
-    final previewItems = items.take(3).toList(growable: false);
-    final hiddenItemCount = items.length > 3 ? items.length - 3 : 0;
-
-    String timeAgo = '';
-    try {
-      final dt = DateTime.parse(createdAt).toLocal();
-      final diff = DateTime.now().difference(dt);
-      if (diff.inMinutes < 1) {
-        timeAgo = 'Az önce';
-      } else if (diff.inMinutes < 60) {
-        timeAgo = '${diff.inMinutes} dk önce';
-      } else {
-        timeAgo = '${diff.inHours} sa önce';
-      }
-    } catch (_) {}
-
-    return GestureDetector(
-      onTap: () =>
-          _showGarsonOrderDialog(order, statusColor, tableOrders: [order]),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: statusColor.withOpacity(0.25)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.03),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Card header
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.07),
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(8),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.table_restaurant_outlined,
-                    color: statusColor,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Masa $tableNumber',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: statusColor,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    timeAgo,
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ...previewItems.map((item) {
-                      final notes = item['notes']?.toString() ?? '';
-                      final gramaj = item['gramaj']?.toString() ?? '';
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 22,
-                              height: 22,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  '${item['quantity'] ?? 1}',
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.primary,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item['name']?.toString() ?? '-',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF1F2937),
-                                    ),
-                                  ),
-                                  if (gramaj.isNotEmpty || notes.isNotEmpty)
-                                    Text(
-                                      [
-                                        if (gramaj.isNotEmpty) gramaj,
-                                        if (notes.isNotEmpty) notes,
-                                      ].join(' · '),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey.shade500,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              item['price']?.toString() ?? '',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    if (hiddenItemCount > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          '+$hiddenItemCount ürün daha',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey.shade500,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    const Spacer(),
-                    Text(
-                      'Toplam: ${_garsonFormatMoney(_garsonOrderTotal(order))}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Row(
-                children: [
-                  if (_isGarsonWaitingStatus(status))
-                    Expanded(
-                      child: _garsonActionBtn(
-                        label: 'Sipariş Gönderildi',
-                        color: Colors.green,
-                        onTap: () =>
-                            _markTableOrderSentWithKitchenRouting(order),
-                      ),
-                    ),
-                  if (status.toLowerCase() == 'preparing')
-                    Expanded(
-                      child: _garsonActionBtn(
-                        label: 'Siparişi Bitir',
-                        color: Colors.green,
-                        onTap: () =>
-                            _markTableOrderSentWithKitchenRouting(order),
-                      ),
-                    ),
-                  if (_isGarsonCompletedStatus(status)) ...[
-                    Expanded(
-                      child: _garsonActionBtn(
-                        label: 'Adisyon Yazdır',
-                        color: AppColors.primary,
-                        onTap: () => _printGarsonAdisyon(
-                          tableNumber: tableNumber,
-                          orders: [order],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: _garsonActionBtn(
-                        label: 'Masa Kapat',
-                        color: Colors.grey,
-                        onTap: () => _confirmCloseGarsonTable(
-                          tableNumber: tableNumber,
-                          existingOrders: [order],
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showGarsonOrderDialog(
-    Map<String, dynamic> order,
-    Color statusColor, {
-    List<Map<String, dynamic>>? tableOrders,
-  }) {
-    final orderId = order['id']?.toString() ?? '';
-    final tableNumber = order['table_number'];
-    final status = order['status'] ?? 'new';
-    final createdAt = order['created_at']?.toString() ?? '';
-
-    List<Map<String, dynamic>> editableItems = [];
-    final rawItems = order['items'];
-    if (rawItems is List) {
-      editableItems = List<Map<String, dynamic>>.from(
-        rawItems.map((e) => Map<String, dynamic>.from(e as Map)),
-      );
-    }
-
-    final bool isEditable = _isGarsonWaitingStatus(status);
-
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheet) {
-            return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: statusColor.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Icon(
-                              Icons.table_restaurant_outlined,
-                              color: statusColor,
-                              size: 18,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Masa $tableNumber',
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              if (createdAt.isNotEmpty)
-                                Text(
-                                  createdAt,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey.shade500,
-                                  ),
-                                ),
-                            ],
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            icon: const Icon(Icons.close),
-                            splashRadius: 18,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Divider(color: Colors.grey.shade200, height: 1),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Sipariş İçeriği',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (editableItems.isEmpty)
-                        const Text(
-                          'Bu siparişte ürün bulunamadı.',
-                          style: TextStyle(fontSize: 13, color: Colors.grey),
-                        )
-                      else
-                        SizedBox(
-                          height: 260,
-                          child: ListView.builder(
-                            itemCount: editableItems.length,
-                            itemBuilder: (ctx, index) {
-                              final item = editableItems[index];
-                              final name = item['name']?.toString() ?? '-';
-                              final notes = item['notes']?.toString() ?? '';
-                              final gramaj = item['gramaj']?.toString() ?? '';
-                              final price = item['price']?.toString() ?? '';
-                              final int quantity =
-                                  (item['quantity'] ?? 1) as int;
-                              final attrs =
-                                  (item['attributes'] as List?)
-                                      ?.whereType<String>()
-                                      .toList() ??
-                                  [];
-
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: Colors.grey.shade200,
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.02),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        if (isEditable)
-                                          Row(
-                                            children: [
-                                              GestureDetector(
-                                                onTap: () {
-                                                  if (quantity > 1) {
-                                                    setSheet(() {
-                                                      editableItems[index]['quantity'] =
-                                                          quantity - 1;
-                                                    });
-                                                  }
-                                                },
-                                                child: Container(
-                                                  width: 24,
-                                                  height: 24,
-                                                  decoration: BoxDecoration(
-                                                    color: AppColors.primary
-                                                        .withOpacity(0.06),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          6,
-                                                        ),
-                                                  ),
-                                                  child: const Icon(
-                                                    Icons.remove,
-                                                    size: 14,
-                                                    color: AppColors.primary,
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                '$quantity',
-                                                style: const TextStyle(
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w700,
-                                                  color: AppColors.primary,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              GestureDetector(
-                                                onTap: () {
-                                                  setSheet(() {
-                                                    editableItems[index]['quantity'] =
-                                                        quantity + 1;
-                                                  });
-                                                },
-                                                child: Container(
-                                                  width: 24,
-                                                  height: 24,
-                                                  decoration: BoxDecoration(
-                                                    color: AppColors.primary
-                                                        .withOpacity(0.06),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          6,
-                                                        ),
-                                                  ),
-                                                  child: const Icon(
-                                                    Icons.add,
-                                                    size: 14,
-                                                    color: AppColors.primary,
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 10),
-                                            ],
-                                          )
-                                        else
-                                          Container(
-                                            width: 24,
-                                            height: 24,
-                                            alignment: Alignment.center,
-                                            decoration: BoxDecoration(
-                                              color: AppColors.primary
-                                                  .withOpacity(0.05),
-                                              borderRadius:
-                                                  BorderRadius.circular(6),
-                                            ),
-                                            child: Text(
-                                              '$quantity',
-                                              style: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.w700,
-                                                color: AppColors.primary,
-                                              ),
-                                            ),
-                                          ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Text(
-                                            name,
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w600,
-                                              color: Color(0xFF1F2937),
-                                            ),
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                        if (price.isNotEmpty)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              left: 6,
-                                            ),
-                                            child: Text(
-                                              price,
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w700,
-                                                color: AppColors.primary,
-                                              ),
-                                            ),
-                                          ),
-                                        if (isEditable)
-                                          IconButton(
-                                            onPressed: () {
-                                              _editGarsonItemSettings(
-                                                ctx,
-                                                Map<String, dynamic>.from(item),
-                                                (updated) {
-                                                  setSheet(() {
-                                                    editableItems[index] =
-                                                        updated;
-                                                  });
-                                                },
-                                              );
-                                            },
-                                            icon: const Icon(
-                                              Icons.tune,
-                                              size: 18,
-                                              color: Colors.grey,
-                                            ),
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                          ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 6),
-                                    if (!isEditable &&
-                                        (gramaj.isNotEmpty || notes.isNotEmpty))
-                                      Text(
-                                        [
-                                          if (gramaj.isNotEmpty) gramaj,
-                                          if (notes.isNotEmpty) notes,
-                                        ].join(' · '),
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: Colors.grey.shade500,
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    if (!isEditable && attrs.isNotEmpty) ...[
-                                      const SizedBox(height: 6),
-                                      Wrap(
-                                        spacing: 6,
-                                        runSpacing: 4,
-                                        children: attrs
-                                            .map(
-                                              (a) => Container(
-                                                padding:
-                                                    const EdgeInsets.fromLTRB(
-                                                      8,
-                                                      4,
-                                                      8,
-                                                      4,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.grey.shade200,
-                                                  borderRadius:
-                                                      BorderRadius.circular(12),
-                                                ),
-                                                child: Text(
-                                                  a,
-                                                  style: const TextStyle(
-                                                    fontSize: 11,
-                                                  ),
-                                                ),
-                                              ),
-                                            )
-                                            .toList(),
-                                      ),
-                                    ],
-                                    if (isEditable && attrs.isNotEmpty) ...[
-                                      const SizedBox(height: 4),
-                                      Wrap(
-                                        spacing: 6,
-                                        runSpacing: 4,
-                                        children: attrs
-                                            .map(
-                                              (a) => Container(
-                                                padding:
-                                                    const EdgeInsets.fromLTRB(
-                                                      8,
-                                                      4,
-                                                      8,
-                                                      4,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.grey.shade100,
-                                                  borderRadius:
-                                                      BorderRadius.circular(12),
-                                                ),
-                                                child: Text(
-                                                  a,
-                                                  style: const TextStyle(
-                                                    fontSize: 11,
-                                                  ),
-                                                ),
-                                              ),
-                                            )
-                                            .toList(),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      const SizedBox(height: 16),
-                      if (isEditable)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            onPressed: () async {
-                              final newItem = await _pickProductForGarsonOrder(
-                                ctx,
-                              );
-                              if (newItem != null) {
-                                setSheet(() {
-                                  editableItems.add(newItem);
-                                });
-                              }
-                            },
-                            icon: const Icon(Icons.add),
-                            label: const Text('Ürün ekle'),
-                          ),
-                        ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text('Vazgeç'),
-                          ),
-                          const SizedBox(width: 8),
-                          OutlinedButton.icon(
-                            onPressed: () => _printGarsonAdisyon(
-                              tableNumber: _garsonTableNumberFromOrder(order),
-                              orders:
-                                  (tableOrders != null &&
-                                      tableOrders.isNotEmpty)
-                                  ? tableOrders
-                                  : [order],
-                            ),
-                            icon: const Icon(Icons.receipt_long_outlined),
-                            label: const Text('Adisyon Yazdır'),
-                          ),
-                          const Spacer(),
-                          if (_isGarsonWaitingStatus(status))
-                            ElevatedButton(
-                              onPressed: () async {
-                                final updatedOrder = {
-                                  ...order,
-                                  'items': editableItems,
-                                };
-                                await _markTableOrderSentWithKitchenRouting(
-                                  updatedOrder,
-                                  overrideItems: editableItems,
-                                );
-                                if (mounted) Navigator.pop(ctx);
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 10,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                              child: const Text(
-                                'Sipariş Gönderildi',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            )
-                          else if (status == 'preparing')
-                            ElevatedButton(
-                              onPressed: () async {
-                                await _markTableOrderSentWithKitchenRouting(
-                                  order,
-                                );
-                                if (mounted) Navigator.pop(ctx);
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 10,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                              child: const Text(
-                                'Siparişi Bitir',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            )
-                          else
-                            ElevatedButton(
-                              onPressed: () async {
-                                await _confirmCloseGarsonTable(
-                                  tableNumber: _garsonTableNumberFromOrder(
-                                    order,
-                                  ),
-                                  existingOrders:
-                                      (tableOrders != null &&
-                                          tableOrders.isNotEmpty)
-                                      ? tableOrders
-                                      : [order],
-                                );
-                                if (mounted) Navigator.pop(ctx);
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.grey.shade600,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 10,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                              child: const Text(
-                                'Masa Kapat',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<Map<String, dynamic>?> _pickProductForGarsonOrder(
-    BuildContext ctx,
-  ) async {
-    if (_products.isEmpty) return null;
-    return showDialog<Map<String, dynamic>>(
-      context: ctx,
-      builder: (dCtx) {
-        final allSubCats =
-            _products
-                .map((p) => p.subCategory)
-                .where((s) => s.trim().isNotEmpty)
-                .toSet()
-                .toList()
-              ..sort();
-
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            String selectedSubCat = 'Tümü';
-
-            List<SellerProduct> filteredProducts;
-            if (selectedSubCat == 'Tümü') {
-              filteredProducts = _products;
-            } else {
-              filteredProducts = _products
-                  .where((p) => p.subCategory == selectedSubCat)
-                  .toList();
-            }
-
-            return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: 520,
-                  maxHeight: 560,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          const Text(
-                            'Ürün Ekle',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            onPressed: () => Navigator.pop(dCtx),
-                            icon: const Icon(Icons.close),
-                            splashRadius: 18,
-                          ),
-                        ],
-                      ),
-                      if (allSubCats.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          height: 40,
-                          width: double.infinity,
-                          child: ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: allSubCats.length + 1,
-                            itemBuilder: (_, i) {
-                              final cat = i == 0 ? 'Tümü' : allSubCats[i - 1];
-                              final isSelected = selectedSubCat == cat;
-                              return GestureDetector(
-                                onTap: () {
-                                  setDialogState(() {
-                                    selectedSubCat = cat;
-                                  });
-                                },
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 150),
-                                  margin: const EdgeInsets.only(right: 8),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? AppColors.primary
-                                        : Colors.grey.shade100,
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : Colors.grey.shade200,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    cat,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: isSelected
-                                          ? Colors.white
-                                          : Colors.grey.shade700,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 10),
-                      Expanded(
-                        child: filteredProducts.isEmpty
-                            ? const Center(
-                                child: Text(
-                                  'Bu kategoride ürün yok.',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              )
-                            : ListView.builder(
-                                itemCount: filteredProducts.length,
-                                itemBuilder: (c, i) {
-                                  final p = filteredProducts[i];
-                                  return Container(
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(14),
-                                      border: Border.all(
-                                        color: Colors.grey.shade200,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.02),
-                                          blurRadius: 4,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                p.name,
-                                                style: const TextStyle(
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                              const SizedBox(height: 2),
-                                              if (p.subCategory.isNotEmpty)
-                                                Text(
-                                                  p.subCategory,
-                                                  style: TextStyle(
-                                                    fontSize: 11,
-                                                    color: Colors.grey.shade500,
-                                                  ),
-                                                ),
-                                              const SizedBox(height: 2),
-                                              Text(
-                                                p.displayPrice,
-                                                style: const TextStyle(
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w700,
-                                                  color: AppColors.primary,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            TextButton(
-                                              onPressed: () {
-                                                final item = <String, dynamic>{
-                                                  'name': p.name,
-                                                  'price': p.displayPrice,
-                                                  'quantity': 1,
-                                                  'gramaj': '',
-                                                  'notes': '',
-                                                  'attributes': <String>[],
-                                                };
-                                                Navigator.pop(dCtx, item);
-                                              },
-                                              child: const Text('Ekle'),
-                                            ),
-                                            IconButton(
-                                              onPressed: () async {
-                                                final configured =
-                                                    await _configureGarsonProductItem(
-                                                      dCtx,
-                                                      p,
-                                                    );
-                                                if (configured != null) {
-                                                  if (Navigator.canPop(dCtx)) {
-                                                    Navigator.pop(
-                                                      dCtx,
-                                                      configured,
-                                                    );
-                                                  }
-                                                }
-                                              },
-                                              icon: const Icon(
-                                                Icons.tune,
-                                                size: 18,
-                                              ),
-                                              splashRadius: 18,
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   Future<void> _editGarsonItemSettings(
     BuildContext ctx,
     Map<String, dynamic> item,
     void Function(Map<String, dynamic>) onSave,
   ) async {
     final name = item['name']?.toString() ?? '';
-    final priceText = item['price']?.toString() ?? '';
+    // TODO(debug): remove before production
+    final rawPrice = item['price'];
+    debugPrint(
+      '[ORDER_NUMERIC_FIELD] field=price value=$rawPrice runtimeType=${rawPrice?.runtimeType}',
+    );
+    final numericPrice = MixedServiceOrder.parsePrice(rawPrice);
+    final priceText = numericPrice > 0
+        ? ProductPriceCalculator.formatCurrency(numericPrice)
+        : '';
     int qty = (item['quantity'] as num?)?.toInt() ?? 1;
     final gramajController = TextEditingController(
       text: item['gramaj']?.toString() ?? '',
@@ -18918,6 +18627,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           product?.name.trim().toLowerCase() == name.trim().toLowerCase(),
       orElse: () => null,
     );
+    double selectedServiceAmount =
+        (item['selectedServiceAmount'] as num?)?.toDouble() ??
+        matchedProduct?.resolvedDefaultServiceAmount ??
+        0;
+    int selectedWeightGrams =
+        (item['selectedWeightGrams'] as num?)?.toInt() ??
+        matchedProduct?.resolvedDefaultWeightGrams ??
+        0;
     final availableAttrs = <String>{
       ...?matchedProduct?.attributes,
       ...initialAttrs,
@@ -18996,79 +18713,232 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             ),
                             const SizedBox(height: 12),
                           ],
-                          const Text(
-                            'Adet',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF111827),
+                          if (matchedProduct?.usesServiceControlStepper !=
+                              true) ...[
+                            const Text(
+                              'Adet',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF111827),
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              qtyButton(Icons.remove, () {
-                                if (qty > 1) {
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                qtyButton(Icons.remove, () {
+                                  if (qty > 1) {
+                                    setStateDialog(() {
+                                      qty--;
+                                    });
+                                  }
+                                }),
+                                const SizedBox(width: 10),
+                                Container(
+                                  width: 46,
+                                  height: 32,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: const Color(0xFFD1D5DB),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    '$qty',
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                qtyButton(Icons.add, () {
                                   setStateDialog(() {
-                                    qty--;
+                                    qty++;
                                   });
-                                }
-                              }),
-                              const SizedBox(width: 10),
-                              Container(
-                                width: 46,
-                                height: 32,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: const Color(0xFFD1D5DB),
-                                  ),
-                                ),
-                                child: Text(
-                                  '$qty',
-                                  style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              qtyButton(Icons.add, () {
-                                setStateDialog(() {
-                                  qty++;
-                                });
-                              }),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          const Text(
-                            'Gramaj (isteğe bağlı)',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF111827),
+                                }),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 6),
-                          TextField(
-                            controller: gramajController,
-                            decoration: InputDecoration(
-                              hintText: 'Örn: 250g',
-                              filled: true,
-                              fillColor: Colors.white,
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 11,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
+                            const SizedBox(height: 14),
+                            const Text(
+                              'Gramaj (istege bagli)',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF111827),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
+                            const SizedBox(height: 6),
+                            TextField(
+                              controller: gramajController,
+                              decoration: InputDecoration(
+                                hintText: 'Orn: 250g',
+                                filled: true,
+                                fillColor: Colors.white,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 11,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          if (matchedProduct?.usesPortionLikeStepper ==
+                              true) ...[
+                            const Text(
+                              'Servis Secimi',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF111827),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                qtyButton(Icons.remove, () {
+                                  setStateDialog(() {
+                                    selectedServiceAmount =
+                                        ProductPriceCalculator.clampPortionSelection(
+                                          selectedServiceAmount -
+                                              matchedProduct!
+                                                  .resolvedPortionStepAmount,
+                                          type: matchedProduct
+                                              .resolvedServiceControlType,
+                                          minPortion: matchedProduct.minPortion,
+                                          maxPortion: matchedProduct.maxPortion,
+                                          portionStep:
+                                              matchedProduct.portionStep,
+                                        );
+                                  });
+                                }),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Container(
+                                    height: 36,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: const Color(0xFFD1D5DB),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      ProductPriceCalculator.formatServiceAmountLabel(
+                                        type: matchedProduct!
+                                            .resolvedServiceControlType,
+                                        amount: selectedServiceAmount,
+                                      ),
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                qtyButton(Icons.add, () {
+                                  setStateDialog(() {
+                                    selectedServiceAmount =
+                                        ProductPriceCalculator.clampPortionSelection(
+                                          selectedServiceAmount +
+                                              matchedProduct
+                                                  .resolvedPortionStepAmount,
+                                          type: matchedProduct
+                                              .resolvedServiceControlType,
+                                          minPortion: matchedProduct.minPortion,
+                                          maxPortion: matchedProduct.maxPortion,
+                                          portionStep:
+                                              matchedProduct.portionStep,
+                                        );
+                                  });
+                                }),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          if (matchedProduct?.resolvedServiceControlType ==
+                              ProductServiceControlType.weightStepper) ...[
+                            const Text(
+                              'Kilo Secimi',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF111827),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                qtyButton(Icons.remove, () {
+                                  setStateDialog(() {
+                                    selectedWeightGrams =
+                                        ProductPriceCalculator.clampWeightSelection(
+                                          selectedWeightGrams -
+                                              matchedProduct!
+                                                  .resolvedWeightStepGrams,
+                                          minWeightGrams:
+                                              matchedProduct.minWeightGrams,
+                                          weightStepGrams:
+                                              matchedProduct.weightStepGrams,
+                                          maxWeightGrams:
+                                              matchedProduct.maxWeightGrams,
+                                        );
+                                  });
+                                }),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Container(
+                                    height: 36,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: const Color(0xFFD1D5DB),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      ProductPriceCalculator.formatServiceAmountLabel(
+                                        type: matchedProduct!
+                                            .resolvedServiceControlType,
+                                        grams: selectedWeightGrams,
+                                      ),
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                qtyButton(Icons.add, () {
+                                  setStateDialog(() {
+                                    selectedWeightGrams =
+                                        ProductPriceCalculator.clampWeightSelection(
+                                          selectedWeightGrams +
+                                              matchedProduct
+                                                  .resolvedWeightStepGrams,
+                                          minWeightGrams:
+                                              matchedProduct.minWeightGrams,
+                                          weightStepGrams:
+                                              matchedProduct.weightStepGrams,
+                                          maxWeightGrams:
+                                              matchedProduct.maxWeightGrams,
+                                        );
+                                  });
+                                }),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                          ],
                           const Text(
                             'Açıklama / Not (isteğe bağlı)',
                             style: TextStyle(
@@ -19165,9 +19035,78 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             width: double.infinity,
                             child: ElevatedButton(
                               onPressed: () {
+                                final quantity =
+                                    matchedProduct?.usesServiceControlStepper ==
+                                        true
+                                    ? 1
+                                    : qty;
+                                final unitPrice = matchedProduct == null
+                                    ? ProductPriceCalculator.parsePriceValue(
+                                        priceText,
+                                      )
+                                    : ProductPriceCalculator.resolveServiceControlledUnitPrice(
+                                        serviceControlType: matchedProduct
+                                            .resolvedServiceControlType,
+                                        pricingType:
+                                            matchedProduct.resolvedPricingType,
+                                        portionPrice:
+                                            matchedProduct.portionPrice,
+                                        pricePerKg: matchedProduct.pricePerKg,
+                                        fallbackPrice: matchedProduct.price,
+                                        selectedAmount:
+                                            matchedProduct
+                                                .usesPortionLikeStepper
+                                            ? selectedServiceAmount
+                                            : null,
+                                        selectedWeightGrams:
+                                            matchedProduct
+                                                    .resolvedServiceControlType ==
+                                                ProductServiceControlType
+                                                    .weightStepper
+                                            ? selectedWeightGrams
+                                            : null,
+                                      );
+                                final amountLabel =
+                                    matchedProduct?.usesServiceControlStepper ==
+                                        true
+                                    ? ProductPriceCalculator.formatServiceAmountLabel(
+                                        type: matchedProduct!
+                                            .resolvedServiceControlType,
+                                        amount:
+                                            matchedProduct
+                                                .usesPortionLikeStepper
+                                            ? selectedServiceAmount
+                                            : null,
+                                        grams:
+                                            matchedProduct
+                                                    .resolvedServiceControlType ==
+                                                ProductServiceControlType
+                                                    .weightStepper
+                                            ? selectedWeightGrams
+                                            : null,
+                                      )
+                                    : gramajController.text.trim();
                                 final updated = Map<String, dynamic>.from(item)
-                                  ..['quantity'] = qty
-                                  ..['gramaj'] = gramajController.text.trim()
+                                  ..['quantity'] = quantity
+                                  ..['price'] = unitPrice
+                                  ..['gramaj'] = amountLabel
+                                  ..['amountLabel'] = amountLabel
+                                  ..['serviceControlType'] = matchedProduct
+                                      ?.resolvedServiceControlType
+                                      .storageValue
+                                  ..['selectedServiceAmount'] =
+                                      matchedProduct?.usesPortionLikeStepper ==
+                                          true
+                                      ? selectedServiceAmount
+                                      : null
+                                  ..['selectedWeightGrams'] =
+                                      matchedProduct
+                                              ?.resolvedServiceControlType ==
+                                          ProductServiceControlType
+                                              .weightStepper
+                                      ? selectedWeightGrams
+                                      : null
+                                  ..['line_total'] = unitPrice * quantity
                                   ..['notes'] = notesController.text.trim()
                                   ..['attributes'] = selectedAttrs.toList(
                                     growable: false,
@@ -19215,22 +19154,31 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     SellerProduct product,
   ) async {
     int qty = 1;
+    double selectedServiceAmount = product.resolvedDefaultServiceAmount;
+    int selectedWeightGrams = product.resolvedDefaultWeightGrams;
     final gramajCtrl = TextEditingController();
     final notesCtrl = TextEditingController();
     final attrs = product.attributes;
     final selected = <String>{};
 
-    return showDialog<Map<String, dynamic>>(
+    // showModalBottomSheet correctly propagates MediaQuery.viewInsets so the
+    // note field stays visible when the keyboard is shown (keyboard-safe).
+    return showModalBottomSheet<Map<String, dynamic>>(
       context: ctx,
-      builder: (dCtx) {
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (bCtx) {
         return StatefulBuilder(
-          builder: (dCtx, setStateDialog) {
-            return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+          builder: (bCtx, setStateDialog) {
+            final kbPad = MediaQuery.viewInsetsOf(bCtx).bottom;
+            return SizedBox(
+              width: double.infinity,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                padding: EdgeInsets.fromLTRB(20, 16, 20, 20 + kbPad),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -19262,109 +19210,316 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             ),
                           ),
                           IconButton(
-                            onPressed: () => Navigator.pop(dCtx),
+                            onPressed: () => Navigator.pop(bCtx),
                             icon: const Icon(Icons.close),
                             splashRadius: 18,
                           ),
                         ],
                       ),
                       const SizedBox(height: 12),
-                      const Text(
-                        'Adet',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                      if (!product.usesServiceControlStepper) ...[
+                        const Text(
+                          'Adet',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          GestureDetector(
-                            onTap: () {
-                              if (qty > 1) {
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                if (qty > 1) {
+                                  setStateDialog(() {
+                                    qty--;
+                                  });
+                                }
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.remove,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 48,
+                              height: 32,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              child: Text(
+                                '$qty',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () {
                                 setStateDialog(() {
-                                  qty--;
+                                  qty++;
                                 });
-                              }
-                            },
-                            child: Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.08),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.remove,
-                                size: 18,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            width: 48,
-                            height: 32,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.grey.shade300),
-                            ),
-                            child: Text(
-                              '$qty',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () {
-                              setStateDialog(() {
-                                qty++;
-                              });
-                            },
-                            child: Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.08),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.add,
-                                size: 18,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Gramaj (isteğe bağlı)',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      TextField(
-                        controller: gramajCtrl,
-                        decoration: InputDecoration(
-                          hintText: 'Örn: 250g',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Gramaj (istege bagli)',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: gramajCtrl,
+                          decoration: InputDecoration(
+                            hintText: 'Orn: 250g',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      if (product.usesPortionLikeStepper) ...[
+                        const Text(
+                          'Servis Secimi',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                setStateDialog(() {
+                                  selectedServiceAmount =
+                                      ProductPriceCalculator.clampPortionSelection(
+                                        selectedServiceAmount -
+                                            product.resolvedPortionStepAmount,
+                                        type:
+                                            product.resolvedServiceControlType,
+                                        minPortion: product.minPortion,
+                                        maxPortion: product.maxPortion,
+                                        portionStep: product.portionStep,
+                                      );
+                                });
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.remove,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Container(
+                                height: 40,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: Colors.grey.shade300,
+                                  ),
+                                ),
+                                child: Text(
+                                  ProductPriceCalculator.formatServiceAmountLabel(
+                                    type: product.resolvedServiceControlType,
+                                    amount: selectedServiceAmount,
+                                  ),
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () {
+                                setStateDialog(() {
+                                  selectedServiceAmount =
+                                      ProductPriceCalculator.clampPortionSelection(
+                                        selectedServiceAmount +
+                                            product.resolvedPortionStepAmount,
+                                        type:
+                                            product.resolvedServiceControlType,
+                                        minPortion: product.minPortion,
+                                        maxPortion: product.maxPortion,
+                                        portionStep: product.portionStep,
+                                      );
+                                });
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      if (product.resolvedServiceControlType ==
+                          ProductServiceControlType.weightStepper) ...[
+                        const Text(
+                          'Kilo Secimi',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                setStateDialog(() {
+                                  selectedWeightGrams =
+                                      ProductPriceCalculator.clampWeightSelection(
+                                        selectedWeightGrams -
+                                            product.resolvedWeightStepGrams,
+                                        minWeightGrams: product.minWeightGrams,
+                                        weightStepGrams:
+                                            product.weightStepGrams,
+                                        maxWeightGrams: product.maxWeightGrams,
+                                      );
+                                });
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.remove,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Container(
+                                height: 40,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: Colors.grey.shade300,
+                                  ),
+                                ),
+                                child: Text(
+                                  ProductPriceCalculator.formatServiceAmountLabel(
+                                    type: product.resolvedServiceControlType,
+                                    grams: selectedWeightGrams,
+                                  ),
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () {
+                                setStateDialog(() {
+                                  selectedWeightGrams =
+                                      ProductPriceCalculator.clampWeightSelection(
+                                        selectedWeightGrams +
+                                            product.resolvedWeightStepGrams,
+                                        minWeightGrams: product.minWeightGrams,
+                                        weightStepGrams:
+                                            product.weightStepGrams,
+                                        maxWeightGrams: product.maxWeightGrams,
+                                      );
+                                });
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       const Text(
                         'Açıklama / Not (isteğe bağlı)',
                         style: TextStyle(
@@ -19462,19 +19617,69 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: () {
+                            final quantity = product.usesServiceControlStepper
+                                ? 1
+                                : qty;
+                            final unitPrice =
+                                ProductPriceCalculator.resolveServiceControlledUnitPrice(
+                                  serviceControlType:
+                                      product.resolvedServiceControlType,
+                                  pricingType: product.resolvedPricingType,
+                                  portionPrice: product.portionPrice,
+                                  pricePerKg: product.pricePerKg,
+                                  fallbackPrice: product.price,
+                                  selectedAmount: product.usesPortionLikeStepper
+                                      ? selectedServiceAmount
+                                      : null,
+                                  selectedWeightGrams:
+                                      product.resolvedServiceControlType ==
+                                          ProductServiceControlType
+                                              .weightStepper
+                                      ? selectedWeightGrams
+                                      : null,
+                                );
+                            final amountLabel =
+                                product.usesServiceControlStepper
+                                ? ProductPriceCalculator.formatServiceAmountLabel(
+                                    type: product.resolvedServiceControlType,
+                                    amount: product.usesPortionLikeStepper
+                                        ? selectedServiceAmount
+                                        : null,
+                                    grams:
+                                        product.resolvedServiceControlType ==
+                                            ProductServiceControlType
+                                                .weightStepper
+                                        ? selectedWeightGrams
+                                        : null,
+                                  )
+                                : gramajCtrl.text.trim();
                             final item = <String, dynamic>{
                               'product_id': product.id,
                               'name': product.name,
-                              'price': product.displayPrice,
-                              'quantity': qty,
-                              'gramaj': gramajCtrl.text.trim(),
+                              'price': unitPrice,
+                              'quantity': quantity,
+                              'gramaj': amountLabel,
+                              'amountLabel': amountLabel,
+                              'serviceControlType': product
+                                  .resolvedServiceControlType
+                                  .storageValue,
+                              'selectedServiceAmount':
+                                  product.usesPortionLikeStepper
+                                  ? selectedServiceAmount
+                                  : null,
+                              'selectedWeightGrams':
+                                  product.resolvedServiceControlType ==
+                                      ProductServiceControlType.weightStepper
+                                  ? selectedWeightGrams
+                                  : null,
+                              'line_total': unitPrice * quantity,
                               'notes': notesCtrl.text.trim(),
                               'station_id': product.stationId,
                               'printer_routing_enabled':
                                   product.printerRoutingEnabled,
                               'attributes': selected.toList(),
                             };
-                            Navigator.pop(dCtx, item);
+                            Navigator.pop(bCtx, item);
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
@@ -19504,33 +19709,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           },
         );
       },
-    );
-  }
-
-  Widget _garsonActionBtn({
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 34,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: color,
-          ),
-        ),
-      ),
     );
   }
 
@@ -19576,7 +19754,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: [
-                          AppColors.primary.withOpacity(0.7),
+                          AppColors.primary.withValues(alpha: 0.7),
                           AppColors.primary,
                         ],
                       ),
@@ -19603,8 +19781,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               ),
                               errorWidget: const Center(
                                 child: Column(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.center,
+                                  mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     Icon(
                                       Icons.broken_image,
@@ -19677,7 +19854,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             border: Border.all(color: Colors.white, width: 4),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
+                                color: Colors.black.withValues(alpha: 0.1),
                                 blurRadius: 8,
                                 offset: const Offset(0, 2),
                               ),
@@ -19700,10 +19877,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                             child: SizedBox(
                                               width: 20,
                                               height: 20,
-                                              child:
-                                                  CircularProgressIndicator(
-                                                    strokeWidth: 2,
-                                                  ),
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
                                             ),
                                           ),
                                           errorWidget: Stack(
@@ -19722,8 +19898,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                                   width: 28,
                                                   height: 28,
                                                   decoration: BoxDecoration(
-                                                    color:
-                                                        AppColors.primary,
+                                                    color: AppColors.primary,
                                                     shape: BoxShape.circle,
                                                   ),
                                                   child: const Icon(
@@ -20590,8 +20765,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           IgnorePointer(
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: OptimizedImage(imageUrlOrPath: 
-                                _storeImages[index]!,
+                              child: OptimizedImage(
+                                imageUrlOrPath: _storeImages[index]!,
                                 width: double.infinity,
                                 height: double.infinity,
                                 fit: BoxFit.cover,
@@ -20723,8 +20898,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             IgnorePointer(
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: OptimizedImage(imageUrlOrPath: 
-                                  _announcementBanners[index]!,
+                                child: OptimizedImage(
+                                  imageUrlOrPath: _announcementBanners[index]!,
                                   width: double.infinity,
                                   height: double.infinity,
                                   fit: BoxFit.cover,
@@ -21336,733 +21511,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return SellerAdsManagerContent(
       sellerId: _authService.currentUser?.id ?? '',
       embedded: true,
-    );
-  }
-
-  String _formatCampaignType(String type) {
-    const map = {
-      'yuzde_indirim': 'Yüzde İndirim',
-      'sabit_tutar': 'Sabit Tutar',
-      'kupon': 'Kupon',
-      'al_get': 'Al-Get',
-      'ikinci_urun': '2. Üründe',
-      'ucretsiz_kargo': 'Ücretsiz Kargo',
-    };
-    return map[type] ?? type;
-  }
-
-  String _campaignTypeToIconKey(String type) {
-    const map = {
-      'yuzde_indirim': 'Yuzde Indirim',
-      'sabit_tutar': 'Sabit Tutar',
-      'kupon': 'Kupon',
-      'al_get': 'Al-Get',
-      'ikinci_urun': '2.Urun',
-      'ucretsiz_kargo': 'Ucretsiz Kargo',
-    };
-    return map[type] ?? 'Kupon';
-  }
-
-  String _formatCampaignDiscount(StoreCampaign c) {
-    if (c.discountType == 'percent') return '%${c.discountValue.toInt()}';
-    return '₺${c.discountValue.toInt()}';
-  }
-
-  Widget _buildStoreCampaignCard(StoreCampaign c) {
-    final isStopped = c.status == 'inactive';
-    final isActive = c.status == 'active' && c.endDate.isAfter(DateTime.now());
-    final statusLabel = isStopped
-        ? 'Durduruldu'
-        : (isActive ? 'Aktif' : 'Pasif');
-    final typeLabel = _formatCampaignType(c.type);
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isActive
-              ? const Color(0xFF6C63FF).withOpacity(0.3)
-              : Colors.grey.shade200,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: isActive
-                  ? const Color(0xFF6C63FF).withOpacity(0.1)
-                  : Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              _getCampaignIcon(_campaignTypeToIconKey(c.type)),
-              color: isActive ? const Color(0xFF6C63FF) : Colors.grey.shade600,
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        c.name,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isStopped
-                            ? Colors.orange
-                            : (isActive
-                                  ? const Color(0xFF10B981)
-                                  : Colors.grey.shade400),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        statusLabel,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '$typeLabel • ${_formatCampaignDiscount(c)}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                if (c.couponCode != null && c.couponCode!.isNotEmpty)
-                  Text(
-                    'Kod: ${c.couponCode}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade500,
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
-            onSelected: (value) async {
-              if (value == 'edit') {
-                final result = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => CampaignFormDialog(
-                    campaignType: _formatCampaignType(c.type),
-                    products: _products,
-                    existingCampaign: c,
-                  ),
-                );
-                if (result == true && mounted) _loadCampaigns();
-              } else if (value == 'delete') {
-                final confirm = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Kampanyayı Sil'),
-                    content: const Text(
-                      'Bu kampanyayı kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('İptal'),
-                      ),
-                      ElevatedButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                        ),
-                        child: const Text('Sil'),
-                      ),
-                    ],
-                  ),
-                );
-                if (confirm == true) {
-                  try {
-                    await CampaignService().deleteCampaign(c.id);
-                    if (mounted) {
-                      _loadCampaigns();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Kampanya silindi')),
-                      );
-                    }
-                  } catch (e) {
-                    if (mounted)
-                      ScaffoldMessenger.of(
-                        context,
-                      ).showSnackBar(SnackBar(content: Text('Hata: $e')));
-                  }
-                }
-              }
-            },
-            itemBuilder: (ctx) => [
-              const PopupMenuItem(
-                value: 'edit',
-                child: Row(
-                  children: [
-                    Icon(Icons.edit, size: 18),
-                    SizedBox(width: 8),
-                    Text('Düzenle'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete, size: 18, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Sil', style: TextStyle(color: Colors.red)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCampaignCard(int index) {
-    final campaignTypes = [
-      'Yuzde Indirim',
-      'Sabit Tutar',
-      'Al-Get',
-      '2.Urun',
-      'Ucretsiz Kargo',
-      'Kupon',
-    ];
-    final campaignType = campaignTypes[index % campaignTypes.length];
-    final isActive = index % 2 == 0;
-
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isActive
-              ? const Color(0xFF6C63FF).withOpacity(0.3)
-              : Colors.grey.shade200,
-          width: 1,
-        ),
-      ),
-      child: Row(
-        children: [
-          // Sol: İkon
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: isActive
-                  ? const Color(0xFF6C63FF).withOpacity(0.1)
-                  : Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Icon(
-              _getCampaignIcon(campaignType),
-              color: isActive ? const Color(0xFF6C63FF) : Colors.grey.shade600,
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Orta: Kampanya Detayları
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _getCampaignTitle(campaignType, index),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isActive
-                            ? const Color(0xFF10B981)
-                            : Colors.grey.shade400,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        isActive ? 'Aktif' : 'Pasif',
-                        style: const TextStyle(
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.local_offer,
-                      size: 9,
-                      color: Colors.grey.shade500,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      campaignType.replaceAll('.', '. '),
-                      style: TextStyle(
-                        fontSize: 9,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.calendar_today,
-                      size: 8,
-                      color: Colors.grey.shade500,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      '${15 + index}-${20 + index} Şub',
-                      style: TextStyle(
-                        fontSize: 9,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.shopping_bag_outlined,
-                      size: 9,
-                      color: Colors.grey.shade500,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      '${(index + 1) * 15} Ürün',
-                      style: TextStyle(
-                        fontSize: 9,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.show_chart,
-                      size: 9,
-                      color: Colors.grey.shade500,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      '${(index + 1) * 42} Kullanım',
-                      style: TextStyle(
-                        fontSize: 9,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // Sağ: İndirim ve İşlemler
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF6C63FF).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  _getCampaignDiscount(campaignType, index),
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF6C63FF),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  InkWell(
-                    onTap: () => _editCampaign(index),
-                    borderRadius: BorderRadius.circular(4),
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Icon(
-                        Icons.edit,
-                        size: 12,
-                        color: Colors.blue,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 3),
-                  InkWell(
-                    onTap: () => _toggleCampaign(index),
-                    borderRadius: BorderRadius.circular(4),
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Icon(
-                        isActive ? Icons.pause : Icons.play_arrow,
-                        size: 12,
-                        color: isActive ? Colors.orange : Colors.green,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 3),
-                  InkWell(
-                    onTap: () => _deleteCampaign(index),
-                    borderRadius: BorderRadius.circular(4),
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Icon(
-                        Icons.delete,
-                        size: 12,
-                        color: Colors.red,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  IconData _getCampaignIcon(String type) {
-    switch (type) {
-      case 'Yuzde Indirim':
-        return Icons.percent;
-      case 'Sabit Tutar':
-        return Icons.attach_money;
-      case 'Al-Get':
-        return Icons.card_giftcard;
-      case '2.Urun':
-        return Icons.loyalty;
-      case 'Ucretsiz Kargo':
-        return Icons.local_shipping;
-      case 'Kupon':
-        return Icons.confirmation_number;
-      default:
-        return Icons.discount;
-    }
-  }
-
-  String _getCampaignTitle(String type, int index) {
-    switch (type) {
-      case 'Yuzde Indirim':
-        return 'Bahar İndirimi ${index + 1}';
-      case 'Sabit Tutar':
-        return '₺100 İndirim Kampanyası';
-      case 'Al-Get':
-        return '3 Al 2 Öde';
-      case '2.Urun':
-        return '2. Üründe %50';
-      case 'Ucretsiz Kargo':
-        return 'Ücretsiz Kargo';
-      case 'Kupon':
-        return 'HOSGELDIN100';
-      default:
-        return 'Kampanya ${index + 1}';
-    }
-  }
-
-  String _getCampaignDiscount(String type, int index) {
-    switch (type) {
-      case 'Yuzde Indirim':
-        return '%${(index + 1) * 10}';
-      case 'Sabit Tutar':
-        return '₺100';
-      case 'Al-Get':
-        return '3 Al 2 Öde';
-      case '2.Urun':
-        return '%50';
-      case 'Ucretsiz Kargo':
-        return '₺0 Kargo';
-      case 'Kupon':
-        return '₺100';
-      default:
-        return '%20';
-    }
-  }
-
-  void _showCreateCampaignDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        final screenHeight = MediaQuery.of(context).size.height;
-        return Dialog(
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 22,
-          ),
-          backgroundColor: Colors.white,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 700,
-              maxHeight: math.min(screenHeight * 0.9, 640),
-            ),
-            child: Column(
-              children: [
-                // Dialog Header
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      bottom: BorderSide(color: Colors.grey.shade200),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.campaign,
-                        color: AppColors.primary,
-                        size: 24,
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'Yeni Kampanya Oluştur',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Dialog Content
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Kampanya Tipi Seçin',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final isCompact = constraints.maxWidth < 430;
-                            final crossAxisCount = isCompact ? 2 : 3;
-                            final mainAxisExtent = isCompact ? 110.0 : 96.0;
-                            return GridView.count(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              crossAxisCount: crossAxisCount,
-                              crossAxisSpacing: 12,
-                              mainAxisSpacing: 12,
-                              mainAxisExtent: mainAxisExtent,
-                              children: [
-                                _buildCampaignTypeCard(
-                                  'Yüzde İndirim',
-                                  Icons.percent,
-                                  compact: isCompact,
-                                ),
-                                _buildCampaignTypeCard(
-                                  'Sabit Tutar',
-                                  Icons.attach_money,
-                                  compact: isCompact,
-                                ),
-                                _buildCampaignTypeCard(
-                                  'Al-Get',
-                                  Icons.card_giftcard,
-                                  compact: isCompact,
-                                ),
-                                _buildCampaignTypeCard(
-                                  '2. Üründe',
-                                  Icons.loyalty,
-                                  compact: isCompact,
-                                ),
-                                _buildCampaignTypeCard(
-                                  'Ücretsiz Kargo',
-                                  Icons.local_shipping,
-                                  compact: isCompact,
-                                ),
-                                _buildCampaignTypeCard(
-                                  'Kupon Kodu',
-                                  Icons.confirmation_number,
-                                  compact: isCompact,
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildCampaignTypeCard(
-    String title,
-    IconData icon, {
-    bool compact = false,
-  }) {
-    return Material(
-      color: Colors.white,
-      child: InkWell(
-        onTap: () {
-          Navigator.pop(context);
-          _showCampaignDetailsDialog(title);
-        },
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey.shade300),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: AppColors.primary, size: compact ? 24 : 26),
-              SizedBox(height: compact ? 6 : 7),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: compact ? 11 : 12,
-                    fontWeight: FontWeight.w600,
-                    height: 1.15,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showCampaignDetailsDialog(String campaignType) {
-    showDialog(
-      context: context,
-      builder: (context) =>
-          CampaignFormDialog(campaignType: campaignType, products: _products),
-    ).then((result) {
-      if (result == true && mounted) _loadCampaigns();
-    });
-  }
-
-  void _editCampaign(int index) {
-    _showCampaignDetailsDialog('Yüzde İndirim');
-  }
-
-  void _toggleCampaign(int index) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Kampanya ${index + 1} durumu değiştirildi')),
-    );
-  }
-
-  void _deleteCampaign(int index) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Kampanyayı Sil'),
-        content: const Text(
-          'Bu kampanyayı silmek istediğinizden emin misiniz?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('İptal'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Kampanya silindi')));
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Sil'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -22740,13 +22188,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           Row(
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 32,
+                height: 32,
                 decoration: BoxDecoration(
                   color: accentSoft,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: accent, size: 20),
+                child: Icon(icon, color: accent, size: 17),
               ),
               const Spacer(),
               Text(
@@ -22754,35 +22202,35 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 style: TextStyle(
                   color: trendColor,
                   fontWeight: FontWeight.w700,
-                  fontSize: 14,
+                  fontSize: 12,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text(
             title,
             style: const TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             value,
             style: const TextStyle(
               color: Color(0xFF0F172A),
-              fontSize: 22,
+              fontSize: 18,
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             subtitle,
             style: const TextStyle(
               color: Color(0xFF94A3B8),
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -22804,19 +22252,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return Column(
       children: [
         SizedBox(
-          height: 250,
+          height: 230,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(
-                width: 62,
+                width: 54,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: _buildChartYAxisLabels(maxRevenue),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Expanded(
                 child: Stack(
                   children: [
@@ -22836,7 +22284,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           'Seçili tarih aralığında finans verisi bulunmuyor',
                           style: TextStyle(
                             color: Colors.grey.shade400,
-                            fontSize: 14,
+                            fontSize: 12,
                           ),
                         ),
                       ),
@@ -22846,7 +22294,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             ],
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: _buildChartXAxisLabels(points),
@@ -22861,10 +22309,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required ValueChanged<String?> onChanged,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: DropdownButtonHideUnderline(
@@ -22911,22 +22359,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         '${amount >= 0 ? '+' : '-'}${_formatDashboardCurrency(amount.abs())}';
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
       ),
       child: Row(
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, color: color, size: 20),
+            child: Icon(icon, color: color, size: 16),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -22935,7 +22383,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   transaction['title'] as String,
                   style: const TextStyle(
                     color: Color(0xFF0F172A),
-                    fontSize: 14,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -22944,14 +22392,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   transaction['subtitle'] as String,
                   style: const TextStyle(
                     color: Color(0xFF64748B),
-                    fontSize: 12,
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -22959,7 +22407,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 amountText,
                 style: TextStyle(
                   color: amount >= 0 ? const Color(0xFF16A34A) : color,
-                  fontSize: 14,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -22968,7 +22416,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 _formatDateShort(date),
                 style: const TextStyle(
                   color: Color(0xFF94A3B8),
-                  fontSize: 12,
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -22986,7 +22434,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }) {
     final normalizedValue = value.trim().isEmpty ? '-' : value.trim();
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 8),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final useStacked =
@@ -23002,7 +22450,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   label,
                   style: const TextStyle(
                     color: Color(0xFF64748B),
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -23012,7 +22460,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   softWrap: true,
                   style: const TextStyle(
                     color: Color(0xFF0F172A),
-                    fontSize: 13,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w700,
                     height: 1.35,
                   ),
@@ -23028,12 +22476,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   label,
                   style: const TextStyle(
                     color: Color(0xFF64748B),
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Flexible(
                 child: Text(
                   normalizedValue,
@@ -23042,7 +22490,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Color(0xFF0F172A),
-                    fontSize: 13,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -23065,7 +22513,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 label,
                 style: const TextStyle(
                   color: Color(0xFF475569),
-                  fontSize: 14,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -23074,18 +22522,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               '%${value.toStringAsFixed(1)}',
               style: TextStyle(
                 color: color,
-                fontSize: 14,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w800,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         ClipRRect(
           borderRadius: BorderRadius.circular(999),
           child: LinearProgressIndicator(
             value: (value / 100).clamp(0.0, 1.0),
-            minHeight: 7,
+            minHeight: 6,
             backgroundColor: const Color(0xFFE5E7EB),
             valueColor: AlwaysStoppedAnimation<Color>(color),
           ),
@@ -23102,16 +22550,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required String subtitle,
   }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: accent, size: 18),
-          const SizedBox(width: 10),
+          Icon(icon, color: accent, size: 16),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -23121,7 +22569,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   style: const TextStyle(
                     color: Color(0xFF0F172A),
                     fontWeight: FontWeight.w700,
-                    fontSize: 14,
+                    fontSize: 12.5,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -23129,7 +22577,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   subtitle,
                   style: const TextStyle(
                     color: Color(0xFF64748B),
-                    fontSize: 12,
+                    fontSize: 11.5,
                     height: 1.45,
                   ),
                 ),
@@ -23199,129 +22647,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Finans raporu indiriliyor.')));
-  }
-
-  void _showWithdrawalDialog() {
-    final availableBalance =
-        (_buildFinanceSummary()['availableBalance'] as double?) ?? 0.0;
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        child: Container(
-          width: 450,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(
-                    Icons.account_balance,
-                    color: Color(0xFF6C63FF),
-                    size: 24,
-                  ),
-                  SizedBox(width: 12),
-                  Text(
-                    'Ödeme Talep Et',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.account_balance_wallet,
-                      color: Colors.grey.shade600,
-                    ),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Mevcut Bakiye',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        Text(
-                          _formatDashboardCurrency(availableBalance),
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              _buildStoreTextField(
-                label: 'Çekilecek Tutar *',
-                hint: 'Örn: 10000',
-              ),
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: Text(
-                  _companyNameController.text.trim().isEmpty
-                      ? 'Kayıtlı banka hesabı bulunmuyor. Önce mağaza finans bilgilerinizi güncelleyin.'
-                      : '${_companyNameController.text.trim()} · Kurumsal ödeme hesabı',
-                  style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('İptal'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Ödeme talebiniz alındı!'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.check, size: 18),
-                      label: const Text('Talep Gönder'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6C63FF),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildReviewsModule() {
@@ -24020,7 +23345,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       return;
     }
 
-    final sellerId = _authService.currentUser?.id?.trim() ?? '';
+    final sellerId = _authService.currentUser?.id.trim() ?? '';
     if (sellerId.isEmpty) return;
 
     try {
@@ -25269,7 +24594,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3), width: 1),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 1),
       ),
       child: Row(
         children: [
@@ -25277,7 +24602,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(icon, color: color, size: 24),
@@ -25309,673 +24634,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 ],
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReviewCard(int index) {
-    final ratings = [5, 4, 5, 3, 5, 4, 2, 5];
-    final rating = ratings[index % ratings.length];
-    final hasReply = index % 3 == 0;
-    final productNames = [
-      'iPhone 15 Pro Max 256GB',
-      'AirPods Pro (2. Nesil)',
-      'Samsung Galaxy S24 Ultra',
-      'MacBook Air M3',
-      'iPad Pro 12.9"',
-      'Apple Watch Series 9',
-      'Sony WH-1000XM5',
-      'Logitech MX Master 3S',
-    ];
-    final reviewers = [
-      'Ahmet Yılmaz',
-      'Ayşe Kaya',
-      'Mehmet Demir',
-      'Zeynep Çelik',
-      'Can Özdemir',
-      'Elif Şahin',
-      'Burak Aydın',
-      'Selin Yıldız',
-    ];
-    final comments = [
-      'Ürün harika! Kargo çok hızlı geldi. Paketleme çok iyiydi. Teşekkürler!',
-      'Beklentilerimi karşıladı. Fiyat/performans açısından güzel.',
-      'Mükemmel bir ürün. Kesinlikle tavsiye ederim.',
-      'Ürün güzel ama kargo biraz gecikti.',
-      'Harika! Çok memnun kaldım. Satıcıya teşekkürler.',
-      'Kaliteli bir ürün. Fiyatı biraz yüksek ama değer.',
-      'Beklediğim gibi çıkmadı. İade etmeyi düşünüyorum.',
-      'Sürat kargoyla 1 günde geldi. Mükemmel!',
-    ];
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: hasReply
-              ? Colors.grey.shade200
-              : const Color(0xFF6C63FF).withOpacity(0.3),
-          width: hasReply ? 1 : 1.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Üst Satır: Ürün ve Durum (Daha Kompakt)
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Icon(
-                  Icons.phone_iphone,
-                  color: Colors.grey,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      productNames[index],
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        ...List.generate(5, (i) {
-                          return Icon(
-                            i < rating ? Icons.star : Icons.star_border,
-                            color: i < rating
-                                ? Colors.amber
-                                : Colors.grey.shade300,
-                            size: 12,
-                          );
-                        }),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${18 - (index % 5)} Şubat',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              if (!hasReply)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF6C63FF).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.mark_chat_unread,
-                        size: 10,
-                        color: Color(0xFF6C63FF),
-                      ),
-                      SizedBox(width: 3),
-                      Text(
-                        'Yeni',
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF6C63FF),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-          const Divider(height: 16),
-
-          // Müşteri Bilgisi ve Yorum (Daha Kompakt)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundColor: Colors.grey.shade200,
-                child: Text(
-                  reviewers[index].substring(0, 1),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      reviewers[index],
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      comments[index],
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade700,
-                        height: 1.3,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          // Satıcı Yanıtı (Daha Kompakt)
-          if (hasReply) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius: BorderRadius.circular(6),
-                border: Border(
-                  left: BorderSide(color: const Color(0xFF6C63FF), width: 2),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.store, size: 12, color: Color(0xFF6C63FF)),
-                      SizedBox(width: 4),
-                      Text(
-                        'Satıcı Yanıtı',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF6C63FF),
-                        ),
-                      ),
-                      Spacer(),
-                      Text(
-                        '19 Şub',
-                        style: TextStyle(fontSize: 9, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Değerli müşterimiz, görüşleriniz için teşekkür ederiz.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 10),
-
-          // İşlem Butonları (Daha Kompakt)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (!hasReply)
-                TextButton.icon(
-                  onPressed: () => _showReplyDialog(index),
-                  icon: const Icon(Icons.reply, size: 14),
-                  label: const Text('Yanıtla', style: TextStyle(fontSize: 11)),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF6C63FF),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.flag, size: 14),
-                label: const Text('Şikayet', style: TextStyle(fontSize: 11)),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.grey.shade600,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showReplyDialog(int reviewIndex) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        child: Container(
-          width: 500,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.reply, color: Color(0xFF6C63FF), size: 24),
-                  SizedBox(width: 12),
-                  Text(
-                    'Yoruma Yanıt Ver',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.person, size: 16, color: Colors.grey),
-                        SizedBox(width: 6),
-                        Text(
-                          'Müşteri Yorumu',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Ürün harika! Kargo çok hızlı geldi. Paketleme çok iyiydi.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                maxLines: 4,
-                decoration: InputDecoration(
-                  hintText: 'Yanıtınızı yazın...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  contentPadding: const EdgeInsets.all(12),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Profesyonel ve nazik bir dil kullanmanızı öneririz.',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('İptal'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Yanıtınız gönderildi!'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.send, size: 18),
-                      label: const Text('Yanıt Gönder'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6C63FF),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTabButton(String label, bool isActive, VoidCallback onTap) {
-    return PremiumPressable(
-      hoverLift: isActive ? 0.5 : 1,
-      child: Material(
-        color: isActive ? Colors.white : Colors.transparent,
-        borderRadius: BorderRadius.circular(6),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(6),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: isActive ? Colors.white : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-              boxShadow: isActive
-                  ? [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-                color: isActive
-                    ? const Color(0xFF6C63FF)
-                    : Colors.grey.shade600,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildComplaintCard(int index) {
-    final complaintTypes = [
-      'Ürün Hasarlı',
-      'Kargo Gecikmesi',
-      'Yanlış Ürün',
-      'Memnuniyetsizlik',
-      'Ürün Eksik',
-    ];
-    final complaintType = complaintTypes[index % complaintTypes.length];
-    final status = _complaintStatuses[index];
-    final statusColors = {
-      'Bekliyor': Colors.orange,
-      'İnceleniyor': Colors.blue,
-      'Çözüldü': Colors.green,
-    };
-
-    final productNames = [
-      'iPhone 15 Pro Max 256GB',
-      'AirPods Pro (2. Nesil)',
-      'Samsung Galaxy S24 Ultra',
-      'MacBook Air M3',
-      'iPad Pro 12.9"',
-    ];
-    final customers = [
-      'Ahmet Yılmaz',
-      'Ayşe Kaya',
-      'Mehmet Demir',
-      'Zeynep Çelik',
-      'Can Özdemir',
-    ];
-    final complaints = [
-      'Ürün kargoda hasar görmüş. Kutu ezilmiş durumda geldi.',
-      'Siparişim 5 gündür kargoda bekliyor. Bilgi verilmedi.',
-      'Sipariş ettiğim ürünle gelen ürün farklı.',
-      'Ürün beklediğim kalitede değil. İade etmek istiyorum.',
-      'Siparişim eksik geldi. 2 ürün eksik.',
-    ];
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: status == 'Bekliyor'
-              ? Colors.orange.withOpacity(0.3)
-              : status == 'İnceleniyor'
-              ? Colors.blue.withOpacity(0.3)
-              : Colors.green.withOpacity(0.3),
-          width: 1.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Üst Satır: Şikayet Tipi ve Durum
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: statusColors[status]!.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Icon(
-                  Icons.warning_amber,
-                  color: statusColors[status],
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      complaintType,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      productNames[index],
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: statusColors[status]!.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  status,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: statusColors[status],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const Divider(height: 16),
-
-          // Müşteri Bilgisi ve Şikayet
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundColor: Colors.red.shade100,
-                child: Text(
-                  customers[index].substring(0, 1),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red.shade700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          customers[index],
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '${18 - (index % 5)} Şubat',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      complaints[index],
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade700,
-                        height: 1.3,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          // İşlem Butonları
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (status != 'Çözüldü')
-                TextButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      _complaintStatuses[index] = 'Çözüldü';
-                    });
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Şikayet çözüldü olarak işaretlendi!'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.check_circle, size: 14),
-                  label: const Text(
-                    'Çözüldü İşaretle',
-                    style: TextStyle(fontSize: 11),
-                  ),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.green,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: () =>
-                    _showComplaintReplyDialog(index, customers[index]),
-                icon: const Icon(Icons.message, size: 14),
-                label: const Text(
-                  'Müşteriye Yanıtla',
-                  style: TextStyle(fontSize: 11),
-                ),
-                style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFF6C63FF),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: () => _showComplaintDetailDialog(
-                  index,
-                  complaintType,
-                  customers[index],
-                  complaints[index],
-                  status,
-                ),
-                icon: const Icon(Icons.visibility, size: 14),
-                label: const Text('Detay', style: TextStyle(fontSize: 11)),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.grey.shade600,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -26227,7 +24885,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3), width: 1),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 1),
       ),
       child: Row(
         children: [
@@ -26235,7 +24893,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(icon, color: color, size: 22),
@@ -26292,7 +24950,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             boxShadow: isActive
                 ? [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
+                      color: Colors.black.withValues(alpha: 0.05),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
@@ -26310,101 +24968,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ),
       ),
     );
-  }
-
-  Future<void> _showCloseSellerAccountDialog() async {
-    final reasonController = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Satıcı Hesabını Kapat'),
-          content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Bu işlem satıcı hesabınızın kalıcı olarak silinmesi için destek ekibine talep oluşturur. Talep onaylandıktan sonra mağaza sayfanız ve satıcı paneline erişiminiz kapatılacaktır.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade700,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: reasonController,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Kapatma nedeni (isteğe bağlı)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Onay sonrası tekrar açılmasını talep etmek için destek ekibiyle iletişime geçmeniz gerekir.',
-                  style: TextStyle(fontSize: 11, color: Colors.redAccent),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Vazgeç'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Kalıcı Kapatma Talebi Oluştur'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed == true) {
-      await _handleCloseSellerAccount(
-        reasonController.text.trim().isEmpty
-            ? null
-            : reasonController.text.trim(),
-      );
-    }
-    reasonController.dispose();
-  }
-
-  Future<void> _handleCloseSellerAccount(String? reason) async {
-    setState(() => _isLoading = true);
-    try {
-      await _storeService.requestStoreDeletion(reason: reason);
-      final restoredUserSession = await _authService
-          .restoreUserSessionAfterSellerExit();
-      await Future.delayed(const Duration(milliseconds: 200));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            restoredUserSession
-                ? 'Satıcı panelinden çıkıldı. Önceki kullanıcı oturumu geri yüklendi.'
-                : 'Kapatma talebiniz alındı. Hesabınızdan çıkış yapıldı.',
-          ),
-        ),
-      );
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Hata: $e')));
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
   }
 
   Widget _buildSupportTicketCard(SupportTicket ticket) {
@@ -26448,7 +25011,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: ticket.status == TicketStatus.open
-              ? const Color(0xFF6C63FF).withOpacity(0.3)
+              ? const Color(0xFF6C63FF).withValues(alpha: 0.3)
               : Colors.grey.shade200,
           width: 1.5,
         ),
@@ -26463,7 +25026,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: priorityColors[ticket.priority]!.withOpacity(0.1),
+                  color: priorityColors[ticket.priority]!.withValues(
+                    alpha: 0.1,
+                  ),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Icon(
@@ -26519,7 +25084,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: statusColors[ticket.status]!.withOpacity(0.1),
+                  color: statusColors[ticket.status]!.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
@@ -26542,7 +25107,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: priorityColors[ticket.priority]!.withOpacity(0.1),
+                  color: priorityColors[ticket.priority]!.withValues(
+                    alpha: 0.1,
+                  ),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Row(
@@ -26804,25 +25371,23 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 );
                               }
 
-                              if (mounted) {
-                                Navigator.pop(dialogContext);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      isCloseAccountRequest
-                                          ? 'Kapatma talebiniz oluşturuldu. Admin onayı bekleniyor.'
-                                          : 'Destek talebiniz oluşturuldu!',
-                                    ),
-                                    backgroundColor: Colors.green,
+                              if (!mounted || !dialogContext.mounted) return;
+                              Navigator.pop(dialogContext);
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    isCloseAccountRequest
+                                        ? 'Kapatma talebiniz oluşturuldu. Admin onayı bekleniyor.'
+                                        : 'Destek talebiniz oluşturuldu!',
                                   ),
-                                );
-                              }
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
                             } catch (e) {
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Hata: $e')),
-                                );
-                              }
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(content: Text('Hata: $e')),
+                              );
                             }
                           },
                           icon: const Icon(Icons.send, size: 18),
@@ -26904,11 +25469,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   void _showSupportTicketDetailDialog(SupportTicket ticket) {
-    final priorityColors = {
-      TicketPriority.high: Colors.red,
-      TicketPriority.medium: Colors.orange,
-      TicketPriority.low: Colors.green,
-    };
     final statusColors = {
       TicketStatus.open: Colors.orange,
       TicketStatus.in_progress: Colors.blue,
@@ -26963,7 +25523,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: statusColors[ticket.status]!.withOpacity(0.1),
+                        color: statusColors[ticket.status]!.withValues(
+                          alpha: 0.1,
+                        ),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
@@ -27039,473 +25601,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
-  void _showSupportReplyDialog(SupportTicket ticket) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        child: Container(
-          width: 500,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.reply, color: Color(0xFF6C63FF), size: 24),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Talebe Yanıt Ver - #${ticket.id.substring(0, 6)}',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Konu: ${ticket.subject}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                maxLines: 4,
-                decoration: InputDecoration(
-                  hintText: 'Yanıtınızı yazın...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  contentPadding: const EdgeInsets.all(12),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Destek ekibine yanıtınızı gönderin.',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('İptal'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        // TODO: Implement reply logic
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Yanıtınız gönderildi')),
-                        );
-                      },
-                      icon: const Icon(Icons.send, size: 18),
-                      label: const Text('Gönder'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6C63FF),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showComplaintReplyDialog(int index, String customerName) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        child: Container(
-          width: 500,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.message, color: Color(0xFF6C63FF), size: 24),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Müşteriye Yanıt Ver - $customerName',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(
-                          Icons.warning_amber,
-                          size: 16,
-                          color: Colors.orange,
-                        ),
-                        SizedBox(width: 6),
-                        Text(
-                          'Şikayet Konusu',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Müşterinin şikayetini inceledik. En kısa sürede çözüm sağlayacağız.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                maxLines: 4,
-                decoration: InputDecoration(
-                  hintText: 'Müşteriye yanıtınızı yazın...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  contentPadding: const EdgeInsets.all(12),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Profesyonel ve çözüm odaklı bir dil kullanmanızı öneririz.',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('İptal'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Yanıtınız müşteriye gönderildi!'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.send, size: 18),
-                      label: const Text('Gönder'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6C63FF),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showComplaintDetailDialog(
-    int index,
-    String complaintType,
-    String customerName,
-    String complaint,
-    String status,
-  ) {
-    final statusColors = {
-      'Bekliyor': Colors.orange,
-      'İnceleniyor': Colors.blue,
-      'Çözüldü': Colors.green,
-    };
-
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        child: Container(
-          width: 550,
-          constraints: const BoxConstraints(maxHeight: 600),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: Colors.grey.shade200),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.warning_amber,
-                      color: Color(0xFF6C63FF),
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        'Şikayet Detayları',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: statusColors[status]!.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        status,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: statusColors[status],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Content
-              Flexible(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Şikayet Tipi
-                      _buildDetailRow('Şikayet Tipi', complaintType),
-                      const SizedBox(height: 16),
-
-                      // Müşteri Bilgisi
-                      _buildDetailRow('Müşteri', customerName),
-                      const SizedBox(height: 16),
-
-                      // Sipariş No
-                      _buildDetailRow('Sipariş No', '#${10000 + index}'),
-                      const SizedBox(height: 16),
-
-                      // Tarih
-                      _buildDetailRow(
-                        'Tarih',
-                        '${18 - (index % 5)} Şubat 2026',
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Şikayet Metni
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Şikayet Açıklaması',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              complaint,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey.shade800,
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-
-                      // Ürün Bilgisi
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF6C63FF).withOpacity(0.05),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: const Color(0xFF6C63FF).withOpacity(0.2),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 50,
-                              height: 50,
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade200,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Icon(
-                                Icons.phone_iphone,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            const Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'iPhone 15 Pro Max 256GB',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  SizedBox(height: 4),
-                                  Text(
-                                    '₺45.000',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Color(0xFF6C63FF),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Footer
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Kapat'),
-                    ),
-                    const SizedBox(width: 12),
-                    if (status != 'Çözüldü')
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _complaintStatuses[index] = 'Çözüldü';
-                          });
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Şikayet çözüldü olarak işaretlendi!',
-                              ),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.check_circle, size: 18),
-                        label: const Text('Çözüldü İşaretle'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildDetailRow(String label, String value) {
     return SellerPanelDetailRow(label: label, value: value);
-  }
-
-  Widget _buildPlaceholder(String title, String description) {
-    return SellerPanelPlaceholder(title: title, description: description);
   }
 
   Widget _buildTeamModule() {
@@ -27990,7 +26087,9 @@ class _StoreLocationChangeDialogState
         throw Exception('Konum izni verilmedi');
       }
       final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
       if (!mounted) return;
       setState(() {
@@ -28152,10 +26251,95 @@ typedef _GarsonEditItemSettings =
 typedef _MobileGarsonDraftChanged =
     void Function(int tableNumber, List<Map<String, dynamic>> draftItems);
 typedef _MobileGarsonOrderSubmitted =
-    void Function(int tableNumber, List<Map<String, dynamic>> submittedItems);
+    void Function(
+      int tableNumber,
+      List<Map<String, dynamic>> submittedItems,
+      Map<String, dynamic> submittedOrder,
+    );
+typedef _MobileGarsonPrintAdisyon =
+    Future<void> Function(
+      int tableNumber,
+      List<Map<String, dynamic>> tableOrders,
+    );
+
+enum _GarsonOrderChangeType { added, removed, updated }
+
+class _GarsonOrderUpdatedEntry {
+  const _GarsonOrderUpdatedEntry({required this.before, required this.after});
+
+  final Map<String, dynamic> before;
+  final Map<String, dynamic> after;
+}
+
+class _GarsonOrderChangeEntry {
+  const _GarsonOrderChangeEntry({
+    required this.type,
+    required this.item,
+    this.previousItem,
+  });
+
+  final _GarsonOrderChangeType type;
+  final Map<String, dynamic> item;
+  final Map<String, dynamic>? previousItem;
+}
+
+class _GarsonOrderChangeSummary {
+  const _GarsonOrderChangeSummary({
+    this.kitchenAddedItems = const <Map<String, dynamic>>[],
+    this.kitchenRemovedItems = const <Map<String, dynamic>>[],
+    this.displayEntries = const <_GarsonOrderChangeEntry>[],
+    this.addedQuantity = 0,
+    this.removedQuantity = 0,
+    this.updatedQuantity = 0,
+  });
+
+  final List<Map<String, dynamic>> kitchenAddedItems;
+  final List<Map<String, dynamic>> kitchenRemovedItems;
+  final List<_GarsonOrderChangeEntry> displayEntries;
+  final int addedQuantity;
+  final int removedQuantity;
+  final int updatedQuantity;
+
+  bool get hasChanges =>
+      displayEntries.isNotEmpty ||
+      kitchenAddedItems.isNotEmpty ||
+      kitchenRemovedItems.isNotEmpty;
+
+  List<_GarsonOrderChangeEntry> previewEntries({int limit = 4}) {
+    if (displayEntries.length <= limit) return displayEntries;
+    return displayEntries.take(limit).toList(growable: false);
+  }
+}
+
+class _GarsonOrderEditPolicy {
+  const _GarsonOrderEditPolicy({
+    required this.canEdit,
+    required this.canResend,
+    required this.message,
+    this.isWarning = false,
+    this.isLocked = false,
+  });
+
+  final bool canEdit;
+  final bool canResend;
+  final String message;
+  final bool isWarning;
+  final bool isLocked;
+}
+
+class _GarsonAggregatedOrderItem {
+  const _GarsonAggregatedOrderItem({
+    required this.item,
+    required this.quantity,
+  });
+
+  final Map<String, dynamic> item;
+  final int quantity;
+}
 
 class _MobileGarsonTableFlowPage extends StatefulWidget {
   const _MobileGarsonTableFlowPage({
+    super.key,
     required this.sellerId,
     required this.tableNumber,
     required this.products,
@@ -28165,7 +26349,14 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     this.initialDraftItems = const <Map<String, dynamic>>[],
     this.onDraftChanged,
     this.onOrderSubmitted,
+    this.onTableClosed,
+    this.onPrintAdisyon,
     this.initialOrderId,
+    this.debugDisableLiveSync = false,
+    this.debugUseLocalSubmit = false,
+    this.debugInitialTableOrders = const <Map<String, dynamic>>[],
+    this.debugSubmitFeedbackMessage,
+    this.debugSubmitFeedbackIsWarning = false,
   });
 
   final String sellerId;
@@ -28178,6 +26369,13 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final _GarsonEditItemSettings editItemSettings;
   final _MobileGarsonDraftChanged? onDraftChanged;
   final _MobileGarsonOrderSubmitted? onOrderSubmitted;
+  final void Function(int tableNumber)? onTableClosed;
+  final _MobileGarsonPrintAdisyon? onPrintAdisyon;
+  final bool debugDisableLiveSync;
+  final bool debugUseLocalSubmit;
+  final List<Map<String, dynamic>> debugInitialTableOrders;
+  final String? debugSubmitFeedbackMessage;
+  final bool debugSubmitFeedbackIsWarning;
 
   @override
   State<_MobileGarsonTableFlowPage> createState() =>
@@ -28186,20 +26384,100 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
 
 class _MobileGarsonTableFlowPageState
     extends State<_MobileGarsonTableFlowPage> {
-  final StoreService _storeService = StoreService();
-  final OrderPrintJobService _orderPrintJobService = OrderPrintJobService();
+  StoreService? _storeServiceInstance;
+  OrderPrintJobService? _orderPrintJobServiceInstance;
   final List<Map<String, dynamic>> _draftItems = <Map<String, dynamic>>[];
   late final Stream<List<Map<String, dynamic>>> _tableOrdersStream;
+  Future<List<Map<String, dynamic>>>? _tableOrdersFallbackFuture;
+  List<SellerProduct> _queriedProducts = <SellerProduct>[];
+  bool _isLoadingProducts = false;
+  bool _hasShownRealtimeFallbackWarning = false;
   bool _isSubmitting = false;
   late int _bottomIndex;
   String _selectedCategory = 'Tümü';
   String? _editingOrderId;
+  Map<String, dynamic>? _editingOrderSnapshot;
+  List<Map<String, dynamic>> _editingBaseItems = const <Map<String, dynamic>>[];
   String? _pendingInitialOrderId;
+  List<Map<String, dynamic>> _hydratedTableOrders =
+      const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _optimisticTableOrders =
+      const <Map<String, dynamic>>[];
+  String? _submitFeedbackMessage;
+  bool _submitFeedbackIsWarning = false;
+
+  // ── Undo System ──────────────────────────────────────────────────────────
+  late final GarsonUndoController _undoController;
+
+  // ── Duplicate Product Warning ────────────────────────────────────────────
+  // Tracks product IDs added in the last 4 seconds to flag duplicates.
+  final Map<String, DateTime> _recentlyAddedProductIds = {};
+
+  // ── Payment Session ──────────────────────────────────────────────────────
+  String? _sessionKey;
+
+  String _getOrCreateSessionKey() {
+    _sessionKey ??=
+        'session_${widget.sellerId}_${widget.tableNumber}_${DateTime.now().millisecondsSinceEpoch}';
+    return _sessionKey!;
+  }
+
+  StoreService get _storeService => _storeServiceInstance ??= StoreService();
+
+  OrderPrintJobService get _orderPrintJobService =>
+      _orderPrintJobServiceInstance ??= OrderPrintJobService();
+
+  User? _currentSupabaseUser() {
+    if (widget.debugDisableLiveSync) return null;
+    try {
+      return Supabase.instance.client.auth.currentUser;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _currentWaiterId() {
+    return _currentSupabaseUser()?.id;
+  }
 
   @override
   void initState() {
     super.initState();
-    _tableOrdersStream = _storeService.getTableOrdersStream(widget.sellerId);
+    _undoController = GarsonUndoController();
+    debugPrint(
+      '[GarsonRealtime] mode=flow_stream_init '
+      'supabaseUrl=${AppRuntimeConfig.rawSupabaseUrl.trim().isEmpty ? '(missing)' : AppRuntimeConfig.rawSupabaseUrl.trim()} '
+      'storeId=${widget.sellerId} '
+      'sellerId=${widget.sellerId} '
+      'waiterId=${_currentWaiterId() ?? '-'} '
+      'schema=public table=table_orders channel=auto:stream(table_orders) '
+      'filter=seller_id=eq.${widget.sellerId} '
+      'tableNumber=${widget.tableNumber}',
+    );
+    if (widget.debugDisableLiveSync) {
+      final seededTableOrders = widget.debugInitialTableOrders
+          .map(_normalizeTableOrder)
+          .toList(growable: false);
+      _hydratedTableOrders = seededTableOrders;
+      _tableOrdersStream = Stream<List<Map<String, dynamic>>>.value(
+        seededTableOrders,
+      );
+      _submitFeedbackMessage = widget.debugSubmitFeedbackMessage;
+      _submitFeedbackIsWarning = widget.debugSubmitFeedbackIsWarning;
+    } else {
+      _tableOrdersStream = _storeService.getTableOrdersStream(widget.sellerId);
+    }
+    // TODO(debug): remove before production
+    debugPrint(
+      '[WAITER_FLOW_INIT] '
+      'sellerId=${widget.sellerId} '
+      'table=${widget.tableNumber} '
+      'widgetProducts=${widget.products.length} '
+      'fetch=getProductsBySellerId',
+    );
+    if (!widget.debugDisableLiveSync) {
+      unawaited(_loadProductsForGarsonFlow());
+    }
     _bottomIndex = widget.initialTabIndex.clamp(0, 2);
     _pendingInitialOrderId = widget.initialOrderId;
     if (widget.initialDraftItems.isNotEmpty) {
@@ -28210,11 +26488,78 @@ class _MobileGarsonTableFlowPageState
               .map((item) => _normalizeItem(item))
               .toList(growable: false),
         );
-      _bottomIndex = 2;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _notifyDraftChanged();
     });
+  }
+
+  @override
+  void didUpdateWidget(_MobileGarsonTableFlowPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If the parent refreshed its product list (e.g. after a template is
+    // created/published) and we don't yet have our own queried copy, reload.
+    if (oldWidget.products.length != widget.products.length &&
+        _queriedProducts.isEmpty) {
+      unawaited(_loadProductsForGarsonFlow());
+    }
+  }
+
+  @override
+  void dispose() {
+    _undoController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadProductsForGarsonFlow() async {
+    final sellerId = widget.sellerId.trim();
+    if (sellerId.isEmpty) return;
+    setState(() => _isLoadingProducts = true);
+    try {
+      final rows = await _storeService.getProductsBySellerId(sellerId);
+      final queriedProducts = rows
+          .map((row) {
+            final map = Map<String, dynamic>.from(row);
+            final id = map['id']?.toString() ?? '';
+            return SellerProduct.fromMap(map, id);
+          })
+          .where((product) => product.id.trim().isNotEmpty)
+          .toList(growable: false);
+      // TODO(debug): remove before production
+      debugPrint(
+        '[WAITER_FLOW_FETCH] '
+        'sellerId=$sellerId '
+        'count=${queriedProducts.length} '
+        'service_count=${queriedProducts.where((p) => MixedServiceOrder.isServiceTemplateProduct(p)).length} '
+        'menu_count=${queriedProducts.where((p) => MixedServiceOrder.isMenuTemplateProduct(p)).length}',
+      );
+      if (!mounted) return;
+      setState(() {
+        _queriedProducts = queriedProducts;
+      });
+    } catch (error) {
+      debugPrint('[GarsonProducts] direct seller query failed: $error');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingProducts = false);
+      }
+    }
+  }
+
+  bool _isRealtimeConnectionError(Object error) {
+    final normalized = error.toString().toLowerCase();
+    return normalized.contains('realtimesubscribeexception') &&
+        (normalized.contains('timedout') ||
+            normalized.contains('channelerror') ||
+            normalized.contains('websocket') ||
+            normalized.contains('connection failed'));
+  }
+
+  Future<List<Map<String, dynamic>>> _getTableOrdersFallbackFuture() {
+    return _tableOrdersFallbackFuture ??= _storeService.getTableOrdersSnapshot(
+      widget.sellerId,
+      tableNumber: widget.tableNumber,
+    );
   }
 
   List<Map<String, dynamic>> _draftSnapshot() {
@@ -28224,13 +26569,15 @@ class _MobileGarsonTableFlowPageState
   }
 
   void _notifyDraftChanged() {
+    if (_draftItems.isNotEmpty) {
+      _submitFeedbackMessage = null;
+      _submitFeedbackIsWarning = false;
+    }
     widget.onDraftChanged?.call(widget.tableNumber, _draftSnapshot());
   }
 
   String? _currentWaiterName() {
-    return _orderPrintJobService.safeUserDisplayName(
-      Supabase.instance.client.auth.currentUser,
-    );
+    return _orderPrintJobService.safeUserDisplayName(_currentSupabaseUser());
   }
 
   Future<String?> _dispatchKitchenPrintJobs(
@@ -28242,9 +26589,72 @@ class _MobileGarsonTableFlowPageState
         restaurantId: widget.sellerId,
         tableNumber: widget.tableNumber,
         items: items,
-        waiterId: Supabase.instance.client.auth.currentUser?.id,
+        waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
         jobType: 'new_order',
+      );
+      _orderPrintJobService.debugLogResult(result);
+      return null;
+    } catch (error) {
+      return error.toString();
+    }
+  }
+
+  Future<String?> _dispatchKitchenAdditions(
+    List<Map<String, dynamic>> items, {
+    String? note,
+  }) async {
+    if (items.isEmpty) return null;
+    try {
+      final result = await _orderPrintJobService.dispatchAddItem(
+        restaurantId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+        items: items,
+        waiterId: _currentWaiterId(),
+        waiterName: _currentWaiterName(),
+        notes: note,
+      );
+      _orderPrintJobService.debugLogResult(result);
+      return null;
+    } catch (error) {
+      return error.toString();
+    }
+  }
+
+  Future<String?> _dispatchKitchenRemovals(
+    List<Map<String, dynamic>> items, {
+    String? note,
+  }) async {
+    if (items.isEmpty) return null;
+    try {
+      final result = await _orderPrintJobService.dispatchCancelItem(
+        restaurantId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+        items: items,
+        waiterId: _currentWaiterId(),
+        waiterName: _currentWaiterName(),
+        notes: note,
+      );
+      _orderPrintJobService.debugLogResult(result);
+      return null;
+    } catch (error) {
+      return error.toString();
+    }
+  }
+
+  Future<String?> _dispatchKitchenReprintJobs(
+    List<Map<String, dynamic>> items, {
+    String? note,
+  }) async {
+    if (items.isEmpty) return null;
+    try {
+      final result = await _orderPrintJobService.dispatchReprint(
+        restaurantId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+        items: items,
+        waiterId: _currentWaiterId(),
+        waiterName: _currentWaiterName(),
+        notes: note,
       );
       _orderPrintJobService.debugLogResult(result);
       return null;
@@ -28265,6 +26675,26 @@ class _MobileGarsonTableFlowPageState
     return parsed?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
   }
 
+  DateTime _updatedAt(Map<String, dynamic> order) {
+    final parsed = DateTime.tryParse(order['updated_at']?.toString() ?? '');
+    return parsed?.toLocal() ?? _createdAt(order);
+  }
+
+  int _parsePositiveInt(dynamic value, {int fallback = 0}) {
+    final parsed = value is num
+        ? value.toInt()
+        : int.tryParse(value?.toString() ?? '');
+    if (parsed == null || parsed <= 0) return fallback;
+    return parsed;
+  }
+
+  Map<String, dynamic> _normalizedLastEditSummary(dynamic raw) {
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return const <String, dynamic>{};
+  }
+
   List<Map<String, dynamic>> _extractTableOrders(
     List<Map<String, dynamic>> allOrders,
   ) {
@@ -28273,6 +26703,140 @@ class _MobileGarsonTableFlowPageState
         .toList(growable: false);
     list.sort((a, b) => _createdAt(b).compareTo(_createdAt(a)));
     return list;
+  }
+
+  Map<String, dynamic> _normalizeTableOrder(Map<String, dynamic> order) {
+    final normalized = Map<String, dynamic>.from(order);
+    final rawTableNumber = normalized['table_number'];
+    normalized['seller_id'] =
+        normalized['seller_id']?.toString().trim().isNotEmpty == true
+        ? normalized['seller_id']
+        : widget.sellerId;
+    normalized['table_number'] = rawTableNumber is int
+        ? rawTableNumber
+        : rawTableNumber is num
+        ? rawTableNumber.toInt()
+        : int.tryParse(rawTableNumber?.toString() ?? '') ?? widget.tableNumber;
+    normalized['status'] =
+        normalized['status']?.toString().trim().isNotEmpty == true
+        ? normalized['status']
+        : 'sent';
+    normalized['created_at'] =
+        normalized['created_at']?.toString().trim().isNotEmpty == true
+        ? normalized['created_at']
+        : DateTime.now().toIso8601String();
+    normalized['updated_at'] =
+        normalized['updated_at']?.toString().trim().isNotEmpty == true
+        ? normalized['updated_at']
+        : normalized['created_at'];
+    normalized['revision'] = _parsePositiveInt(
+      normalized['revision'],
+      fallback: 1,
+    );
+    normalized['last_edit_summary'] = _normalizedLastEditSummary(
+      normalized['last_edit_summary'],
+    );
+    normalized['last_edit_note'] =
+        normalized['last_edit_note']?.toString() ?? '';
+    normalized['items'] = _extractItems(normalized['items']);
+    return normalized;
+  }
+
+  int _orderRevision(Map<String, dynamic> order) {
+    return _parsePositiveInt(order['revision'], fallback: 1);
+  }
+
+  Map<String, dynamic> _orderLastEditSummary(Map<String, dynamic> order) {
+    return _normalizedLastEditSummary(order['last_edit_summary']);
+  }
+
+  String _tableOrderIdentity(Map<String, dynamic> order) {
+    final id = order['id']?.toString().trim() ?? '';
+    if (id.isNotEmpty) return 'id:$id';
+    final createdAt = order['created_at']?.toString().trim() ?? '';
+    final status = order['status']?.toString().trim() ?? '';
+    final items = jsonEncode(_extractItems(order['items']));
+    return 'fallback:${widget.tableNumber}|$createdAt|$status|$items';
+  }
+
+  List<Map<String, dynamic>> _mergeTableOrders(
+    Iterable<Map<String, dynamic>> primary,
+    Iterable<Map<String, dynamic>> secondary,
+  ) {
+    final merged = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    void append(Iterable<Map<String, dynamic>> source) {
+      for (final order in source) {
+        final normalized = _normalizeTableOrder(order);
+        final identity = _tableOrderIdentity(normalized);
+        if (!seen.add(identity)) continue;
+        merged.add(normalized);
+      }
+    }
+
+    append(primary);
+    append(secondary);
+    merged.sort((a, b) => _createdAt(b).compareTo(_createdAt(a)));
+    return merged;
+  }
+
+  List<Map<String, dynamic>> _displayTableOrders(
+    List<Map<String, dynamic>> serverOrders,
+  ) {
+    final normalizedServerOrders = serverOrders
+        .map(_normalizeTableOrder)
+        .toList(growable: false);
+    final baseOrders = normalizedServerOrders.isNotEmpty
+        ? normalizedServerOrders
+        : _hydratedTableOrders;
+    return _mergeTableOrders(baseOrders, _optimisticTableOrders);
+  }
+
+  List<Map<String, dynamic>> _buildOptimisticTableOrders({
+    required List<Map<String, dynamic>> existingTableOrders,
+    required Map<String, dynamic> submittedOrder,
+    required String? editingOrderId,
+  }) {
+    final baseOrders = editingOrderId == null || editingOrderId.isEmpty
+        ? existingTableOrders
+        : existingTableOrders.where(
+            (order) => order['id']?.toString() != editingOrderId,
+          );
+    return _mergeTableOrders([
+      _normalizeTableOrder(submittedOrder),
+    ], baseOrders);
+  }
+
+  Future<void> _refreshTableOrdersAfterSubmit() async {
+    try {
+      _tableOrdersFallbackFuture = null;
+      final snapshot = await _storeService.getTableOrdersSnapshot(
+        widget.sellerId,
+        tableNumber: widget.tableNumber,
+      );
+      if (!mounted) return;
+      final normalizedSnapshot = snapshot
+          .map(_normalizeTableOrder)
+          .toList(growable: false);
+      final serverIdentities = normalizedSnapshot
+          .map(_tableOrderIdentity)
+          .toSet();
+      setState(() {
+        _hydratedTableOrders = normalizedSnapshot;
+        _optimisticTableOrders = _optimisticTableOrders
+            .map(_normalizeTableOrder)
+            .where(
+              (order) => !serverIdentities.contains(_tableOrderIdentity(order)),
+            )
+            .toList(growable: false);
+      });
+    } catch (error) {
+      debugPrint(
+        '[GarsonTableFlow] table=${widget.tableNumber} submit_refresh_failed '
+        'sellerId=${widget.sellerId} error=$error',
+      );
+    }
   }
 
   void _tryApplyInitialOrder(List<Map<String, dynamic>> tableOrders) {
@@ -28299,6 +26863,9 @@ class _MobileGarsonTableFlowPageState
   }
 
   String _productCategory(SellerProduct product) {
+    if (MixedServiceOrder.isTemplateProduct(product)) {
+      return MixedServiceOrder.templateTypeLabelFromProduct(product);
+    }
     final main = product.mainCategory.trim();
     if (main.isNotEmpty) return main;
     final sub = product.subCategory.trim();
@@ -28306,16 +26873,86 @@ class _MobileGarsonTableFlowPageState
     return 'Diğer';
   }
 
+  String _normalizeGarsonProductStatusKey(String? status) {
+    final normalized = (status ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll(' ', '_')
+        .replaceAll('-', '_');
+    if (normalized.isEmpty) return '';
+    if (normalized == 'aktif' || normalized == 'active') {
+      return 'active';
+    }
+    if (normalized == 'pasif' || normalized == 'inactive') {
+      return 'inactive';
+    }
+    if (normalized == 'taslak' || normalized == 'draft') {
+      return 'draft';
+    }
+    if (normalized == 'rejected' || normalized == 'reddedildi') {
+      return 'rejected';
+    }
+    if (normalized == 'pending' ||
+        normalized == 'pending_approval' ||
+        normalized == 'beklemede' ||
+        normalized == 'bekleniyor') {
+      return 'pending';
+    }
+    return normalized;
+  }
+
+  String _garsonProductType(SellerProduct product) {
+    return MixedServiceOrder.productTypeFromProduct(product);
+  }
+
+  List<SellerProduct> _allGarsonProducts() {
+    if (_queriedProducts.isNotEmpty) {
+      return List<SellerProduct>.from(_queriedProducts, growable: false);
+    }
+    return List<SellerProduct>.from(widget.products, growable: false);
+  }
+
   List<SellerProduct> _activeProducts() {
-    return widget.products
+    return _allGarsonProducts()
         .where((product) {
-          final status = product.status.trim().toLowerCase();
-          if (status.contains('pasif')) return false;
-          if (status.contains('rejected')) return false;
-          if (status.contains('taslak')) return false;
+          final status = _normalizeGarsonProductStatusKey(product.status);
+          if (status == 'inactive') return false;
+          if (status == 'rejected') return false;
+          if (status == 'draft') return false;
           return true;
         })
         .toList(growable: false);
+  }
+
+  void _debugLogProductPipeline({
+    required List<SellerProduct> sourceProducts,
+    required List<SellerProduct> allProducts,
+    required List<SellerProduct> visibleProducts,
+    required String selectedCategory,
+  }) {
+    final sampleProducts = allProducts
+        .take(5)
+        .map((product) {
+          return <String, String>{
+            'name': product.name,
+            'status': product.status,
+            'product_type': _garsonProductType(product),
+            'category': _productCategory(product),
+            'store_id': widget.sellerId,
+          };
+        })
+        .toList(growable: false);
+    debugPrint(
+      '[GarsonProducts] sellerId=${widget.sellerId} '
+      'branchId=- '
+      'widgetProducts=${widget.products.length} '
+      'queriedProducts=${_queriedProducts.length} '
+      'sourceProducts=${sourceProducts.length} '
+      'allProducts=${allProducts.length} '
+      'visibleProducts=${visibleProducts.length} '
+      'selectedCategory=$selectedCategory '
+      'sample=$sampleProducts',
+    );
   }
 
   List<String> _productCategories(List<SellerProduct> products) {
@@ -28327,32 +26964,8 @@ class _MobileGarsonTableFlowPageState
     return list;
   }
 
-  double _parsePrice(dynamic raw) {
-    if (raw is num) return raw.toDouble();
-    final text = (raw ?? '').toString().trim();
-    if (text.isEmpty) return 0;
-
-    var normalized = text.replaceAll(RegExp(r'[^0-9,.-]'), '');
-    if (normalized.isEmpty) return 0;
-    final hasComma = normalized.contains(',');
-    final hasDot = normalized.contains('.');
-
-    if (hasComma && hasDot) {
-      if (normalized.lastIndexOf(',') > normalized.lastIndexOf('.')) {
-        normalized = normalized.replaceAll('.', '').replaceAll(',', '.');
-      } else {
-        normalized = normalized.replaceAll(',', '');
-      }
-    } else if (hasComma) {
-      normalized = normalized.replaceAll('.', '').replaceAll(',', '.');
-    }
-    return double.tryParse(normalized) ?? 0;
-  }
-
   double _itemLineTotal(Map<String, dynamic> item) {
-    final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-    final price = _parsePrice(item['price']);
-    return qty * price;
+    return MixedServiceOrder.itemLineTotal(item);
   }
 
   double _draftTotal() {
@@ -28380,21 +26993,7 @@ class _MobileGarsonTableFlowPageState
   }
 
   Map<String, dynamic> _normalizeItem(Map<String, dynamic> item) {
-    return <String, dynamic>{
-      'product_id':
-          item['product_id']?.toString() ?? item['productId']?.toString(),
-      'name': item['name']?.toString() ?? '-',
-      'price': item['price'],
-      'quantity': (item['quantity'] as num?)?.toInt() ?? 1,
-      'gramaj': item['gramaj']?.toString() ?? '',
-      'notes': item['notes']?.toString() ?? '',
-      'station_id':
-          item['station_id']?.toString() ?? item['stationId']?.toString(),
-      'printer_routing_enabled': item['printer_routing_enabled'] != false,
-      'attributes':
-          (item['attributes'] as List?)?.whereType<String>().toList() ??
-          <String>[],
-    };
+    return MixedServiceOrder.normalizeOrderItem(item);
   }
 
   List<Map<String, dynamic>> _extractItems(dynamic raw) {
@@ -28403,6 +27002,196 @@ class _MobileGarsonTableFlowPageState
         .whereType<Map>()
         .map((map) => _normalizeItem(Map<String, dynamic>.from(map)))
         .toList(growable: false);
+  }
+
+  bool _isMixedServiceItem(Map<String, dynamic> item) {
+    return MixedServiceOrder.isMixedService(item);
+  }
+
+  List<MixedServiceDisplayEntry> _itemDetailLines(Map<String, dynamic> item) {
+    final lines = <MixedServiceDisplayEntry>[];
+    final gramaj = item['gramaj']?.toString().trim() ?? '';
+    final notes = item['notes']?.toString().trim() ?? '';
+    if (gramaj.isNotEmpty) {
+      lines.add(MixedServiceDisplayEntry.item(gramaj));
+    }
+    if (notes.isNotEmpty) {
+      lines.add(MixedServiceDisplayEntry.item(notes));
+    }
+    lines.addAll(MixedServiceOrder.childItemDisplayEntries(item));
+    return lines;
+  }
+
+  bool _isTemplateProduct(SellerProduct product) {
+    return MixedServiceOrder.isTemplateProduct(product);
+  }
+
+  bool _isMenuTemplateProduct(SellerProduct product) {
+    return MixedServiceOrder.isMenuTemplateProduct(product);
+  }
+
+  bool _isServiceTemplateProduct(SellerProduct product) {
+    return MixedServiceOrder.isServiceTemplateProduct(product);
+  }
+
+  String _templatePrimaryActionLabel(SellerProduct product) {
+    if (_isServiceTemplateProduct(product)) {
+      return 'Seç';
+    }
+    if (_isTemplateProduct(product)) {
+      return 'Ekle';
+    }
+    return 'Ekle';
+  }
+
+  Color _templateAccentColor(SellerProduct product) {
+    return _isMenuTemplateProduct(product)
+        ? const Color(0xFF0F766E)
+        : AppColors.primary;
+  }
+
+  Widget _templateTypeBadge(
+    SellerProduct product, {
+    double fontSize = 10,
+    EdgeInsetsGeometry padding = const EdgeInsets.symmetric(
+      horizontal: 8,
+      vertical: 3,
+    ),
+  }) {
+    final accent = _templateAccentColor(product);
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        MixedServiceOrder.templateTypeLabelFromProduct(product),
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.w800,
+          color: accent,
+        ),
+      ),
+    );
+  }
+
+  List<String> _availablePricingModesForTemplate(SellerProduct product) {
+    final config = MixedServiceOrder.templateConfigFromProduct(product);
+    final pricingMode = MixedServiceOrder.normalizeTemplatePricingMode(
+      config?['pricing_mode']?.toString(),
+    );
+    switch (pricingMode) {
+      case MixedServiceOrder.manualAllowedPriceMode:
+        return const <String>[
+          MixedServiceOrder.manualAllowedPriceMode,
+          MixedServiceOrder.manualPriceMode,
+        ];
+      case MixedServiceOrder.autoSumPriceMode:
+      default:
+        return const <String>[MixedServiceOrder.autoSumPriceMode];
+    }
+  }
+
+  MixedServiceTemplateResolution _inspectServiceTemplateResolution(
+    SellerProduct product,
+  ) {
+    return MixedServiceOrder.inspectTemplateSelectableProducts(
+      product,
+      availableProducts: _allGarsonProducts(),
+      debugContext: 'seller_panel_page._showTemplateProductActions',
+    );
+  }
+
+  Map<String, dynamic> _menuTemplateOrderItem(SellerProduct product) {
+    return MixedServiceOrder.buildOrderItemFromTemplateProduct(
+      product,
+      availableProducts: _activeProducts(),
+      preselectTemplateItems: true,
+    );
+  }
+
+  void _appendDraftItem(Map<String, dynamic> item) {
+    setState(() {
+      _draftItems.add(_normalizeItem(item));
+    });
+    _notifyDraftChanged();
+  }
+
+  void _addMenuTemplateProductToDraft(SellerProduct product) {
+    final preparedItem = _menuTemplateOrderItem(product);
+    final childItems = MixedServiceOrder.normalizeChildItems(
+      preparedItem['child_items'],
+    );
+    if (childItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bu menüde eklenecek aktif ürün bulunmuyor.'),
+        ),
+      );
+      return;
+    }
+    _appendDraftItem(preparedItem);
+  }
+
+  Future<void> _customizeServiceTemplateProduct(
+    SellerProduct product, {
+    required List<SellerProduct> selectableProducts,
+  }) async {
+    // TODO(debug): remove before production
+    debugPrint(
+      '[SERVICE_OPEN] '
+      'name="${product.name}" '
+      'resolved_kind=${MixedServiceOrder.productTypeFromProduct(product)} '
+      'dialog_opening=true',
+    );
+    final configured = await showMixedServiceDialog(
+      context: context,
+      products: selectableProducts,
+      mode: MixedServiceDialogMode.edit,
+      title: 'Servisi Aç',
+      subtitle:
+          'Siparişe eklemeden önce servis içinden ürünleri seçin, porsiyon, gramaj, adet ve notları düzenleyin.',
+      submitLabel: 'Siparişe Ekle',
+      initialItem: MixedServiceOrder.buildOrderItemFromTemplateProduct(
+        product,
+        availableProducts: selectableProducts,
+        preselectTemplateItems: false,
+      ),
+      availablePricingModes: _availablePricingModesForTemplate(product),
+    );
+    if (configured == null || !mounted) return;
+    _appendDraftItem(configured);
+  }
+
+  Future<void> _showTemplateProductActions(SellerProduct product) async {
+    if (_isMenuTemplateProduct(product)) {
+      _addMenuTemplateProductToDraft(product);
+      return;
+    }
+    final resolution = _inspectServiceTemplateResolution(product);
+    final selectableProducts = resolution.selectableProducts;
+    if (selectableProducts.isEmpty) {
+      debugPrint(
+        '[SERVICE_EMPTY] '
+        'serviceId=${product.id} '
+        'serviceName="${product.name}" '
+        'templateItems=${resolution.templateItemsCount} '
+        'matchedProducts=${resolution.matchedSelectableProductsCount} '
+        'activeMatchedProducts=${resolution.activeMatchedProductsCount} '
+        'finalSelectableCount=${resolution.selectableProducts.length}',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bu serviste seçilebilir aktif içerik bulunmuyor.'),
+        ),
+      );
+      return;
+    }
+    await _customizeServiceTemplateProduct(
+      product,
+      selectableProducts: selectableProducts,
+    );
   }
 
   int _draftQuantityForProduct(SellerProduct product) {
@@ -28419,7 +27208,168 @@ class _MobileGarsonTableFlowPageState
     return total;
   }
 
+  SellerProduct? _sellerProductById(String productId) {
+    for (final product in _allGarsonProducts()) {
+      if (product.id == productId) return product;
+    }
+    return null;
+  }
+
+  int _simpleDraftIndexForProduct(SellerProduct product) {
+    return _draftItems.indexWhere((item) {
+      if (_isMixedServiceItem(item)) return false;
+      final itemProductId = item['product_id']?.toString();
+      final matchesProduct = itemProductId != null && itemProductId.isNotEmpty
+          ? itemProductId == product.id
+          : (item['name']?.toString() ?? '') == product.name;
+      if (!matchesProduct) return false;
+      final notes = item['notes']?.toString().trim() ?? '';
+      final attrs =
+          (item['attributes'] as List?)?.whereType<String>().toList() ??
+          const <String>[];
+      return notes.isEmpty && attrs.isEmpty;
+    });
+  }
+
+  Map<String, dynamic>? _simpleDraftItemForProduct(SellerProduct product) {
+    final index = _simpleDraftIndexForProduct(product);
+    if (index < 0 || index >= _draftItems.length) return null;
+    return _draftItems[index];
+  }
+
+  double _selectedServiceAmountForProduct(SellerProduct product) {
+    final item = _simpleDraftItemForProduct(product);
+    if (product.resolvedServiceControlType ==
+        ProductServiceControlType.weightStepper) {
+      return ((item?['selectedWeightGrams'] as num?)?.toDouble()) ??
+          ((item?['selected_weight_grams'] as num?)?.toDouble()) ??
+          product.resolvedDefaultWeightGrams.toDouble();
+    }
+    return ((item?['selectedServiceAmount'] as num?)?.toDouble()) ??
+        ((item?['selected_service_amount'] as num?)?.toDouble()) ??
+        product.resolvedDefaultServiceAmount;
+  }
+
+  String? _serviceStepperLabelForProduct(SellerProduct product) {
+    final item = _simpleDraftItemForProduct(product);
+    final label = item?['amountLabel']?.toString().trim() ?? '';
+    if (label.isNotEmpty) return label;
+    final normalizedLabel = item?['amount_label']?.toString().trim() ?? '';
+    if (normalizedLabel.isNotEmpty) return normalizedLabel;
+    return null;
+  }
+
+  Map<String, dynamic> _buildDraftItem(
+    SellerProduct product, {
+    int quantity = 1,
+    String notes = '',
+    List<String> attributes = const <String>[],
+    double? selectedServiceAmount,
+    int? selectedWeightGrams,
+  }) {
+    final effectiveWeight =
+        product.resolvedServiceControlType ==
+            ProductServiceControlType.weightStepper
+        ? ProductPriceCalculator.clampWeightSelection(
+            selectedWeightGrams ?? product.resolvedDefaultWeightGrams,
+            minWeightGrams: product.minWeightGrams,
+            weightStepGrams: product.weightStepGrams,
+            maxWeightGrams: product.maxWeightGrams,
+          )
+        : null;
+    final effectiveServiceAmount =
+        ProductPriceCalculator.usesPortionLikeStepper(
+          product.resolvedServiceControlType,
+        )
+        ? ProductPriceCalculator.clampPortionSelection(
+            selectedServiceAmount ?? product.resolvedDefaultServiceAmount,
+            type: product.resolvedServiceControlType,
+            minPortion: product.minPortion,
+            maxPortion: product.maxPortion,
+            portionStep: product.portionStep,
+          )
+        : null;
+    final unitPrice = ProductPriceCalculator.resolveServiceControlledUnitPrice(
+      serviceControlType: product.resolvedServiceControlType,
+      pricingType: product.resolvedPricingType,
+      portionPrice: product.portionPrice,
+      pricePerKg: product.pricePerKg,
+      fallbackPrice: product.price,
+      selectedAmount: effectiveServiceAmount,
+      selectedWeightGrams: effectiveWeight,
+    );
+    final amountLabel = product.usesServiceControlStepper
+        ? ProductPriceCalculator.formatServiceAmountLabel(
+            type: product.resolvedServiceControlType,
+            amount: effectiveServiceAmount,
+            grams: effectiveWeight,
+          )
+        : '';
+    return <String, dynamic>{
+      'product_id': product.id,
+      'name': product.name,
+      'price': unitPrice,
+      'quantity': quantity,
+      'gramaj': amountLabel,
+      'amountLabel': amountLabel,
+      'serviceControlType': product.resolvedServiceControlType.storageValue,
+      'selectedServiceAmount': effectiveServiceAmount,
+      'selectedWeightGrams': effectiveWeight,
+      'line_total': unitPrice * quantity,
+      'notes': notes.trim(),
+      'station_id': product.stationId,
+      'printer_routing_enabled': product.printerRoutingEnabled,
+      'attributes': attributes,
+      'unitPriceSnapshot': unitPrice,
+    };
+  }
+
+  void _setServiceControlledProductAmount(
+    SellerProduct product,
+    double? nextAmount,
+  ) {
+    final index = _simpleDraftIndexForProduct(product);
+    setState(() {
+      if (index >= 0 && index < _draftItems.length) {
+        _draftItems.removeAt(index);
+      }
+      if (nextAmount == null || nextAmount <= 0) return;
+      _draftItems.add(
+        _normalizeItem(
+          _buildDraftItem(
+            product,
+            selectedServiceAmount:
+                product.resolvedServiceControlType ==
+                    ProductServiceControlType.weightStepper
+                ? null
+                : nextAmount,
+            selectedWeightGrams:
+                product.resolvedServiceControlType ==
+                    ProductServiceControlType.weightStepper
+                ? nextAmount.round()
+                : null,
+          ),
+        ),
+      );
+    });
+    _notifyDraftChanged();
+  }
+
   void _quickAddProduct(SellerProduct product) {
+    if (_isTemplateProduct(product)) {
+      _showTemplateProductActions(product);
+      return;
+    }
+    if (product.usesServiceControlStepper) {
+      _setServiceControlledProductAmount(
+        product,
+        product.resolvedServiceControlType ==
+                ProductServiceControlType.weightStepper
+            ? product.resolvedDefaultWeightGrams.toDouble()
+            : product.resolvedDefaultServiceAmount,
+      );
+      return;
+    }
     final index = _draftItems.indexWhere(
       (item) =>
           (item['name']?.toString() ?? '') == product.name &&
@@ -28427,6 +27377,61 @@ class _MobileGarsonTableFlowPageState
           (item['notes']?.toString() ?? '').isEmpty &&
           ((item['attributes'] as List?)?.isEmpty ?? true),
     );
+
+    // Duplicate detection: product was already in the draft AND was added
+    // within the last 3 seconds — intercept and show a confirmation warning
+    // instead of silently incrementing (guards against double-tap accidents).
+    final productKey = product.id.isNotEmpty ? product.id : product.name;
+    final lastAdded = _recentlyAddedProductIds[productKey];
+    final isRecentDuplicate =
+        index >= 0 &&
+        lastAdded != null &&
+        DateTime.now().difference(lastAdded).inSeconds < 3;
+    if (isRecentDuplicate && mounted) {
+      showDuplicateProductWarning(
+        context,
+        productName: product.name,
+        onIncreaseQty: () {
+          if (!mounted) return;
+          final i = _draftItems.indexWhere(
+            (item) =>
+                (item['name']?.toString() ?? '') == product.name &&
+                (item['gramaj']?.toString() ?? '').isEmpty &&
+                (item['notes']?.toString() ?? '').isEmpty &&
+                ((item['attributes'] as List?)?.isEmpty ?? true),
+          );
+          setState(() {
+            if (i >= 0 && i < _draftItems.length) {
+              final qty = (_draftItems[i]['quantity'] as num?)?.toInt() ?? 1;
+              _draftItems[i]['quantity'] = qty + 1;
+            }
+          });
+          _recentlyAddedProductIds[productKey] = DateTime.now();
+          _notifyDraftChanged();
+        },
+        onKeepBoth: () {
+          if (!mounted) return;
+          setState(() {
+            _draftItems.add(<String, dynamic>{
+              'product_id': product.id,
+              'name': product.name,
+              'price': product.displayPrice,
+              'quantity': 1,
+              'gramaj': '',
+              'notes': '',
+              'station_id': product.stationId,
+              'printer_routing_enabled': product.printerRoutingEnabled,
+              'attributes': <String>[],
+            });
+          });
+          _recentlyAddedProductIds[productKey] = DateTime.now();
+          _notifyDraftChanged();
+        },
+      );
+      return;
+    }
+
+    _recentlyAddedProductIds[productKey] = DateTime.now();
     setState(() {
       if (index >= 0) {
         final qty = (_draftItems[index]['quantity'] as num?)?.toInt() ?? 1;
@@ -28449,6 +27454,10 @@ class _MobileGarsonTableFlowPageState
   }
 
   Future<void> _addConfiguredProduct(SellerProduct product) async {
+    if (_isTemplateProduct(product)) {
+      await _showTemplateProductActions(product);
+      return;
+    }
     final item = await widget.configureProductItem(context, product);
     if (item == null || !mounted) return;
     setState(() {
@@ -28457,15 +27466,524 @@ class _MobileGarsonTableFlowPageState
     _notifyDraftChanged();
   }
 
+  Map<String, dynamic> _copyDraftItemWithQuantity(
+    Map<String, dynamic> item,
+    int quantity,
+  ) {
+    final safeQuantity = quantity <= 0 ? 1 : quantity;
+    if (_isMixedServiceItem(item)) {
+      return _normalizeItem(
+        Map<String, dynamic>.from(item)..['quantity'] = safeQuantity,
+      );
+    }
+
+    final updated = Map<String, dynamic>.from(item)
+      ..['quantity'] = safeQuantity;
+    final unitPrice = MixedServiceOrder.parsePrice(
+      updated['unitPriceSnapshot'] ?? updated['price'],
+    );
+    final lineTotal = unitPrice * safeQuantity;
+    updated['line_total'] = lineTotal;
+    updated['total_price'] = lineTotal;
+    return updated;
+  }
+
+  bool get _isEditingOrder => _editingOrderId?.isNotEmpty == true;
+
+  int _draftTotalQuantity() {
+    return _draftItems.fold<int>(
+      0,
+      (sum, item) => sum + ((item['quantity'] as num?)?.toInt() ?? 1),
+    );
+  }
+
+  String _normalizedOrderStatusKey(String? status) {
+    final normalized = (status ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll(' ', '_')
+        .replaceAll('-', '_');
+    switch (normalized) {
+      case 'done':
+      case 'kitchen':
+        return 'sent';
+      default:
+        return normalized;
+    }
+  }
+
+  /// Delegates entirely to [GarsonOperationRules] — single source of truth.
+  _GarsonOrderEditPolicy _orderEditPolicy(String? status) {
+    final rules = GarsonOperationRules.forStatus(status);
+    return _GarsonOrderEditPolicy(
+      canEdit: rules.canEdit,
+      canResend: rules.canResend,
+      message: rules.editNote,
+      isWarning: rules.showEditWarning,
+      isLocked: !rules.canEdit,
+    );
+  }
+
+  String _draftItemAmountLabel(Map<String, dynamic> item) {
+    final amountLabel = item['amountLabel']?.toString().trim() ?? '';
+    if (amountLabel.isNotEmpty) return amountLabel;
+    final normalizedLabel = item['amount_label']?.toString().trim() ?? '';
+    if (normalizedLabel.isNotEmpty) return normalizedLabel;
+    return item['gramaj']?.toString().trim() ?? '';
+  }
+
+  String _draftItemPreviewLabel(Map<String, dynamic> item) {
+    final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+    final name = item['name']?.toString() ?? '-';
+    final amountLabel = _draftItemAmountLabel(item);
+    if (amountLabel.isEmpty) return '$qty x $name';
+    return '$qty x $name • $amountLabel';
+  }
+
+  String _updatedEntryReason(_GarsonOrderChangeEntry entry) {
+    final before = entry.previousItem ?? const <String, dynamic>{};
+    final after = entry.item;
+    final beforeNote = before['notes']?.toString().trim() ?? '';
+    final afterNote = after['notes']?.toString().trim() ?? '';
+    if (beforeNote != afterNote) {
+      return 'Not güncellendi';
+    }
+    final beforeAmount = _draftItemAmountLabel(before);
+    final afterAmount = _draftItemAmountLabel(after);
+    if (beforeAmount != afterAmount) {
+      if (beforeAmount.isNotEmpty && afterAmount.isNotEmpty) {
+        return '$beforeAmount -> $afterAmount';
+      }
+      return 'Porsiyon güncellendi';
+    }
+    final beforeAttributes = List<String>.from(
+      (before['attributes'] as List?)?.map((item) => item.toString()) ??
+          const <String>[],
+      growable: false,
+    )..sort();
+    final afterAttributes = List<String>.from(
+      (after['attributes'] as List?)?.map((item) => item.toString()) ??
+          const <String>[],
+      growable: false,
+    )..sort();
+    if (!listEquals(beforeAttributes, afterAttributes)) {
+      return 'Seçim güncellendi';
+    }
+    if (MixedServiceOrder.childSummary(before) !=
+        MixedServiceOrder.childSummary(after)) {
+      return 'İçerik güncellendi';
+    }
+    return 'Revize edildi';
+  }
+
+  String _orderChangeEntryLabel(_GarsonOrderChangeEntry entry) {
+    final base = _draftItemPreviewLabel(entry.item);
+    switch (entry.type) {
+      case _GarsonOrderChangeType.added:
+        return '$base eklendi';
+      case _GarsonOrderChangeType.removed:
+        return '$base çıkarıldı';
+      case _GarsonOrderChangeType.updated:
+        return '$base • ${_updatedEntryReason(entry)}';
+    }
+  }
+
+  dynamic _canonicalizeJsonValue(dynamic value) {
+    if (value is Map) {
+      final entries = value.entries.toList(growable: false)
+        ..sort((a, b) => a.key.toString().compareTo(b.key.toString()));
+      return <String, dynamic>{
+        for (final entry in entries)
+          entry.key.toString(): _canonicalizeJsonValue(entry.value),
+      };
+    }
+    if (value is List) {
+      return value.map(_canonicalizeJsonValue).toList(growable: false);
+    }
+    if (value is num) return value.toDouble();
+    return value;
+  }
+
+  String _orderItemProductKey(Map<String, dynamic> item) {
+    final normalized = _normalizeItem(item);
+    return jsonEncode(<String, dynamic>{
+      'item_type': normalized['item_type']?.toString() ?? 'product',
+      'product_id': normalized['product_id']?.toString() ?? '',
+      'name': normalized['name']?.toString() ?? '-',
+    });
+  }
+
+  String _orderItemContentSignature(Map<String, dynamic> item) {
+    final normalized = _normalizeItem(item);
+    final attributes = List<String>.from(
+      (normalized['attributes'] as List?)?.map((item) => item.toString()) ??
+          const <String>[],
+      growable: false,
+    )..sort();
+    final childItems =
+        MixedServiceOrder.normalizeChildItems(normalized['child_items'])
+            .map((child) {
+              return <String, dynamic>{
+                'product_id': child['product_id']?.toString() ?? '',
+                'product_name': child['product_name']?.toString() ?? '-',
+                'quantity': (child['quantity'] as num?)?.toInt() ?? 1,
+                'amount_label': child['amount_label']?.toString() ?? '',
+                'note': child['note']?.toString() ?? '',
+                'service_round': MixedServiceOrder.normalizeServiceRound(
+                  child['service_round'],
+                ),
+              };
+            })
+            .toList(growable: false)
+          ..sort(
+            (left, right) => jsonEncode(
+              _canonicalizeJsonValue(left),
+            ).compareTo(jsonEncode(_canonicalizeJsonValue(right))),
+          );
+
+    final resolvedUnitPrice = _isMixedServiceItem(normalized)
+        ? MixedServiceOrder.resolveMainItemTotal(normalized)
+        : MixedServiceOrder.parsePrice(
+            normalized['unitPriceSnapshot'] ??
+                normalized['unit_price_snapshot'] ??
+                normalized['price'],
+          );
+
+    return jsonEncode(
+      _canonicalizeJsonValue(<String, dynamic>{
+        'product_id': normalized['product_id']?.toString() ?? '',
+        'name': normalized['name']?.toString() ?? '-',
+        'item_type': normalized['item_type']?.toString() ?? 'product',
+        'source_product_type':
+            normalized['source_product_type']?.toString() ?? '',
+        'amount_label': _draftItemAmountLabel(normalized),
+        'notes': normalized['notes']?.toString().trim() ?? '',
+        'service_control_type':
+            normalized['service_control_type']?.toString() ?? '',
+        'selected_service_amount':
+            (normalized['selected_service_amount'] as num?)?.toDouble(),
+        'selected_weight_grams': (normalized['selected_weight_grams'] as num?)
+            ?.toInt(),
+        'pricing_mode': normalized['pricing_mode']?.toString() ?? '',
+        'manual_price': MixedServiceOrder.parsePrice(
+          normalized['manual_price'],
+        ),
+        'fixed_price': MixedServiceOrder.parsePrice(normalized['fixed_price']),
+        'resolved_unit_price': resolvedUnitPrice,
+        'attributes': attributes,
+        'child_items': childItems,
+      }),
+    );
+  }
+
+  Map<String, _GarsonAggregatedOrderItem> _aggregateOrderItems(
+    Iterable<Map<String, dynamic>> items,
+  ) {
+    final aggregated = <String, _GarsonAggregatedOrderItem>{};
+    for (final rawItem in items) {
+      final normalized = _normalizeItem(rawItem);
+      final signature = _orderItemContentSignature(normalized);
+      final quantity = (normalized['quantity'] as num?)?.toInt() ?? 1;
+      final current = aggregated[signature];
+      final baseItem = _copyDraftItemWithQuantity(normalized, 1);
+      aggregated[signature] = _GarsonAggregatedOrderItem(
+        item: current?.item ?? baseItem,
+        quantity: (current?.quantity ?? 0) + quantity,
+      );
+    }
+    return aggregated;
+  }
+
+  _GarsonOrderChangeSummary _buildOrderChangeSummary({
+    required List<Map<String, dynamic>> originalItems,
+    required List<Map<String, dynamic>> nextItems,
+  }) {
+    final originalAgg = _aggregateOrderItems(originalItems);
+    final nextAgg = _aggregateOrderItems(nextItems);
+    final kitchenAddedItems = <Map<String, dynamic>>[];
+    final kitchenRemovedItems = <Map<String, dynamic>>[];
+    final allKeys = <String>{...originalAgg.keys, ...nextAgg.keys};
+
+    for (final key in allKeys) {
+      final original = originalAgg[key];
+      final next = nextAgg[key];
+      final originalQty = original?.quantity ?? 0;
+      final nextQty = next?.quantity ?? 0;
+      if (nextQty > originalQty && next != null) {
+        kitchenAddedItems.add(
+          _copyDraftItemWithQuantity(next.item, nextQty - originalQty),
+        );
+      }
+      if (originalQty > nextQty && original != null) {
+        kitchenRemovedItems.add(
+          _copyDraftItemWithQuantity(original.item, originalQty - nextQty),
+        );
+      }
+    }
+
+    final addedDisplayPool = kitchenAddedItems
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    final removedDisplayPool = kitchenRemovedItems
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    final addedByProduct = <String, List<Map<String, dynamic>>>{};
+    final removedByProduct = <String, List<Map<String, dynamic>>>{};
+
+    for (final item in addedDisplayPool) {
+      addedByProduct
+          .putIfAbsent(
+            _orderItemProductKey(item),
+            () => <Map<String, dynamic>>[],
+          )
+          .add(item);
+    }
+    for (final item in removedDisplayPool) {
+      removedByProduct
+          .putIfAbsent(
+            _orderItemProductKey(item),
+            () => <Map<String, dynamic>>[],
+          )
+          .add(item);
+    }
+
+    final updatedEntries = <_GarsonOrderUpdatedEntry>[];
+    final sharedKeys = <String>{
+      ...addedByProduct.keys,
+      ...removedByProduct.keys,
+    };
+    for (final key in sharedKeys) {
+      final additions = addedByProduct[key];
+      final removals = removedByProduct[key];
+      if (additions == null || removals == null) continue;
+      while (additions.isNotEmpty && removals.isNotEmpty) {
+        final addedItem = additions.first;
+        final removedItem = removals.first;
+        final addedQty = (addedItem['quantity'] as num?)?.toInt() ?? 1;
+        final removedQty = (removedItem['quantity'] as num?)?.toInt() ?? 1;
+        final matchedQty = math.min(addedQty, removedQty);
+        updatedEntries.add(
+          _GarsonOrderUpdatedEntry(
+            before: _copyDraftItemWithQuantity(removedItem, matchedQty),
+            after: _copyDraftItemWithQuantity(addedItem, matchedQty),
+          ),
+        );
+        if (addedQty <= matchedQty) {
+          additions.removeAt(0);
+        } else {
+          additions[0] = _copyDraftItemWithQuantity(
+            addedItem,
+            addedQty - matchedQty,
+          );
+        }
+        if (removedQty <= matchedQty) {
+          removals.removeAt(0);
+        } else {
+          removals[0] = _copyDraftItemWithQuantity(
+            removedItem,
+            removedQty - matchedQty,
+          );
+        }
+      }
+    }
+
+    final remainingAddedItems = addedByProduct.values
+        .expand((items) => items)
+        .toList(growable: false);
+    final remainingRemovedItems = removedByProduct.values
+        .expand((items) => items)
+        .toList(growable: false);
+    final displayEntries = <_GarsonOrderChangeEntry>[
+      ...updatedEntries.map(
+        (entry) => _GarsonOrderChangeEntry(
+          type: _GarsonOrderChangeType.updated,
+          item: entry.after,
+          previousItem: entry.before,
+        ),
+      ),
+      ...remainingAddedItems.map(
+        (item) => _GarsonOrderChangeEntry(
+          type: _GarsonOrderChangeType.added,
+          item: item,
+        ),
+      ),
+      ...remainingRemovedItems.map(
+        (item) => _GarsonOrderChangeEntry(
+          type: _GarsonOrderChangeType.removed,
+          item: item,
+        ),
+      ),
+    ];
+
+    final addedQuantity = remainingAddedItems.fold<int>(
+      0,
+      (sum, item) => sum + ((item['quantity'] as num?)?.toInt() ?? 1),
+    );
+    final removedQuantity = remainingRemovedItems.fold<int>(
+      0,
+      (sum, item) => sum + ((item['quantity'] as num?)?.toInt() ?? 1),
+    );
+    final updatedQuantity = updatedEntries.fold<int>(
+      0,
+      (sum, entry) => sum + ((entry.after['quantity'] as num?)?.toInt() ?? 1),
+    );
+
+    return _GarsonOrderChangeSummary(
+      kitchenAddedItems: kitchenAddedItems,
+      kitchenRemovedItems: kitchenRemovedItems,
+      displayEntries: displayEntries,
+      addedQuantity: addedQuantity,
+      removedQuantity: removedQuantity,
+      updatedQuantity: updatedQuantity,
+    );
+  }
+
+  _GarsonOrderChangeSummary _currentEditingChangeSummary() {
+    if (!_isEditingOrder) return const _GarsonOrderChangeSummary();
+    return _buildOrderChangeSummary(
+      originalItems: _editingBaseItems,
+      nextItems: _draftItems,
+    );
+  }
+
+  bool _canSubmitDraft() {
+    if (_draftItems.isEmpty || _isSubmitting) return false;
+    if (!_isEditingOrder) return true;
+    return _currentEditingChangeSummary().hasChanges;
+  }
+
+  Map<String, dynamic> _orderChangeSummaryPayload(
+    _GarsonOrderChangeSummary summary,
+  ) {
+    if (!summary.hasChanges) return const <String, dynamic>{};
+    final entries = summary.previewEntries(limit: 6);
+    return <String, dynamic>{
+      'added_quantity': summary.addedQuantity,
+      'removed_quantity': summary.removedQuantity,
+      'updated_quantity': summary.updatedQuantity,
+      'changes': entries
+          .map(
+            (entry) => <String, dynamic>{
+              'type': entry.type.name,
+              'label': _orderChangeEntryLabel(entry),
+            },
+          )
+          .toList(growable: false),
+    };
+  }
+
+  bool _shouldDispatchFullKitchenTicket(String? status) =>
+      KitchenPrintPolicy.shouldDispatchFullTicket(status);
+
+  Future<String?> _dispatchUpdatedOrderPrintJobs({
+    required String? previousStatus,
+    required _GarsonOrderChangeSummary changeSummary,
+    required List<Map<String, dynamic>> nextItems,
+  }) async {
+    if (_shouldDispatchFullKitchenTicket(previousStatus)) {
+      return _dispatchKitchenPrintJobs(nextItems);
+    }
+
+    final errors = <String>[];
+    final removalError = await _dispatchKitchenRemovals(
+      changeSummary.kitchenRemovedItems,
+      note: KitchenPrintPolicy.removeItemsNote,
+    );
+    if (removalError != null && removalError.isNotEmpty) {
+      errors.add(removalError);
+    }
+
+    final additionError = await _dispatchKitchenAdditions(
+      changeSummary.kitchenAddedItems,
+      note: KitchenPrintPolicy.addItemsNote,
+    );
+    if (additionError != null && additionError.isNotEmpty) {
+      errors.add(additionError);
+    }
+
+    if (changeSummary.kitchenRemovedItems.isEmpty &&
+        changeSummary.kitchenAddedItems.isEmpty) {
+      final reprintError = await _dispatchKitchenReprintJobs(
+        nextItems,
+        note: KitchenPrintPolicy.reprintNote,
+      );
+      if (reprintError != null && reprintError.isNotEmpty) {
+        errors.add(reprintError);
+      }
+    }
+
+    if (errors.isEmpty) return null;
+    return errors.join(' | ');
+  }
+
   void _changeDraftQty(int index, int delta) {
     if (index < 0 || index >= _draftItems.length) return;
+    final matchedProduct = _sellerProductById(
+      _draftItems[index]['product_id']?.toString() ?? '',
+    );
+    if (matchedProduct != null && matchedProduct.usesServiceControlStepper) {
+      final current = _draftItems[index];
+      if (matchedProduct.resolvedServiceControlType ==
+          ProductServiceControlType.weightStepper) {
+        final currentGrams =
+            (current['selectedWeightGrams'] as num?)?.toDouble() ??
+            (current['selected_weight_grams'] as num?)?.toDouble() ??
+            matchedProduct.resolvedDefaultWeightGrams.toDouble();
+        final min = matchedProduct.resolvedMinWeightGrams.toDouble();
+        if (delta < 0 && currentGrams <= min) {
+          setState(() {
+            _draftItems.removeAt(index);
+          });
+          _notifyDraftChanged();
+          return;
+        }
+        _setServiceControlledProductAmount(
+          matchedProduct,
+          ProductPriceCalculator.clampWeightSelection(
+            currentGrams.round() +
+                (delta * matchedProduct.resolvedWeightStepGrams),
+            minWeightGrams: matchedProduct.minWeightGrams,
+            weightStepGrams: matchedProduct.weightStepGrams,
+            maxWeightGrams: matchedProduct.maxWeightGrams,
+          ).toDouble(),
+        );
+        return;
+      }
+
+      final currentAmount =
+          (current['selectedServiceAmount'] as num?)?.toDouble() ??
+          (current['selected_service_amount'] as num?)?.toDouble() ??
+          matchedProduct.resolvedDefaultServiceAmount;
+      final min = matchedProduct.resolvedMinPortionAmount;
+      if (delta < 0 && currentAmount <= min + 0.0001) {
+        setState(() {
+          _draftItems.removeAt(index);
+        });
+        _notifyDraftChanged();
+        return;
+      }
+      _setServiceControlledProductAmount(
+        matchedProduct,
+        ProductPriceCalculator.clampPortionSelection(
+          currentAmount + (delta * matchedProduct.resolvedPortionStepAmount),
+          type: matchedProduct.resolvedServiceControlType,
+          minPortion: matchedProduct.minPortion,
+          maxPortion: matchedProduct.maxPortion,
+          portionStep: matchedProduct.portionStep,
+        ),
+      );
+      return;
+    }
     setState(() {
       final current = (_draftItems[index]['quantity'] as num?)?.toInt() ?? 1;
       final next = current + delta;
       if (next <= 0) {
         _draftItems.removeAt(index);
       } else {
-        _draftItems[index]['quantity'] = next;
+        _draftItems[index] = _copyDraftItemWithQuantity(
+          _draftItems[index],
+          next,
+        );
       }
     });
     _notifyDraftChanged();
@@ -28474,6 +27992,26 @@ class _MobileGarsonTableFlowPageState
   Future<void> _editDraftItem(int index) async {
     if (index < 0 || index >= _draftItems.length) return;
     final original = Map<String, dynamic>.from(_draftItems[index]);
+    if (_isMixedServiceItem(original)) {
+      final updated = await showMixedServiceDialog(
+        context: context,
+        products: _activeProducts(),
+        mode: MixedServiceDialogMode.edit,
+        initialItem: original,
+      );
+      if (updated == null || !mounted) return;
+      final preservedQuantity = (original['quantity'] as num?)?.toInt() ?? 1;
+      setState(() {
+        if (index < _draftItems.length) {
+          _draftItems[index] = _normalizeItem(
+            Map<String, dynamic>.from(updated)
+              ..['quantity'] = preservedQuantity,
+          );
+        }
+      });
+      _notifyDraftChanged();
+      return;
+    }
     await widget.editItemSettings(context, original, (updated) {
       if (!mounted) return;
       setState(() {
@@ -28486,30 +28024,42 @@ class _MobileGarsonTableFlowPageState
   }
 
   String _statusLabel(String status) {
-    switch (status.toLowerCase()) {
+    switch (_normalizedOrderStatusKey(status)) {
+      case 'draft':
       case 'waiting':
       case 'new':
-        return 'Sipariş Bekleniliyor';
+        return 'Yeni Sipariş';
+      case 'sent':
+        return 'Mutfağa İletildi';
       case 'preparing':
         return 'Hazırlanıyor';
-      case 'sent':
-      case 'done':
-        return 'Sipariş Gönderildi';
+      case 'ready':
+        return 'Hazır';
+      case 'served':
+        return 'Servis Edildi';
+      case 'closed':
+        return 'Kapatıldı';
       default:
         return 'Bilinmiyor';
     }
   }
 
   Color _statusColor(String status) {
-    switch (status.toLowerCase()) {
+    switch (_normalizedOrderStatusKey(status)) {
+      case 'draft':
       case 'waiting':
       case 'new':
-        return const Color(0xFFEF4444);
-      case 'preparing':
-        return const Color(0xFFF59E0B);
+        return const Color(0xFFEF4444); // kırmızı – yeni
       case 'sent':
-      case 'done':
-        return const Color(0xFF16A34A);
+        return const Color(0xFFF97316); // turuncu – mutfağa iletildi
+      case 'preparing':
+        return const Color(0xFF0891B2); // teal – hazırlanıyor
+      case 'ready':
+        return const Color(0xFF0F766E); // yeşil-teal – hazır
+      case 'served':
+        return const Color(0xFF16A34A); // yeşil – servis edildi
+      case 'closed':
+        return const Color(0xFF6B7280); // gri – kapatıldı
       default:
         return const Color(0xFF6B7280);
     }
@@ -28524,180 +28074,164 @@ class _MobileGarsonTableFlowPageState
   }
 
   bool _isWaitingStatus(String status) {
-    final normalized = status.toLowerCase();
-    return normalized == 'new' || normalized == 'waiting';
+    final normalized = _normalizedOrderStatusKey(status);
+    return normalized == 'draft' ||
+        normalized == 'new' ||
+        normalized == 'waiting';
   }
 
-  bool _isCompletedStatus(String status) {
-    final normalized = status.toLowerCase();
-    return normalized == 'done' || normalized == 'sent';
+  void _clearDraftComposer() {
+    setState(() {
+      _draftItems.clear();
+      _editingOrderId = null;
+      _editingOrderSnapshot = null;
+      _editingBaseItems = const <Map<String, dynamic>>[];
+    });
+    _notifyDraftChanged();
   }
 
-  Future<void> _printTableAdisyon(
-    List<Map<String, dynamic>> tableOrders,
-  ) async {
-    if (!kIsWeb) {
+  void _loadOrderIntoDraft(Map<String, dynamic> order) {
+    final normalizedOrder = _normalizeTableOrder(order);
+    final orderId = normalizedOrder['id']?.toString();
+    if (orderId == null || orderId.isEmpty) return;
+    final originalItems = _extractItems(
+      normalizedOrder['items'],
+    ).map((item) => Map<String, dynamic>.from(item)).toList(growable: false);
+    setState(() {
+      _editingOrderId = orderId;
+      _editingOrderSnapshot = Map<String, dynamic>.from(normalizedOrder);
+      _editingBaseItems = originalItems
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+      _draftItems
+        ..clear()
+        ..addAll(
+          originalItems
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false),
+        );
+      _submitFeedbackMessage = null;
+      _submitFeedbackIsWarning = false;
+      _bottomIndex = 2;
+    });
+    _notifyDraftChanged();
+  }
+
+  Future<bool> _confirmReplaceDraftForEditing() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text('Mevcut taslak değiştirilsin mi?'),
+              content: const Text(
+                'Şu an açık bir taslak var. Bu siparişi düzenlersen mevcut taslak bununla değişecek.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Vazgeç'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Taslağı Değiştir'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+  }
+
+  Future<void> _beginOrderEditing(Map<String, dynamic> order) async {
+    final normalizedOrder = _normalizeTableOrder(order);
+    final orderId = normalizedOrder['id']?.toString().trim() ?? '';
+    final status = normalizedOrder['status']?.toString();
+    final policy = _orderEditPolicy(status);
+
+    if (!policy.canEdit) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(policy.message)));
+      return;
+    }
+
+    if (_editingOrderId == orderId) {
+      setState(() => _bottomIndex = 2);
+      return;
+    }
+
+    if (_draftItems.isNotEmpty) {
+      final confirmed = await _confirmReplaceDraftForEditing();
+      if (!confirmed || !mounted) return;
+    }
+
+    _loadOrderIntoDraft(normalizedOrder);
+  }
+
+  String _nextStatusAfterDraftSubmit(String? previousStatus) {
+    switch (_normalizedOrderStatusKey(previousStatus)) {
+      case 'draft':
+      case 'new':
+      case 'waiting':
+        return 'sent';
+      case 'preparing':
+        return 'preparing';
+      case 'ready':
+        return 'ready';
+      case 'served':
+        return 'served';
+      case 'closed':
+        return 'closed';
+      case 'sent':
+      default:
+        return 'sent';
+    }
+  }
+
+  Future<void> _resendOrderToKitchen(Map<String, dynamic> order) async {
+    if (_isSubmitting) return;
+    final policy = _orderEditPolicy(order['status']?.toString());
+    if (!policy.canResend) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(policy.message)));
+      return;
+    }
+    final items = _extractItems(order['items']);
+    if (items.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Adisyon yazdırma şu anda web panelde kullanılabilir.'),
+          content: Text('Tekrar iletmek için sipariş kalemi bulunamadı.'),
         ),
       );
       return;
     }
-    if (tableOrders.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bu masa için adisyon bulunamadı.')),
-      );
-      return;
-    }
 
-    final htmlEscape = const HtmlEscape();
-    final now = DateTime.now().toLocal();
-    final dateLabel =
-        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}';
-    final timeLabel =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    final storeRow = await Supabase.instance.client
-        .from('stores')
-        .select('business_name, phone, district, city')
-        .eq('seller_id', widget.sellerId)
-        .maybeSingle();
-    final storeName =
-        (storeRow?['business_name']?.toString().trim().isNotEmpty ?? false)
-        ? storeRow!['business_name'].toString().trim()
-        : 'Mağaza';
-    final rawPhone = (storeRow?['phone']?.toString().trim().isNotEmpty ?? false)
-        ? storeRow!['phone'].toString().trim()
-        : '-';
-    final branchSource =
-        (storeRow?['district']?.toString().trim().isNotEmpty ?? false)
-        ? storeRow!['district'].toString().trim()
-        : ((storeRow?['city']?.toString().trim().isNotEmpty ?? false)
-              ? storeRow!['city'].toString().trim()
-              : 'Merkez');
-    final upperBranchSource = branchSource.toUpperCase();
-    final branchLabel =
-        (upperBranchSource.contains('ŞUBE') ||
-            upperBranchSource.contains('SUBE'))
-        ? upperBranchSource
-        : '$upperBranchSource ŞUBE';
-    final rows = <String>[];
-    double total = 0;
-
-    for (final order in tableOrders) {
-      final items = _extractItems(order['items']);
-      for (final item in items) {
-        final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-        final unit = _parsePrice(item['price']);
-        final line = qty * unit;
-        total += line;
-        final notes = (item['notes']?.toString() ?? '').trim();
-        rows.add('''
-          <tr>
-            <td style="padding:7px 4px;border-bottom:1px solid #e5e7eb;">
-              <div style="font-weight:700;color:#111827;">${htmlEscape.convert(item['name']?.toString() ?? '-')}</div>
-              ${notes.isEmpty ? '' : '<div style="font-size:11px;color:#6b7280;margin-top:2px;">${htmlEscape.convert(notes)}</div>'}
-            </td>
-            <td style="padding:7px 4px;border-bottom:1px solid #e5e7eb;text-align:center;white-space:nowrap;">$qty ADET</td>
-            <td style="padding:7px 4px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;white-space:nowrap;">${_formatMoney(line)}</td>
-          </tr>
-        ''');
-      }
-    }
-
-    const discountTotal = 0.0;
-    final netTotal = total - discountTotal;
-    BrowserFileDownload.openPrintHtml(
-      title: 'Adisyon Masa ${widget.tableNumber}',
-      htmlBody:
-          '''
-        <div style="max-width:420px;margin:0 auto;color:#111827;font-family:Arial,sans-serif;">
-          <div style="text-align:center;font-size:28px;font-weight:900;letter-spacing:0.5px;">${htmlEscape.convert(storeName)}</div>
-          <div style="margin-top:8px;padding:6px 0;border-top:1px dashed #111827;border-bottom:1px dashed #111827;display:flex;justify-content:space-between;font-size:16px;font-weight:700;">
-            <span>${htmlEscape.convert(branchLabel)}</span>
-            <span>Tel: ${htmlEscape.convert(rawPhone)}</span>
-          </div>
-          <div style="margin-top:8px;padding:6px 0;border-bottom:1px solid #d1d5db;display:flex;justify-content:space-between;font-size:15px;font-weight:700;">
-            <span>Tarih: $dateLabel &nbsp; Saat: $timeLabel</span>
-            <span>Masa No: ${widget.tableNumber}</span>
-          </div>
-          <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;">
-            <thead>
-              <tr>
-                <th style="text-align:left;padding:7px 4px;border-bottom:2px solid #111827;">Ürünler</th>
-                <th style="text-align:center;padding:7px 4px;border-bottom:2px solid #111827;width:100px;">Adet</th>
-                <th style="text-align:right;padding:7px 4px;border-bottom:2px solid #111827;width:120px;">Tutar</th>
-              </tr>
-            </thead>
-            <tbody>${rows.join()}</tbody>
-          </table>
-          <div style="margin-top:10px;border-top:1px dashed #111827;padding-top:8px;font-size:15px;">
-            <div style="display:flex;justify-content:space-between;padding:2px 0;">
-              <span>Adisyon Toplam</span>
-              <span>${_formatMoney(total)}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;padding:2px 0;">
-              <span>İndirim</span>
-              <span>${_formatMoney(discountTotal)}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;padding:2px 0;font-weight:700;">
-              <span>Net Toplam</span>
-              <span>${_formatMoney(netTotal)}</span>
-            </div>
-          </div>
-          <div style="margin-top:14px;padding-top:10px;border-top:2px solid #111827;text-align:center;">
-            <div style="font-size:28px;font-weight:900;">Ödenecek Toplam : ${_formatMoney(netTotal)}</div>
-            <div style="margin-top:8px;font-size:18px;">Teşekkür Ederiz</div>
-          </div>
-        </div>
-      ''',
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Adisyon yazdırma penceresi açıldı.')),
-    );
-  }
-
-  Future<void> _closeTable() async {
-    if (_isSubmitting) return;
     setState(() => _isSubmitting = true);
     try {
-      await _storeService.closeTableOrders(
-        sellerId: widget.sellerId,
-        tableNumber: widget.tableNumber,
+      final dispatchError = await _dispatchKitchenReprintJobs(
+        items,
+        note: 'Sipariş tekrar iletimi',
       );
       if (!mounted) return;
-      setState(() {
-        _draftItems.clear();
-        _editingOrderId = null;
-      });
-      _notifyDraftChanged();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Masa ${widget.tableNumber} kapatıldı.')),
+        SnackBar(
+          content: Text(
+            dispatchError == null
+                ? 'Sipariş mutfağa tekrar iletildi.'
+                : 'Sipariş tekrar iletildi fakat mutfak kuyruğu kontrol edilmeli.',
+          ),
+          backgroundColor: dispatchError == null
+              ? null
+              : Colors.orange.shade700,
+        ),
       );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Masa kapatılamadı: $error')));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
-  }
-
-  void _loadOrderIntoDraft(Map<String, dynamic> order) {
-    final orderId = order['id']?.toString();
-    if (orderId == null || orderId.isEmpty) return;
-    setState(() {
-      _editingOrderId = orderId;
-      _draftItems
-        ..clear()
-        ..addAll(_extractItems(order['items']));
-      _bottomIndex = 2;
-    });
-    _notifyDraftChanged();
   }
 
   Future<void> _changeOrderStatus(
@@ -28708,6 +28242,7 @@ class _MobileGarsonTableFlowPageState
     if (_isSubmitting) return;
     setState(() => _isSubmitting = true);
     try {
+      _tableOrdersFallbackFuture = null;
       await _storeService.updateTableOrderStatus(orderId, nextStatus);
       String? dispatchError;
       if (nextStatus.toLowerCase() == 'sent') {
@@ -28729,6 +28264,7 @@ class _MobileGarsonTableFlowPageState
               : Colors.orange.shade700,
         ),
       );
+      unawaited(_refreshTableOrdersAfterSubmit());
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -28739,49 +28275,236 @@ class _MobileGarsonTableFlowPageState
     }
   }
 
-  Future<void> _submitDraft() async {
-    if (_draftItems.isEmpty || _isSubmitting) return;
+  Future<void> _submitDraft(
+    List<Map<String, dynamic>> existingTableOrders,
+  ) async {
+    if (!_canSubmitDraft()) return;
     setState(() => _isSubmitting = true);
     try {
+      _tableOrdersFallbackFuture = null;
       final items = _draftItems
           .map((item) => Map<String, dynamic>.from(item))
           .toList(growable: false);
       final editingId = _editingOrderId;
-      if (editingId != null && editingId.isNotEmpty) {
-        await _storeService.updateTableOrder(
+      final originalOrder = editingId == null || editingId.isEmpty
+          ? null
+          : existingTableOrders.cast<Map<String, dynamic>?>().firstWhere(
+              (order) => order?['id']?.toString() == editingId,
+              orElse: () => null,
+            );
+      final changeSummary = editingId == null || editingId.isEmpty
+          ? const _GarsonOrderChangeSummary()
+          : _buildOrderChangeSummary(
+              originalItems: _editingBaseItems,
+              nextItems: items,
+            );
+      if (editingId != null &&
+          editingId.isNotEmpty &&
+          !changeSummary.hasChanges) {
+        return;
+      }
+      final regularCount = items
+          .where((item) => !_isMixedServiceItem(item))
+          .length;
+      final menuCount = items
+          .where(
+            (item) =>
+                _isMixedServiceItem(item) &&
+                item['source_product_type']?.toString() ==
+                    MixedServiceOrder.menuTemplateProductType,
+          )
+          .length;
+      final serviceCount = items
+          .where(
+            (item) =>
+                _isMixedServiceItem(item) &&
+                item['source_product_type']?.toString() ==
+                    MixedServiceOrder.serviceTemplateProductType,
+          )
+          .length;
+      // TODO(debug): remove before production
+      for (final item in items) {
+        final rawPrice = item['price'];
+        final rawLineTotal = item['line_total'];
+        final rawQty = item['quantity'];
+        debugPrint(
+          '[ORDER_PAYLOAD_DEBUG] '
+          'name=${item['name']} '
+          'price=$rawPrice (${rawPrice?.runtimeType}) '
+          'line_total=$rawLineTotal (${rawLineTotal?.runtimeType}) '
+          'quantity=$rawQty (${rawQty?.runtimeType}) '
+          'item_type=${item['item_type']}',
+        );
+        if (rawPrice is String) {
+          debugPrint(
+            '[ORDER_PARSE_WARNING] '
+            'field=price '
+            'raw=$rawPrice '
+            'reason=string_price_in_payload',
+          );
+        }
+        final resolvedLineTotal = MixedServiceOrder.parsePrice(
+          rawLineTotal ?? rawPrice,
+        );
+        debugPrint(
+          '[ORDER_PAYLOAD_ROW] '
+          'item=${item['name']} '
+          'resolved_line_total=$resolvedLineTotal',
+        );
+      }
+      final orderTotal = items.fold<double>(
+        0,
+        (sum, item) =>
+            sum +
+            MixedServiceOrder.parsePrice(item['line_total'] ?? item['price']),
+      );
+      // TODO(debug): remove before production
+      debugPrint(
+        '[ORDER_PAYLOAD] '
+        'regular_count=$regularCount '
+        'menu_count=$menuCount '
+        'service_count=$serviceCount '
+        'total=$orderTotal',
+      );
+      final originalStatus =
+          originalOrder?['status']?.toString() ??
+          _editingOrderSnapshot?['status']?.toString() ??
+          'sent';
+      final nextStatus = editingId != null && editingId.isNotEmpty
+          ? _nextStatusAfterDraftSubmit(originalStatus)
+          : 'sent';
+      final nextRevision = editingId != null && editingId.isNotEmpty
+          ? _orderRevision(
+                  originalOrder ??
+                      _editingOrderSnapshot ??
+                      const <String, dynamic>{},
+                ) +
+                1
+          : 1;
+      final updatedAt = DateTime.now().toIso8601String();
+      final editPolicyMessage = editingId != null && editingId.isNotEmpty
+          ? _orderEditPolicy(originalStatus).message
+          : null;
+      final lastEditSummary = editingId != null && editingId.isNotEmpty
+          ? _orderChangeSummaryPayload(changeSummary)
+          : const <String, dynamic>{};
+      late final Map<String, dynamic> submittedOrder;
+      if (widget.debugUseLocalSubmit) {
+        submittedOrder = <String, dynamic>{
+          'id': editingId != null && editingId.isNotEmpty
+              ? editingId
+              : 'debug-order-${DateTime.now().microsecondsSinceEpoch}',
+          'seller_id': widget.sellerId,
+          'table_number': widget.tableNumber,
+          'items': items,
+          'status': nextStatus,
+          'created_at':
+              originalOrder?['created_at']?.toString() ??
+              DateTime.now().toIso8601String(),
+          'updated_at': updatedAt,
+          'revision': nextRevision,
+          'last_edit_summary': lastEditSummary,
+          'last_edit_note': editPolicyMessage ?? '',
+        };
+      } else if (editingId != null && editingId.isNotEmpty) {
+        final updatedOrder = await _storeService.updateTableOrder(
           editingId,
           items: items,
-          status: 'sent',
+          status: nextStatus,
+          revision: nextRevision,
+          lastEditSummary: lastEditSummary,
+          lastEditNote: editPolicyMessage,
         );
+        submittedOrder =
+            updatedOrder ??
+            <String, dynamic>{
+              'id': editingId,
+              'seller_id': widget.sellerId,
+              'table_number': widget.tableNumber,
+              'items': items,
+              'status': nextStatus,
+              'created_at':
+                  originalOrder?['created_at']?.toString() ??
+                  DateTime.now().toIso8601String(),
+              'updated_at': updatedAt,
+              'revision': nextRevision,
+              'last_edit_summary': lastEditSummary,
+              'last_edit_note': editPolicyMessage ?? '',
+            };
       } else {
-        await _storeService.submitTableOrder(
+        submittedOrder = await _storeService.submitTableOrder(
           sellerId: widget.sellerId,
           tableNumber: widget.tableNumber,
           items: items,
-          status: 'sent',
+          status: nextStatus,
         );
       }
-      final dispatchError = await _dispatchKitchenPrintJobs(items);
+      final dispatchError = widget.debugUseLocalSubmit
+          ? null
+          : editingId != null && editingId.isNotEmpty
+          ? await _dispatchUpdatedOrderPrintJobs(
+              previousStatus: originalStatus,
+              changeSummary: changeSummary,
+              nextItems: items,
+            )
+          : await _dispatchKitchenPrintJobs(items);
+      final optimisticOrders = _buildOptimisticTableOrders(
+        existingTableOrders: existingTableOrders,
+        submittedOrder: submittedOrder,
+        editingOrderId: editingId,
+      );
       if (!mounted) return;
       setState(() {
         _draftItems.clear();
         _editingOrderId = null;
+        _editingOrderSnapshot = null;
+        _editingBaseItems = const <Map<String, dynamic>>[];
         _bottomIndex = 2;
+        _hydratedTableOrders = optimisticOrders;
+        _optimisticTableOrders = optimisticOrders;
+        _submitFeedbackMessage = editingId != null && editingId.isNotEmpty
+            ? dispatchError == null
+                  ? 'Sipariş güncellendi ve mutfağa tekrar iletildi.'
+                  : 'Sipariş güncellendi. Mutfak iletimi kontrol edilmeli.'
+            : dispatchError == null
+            ? 'Sipariş masaya yansıtıldı. Aktif siparişler aşağıda hazır.'
+            : 'Sipariş kaydedildi. Mutfak yazdırma kuyruğu kontrol edilmeli.';
+        _submitFeedbackIsWarning = dispatchError != null;
       });
       _notifyDraftChanged();
-      widget.onOrderSubmitted?.call(widget.tableNumber, items);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            dispatchError == null
-                ? 'Sipariş mutfağa iletildi.'
-                : 'Sipariş kaydedildi fakat mutfak kuyruğu oluşturulamadı.',
+      widget.onOrderSubmitted?.call(widget.tableNumber, items, submittedOrder);
+      // Register 30-second undo window so the waiter can roll back accidents.
+      final submittedId = submittedOrder['id']?.toString() ?? '';
+      if (submittedId.isNotEmpty && mounted) {
+        final wasEditing = editingId != null && editingId.isNotEmpty;
+        // Capture the snapshot we want to restore BEFORE they get cleared.
+        final restoredItems = List<Map<String, dynamic>>.from(
+          wasEditing ? List.from(_editingBaseItems) : items,
+        );
+        final restoredStatus = originalStatus;
+        _undoController.push(
+          GarsonUndoAction(
+            tableNumber: widget.tableNumber,
+            label: wasEditing
+                ? '${items.length} ürün düzenlendi'
+                : '${items.length} ürünlü sipariş gönderildi',
+            undo: () async {
+              if (wasEditing) {
+                await _storeService.updateTableOrder(
+                  submittedId,
+                  items: restoredItems,
+                  status: restoredStatus,
+                );
+              } else {
+                await _storeService.deleteTableOrder(submittedId);
+              }
+            },
           ),
-          backgroundColor: dispatchError == null
-              ? null
-              : Colors.orange.shade700,
-        ),
-      );
+        );
+      }
+      if (!widget.debugDisableLiveSync && !widget.debugUseLocalSubmit) {
+        unawaited(_refreshTableOrdersAfterSubmit());
+      }
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -28829,8 +28552,117 @@ class _MobileGarsonTableFlowPageState
     );
   }
 
+  bool _showProductsLiveSummaryBar() {
+    return _bottomIndex == 0;
+  }
+
+  Widget _buildProductsLiveSummaryBar() {
+    final totalQuantity = _draftTotalQuantity();
+    // Compact single-row live bar — keeps vertical space for the product list.
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: const Border(top: BorderSide(color: Color(0xFFE5E7EB))),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, -3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Item-count badge: green when items exist, neutral when empty
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: totalQuantity == 0
+                  ? const Color(0xFFF1F5F9)
+                  : const Color(0xFFF0FDF4),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: totalQuantity == 0
+                    ? const Color(0xFFE2E8F0)
+                    : const Color(0xFFBBF7D0),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.receipt_long_outlined,
+                  size: 14,
+                  color: totalQuantity == 0
+                      ? const Color(0xFF94A3B8)
+                      : const Color(0xFF15803D),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  totalQuantity == 0 ? 'Taslak boş' : '$totalQuantity ürün',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: totalQuantity == 0
+                        ? const Color(0xFF64748B)
+                        : const Color(0xFF15803D),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          // Total price or placeholder hint
+          if (totalQuantity > 0)
+            Expanded(
+              child: Text(
+                _formatMoney(_draftTotal()),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF111827),
+                ),
+              ),
+            )
+          else
+            const Expanded(
+              child: Text(
+                'Ürün seçince burada görünür',
+                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              ),
+            ),
+          // Jump CTA — only visible when draft has items
+          if (totalQuantity > 0)
+            FilledButton.icon(
+              onPressed: () => setState(() => _bottomIndex = 2),
+              icon: const Icon(Icons.receipt_long_outlined, size: 14),
+              label: const Text(
+                'Sipariş',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 36),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildProductsTab() {
+    final sourceProducts = _allGarsonProducts();
     final allProducts = _activeProducts();
+    // Compact live bar is ~70 px; give extra breathing room for the product list.
+    final extraBottomPadding = _showProductsLiveSummaryBar() ? 88.0 : 16.0;
     final categories = _productCategories(allProducts);
     final effectiveCategory =
         (_selectedCategory == 'Tümü' || categories.contains(_selectedCategory))
@@ -28843,6 +28675,12 @@ class _MobileGarsonTableFlowPageState
                 (product) => _productCategory(product) == effectiveCategory,
               )
               .toList(growable: false);
+    _debugLogProductPipeline(
+      sourceProducts: sourceProducts,
+      allProducts: allProducts,
+      visibleProducts: products,
+      selectedCategory: effectiveCategory,
+    );
 
     return Column(
       children: [
@@ -28854,112 +28692,13 @@ class _MobileGarsonTableFlowPageState
                 categories,
                 selectedCategory: effectiveCategory,
               ),
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      'Taslak: ${_draftItems.length} ürün',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF111827),
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: () {
-                        setState(() => _bottomIndex = 2);
-                      },
-                      icon: const Icon(Icons.receipt_long_outlined, size: 16),
-                      label: const Text('Siparişe Git'),
-                    ),
-                  ],
-                ),
-              ),
-              if (_draftItems.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Kart Önizleme',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF111827),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      ..._draftItems.take(3).map((item) {
-                        final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-                        final name = item['name']?.toString() ?? '-';
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Row(
-                            children: [
-                              Text(
-                                '$qty x ',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: AppColors.primary,
-                                ),
-                              ),
-                              Expanded(
-                                child: Text(
-                                  name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF111827),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                      if (_draftItems.length > 3)
-                        Text(
-                          '+${_draftItems.length - 3} ürün daha',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
             ],
           ),
         ),
         Expanded(
-          child: products.isEmpty
+          child: _isLoadingProducts && sourceProducts.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : products.isEmpty
               ? Center(
                   child: Text(
                     'Bu kategoride ürün yok.',
@@ -28967,7 +28706,7 @@ class _MobileGarsonTableFlowPageState
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 2, 12, 16),
+                  padding: EdgeInsets.fromLTRB(12, 2, 12, extraBottomPadding),
                   itemCount: products.length,
                   itemBuilder: (context, index) {
                     final product = products[index];
@@ -28976,122 +28715,370 @@ class _MobileGarsonTableFlowPageState
                     final outOfStock = product.stock <= 0;
                     final draftQty = _draftQuantityForProduct(product);
                     final isAdded = draftQty > 0;
-                    return Container(
+                    final isTemplate = _isTemplateProduct(product);
+                    final isServiceConfigured =
+                        product.usesServiceControlStepper &&
+                        _serviceStepperLabelForProduct(product) != null;
+                    final isSelectedCard = isAdded || isServiceConfigured;
+                    final resolvedKind =
+                        MixedServiceOrder.productTypeFromProduct(product);
+                    // TODO(debug): remove before production
+                    debugPrint(
+                      '[WAITER_SOURCE] '
+                      'id=${product.id} name="${product.name}" '
+                      'category=${product.mainCategory} '
+                      'subCategory=${product.subCategory} '
+                      'product_type=$resolvedKind '
+                      'spec_len=${product.specifications?.length ?? 0}b '
+                      'resolved_kind=$resolvedKind',
+                    );
+                    final serviceStepperLabel = _serviceStepperLabelForProduct(
+                      product,
+                    );
+                    final usesServiceStepper =
+                        product.usesServiceControlStepper;
+                    final buttonMode = isTemplate
+                        ? _templatePrimaryActionLabel(product)
+                        : usesServiceStepper
+                        ? 'service_stepper'
+                        : (draftQty > 0 ? 'qty_stepper' : 'Ekle');
+                    // TODO(debug): remove before production
+                    debugPrint(
+                      '[WAITER_CARD] '
+                      'name="${product.name}" '
+                      'resolved_kind=$resolvedKind '
+                      'button_mode=$buttonMode '
+                      'addLabel=$buttonMode '
+                      'hasIncrement=${usesServiceStepper || draftQty > 0} '
+                      'hasDecrement=${usesServiceStepper || draftQty > 0} '
+                      'hasCustomize=true',
+                    );
+                    final imageThumb = ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: imageUrl.isEmpty
+                          ? Container(
+                              width: 56,
+                              height: 56,
+                              color: const Color(0xFFF3F4F6),
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.fastfood_rounded,
+                                color: Color(0xFF9CA3AF),
+                              ),
+                            )
+                          : OptimizedImage(
+                              imageUrlOrPath: imageUrl,
+                              width: 56,
+                              height: 56,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) => Container(
+                                width: 56,
+                                height: 56,
+                                color: const Color(0xFFF3F4F6),
+                                alignment: Alignment.center,
+                                child: const Icon(
+                                  Icons.broken_image_outlined,
+                                  color: Color(0xFF9CA3AF),
+                                ),
+                              ),
+                            ),
+                    );
+                    final infoSection = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          product.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                        if (isTemplate) ...[
+                          const SizedBox(height: 4),
+                          _templateTypeBadge(
+                            product,
+                            fontSize: 10,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 4),
+                        Text(
+                          isTemplate
+                              ? '$category • ${MixedServiceOrder.templatePricingLabel(product)}'
+                              : '$category • Stok: ${product.stock}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          isTemplate
+                              ? _formatMoney(
+                                  MixedServiceOrder.templatePreviewPriceFromProduct(
+                                    product,
+                                    availableProducts: products,
+                                  ),
+                                )
+                              : product.displayPrice,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                        if (isSelectedCard) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE8F7EE),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: const Color(0xFFA7E3BE),
+                              ),
+                            ),
+                            child: Text(
+                              isTemplate
+                                  ? 'Taslakta hazır'
+                                  : isServiceConfigured && !isAdded
+                                  ? serviceStepperLabel ?? 'Seçildi'
+                                  : '$draftQty adet taslakta',
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF15803D),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    );
+                    final actionSection = Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (!isTemplate && usesServiceStepper)
+                          ProductQuantityStepper(
+                            quantity: serviceStepperLabel == null ? 0 : 1,
+                            onAdd: () => _quickAddProduct(product),
+                            onIncrement: () {
+                              if (product.resolvedServiceControlType ==
+                                  ProductServiceControlType.weightStepper) {
+                                final current =
+                                    _selectedServiceAmountForProduct(product);
+                                _setServiceControlledProductAmount(
+                                  product,
+                                  ProductPriceCalculator.clampWeightSelection(
+                                    current.round() +
+                                        product.resolvedWeightStepGrams,
+                                    minWeightGrams: product.minWeightGrams,
+                                    weightStepGrams: product.weightStepGrams,
+                                    maxWeightGrams: product.maxWeightGrams,
+                                  ).toDouble(),
+                                );
+                              } else {
+                                final current =
+                                    _selectedServiceAmountForProduct(product);
+                                _setServiceControlledProductAmount(
+                                  product,
+                                  ProductPriceCalculator.clampPortionSelection(
+                                    current + product.resolvedPortionStepAmount,
+                                    type: product.resolvedServiceControlType,
+                                    minPortion: product.minPortion,
+                                    maxPortion: product.maxPortion,
+                                    portionStep: product.portionStep,
+                                  ),
+                                );
+                              }
+                            },
+                            onDecrement: () {
+                              if (product.resolvedServiceControlType ==
+                                  ProductServiceControlType.weightStepper) {
+                                final current =
+                                    _selectedServiceAmountForProduct(product);
+                                final min = product.resolvedMinWeightGrams
+                                    .toDouble();
+                                if (current <= min) {
+                                  _setServiceControlledProductAmount(
+                                    product,
+                                    null,
+                                  );
+                                  return;
+                                }
+                                _setServiceControlledProductAmount(
+                                  product,
+                                  ProductPriceCalculator.clampWeightSelection(
+                                    current.round() -
+                                        product.resolvedWeightStepGrams,
+                                    minWeightGrams: product.minWeightGrams,
+                                    weightStepGrams: product.weightStepGrams,
+                                    maxWeightGrams: product.maxWeightGrams,
+                                  ).toDouble(),
+                                );
+                              } else {
+                                final current =
+                                    _selectedServiceAmountForProduct(product);
+                                final min = product.resolvedMinPortionAmount;
+                                if (current <= min + 0.0001) {
+                                  _setServiceControlledProductAmount(
+                                    product,
+                                    null,
+                                  );
+                                  return;
+                                }
+                                _setServiceControlledProductAmount(
+                                  product,
+                                  ProductPriceCalculator.clampPortionSelection(
+                                    current - product.resolvedPortionStepAmount,
+                                    type: product.resolvedServiceControlType,
+                                    minPortion: product.minPortion,
+                                    maxPortion: product.maxPortion,
+                                    portionStep: product.portionStep,
+                                  ),
+                                );
+                              }
+                            },
+                            compact: true,
+                            addLabel:
+                                product.resolvedServiceControlType ==
+                                    ProductServiceControlType.weightStepper
+                                ? ProductPriceCalculator.formatServiceAmountLabel(
+                                    type: product.resolvedServiceControlType,
+                                    grams: product.resolvedDefaultWeightGrams,
+                                  )
+                                : ProductPriceCalculator.formatServiceAmountLabel(
+                                    type: product.resolvedServiceControlType,
+                                    amount:
+                                        product.resolvedDefaultServiceAmount,
+                                  ),
+                            valueLabel: serviceStepperLabel,
+                          )
+                        else if (!isTemplate && !usesServiceStepper && isAdded)
+                          ProductQuantityStepper(
+                            quantity: draftQty,
+                            onAdd: () => _quickAddProduct(product),
+                            onIncrement: () => _changeDraftQty(
+                              _simpleDraftIndexForProduct(product),
+                              1,
+                            ),
+                            onDecrement: () => _changeDraftQty(
+                              _simpleDraftIndexForProduct(product),
+                              -1,
+                            ),
+                            compact: true,
+                          )
+                        else
+                          SizedBox(
+                            height: 32,
+                            child: OutlinedButton(
+                              onPressed: outOfStock
+                                  ? null
+                                  : () => isTemplate
+                                        ? _showTemplateProductActions(product)
+                                        : _quickAddProduct(product),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                ),
+                              ),
+                              child: Text(
+                                isTemplate
+                                    ? _templatePrimaryActionLabel(product)
+                                    : 'Ekle',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 6),
+                        IconButton(
+                          onPressed: outOfStock
+                              ? null
+                              : () => _addConfiguredProduct(product),
+                          icon: const Icon(Icons.tune, size: 18),
+                          tooltip: isTemplate
+                              ? _isMenuTemplateProduct(product)
+                                    ? 'Menüyü Aç'
+                                    : _isServiceTemplateProduct(product)
+                                    ? 'Servisi Aç'
+                                    : 'Şablonu Aç'
+                              : 'Özelleştir',
+                          splashRadius: 18,
+                        ),
+                      ],
+                    );
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: isSelectedCard
+                            ? const Color(0xFFF0F9F3)
+                            : Colors.white,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: imageUrl.isEmpty
-                                ? Container(
-                                    width: 56,
-                                    height: 56,
-                                    color: const Color(0xFFF3F4F6),
-                                    alignment: Alignment.center,
-                                    child: const Icon(
-                                      Icons.fastfood_rounded,
-                                      color: Color(0xFF9CA3AF),
-                                    ),
-                                  )
-                                : OptimizedImage(imageUrlOrPath: 
-                                    imageUrl,
-                                    width: 56,
-                                    height: 56,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Container(
-                                      width: 56,
-                                      height: 56,
-                                      color: const Color(0xFFF3F4F6),
-                                      alignment: Alignment.center,
-                                      child: const Icon(
-                                        Icons.broken_image_outlined,
-                                        color: Color(0xFF9CA3AF),
-                                      ),
-                                    ),
-                                  ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  product.name,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF111827),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '$category • Stok: ${product.stock}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  product.displayPrice,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w800,
-                                    color: AppColors.primary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Column(
-                            children: [
-                              SizedBox(
-                                height: 32,
-                                child: OutlinedButton(
-                                  onPressed: outOfStock
-                                      ? null
-                                      : () => _quickAddProduct(product),
-                                  style: OutlinedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    isAdded ? 'Eklendi' : 'Ekle',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: isAdded
-                                          ? const Color(0xFF15803D)
-                                          : null,
-                                      fontWeight: isAdded
-                                          ? FontWeight.w800
-                                          : FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              IconButton(
-                                onPressed: outOfStock
-                                    ? null
-                                    : () => _addConfiguredProduct(product),
-                                icon: const Icon(Icons.tune, size: 18),
-                                tooltip: 'Özelleştir',
-                                splashRadius: 18,
-                              ),
-                            ],
+                        border: Border.all(
+                          color: isSelectedCard
+                              ? const Color(0xFFA7E3BE)
+                              : const Color(0xFFE5E7EB),
+                          width: isSelectedCard ? 1.2 : 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: isSelectedCard
+                                ? const Color(
+                                    0xFF16A34A,
+                                  ).withValues(alpha: 0.10)
+                                : Colors.black.withValues(alpha: 0.03),
+                            blurRadius: isSelectedCard ? 16 : 10,
+                            offset: const Offset(0, 4),
                           ),
                         ],
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final useStackedLayout = constraints.maxWidth < 360;
+                          if (useStackedLayout) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    imageThumb,
+                                    const SizedBox(width: 10),
+                                    Expanded(child: infoSection),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: actionSection,
+                                ),
+                              ],
+                            );
+                          }
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              imageThumb,
+                              const SizedBox(width: 10),
+                              Expanded(child: infoSection),
+                              const SizedBox(width: 8),
+                              actionSection,
+                            ],
+                          );
+                        },
                       ),
                     );
                   },
@@ -29101,10 +29088,959 @@ class _MobileGarsonTableFlowPageState
     );
   }
 
+  // ── Payment & Close Table ─────────────────────────────────────────────────
+
+  double _tableOrdersTotal(List<Map<String, dynamic>> orders) {
+    var total = 0.0;
+    for (final order in orders) {
+      final items = _extractItems(order['items']);
+      for (final item in items) {
+        total += _itemLineTotal(item);
+      }
+    }
+    return total;
+  }
+
+  Future<void> _showPaymentDialog(
+    List<Map<String, dynamic>> tableOrders,
+  ) async {
+    if (!mounted) return;
+    final grandTotal = _tableOrdersTotal(tableOrders);
+    String? selectedMethod;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF16A34A).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.point_of_sale_rounded,
+                      color: Color(0xFF16A34A),
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Masa ${widget.tableNumber} — Hesap',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF16A34A).withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: const Color(0xFF16A34A).withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Toplam Tutar',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatMoney(grandTotal),
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF16A34A),
+                          ),
+                        ),
+                        Text(
+                          '${tableOrders.length} sipariş',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Ödeme Yöntemi',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  _PaymentMethodTile(
+                    label: 'Nakit',
+                    icon: Icons.payments_rounded,
+                    color: const Color(0xFF16A34A),
+                    selected: selectedMethod == 'cash',
+                    onTap: () => setDialogState(() => selectedMethod = 'cash'),
+                  ),
+                  const SizedBox(height: 6),
+                  _PaymentMethodTile(
+                    label: 'Kredi / Banka Kartı',
+                    icon: Icons.credit_card_rounded,
+                    color: const Color(0xFF2563EB),
+                    selected: selectedMethod == 'card',
+                    onTap: () => setDialogState(() => selectedMethod = 'card'),
+                  ),
+                  const SizedBox(height: 6),
+                  _PaymentMethodTile(
+                    label: 'Online / QR Ödeme',
+                    icon: Icons.qr_code_scanner_rounded,
+                    color: const Color(0xFF7C3AED),
+                    selected: selectedMethod == 'online',
+                    onTap: () =>
+                        setDialogState(() => selectedMethod = 'online'),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Vazgeç'),
+                ),
+                FilledButton.icon(
+                  onPressed: selectedMethod == null
+                      ? null
+                      : () => Navigator.pop(ctx, selectedMethod),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF16A34A),
+                  ),
+                  icon: const Icon(Icons.check_rounded, size: 16),
+                  label: const Text('Masayı Kapat'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null || !mounted) return;
+    await _closeTableAfterPayment(tableOrders, paymentMethod: result);
+  }
+
+  Future<void> _closeTableAfterPayment(
+    List<Map<String, dynamic>> orders, {
+    required String paymentMethod,
+  }) async {
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+    try {
+      _tableOrdersFallbackFuture = null;
+      await _storeService.closeTableWithHistory(
+        sellerId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+        paymentMethod: paymentMethod,
+        waiterId: _currentWaiterId(),
+        waiterName: _currentWaiterName(),
+        sessionKey: _getOrCreateSessionKey(),
+      );
+      if (!mounted) return;
+      widget.onTableClosed?.call(widget.tableNumber);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Masa ${widget.tableNumber} kapatıldı. '
+            'Ödeme: ${_paymentMethodLabel(paymentMethod)}',
+          ),
+          backgroundColor: const Color(0xFF16A34A),
+        ),
+      );
+      if (mounted) Navigator.of(context).maybePop();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Masa kapatılamadı: $error')));
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  String _paymentMethodLabel(String method) {
+    switch (method) {
+      case 'cash':
+        return 'Nakit';
+      case 'card':
+        return 'Kart';
+      case 'online':
+        return 'Online / QR';
+      default:
+        return method;
+    }
+  }
+
+  // ── Split Bill ────────────────────────────────────────────────────────────
+
+  Future<void> _showSplitBillDialog(
+    List<Map<String, dynamic>> tableOrders,
+  ) async {
+    if (!mounted) return;
+    final grandTotal = _tableOrdersTotal(tableOrders);
+    final controller = TextEditingController(text: '2');
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final n = int.tryParse(controller.text.trim()) ?? 0;
+            final perPerson = (n > 0) ? grandTotal / n : 0.0;
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.call_split_rounded,
+                      color: AppColors.primary,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'Hesabı Böl',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'Toplam: ${_formatMoney(grandTotal)}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (n > 0) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Kişi başı: ${_formatMoney(perPerson)}',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: controller,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Kişi Sayısı',
+                      prefixIcon: Icon(Icons.people_outline),
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: (_) => setDialogState(() {}),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Kapat'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+  }
+
+  Future<void> _showOperationInfo({required String message}) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _printGarsonTestAdisyon() async {
+    if (!kIsWeb) {
+      await _showOperationInfo(
+        message: 'Test yazdırma şu anda yalnızca web panelde kullanılabilir.',
+      );
+      return;
+    }
+
+    final printService = LocalPrintService();
+    try {
+      final healthStatus = await printService.checkAvailability();
+      if (!healthStatus.isAvailable) {
+        await _showOperationInfo(
+          message: 'Bu bilgisayarda yazıcı servisini başlatın.',
+        );
+        return;
+      }
+      await printService.printTest();
+      await _showOperationInfo(message: 'Test fişi yazdırıldı');
+    } catch (error, stackTrace) {
+      debugPrint('SellerPanel local print test failed: $error');
+      debugPrint('$stackTrace');
+      await _showOperationInfo(message: 'Test fişi yazdırılamadı');
+    } finally {
+      printService.dispose();
+    }
+  }
+
+  Future<void> _reprintKitchenTickets(
+    List<Map<String, dynamic>> tableOrders,
+  ) async {
+    final items = tableOrders
+        .expand((order) => _extractItems(order['items']))
+        .toList(growable: false);
+    if (items.isEmpty) {
+      await _showOperationInfo(
+        message: 'Mutfak yazdırma için aktif sipariş kalemi bulunamadı.',
+      );
+      return;
+    }
+    try {
+      final result = await _orderPrintJobService.dispatchReprint(
+        restaurantId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+        items: items,
+        waiterId: _currentWaiterId(),
+        waiterName: _currentWaiterName(),
+      );
+      _orderPrintJobService.debugLogResult(result);
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              result.printJobCount > 0
+                  ? 'Mutfak yazdırma kuyruğu yeniden oluşturuldu.'
+                  : 'Mutfak için yeniden baskı talebi gönderildi.',
+            ),
+          ),
+        );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Mutfak yazdırılamadı: $error')));
+    }
+  }
+
+  Future<void> _showOperationsSheet(
+    List<Map<String, dynamic>> tableOrders,
+  ) async {
+    if (!mounted) return;
+    final hasTableOrders = tableOrders.isNotEmpty;
+    final orderStatuses = tableOrders.map((o) => o['status']?.toString());
+    final canTransferTable =
+        hasTableOrders && TableLevelPolicy.canTransfer(orderStatuses);
+    final canPayTable =
+        hasTableOrders && TableLevelPolicy.canPay(orderStatuses);
+    final canReprintKitchen =
+        hasTableOrders && TableLevelPolicy.canReprint(orderStatuses);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        void runAction(Future<void> Function() action) {
+          Navigator.of(sheetContext).pop();
+          unawaited(action());
+        }
+
+        Widget actionTile({
+          required IconData icon,
+          required String title,
+          required String subtitle,
+          required VoidCallback? onTap,
+          Color accentColor = const Color(0xFF111827),
+        }) {
+          final enabled = onTap != null;
+          final foregroundColor = enabled
+              ? accentColor
+              : const Color(0xFF9CA3AF);
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: enabled ? Colors.white : const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: foregroundColor.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(icon, size: 18, color: foregroundColor),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: foregroundColor,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: enabled
+                                  ? const Color(0xFF6B7280)
+                                  : const Color(0xFF9CA3AF),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: enabled
+                          ? const Color(0xFF9CA3AF)
+                          : const Color(0xFFD1D5DB),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'İşlemler',
+                  style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Masa ${widget.tableNumber} için operasyon aksiyonları',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+                const SizedBox(height: 14),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(sheetContext).size.height * 0.72,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        actionTile(
+                          icon: Icons.payments_outlined,
+                          title: 'Ara Ödeme Al',
+                          subtitle: canPayTable
+                              ? TableLevelPolicy.payEnabled
+                              : TableLevelPolicy.payBlocked,
+                          onTap: canPayTable
+                              ? () => runAction(() async {
+                                  final grandTotal = _tableOrdersTotal(
+                                    tableOrders,
+                                  );
+                                  final payments = await _storeService
+                                      .getTablePayments(
+                                        sellerId: widget.sellerId,
+                                        tableNumber: widget.tableNumber,
+                                        sessionKey: _getOrCreateSessionKey(),
+                                      )
+                                      .then(
+                                        (rows) => rows
+                                            .map(TablePayment.fromMap)
+                                            .toList(),
+                                      )
+                                      .catchError((_) => <TablePayment>[]);
+                                  if (!mounted) return;
+                                  final result =
+                                      await TablePaymentBottomSheet.show(
+                                        context,
+                                        tableNumber: widget.tableNumber,
+                                        grandTotal: grandTotal,
+                                        existingPayments: payments,
+                                      );
+                                  if (result == null || !mounted) return;
+                                  if (result.isClosing) {
+                                    await _closeTableAfterPayment(
+                                      tableOrders,
+                                      paymentMethod: result.method.value,
+                                    );
+                                  } else {
+                                    await _storeService.recordTablePayment(
+                                      sellerId: widget.sellerId,
+                                      tableNumber: widget.tableNumber,
+                                      amount: result.amount,
+                                      method: result.method.value,
+                                      waiterId: _currentWaiterId(),
+                                      waiterName: _currentWaiterName(),
+                                      sessionKey: _getOrCreateSessionKey(),
+                                      note: result.note,
+                                    );
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Ara ödeme kaydedildi: '
+                                          '${_formatMoney(result.amount)}',
+                                        ),
+                                        backgroundColor: const Color(
+                                          0xFF0F766E,
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                })
+                              : null,
+                          accentColor: const Color(0xFF0F766E),
+                        ),
+                        const SizedBox(height: 8),
+                        actionTile(
+                          icon: Icons.call_split_rounded,
+                          title: 'Hesabı Böl',
+                          subtitle: canPayTable
+                              ? TableLevelPolicy.splitEnabled
+                              : TableLevelPolicy.splitBlocked,
+                          onTap: canPayTable
+                              ? () => runAction(
+                                  () => _showSplitBillDialog(tableOrders),
+                                )
+                              : null,
+                          accentColor: AppColors.primary,
+                        ),
+                        const SizedBox(height: 8),
+                        actionTile(
+                          icon: Icons.point_of_sale_rounded,
+                          title: 'Hesabı Kes',
+                          subtitle: canPayTable
+                              ? TableLevelPolicy.closeEnabled
+                              : TableLevelPolicy.closeBlocked,
+                          onTap: canPayTable
+                              ? () => runAction(
+                                  () => _showPaymentDialog(tableOrders),
+                                )
+                              : null,
+                          accentColor: const Color(0xFF16A34A),
+                        ),
+                        const SizedBox(height: 8),
+                        actionTile(
+                          icon: Icons.compare_arrows_rounded,
+                          title: 'Masa Aktar',
+                          subtitle: canTransferTable
+                              ? TableLevelPolicy.transferEnabled
+                              : TableLevelPolicy.transferBlocked,
+                          onTap: canTransferTable
+                              ? () => runAction(() async {
+                                  // Fetch all active table numbers to
+                                  // populate the target table grid.
+                                  final allOrders = await _storeService
+                                      .getTableOrdersSnapshot(widget.sellerId)
+                                      .catchError(
+                                        (_) => <Map<String, dynamic>>[],
+                                      );
+                                  final otherTables =
+                                      allOrders
+                                          .map(
+                                            (o) => (o['table_number'] as num?)
+                                                ?.toInt(),
+                                          )
+                                          .whereType<int>()
+                                          .toSet()
+                                          .where((t) => t != widget.tableNumber)
+                                          .toList()
+                                        ..sort();
+                                  // Flatten all items across orders on this
+                                  // table for the partial/customer-based modes.
+                                  final allItems = tableOrders
+                                      .expand<Map<String, dynamic>>((order) {
+                                        final items = order['items'];
+                                        if (items is List) {
+                                          return items
+                                              .cast<Map<String, dynamic>>();
+                                        }
+                                        return const [];
+                                      })
+                                      .toList();
+                                  if (!mounted) return;
+                                  final result = await TransferTableModal.show(
+                                    context,
+                                    tableNumber: widget.tableNumber,
+                                    availableTableNumbers: otherTables,
+                                    allItems: allItems,
+                                  );
+                                  if (result == null || !mounted) return;
+                                  await _storeService.transferTableOrders(
+                                    sellerId: widget.sellerId,
+                                    fromTable: widget.tableNumber,
+                                    toTable: result.toTable,
+                                    transferType: result.transferType.name,
+                                    itemIds: result.selectedItemIds,
+                                    waiterId: _currentWaiterId(),
+                                    note: result.note,
+                                  );
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Masa ${widget.tableNumber} → '
+                                        'Masa ${result.toTable} aktarıldı.',
+                                      ),
+                                      backgroundColor: const Color(0xFF2563EB),
+                                    ),
+                                  );
+                                  widget.onTableClosed?.call(
+                                    widget.tableNumber,
+                                  );
+                                  if (mounted) {
+                                    Navigator.of(context).maybePop();
+                                  }
+                                })
+                              : null,
+                          accentColor: const Color(0xFF2563EB),
+                        ),
+                        const SizedBox(height: 8),
+                        actionTile(
+                          icon: Icons.receipt_long_outlined,
+                          title: 'Adisyon Yazdır',
+                          subtitle: hasTableOrders
+                              ? TableLevelPolicy.adisyonEnabled
+                              : TableLevelPolicy.adisyonBlocked,
+                          onTap: hasTableOrders && widget.onPrintAdisyon != null
+                              ? () => runAction(
+                                  () => widget.onPrintAdisyon!(
+                                    widget.tableNumber,
+                                    tableOrders,
+                                  ),
+                                )
+                              : null,
+                          accentColor: const Color(0xFF92400E),
+                        ),
+                        if (kDebugMode && kIsWeb) ...[
+                          const SizedBox(height: 8),
+                          actionTile(
+                            icon: Icons.bug_report_outlined,
+                            title: 'Test Adisyon Yazdır',
+                            subtitle:
+                                'Gelistirme amacli localhost:3001/print/test cagrisi.',
+                            onTap: () => runAction(_printGarsonTestAdisyon),
+                            accentColor: const Color(0xFF0F766E),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        actionTile(
+                          icon: Icons.print_outlined,
+                          title: 'Mutfağa Yazdır',
+                          subtitle: canReprintKitchen
+                              ? TableLevelPolicy.reprintEnabled
+                              : TableLevelPolicy.reprintBlocked,
+                          onTap: canReprintKitchen
+                              ? () => runAction(
+                                  () => _reprintKitchenTickets(tableOrders),
+                                )
+                              : null,
+                          accentColor: const Color(0xFFF97316),
+                        ),
+                        const SizedBox(height: 8),
+                        actionTile(
+                          icon: Icons.person_search_outlined,
+                          title: 'Müşteri Seç',
+                          subtitle:
+                              'Müşteri eşleme akışı işlemler menüsüne ayrıldı.',
+                          onTap: () => runAction(
+                            () => _showOperationInfo(
+                              message:
+                                  'Müşteri seçimi bu sürümde henüz bağlanmadı.',
+                            ),
+                          ),
+                          accentColor: const Color(0xFF4F46E5),
+                        ),
+                        const SizedBox(height: 8),
+                        actionTile(
+                          icon: Icons.groups_2_outlined,
+                          title: 'Müşteri Sayısı',
+                          subtitle:
+                              'Müşteri sayısı yönetimi işlemler menüsüne ayrıldı.',
+                          onTap: () => runAction(
+                            () => _showOperationInfo(
+                              message:
+                                  'Müşteri sayısı akışı bu sürümde henüz bağlanmadı.',
+                            ),
+                          ),
+                          accentColor: const Color(0xFF7C3AED),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildOrderPolicyNotice(String status) {
+    final policy = _orderEditPolicy(status);
+    final accentColor = policy.isLocked
+        ? const Color(0xFF6B7280)
+        : policy.isWarning
+        ? const Color(0xFFD97706)
+        : const Color(0xFF2563EB);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: accentColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accentColor.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            policy.isLocked ? Icons.lock_outline : Icons.info_outline_rounded,
+            size: 16,
+            color: accentColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              policy.message,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: accentColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCurrentEditChangeSummaryCard() {
+    final summary = _currentEditingChangeSummary();
+    if (!summary.hasChanges) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Text(
+          'Henüz değişiklik yok. Güncelleme yapmak için ürün ekleyebilir, çıkarabilir veya notları düzenleyebilirsin.',
+          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+        ),
+      );
+    }
+
+    final entries = summary.previewEntries(limit: 4);
+    final remainingCount = summary.displayEntries.length - entries.length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFA7F3D0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Değişiklik Özeti',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF065F46),
+            ),
+          ),
+          const SizedBox(height: 6),
+          ...entries.map(
+            (entry) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                _orderChangeEntryLabel(entry),
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF065F46),
+                ),
+              ),
+            ),
+          ),
+          if (remainingCount > 0)
+            Text(
+              '+$remainingCount değişiklik daha',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF047857)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  List<String> _persistedChangeSummaryLabels(Map<String, dynamic> order) {
+    final summary = _orderLastEditSummary(order);
+    final rawChanges = summary['changes'];
+    if (rawChanges is! List) return const <String>[];
+    return rawChanges
+        .whereType<Map>()
+        .map((row) => row['label']?.toString().trim() ?? '')
+        .where((label) => label.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Widget? _buildPersistedChangeSummaryCard(Map<String, dynamic> order) {
+    final labels = _persistedChangeSummaryLabels(order);
+    final revision = _orderRevision(order);
+    if (labels.isEmpty && revision <= 1) return null;
+    final updatedAt = _updatedAt(order);
+    final visibleLabels = labels.take(3).toList(growable: false);
+    final remainingCount = labels.length - visibleLabels.length;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Son Revizyon • Rev $revision',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF111827),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'Son güncelleme ${_timeAgo(updatedAt)}',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+          ),
+          if (visibleLabels.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            ...visibleLabels.map(
+              (label) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF334155),
+                  ),
+                ),
+              ),
+            ),
+            if (remainingCount > 0)
+              Text(
+                '+$remainingCount değişiklik daha',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildReservationTab() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.fromLTRB(
+          24,
+          24,
+          24,
+          _showDraftBottomActionBar() ? 112 : 24,
+        ),
         child: Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
@@ -29134,7 +30070,7 @@ class _MobileGarsonTableFlowPageState
   }
 
   bool _showDraftBottomActionBar() {
-    return _bottomIndex == 2 && _draftItems.isNotEmpty;
+    return _draftItems.isNotEmpty && _bottomIndex == 2;
   }
 
   String _draftSubmitButtonLabel({required bool hasExistingOrders}) {
@@ -29151,14 +30087,26 @@ class _MobileGarsonTableFlowPageState
     return Icons.send_rounded;
   }
 
-  Widget _buildDraftBottomActionBar({required bool hasExistingOrders}) {
-    final totalLabel = _formatMoney(_draftTotal());
+  Widget _buildDraftBottomActionBar({
+    required List<Map<String, dynamic>> tableOrders,
+  }) {
+    final hasExistingOrders = tableOrders.isNotEmpty;
+    final canSubmit = _canSubmitDraft();
+    final totalQuantity = _draftTotalQuantity();
+    final totalPrice = _draftTotal();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
+        border: const Border(top: BorderSide(color: Color(0xFFE5E7EB))),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
       child: SafeArea(
         top: false,
@@ -29166,17 +30114,53 @@ class _MobileGarsonTableFlowPageState
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Toplam Ürün Tutarı: $totalLabel',
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF111827),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _isEditingOrder ? 'Genel Toplam' : 'Hazır Taslak',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF475569),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '$totalQuantity ürün • Masa ${widget.tableNumber}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    'Toplam ${_formatMoney(totalPrice)}',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 8),
             FilledButton.icon(
-              onPressed: _isSubmitting ? null : _submitDraft,
+              onPressed: canSubmit ? () => _submitDraft(tableOrders) : null,
               icon: _isSubmitting
                   ? const SizedBox(
                       width: 14,
@@ -29195,16 +30179,175 @@ class _MobileGarsonTableFlowPageState
               label: Text(
                 _draftSubmitButtonLabel(hasExistingOrders: hasExistingOrders),
               ),
-              style: FilledButton.styleFrom(minimumSize: const Size(0, 42)),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, 48),
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
+            if (_isEditingOrder &&
+                !_currentEditingChangeSummary().hasChanges) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Henüz değişiklik yok. Aynı siparişi tekrar iletmek istersen karttaki "Tekrar İlet" aksiyonunu kullanabilirsin.',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
+  Widget _buildSubmitFeedbackCard() {
+    final accentColor = _submitFeedbackIsWarning
+        ? const Color(0xFFD97706)
+        : const Color(0xFF16A34A);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: accentColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accentColor.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            _submitFeedbackIsWarning
+                ? Icons.info_outline_rounded
+                : Icons.check_circle_rounded,
+            size: 18,
+            color: accentColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _submitFeedbackMessage ?? '',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: accentColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDraftActionChip({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+    Color foregroundColor = const Color(0xFF334155),
+    Color backgroundColor = Colors.white,
+    Color borderColor = const Color(0xFFE2E8F0),
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(10),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: borderColor),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: foregroundColor),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: foregroundColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDraftQuantityControl({
+    required int quantity,
+    required String label,
+    required VoidCallback? onDecrement,
+    required VoidCallback? onIncrement,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            onPressed: onDecrement,
+            icon: const Icon(Icons.remove_circle_outline, size: 17),
+            color: const Color(0xFF475569),
+            splashRadius: 18,
+            visualDensity: VisualDensity.compact,
+          ),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 74),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$quantity adet',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onIncrement,
+            icon: const Icon(Icons.add_circle_outline, size: 17),
+            color: AppColors.primary,
+            splashRadius: 18,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDraftEditorCard() {
     final isEditing = _editingOrderId != null && _editingOrderId!.isNotEmpty;
+    final editingStatus = _editingOrderSnapshot?['status']?.toString() ?? '';
+    final editingRevision = _orderRevision(
+      _editingOrderSnapshot ?? const <String, dynamic>{},
+    );
 
     if (_draftItems.isEmpty) {
       return Container(
@@ -29218,23 +30361,34 @@ class _MobileGarsonTableFlowPageState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Sipariş Taslağı',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+            Text(
+              isEditing ? 'Siparişi Düzenle' : 'Yeni Sipariş Taslağı',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
             Text(
-              'Henüz ürün seçilmedi. Ürünler sekmesinden ekleyebilirsin.',
+              isEditing
+                  ? 'Bu siparişte ürün kalmadı. Ürünler sekmesinden yeni kalem ekleyebilir veya düzenlemeyi iptal edebilirsin.'
+                  : 'Henüz ürün seçilmedi. Ürünler sekmesinden ekleyebilirsin.',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
             ),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => setState(() => _bottomIndex = 0),
-                icon: const Icon(Icons.storefront_outlined, size: 16),
-                label: const Text('Ürünlere Git'),
-              ),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: () => setState(() => _bottomIndex = 0),
+                  icon: const Icon(Icons.storefront_outlined, size: 16),
+                  label: const Text('Ürünlere Git'),
+                ),
+                if (isEditing) ...[
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    onPressed: _isSubmitting ? null : _clearDraftComposer,
+                    icon: const Icon(Icons.close_rounded, size: 16),
+                    label: const Text('Düzenlemeyi İptal Et'),
+                  ),
+                ],
+              ],
             ),
           ],
         ),
@@ -29253,115 +30407,214 @@ class _MobileGarsonTableFlowPageState
         children: [
           Row(
             children: [
-              Text(
-                isEditing ? 'Siparişi Düzenle' : 'Yeni Sipariş Taslağı',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
+              Expanded(
+                child: Text(
+                  isEditing ? 'Siparişi Düzenle' : 'Yeni Sipariş Taslağı',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
-              const Spacer(),
+              if (isEditing)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Rev $editingRevision',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 6),
               TextButton(
-                onPressed: _isSubmitting
-                    ? null
-                    : () {
-                        setState(() {
-                          _draftItems.clear();
-                          _editingOrderId = null;
-                        });
-                        _notifyDraftChanged();
-                      },
-                child: const Text('Temizle'),
+                onPressed: _isSubmitting ? null : _clearDraftComposer,
+                child: Text(isEditing ? 'İptal' : 'Temizle'),
               ),
             ],
           ),
           const SizedBox(height: 6),
+          if (isEditing) ...[
+            _buildOrderPolicyNotice(editingStatus),
+            const SizedBox(height: 8),
+            _buildCurrentEditChangeSummaryCard(),
+            const SizedBox(height: 8),
+          ],
           ..._draftItems.asMap().entries.map((entry) {
             final index = entry.key;
             final item = entry.value;
             final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-            final price = _parsePrice(item['price']);
+            final isMixedService = _isMixedServiceItem(item);
+            final rawAmountLabel = item['amountLabel']?.toString().trim() ?? '';
+            final amountLabel = rawAmountLabel.isNotEmpty
+                ? rawAmountLabel
+                : item['amount_label']?.toString().trim() ?? '';
             final name = item['name']?.toString() ?? '-';
-            final notes = item['notes']?.toString() ?? '';
-            final gramaj = item['gramaj']?.toString() ?? '';
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
+            final detailLines = _itemDetailLines(item);
+            final quantityLabel = amountLabel.isNotEmpty && !isMixedService
+                ? amountLabel
+                : 'Standart';
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              margin: const EdgeInsets.only(bottom: 6),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isMixedService
+                      ? AppColors.primary.withValues(alpha: 0.18)
+                      : const Color(0xFFE5E7EB),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.025),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
+                      Container(
+                        width: 30,
+                        height: 30,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: isMixedService
+                              ? AppColors.primary.withValues(alpha: 0.12)
+                              : const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(9),
+                        ),
                         child: Text(
-                          name,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
+                          '$qty',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: isMixedService
+                                ? AppColors.primary
+                                : const Color(0xFF111827),
                           ),
                         ),
                       ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            if (isMixedService) ...[
+                              const SizedBox(height: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.10,
+                                  ),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: const Text(
+                                  'Karışık Servis',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
                       Text(
-                        _formatMoney(price * qty),
+                        _formatMoney(_itemLineTotal(item)),
                         style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
                           color: AppColors.primary,
                         ),
                       ),
                     ],
                   ),
-                  if (gramaj.isNotEmpty || notes.isNotEmpty) ...[
+                  if (detailLines.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(
-                      [
-                        if (gramaj.isNotEmpty) gramaj,
-                        if (notes.isNotEmpty) notes,
-                      ].join(' • '),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade600,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: detailLines
+                          .map((entry) {
+                            final isChildLine =
+                                isMixedService && !entry.isGroupHeader;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: Text(
+                                isChildLine ? '• ${entry.label}' : entry.label,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: entry.isGroupHeader
+                                      ? FontWeight.w800
+                                      : FontWeight.w500,
+                                  color: entry.isGroupHeader
+                                      ? const Color(0xFF334155)
+                                      : Colors.grey.shade600,
+                                ),
+                              ),
+                            );
+                          })
+                          .toList(growable: false),
                     ),
                   ],
                   const SizedBox(height: 6),
-                  Row(
+                  // Action row: Wrap handles overflow on very narrow screens.
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      IconButton(
-                        onPressed: _isSubmitting
+                      _buildDraftQuantityControl(
+                        quantity: qty,
+                        label: quantityLabel,
+                        onDecrement: _isSubmitting
                             ? null
                             : () => _changeDraftQty(index, -1),
-                        icon: const Icon(Icons.remove_circle_outline),
-                        splashRadius: 18,
-                      ),
-                      Text(
-                        '$qty',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: _isSubmitting
+                        onIncrement: _isSubmitting
                             ? null
                             : () => _changeDraftQty(index, 1),
-                        icon: const Icon(Icons.add_circle_outline),
-                        splashRadius: 18,
                       ),
-                      const Spacer(),
-                      TextButton.icon(
+                      _buildDraftActionChip(
+                        icon: Icons.tune_rounded,
+                        label: 'Düzenle',
                         onPressed: _isSubmitting
                             ? null
                             : () => _editDraftItem(index),
-                        icon: const Icon(Icons.tune, size: 16),
-                        label: const Text('Düzenle'),
                       ),
-                      IconButton(
+                      _buildDraftActionChip(
+                        icon: Icons.delete_outline_rounded,
+                        label: 'Sil',
                         onPressed: _isSubmitting
                             ? null
                             : () {
@@ -29372,11 +30625,9 @@ class _MobileGarsonTableFlowPageState
                                 });
                                 _notifyDraftChanged();
                               },
-                        icon: const Icon(
-                          Icons.delete_outline_rounded,
-                          color: Color(0xFFDC2626),
-                        ),
-                        splashRadius: 18,
+                        foregroundColor: const Color(0xFFDC2626),
+                        backgroundColor: const Color(0xFFFEF2F2),
+                        borderColor: const Color(0xFFFECACA),
                       ),
                     ],
                   ),
@@ -29391,12 +30642,22 @@ class _MobileGarsonTableFlowPageState
   }
 
   Widget _buildIncomingOrderCard(Map<String, dynamic> order) {
-    final orderId = order['id']?.toString() ?? '';
-    final status = order['status']?.toString() ?? 'new';
+    final normalizedOrder = _normalizeTableOrder(order);
+    final orderId = normalizedOrder['id']?.toString() ?? '';
+    final status = normalizedOrder['status']?.toString() ?? 'new';
+    final statusKey = _normalizedOrderStatusKey(status);
+    final policy = _orderEditPolicy(status);
     final color = _statusColor(status);
-    final createdAt = _createdAt(order);
-    final items = _extractItems(order['items']);
+    final createdAt = _createdAt(normalizedOrder);
+    final updatedAt = _updatedAt(normalizedOrder);
+    final hasUpdatedTimestamp =
+        updatedAt.difference(createdAt).inSeconds.abs() >= 2;
+    final items = _extractItems(normalizedOrder['items']);
     final isEditingThis = _editingOrderId == orderId;
+    final revision = _orderRevision(normalizedOrder);
+    final persistedChangeSummaryCard = _buildPersistedChangeSummaryCard(
+      normalizedOrder,
+    );
     final orderTotal = items.fold<double>(0, (sum, item) {
       return sum + _itemLineTotal(item);
     });
@@ -29453,9 +30714,69 @@ class _MobileGarsonTableFlowPageState
                   ),
                 if (orderId.isNotEmpty && !isEditingThis)
                   Text(
-                    '#${orderId.length > 8 ? orderId.substring(0, 8) : orderId}',
+                    '#${orderId.length > 8 ? orderId.substring(0, 8) : orderId} • Rev $revision',
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                   ),
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: () {
+                    final tableNo = normalizedOrder['table_number'] is int
+                        ? normalizedOrder['table_number'] as int
+                        : int.tryParse(
+                                normalizedOrder['table_number']?.toString() ??
+                                    '',
+                              ) ??
+                              widget.tableNumber;
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => OrderPreviewSheet(
+                        record: OrderPreviewRecord.fromTableOrder(
+                          normalizedOrder,
+                        ),
+                        onPrintAdisyon: widget.onPrintAdisyon != null
+                            ? () => widget.onPrintAdisyon!(tableNo, [
+                                normalizedOrder,
+                              ])
+                            : null,
+                        onResendToKitchen:
+                            policy.canResend && orderId.isNotEmpty
+                            ? () => _resendOrderToKitchen(normalizedOrder)
+                            : null,
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.visibility_outlined,
+                          size: 13,
+                          color: AppColors.primary,
+                        ),
+                        SizedBox(width: 3),
+                        Text(
+                          'Önizle',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -29465,57 +30786,99 @@ class _MobileGarsonTableFlowPageState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${_timeAgo(createdAt)} • ${items.length} ürün',
+                  '${_timeAgo(createdAt)} • ${items.length} ürün${revision > 1 ? ' • Rev $revision' : ''}',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                 ),
+                if (hasUpdatedTimestamp && revision > 1) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Son düzenleme ${_timeAgo(updatedAt)}',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  ),
+                ],
                 const SizedBox(height: 6),
                 ...items.take(4).map((item) {
                   final qty = (item['quantity'] as num?)?.toInt() ?? 1;
                   final name = item['name']?.toString() ?? '-';
                   final lineTotal = _itemLineTotal(item);
+                  final detailLines = _itemDetailLines(item);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEDE9FE),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '$qty',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.primary,
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEDE9FE),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '$qty',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.primary,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _formatMoney(lineTotal),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _formatMoney(lineTotal),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
+                        if (detailLines.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          ...detailLines
+                              .take(3)
+                              .map(
+                                (entry) => Padding(
+                                  padding: const EdgeInsets.only(
+                                    left: 30,
+                                    bottom: 2,
+                                  ),
+                                  child: entry.isGroupHeader
+                                      ? Text(
+                                          entry.label,
+                                          style: const TextStyle(
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w800,
+                                            color: Color(0xFF334155),
+                                          ),
+                                        )
+                                      : Text(
+                                          '• ${entry.label}',
+                                          style: TextStyle(
+                                            fontSize: 10.5,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                        ],
                       ],
                     ),
                   );
@@ -29532,29 +30895,131 @@ class _MobileGarsonTableFlowPageState
                     ),
                   ),
                 const SizedBox(height: 8),
-                if (_isWaitingStatus(status) || status == 'preparing')
+                if (_isWaitingStatus(status)) ...[
                   Row(
                     children: [
                       Expanded(
-                        child: FilledButton(
+                        child: OutlinedButton.icon(
+                          onPressed: _isSubmitting || orderId.isEmpty
+                              ? null
+                              : () => _beginOrderEditing(normalizedOrder),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 34),
+                            foregroundColor: AppColors.primary,
+                          ),
+                          icon: const Icon(Icons.edit_outlined, size: 15),
+                          label: const Text('Düzenle'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton.icon(
                           onPressed: _isSubmitting || orderId.isEmpty
                               ? null
                               : () => _changeOrderStatus(
                                   orderId,
                                   'sent',
-                                  sourceOrder: order,
+                                  sourceOrder: normalizedOrder,
                                 ),
                           style: FilledButton.styleFrom(
                             minimumSize: const Size(0, 34),
-                            backgroundColor: const Color(0xFF16A34A),
+                            backgroundColor: const Color(0xFFF97316),
                           ),
-                          child: Text(
-                            _isWaitingStatus(status) ? 'Gönderildi' : 'Teslim',
-                          ),
+                          icon: const Icon(Icons.send_rounded, size: 15),
+                          label: const Text('Mutfağa İlet'),
                         ),
                       ),
                     ],
                   ),
+                ],
+                if (!_isWaitingStatus(status) &&
+                    (policy.canEdit || policy.canResend)) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _isSubmitting || orderId.isEmpty
+                              ? null
+                              : isEditingThis
+                              ? () => setState(() => _bottomIndex = 2)
+                              : () => _beginOrderEditing(normalizedOrder),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 34),
+                            foregroundColor: AppColors.primary,
+                          ),
+                          icon: Icon(
+                            isEditingThis
+                                ? Icons.receipt_long_outlined
+                                : Icons.edit_outlined,
+                            size: 15,
+                          ),
+                          label: Text(
+                            isEditingThis ? 'Taslağa Git' : 'Düzenle',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _isSubmitting || orderId.isEmpty
+                              ? null
+                              : () => _resendOrderToKitchen(normalizedOrder),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 34),
+                            backgroundColor: const Color(0xFFF97316),
+                          ),
+                          icon: const Icon(Icons.send_rounded, size: 15),
+                          label: const Text('Tekrar İlet'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (statusKey == 'sent') ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _isSubmitting || orderId.isEmpty
+                          ? null
+                          : () => _changeOrderStatus(
+                              orderId,
+                              'preparing',
+                              sourceOrder: normalizedOrder,
+                            ),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 34),
+                        backgroundColor: const Color(0xFF0891B2),
+                      ),
+                      icon: const Icon(Icons.restaurant_outlined, size: 15),
+                      label: const Text('Hazırlanıyor'),
+                    ),
+                  ),
+                ] else if (statusKey == 'preparing' ||
+                    statusKey == 'ready') ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _isSubmitting || orderId.isEmpty
+                          ? null
+                          : () => _changeOrderStatus(
+                              orderId,
+                              'served',
+                              sourceOrder: normalizedOrder,
+                            ),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 34),
+                        backgroundColor: const Color(0xFF16A34A),
+                      ),
+                      icon: const Icon(Icons.check_circle_outline, size: 15),
+                      label: const Text('Servis Edildi'),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                _buildOrderPolicyNotice(status),
+                ?persistedChangeSummaryCard,
                 const SizedBox(height: 6),
                 Text(
                   'Toplam: ${_formatMoney(orderTotal)}',
@@ -29573,20 +31038,28 @@ class _MobileGarsonTableFlowPageState
   }
 
   Widget _buildOrdersTab(List<Map<String, dynamic>> tableOrders) {
-    final extraBottomPadding = _showDraftBottomActionBar() ? 120.0 : 16.0;
+    final extraBottomPadding = _showDraftBottomActionBar() ? 96.0 : 16.0;
 
     return ListView(
       padding: EdgeInsets.fromLTRB(12, 10, 12, extraBottomPadding),
       children: [
         _buildDraftEditorCard(),
+        if (_submitFeedbackMessage != null) ...[
+          const SizedBox(height: 10),
+          _buildSubmitFeedbackCard(),
+        ],
         const SizedBox(height: 10),
         Row(
           children: [
-            const Text(
-              'Masaya Düşen Siparişler',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+            const Expanded(
+              child: Text(
+                'Masaya Düşen Siparişler',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+              ),
             ),
-            const Spacer(),
+            const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -29644,17 +31117,78 @@ class _MobileGarsonTableFlowPageState
         var tableOrders = const <Map<String, dynamic>>[];
         Widget body;
         if (snapshot.hasError) {
-          body = Center(
-            child: Text('Sipariş akışı alınamadı: ${snapshot.error}'),
+          final localOrders = _displayTableOrders(
+            const <Map<String, dynamic>>[],
+          );
+          tableOrders = localOrders;
+          debugPrint(
+            '[GarsonRealtime] mode=flow_stream_error '
+            'supabaseUrl=${AppRuntimeConfig.rawSupabaseUrl.trim().isEmpty ? '(missing)' : AppRuntimeConfig.rawSupabaseUrl.trim()} '
+            'storeId=${widget.sellerId} '
+            'sellerId=${widget.sellerId} '
+            'waiterId=${_currentWaiterId() ?? '-'} '
+            'schema=public table=table_orders channel=auto:stream(table_orders) '
+            'filter=seller_id=eq.${widget.sellerId} '
+            'tableNumber=${widget.tableNumber} '
+            'error=${snapshot.error}',
+          );
+          if (_isRealtimeConnectionError(snapshot.error!)) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _hasShownRealtimeFallbackWarning) return;
+              _hasShownRealtimeFallbackWarning = true;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Canlı sipariş akışı bağlanamadı. Masa ekranı sorgu verisi ile çalışıyor.',
+                  ),
+                ),
+              );
+            });
+          }
+          body = FutureBuilder<List<Map<String, dynamic>>>(
+            future: _getTableOrdersFallbackFuture(),
+            builder: (context, fallbackSnapshot) {
+              if (fallbackSnapshot.connectionState == ConnectionState.waiting) {
+                if (localOrders.isNotEmpty || _draftItems.isNotEmpty) {
+                  return _buildBody(localOrders);
+                }
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (fallbackSnapshot.hasError) {
+                if (localOrders.isNotEmpty || _draftItems.isNotEmpty) {
+                  return _buildBody(localOrders);
+                }
+                return Center(
+                  child: Text(
+                    'Sipariş akışı alınamadı: ${fallbackSnapshot.error}',
+                  ),
+                );
+              }
+              final allOrders =
+                  fallbackSnapshot.data ?? const <Map<String, dynamic>>[];
+              final rawTableOrders = _extractTableOrders(allOrders);
+              final displayTableOrders = _displayTableOrders(rawTableOrders);
+              _tryApplyInitialOrder(displayTableOrders);
+              return _buildBody(displayTableOrders);
+            },
           );
         } else if (snapshot.connectionState == ConnectionState.waiting) {
-          body = const Center(child: CircularProgressIndicator());
+          final localOrders = _displayTableOrders(
+            const <Map<String, dynamic>>[],
+          );
+          tableOrders = localOrders;
+          body = localOrders.isNotEmpty || _draftItems.isNotEmpty
+              ? _buildBody(localOrders)
+              : const Center(child: CircularProgressIndicator());
         } else {
           final allOrders = snapshot.data ?? const <Map<String, dynamic>>[];
-          tableOrders = _extractTableOrders(allOrders);
+          final rawTableOrders = _extractTableOrders(allOrders);
+          tableOrders = _displayTableOrders(rawTableOrders);
           _tryApplyInitialOrder(tableOrders);
           body = _buildBody(tableOrders);
         }
+
+        final isNarrowHeader = MediaQuery.of(context).size.width < 380;
 
         return Scaffold(
           backgroundColor: const Color(0xFFF3F4F6),
@@ -29662,29 +31196,55 @@ class _MobileGarsonTableFlowPageState
             elevation: 0,
             backgroundColor: const Color(0xFFF3F4F6),
             foregroundColor: const Color(0xFF111827),
+            titleSpacing: isNarrowHeader ? 12 : 16,
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Masa ${widget.tableNumber}',
-                  style: const TextStyle(
-                    fontSize: 18,
+                  style: TextStyle(
+                    fontSize: isNarrowHeader ? 15 : 18,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                Text(
-                  'Garson İşlem Ekranı',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
+                if (!isNarrowHeader)
+                  Text(
+                    'Garson İşlem Ekranı',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  ),
               ],
             ),
             actions: [
-              if (_draftItems.isNotEmpty)
+              if (_draftItems.isNotEmpty &&
+                  _bottomIndex != 2 &&
+                  !isNarrowHeader)
                 TextButton.icon(
                   onPressed: () => setState(() => _bottomIndex = 2),
                   icon: const Icon(Icons.receipt_long_outlined, size: 17),
                   label: const Text('Sipariş'),
                 ),
+              isNarrowHeader
+                  ? IconButton(
+                      tooltip: 'İşlemler',
+                      onPressed: _isSubmitting
+                          ? null
+                          : () => _showOperationsSheet(tableOrders),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.tune_rounded, size: 20),
+                    )
+                  : TextButton.icon(
+                      onPressed: _isSubmitting
+                          ? null
+                          : () => _showOperationsSheet(tableOrders),
+                      icon: const Icon(Icons.tune_rounded, size: 17),
+                      label: const Text('İşlemler'),
+                    ),
+              const SizedBox(width: 4),
             ],
           ),
           body: AnimatedSwitcher(
@@ -29699,16 +31259,20 @@ class _MobileGarsonTableFlowPageState
           bottomNavigationBar: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (_showProductsLiveSummaryBar()) _buildProductsLiveSummaryBar(),
               if (_showDraftBottomActionBar())
-                _buildDraftBottomActionBar(
-                  hasExistingOrders: tableOrders.isNotEmpty,
-                ),
+                _buildDraftBottomActionBar(tableOrders: tableOrders),
+              UndoActionBanner(controller: _undoController),
               BottomNavigationBar(
                 currentIndex: _bottomIndex,
                 onTap: (index) => setState(() => _bottomIndex = index),
                 selectedItemColor: AppColors.primary,
                 unselectedItemColor: const Color(0xFF6B7280),
+                selectedFontSize: 11,
+                unselectedFontSize: 11,
+                showUnselectedLabels: true,
                 type: BottomNavigationBarType.fixed,
+                backgroundColor: Colors.white,
                 items: const [
                   BottomNavigationBarItem(
                     icon: Icon(Icons.storefront_outlined),
@@ -29728,6 +31292,65 @@ class _MobileGarsonTableFlowPageState
           ),
         );
       },
+    );
+  }
+}
+
+// ── Payment Method Tile ────────────────────────────────────────────────────
+
+class _PaymentMethodTile extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _PaymentMethodTile({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: selected ? color.withValues(alpha: 0.10) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? color : const Color(0xFFE2E8F0),
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: selected ? color : const Color(0xFF6B7280),
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: selected ? color : const Color(0xFF374151),
+                ),
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check_circle_rounded, color: color, size: 18),
+          ],
+        ),
+      ),
     );
   }
 }

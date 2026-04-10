@@ -4,6 +4,7 @@ import '../../ads/enums/ad_enums.dart';
 import '../../core/constants.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../product_card.dart';
+import '../skeleton_loading.dart';
 import '../sponsored_product_lists_section.dart';
 
 class SimilarProductsSection extends StatefulWidget {
@@ -45,7 +46,7 @@ class _SimilarProductsSectionState extends State<SimilarProductsSection> {
     return Consumer<ProductDetailViewModel>(
       builder: (context, viewModel, child) {
         if (viewModel.loadingSimilarProducts) {
-          return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+          return _buildLoadingState(isMobile: isMobile);
         }
 
         final similarProducts = viewModel.similarProducts;
@@ -158,6 +159,31 @@ class _SimilarProductsSectionState extends State<SimilarProductsSection> {
     );
   }
 
+  Widget _buildLoadingState({required bool isMobile}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: SkeletonLoading(width: 168, height: 22, borderRadius: 8),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 340,
+          child: ListView.separated(
+            controller: _scrollController,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: isMobile ? 2 : 3,
+            separatorBuilder: (context, index) => const SizedBox(width: 12),
+            itemBuilder: (context, index) =>
+                const SizedBox(width: 220, child: ProductCardSkeleton()),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildArrowButton({
     required IconData icon,
     required VoidCallback onPressed,
@@ -170,7 +196,7 @@ class _SimilarProductsSectionState extends State<SimilarProductsSection> {
         shape: BoxShape.circle,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),

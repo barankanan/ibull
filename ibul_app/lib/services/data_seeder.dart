@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import '../services/database_helper.dart';
 import '../models/db_product.dart';
 import '../models/db_banner.dart';
@@ -95,7 +96,7 @@ class DataSeeder {
     ];
     
     await _db.insertProducts(products);
-    print('✅ ${products.length} ürün eklendi!');
+    debugPrint('✅ ${products.length} ürün eklendi!');
   }
   
   /// Örnek bannerları ekle
@@ -121,21 +122,21 @@ class DataSeeder {
     ];
     
     await _db.insertBanners(banners);
-    print('✅ ${banners.length} banner eklendi!');
+    debugPrint('✅ ${banners.length} banner eklendi!');
   }
   
   /// Tüm örnek verileri ekle
   Future<void> seedAll() async {
-    print('🌱 Veritabanı seed işlemi başlatılıyor...');
+    debugPrint('🌱 Veritabanı seed işlemi başlatılıyor...');
     await seedProducts();
     await seedBanners();
-    print('✨ Seed işlemi tamamlandı!');
+    debugPrint('✨ Seed işlemi tamamlandı!');
   }
   
   /// Veritabanını temizle
   Future<void> clearAll() async {
     await _db.clearAllData();
-    print('🗑️ Tüm veriler temizlendi!');
+    debugPrint('🗑️ Tüm veriler temizlendi!');
   }
   
   /// Veritabanını sıfırla ve yeniden seed et

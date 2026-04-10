@@ -80,6 +80,24 @@ List<SingleChildWidget> buildAppProviders() {
   ];
 }
 
+/// Minimal provider set for the /qr fast-path.
+///
+/// Only includes what the QR ordering flow actually requires:
+/// - [CartState] and [CartProvider]: cart management during ordering.
+/// - [ConnectivityProvider]: offline banner in [OfflineListener].
+///
+/// [AppState], [FavoriteState], and [ReviewState] are singletons accessed
+/// directly by [BusinessDetailPage] — they still work without being in the
+/// provider tree. Excluding them from the tree avoids their eager construction
+/// cost (auth init, shared-prefs load, Supabase hydration) during QR cold-start.
+List<SingleChildWidget> buildQrProviders() {
+  return [
+    ChangeNotifierProvider.value(value: CartState()),
+    ChangeNotifierProvider(create: (_) => CartProvider()),
+    ChangeNotifierProvider(create: (_) => ConnectivityProvider()),
+  ];
+}
+
 ThemeData buildAppTheme() {
   final colorScheme =
       ColorScheme.fromSeed(

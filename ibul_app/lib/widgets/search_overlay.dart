@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
+import 'package:ibul_app/widgets/skeleton_loading.dart';
 import 'package:provider/provider.dart';
 import '../../core/app_image_cdn.dart';
 import '../../core/constants.dart';
@@ -132,7 +133,11 @@ class _SearchOverlayState extends State<SearchOverlay> {
       if (trimmed.isEmpty) return;
       final normalized = _normalize(trimmed);
       if (normalized.replaceAll(' ', '').length < 2) return;
-      queryScores.update(normalized, (value) => value + score, ifAbsent: () => score);
+      queryScores.update(
+        normalized,
+        (value) => value + score,
+        ifAbsent: () => score,
+      );
       displayByNormalized.putIfAbsent(normalized, () => trimmed);
     }
 
@@ -143,7 +148,9 @@ class _SearchOverlayState extends State<SearchOverlay> {
     }
 
     try {
-      final recent = await SearchTelemetryService.instance.getRecentSearches(days: 30);
+      final recent = await SearchTelemetryService.instance.getRecentSearches(
+        days: 30,
+      );
       for (final event in recent) {
         addScore(event.query, 1);
       }
@@ -225,22 +232,53 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                   const SizedBox(height: 12),
                                   if (_isLoadingSuggestions)
                                     const Padding(
-                                      padding: EdgeInsets.symmetric(vertical: 8.0),
-                                      child: LinearProgressIndicator(minHeight: 2),
+                                      padding: EdgeInsets.symmetric(
+                                        vertical: 4,
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          _SearchSuggestionSkeleton(),
+                                          SizedBox(height: 8),
+                                          _SearchSuggestionSkeleton(),
+                                          SizedBox(height: 8),
+                                          _SearchSuggestionSkeleton(),
+                                        ],
+                                      ),
                                     )
                                   else if (_suggestionsError != null)
                                     Padding(
-                                      padding: const EdgeInsets.symmetric(vertical: 8.0),
-                                      child: Text(_suggestionsError!, style: const TextStyle(color: Colors.grey)),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8.0,
+                                      ),
+                                      child: Text(
+                                        _suggestionsError!,
+                                        style: const TextStyle(
+                                          color: Colors.grey,
+                                        ),
+                                      ),
                                     )
                                   else if (_suggestions.isEmpty)
                                     Padding(
-                                      padding: const EdgeInsets.symmetric(vertical: 8.0),
-                                      child: Text('"${_query.trim()}" için öneri bulunamadı.', style: const TextStyle(color: Colors.grey)),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8.0,
+                                      ),
+                                      child: Text(
+                                        '"${_query.trim()}" için öneri bulunamadı.',
+                                        style: const TextStyle(
+                                          color: Colors.grey,
+                                        ),
+                                      ),
                                     )
                                   else
                                     Column(
-                                      children: _suggestions.map((p) => _buildSuggestionItem(context, p)).toList(),
+                                      children: _suggestions
+                                          .map(
+                                            (p) => _buildSuggestionItem(
+                                              context,
+                                              p,
+                                            ),
+                                          )
+                                          .toList(),
                                     ),
                                   const SizedBox(height: 20),
                                 ],
@@ -252,23 +290,55 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                 const SizedBox(height: 10),
                                 if (history.isEmpty)
                                   const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 8.0),
-                                    child: Text('Henüz arama yapmadınız.', style: TextStyle(color: Colors.grey)),
+                                    padding: EdgeInsets.symmetric(
+                                      vertical: 8.0,
+                                    ),
+                                    child: Text(
+                                      'Henüz arama yapmadınız.',
+                                      style: TextStyle(color: Colors.grey),
+                                    ),
                                   )
                                 else
-                                  ...history.map((term) => _buildHistoryItem(term, () => appState.removeSearchHistory(term))),
-                                
+                                  ...history.map(
+                                    (term) => _buildHistoryItem(
+                                      term,
+                                      () => appState.removeSearchHistory(term),
+                                    ),
+                                  ),
+
                                 const SizedBox(height: 24),
                                 _buildSectionHeader('Popüler aramalar', null),
                                 const SizedBox(height: 16),
                                 if (_isLoadingPopularSearches)
                                   const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 8.0),
-                                    child: LinearProgressIndicator(minHeight: 2),
+                                    padding: EdgeInsets.symmetric(vertical: 4),
+                                    child: Wrap(
+                                      spacing: 12,
+                                      runSpacing: 12,
+                                      children: [
+                                        SkeletonLoading(
+                                          width: 88,
+                                          height: 34,
+                                          borderRadius: 999,
+                                        ),
+                                        SkeletonLoading(
+                                          width: 96,
+                                          height: 34,
+                                          borderRadius: 999,
+                                        ),
+                                        SkeletonLoading(
+                                          width: 82,
+                                          height: 34,
+                                          borderRadius: 999,
+                                        ),
+                                      ],
+                                    ),
                                   )
                                 else if (_popularSearchTerms.isEmpty)
                                   const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 8.0),
+                                    padding: EdgeInsets.symmetric(
+                                      vertical: 8.0,
+                                    ),
                                     child: Text(
                                       'Henüz popüler ürün araması yok.',
                                       style: TextStyle(color: Colors.grey),
@@ -278,21 +348,25 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                   Wrap(
                                     spacing: 12,
                                     runSpacing: 12,
-                                    children: _popularSearchTerms.map(_buildPopularTag).toList(),
+                                    children: _popularSearchTerms
+                                        .map(_buildPopularTag)
+                                        .toList(),
                                   ),
                               ],
                             ),
                           ),
-                          
+
                           // Divider (Only show if not mobile)
                           if (!isMobile)
                             Container(
                               width: 1,
                               height: 300,
                               color: Colors.grey.shade200,
-                              margin: const EdgeInsets.symmetric(horizontal: 24),
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                              ),
                             ),
-                          
+
                           // Right Column: Recently Viewed (Hide on Mobile)
                           if (!isMobile)
                             Expanded(
@@ -315,7 +389,8 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                       ),
                                     )
                                   : Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         const Text(
                                           'Son gezdiğin ürünler',
@@ -327,13 +402,22 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                         ),
                                         const SizedBox(height: 16),
                                         recentProducts.isEmpty
-                                            ? const Text('Henüz ürün gezmediniz.', style: TextStyle(color: Colors.grey))
+                                            ? const Text(
+                                                'Henüz ürün gezmediniz.',
+                                                style: TextStyle(
+                                                  color: Colors.grey,
+                                                ),
+                                              )
                                             : Column(
-                                                children: recentProducts.map((product) {
+                                                children: recentProducts.map((
+                                                  product,
+                                                ) {
                                                   return _buildRecentProductItem(
                                                     product.name,
                                                     product.price,
-                                                    product.imageFor(AppImageVariant.thumb),
+                                                    product.imageFor(
+                                                      AppImageVariant.thumb,
+                                                    ),
                                                     isDiscounted: true,
                                                   );
                                                 }).toList(),
@@ -377,8 +461,14 @@ class _SearchOverlayState extends State<SearchOverlay> {
               ),
             ),
             Text(
-              product.price.contains('TL') ? product.price : '${product.price} TL',
-              style: const TextStyle(fontSize: 12, color: Colors.black54, fontWeight: FontWeight.w600),
+              product.price.contains('TL')
+                  ? product.price
+                  : '${product.price} TL',
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.black54,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
@@ -386,7 +476,11 @@ class _SearchOverlayState extends State<SearchOverlay> {
     );
   }
 
-  Widget _buildSectionHeader(String title, String? action, {VoidCallback? onAction}) {
+  Widget _buildSectionHeader(
+    String title,
+    String? action, {
+    VoidCallback? onAction,
+  }) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -490,10 +584,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
             const SizedBox(width: 8),
             Text(
               text,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Colors.black87,
-              ),
+              style: const TextStyle(fontSize: 13, color: Colors.black87),
             ),
           ],
         ),
@@ -501,7 +592,12 @@ class _SearchOverlayState extends State<SearchOverlay> {
     );
   }
 
-  Widget _buildRecentProductItem(String title, String price, String imageUrl, {bool isDiscounted = false}) {
+  Widget _buildRecentProductItem(
+    String title,
+    String price,
+    String imageUrl, {
+    bool isDiscounted = false,
+  }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(6),
@@ -531,21 +627,29 @@ class _SearchOverlayState extends State<SearchOverlay> {
                       fit: BoxFit.cover,
                       errorWidget: Container(
                         color: Colors.grey.shade100,
-                        child: const Icon(Icons.image_not_supported, size: 16, color: Colors.grey),
+                        child: const Icon(
+                          Icons.image_not_supported,
+                          size: 16,
+                          color: Colors.grey,
+                        ),
                       ),
                     )
                   : Image.asset(
-                      imageUrl, 
-                      fit: BoxFit.cover, 
+                      imageUrl,
+                      fit: BoxFit.cover,
                       errorBuilder: (c, e, s) => Container(
                         color: Colors.grey.shade100,
-                        child: const Icon(Icons.image_not_supported, size: 16, color: Colors.grey),
+                        child: const Icon(
+                          Icons.image_not_supported,
+                          size: 16,
+                          color: Colors.grey,
+                        ),
                       ),
                     ),
             ),
           ),
           const SizedBox(width: 10),
-          
+
           // Product Details
           Expanded(
             child: Column(
@@ -555,7 +659,10 @@ class _SearchOverlayState extends State<SearchOverlay> {
                 if (isDiscounted)
                   Container(
                     margin: const EdgeInsets.only(bottom: 2),
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(3),
@@ -563,9 +670,9 @@ class _SearchOverlayState extends State<SearchOverlay> {
                     child: const Text(
                       'Yakın Lokasyon',
                       style: TextStyle(
-                        color: AppColors.primary, 
-                        fontSize: 9, 
-                        fontWeight: FontWeight.w600
+                        color: AppColors.primary,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
@@ -573,7 +680,10 @@ class _SearchOverlayState extends State<SearchOverlay> {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
                 Text(
                   price.contains('TL') ? price : '$price TL',
@@ -586,7 +696,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
               ],
             ),
           ),
-          
+
           // Action Icon
           Container(
             padding: const EdgeInsets.all(4),
@@ -594,10 +704,37 @@ class _SearchOverlayState extends State<SearchOverlay> {
               color: Colors.grey.shade50,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+            child: const Icon(
+              Icons.chevron_right,
+              size: 16,
+              color: Colors.grey,
+            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SearchSuggestionSkeleton extends StatelessWidget {
+  const _SearchSuggestionSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: const [
+        SkeletonLoading(width: 18, height: 18, borderRadius: 9),
+        SizedBox(width: 12),
+        Expanded(
+          child: SkeletonLoading(
+            width: double.infinity,
+            height: 16,
+            borderRadius: 6,
+          ),
+        ),
+        SizedBox(width: 12),
+        SkeletonLoading(width: 52, height: 14, borderRadius: 6),
+      ],
     );
   }
 }

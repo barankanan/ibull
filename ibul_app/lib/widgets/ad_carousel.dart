@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
+import 'package:ibul_app/widgets/skeleton_loading.dart';
 
 class AdCarousel extends StatelessWidget {
   final List<String>? imageUrls;
@@ -9,10 +10,7 @@ class AdCarousel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<String> images = imageUrls ?? [
-      '',
-      '',
-    ];
+    final List<String> images = imageUrls ?? ['', ''];
 
     return Column(
       children: [
@@ -57,7 +55,13 @@ class AdCarousel extends StatelessWidget {
               fit: BoxFit.cover,
               placeholder: Container(
                 color: Colors.grey[200],
-                child: const Center(child: CircularProgressIndicator()),
+                child: const Center(
+                  child: SkeletonLoading(
+                    width: double.infinity,
+                    height: double.infinity,
+                    borderRadius: 0,
+                  ),
+                ),
               ),
               errorWidget: Container(
                 color: Colors.grey[200],
@@ -69,7 +73,10 @@ class AdCarousel extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Colors.black.withValues(alpha: 0.25)],
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.25),
+                  ],
                 ),
               ),
               alignment: Alignment.bottomLeft,

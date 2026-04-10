@@ -1,14 +1,19 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../core/app_state.dart';
 import '../models/db_product.dart';
 import '../models/product_model.dart';
 import '../services/database_helper.dart';
+import '../services/review_repository.dart';
+import '../services/store_service.dart';
 import '../services/supabase_service.dart';
 
 class ProductDetailViewModel extends ChangeNotifier {
   Product initialProduct;
   final AppState appState;
+  late ReviewSummary _reviewSummary;
+  String? _storeLogoUrl;
 
   // State variables
   int currentImageIndex = 0;
@@ -63,6 +68,19 @@ class ProductDetailViewModel extends ChangeNotifier {
     required this.initialProduct,
     required this.appState,
   }) {
+    final localReviews = List<Map<String, dynamic>>.unmodifiable(
+      appState.getProductReviewsFor(
+        productName: initialProduct.name,
+        storeName: initialProduct.store,
+      ),
+    );
+    _reviewSummary = ReviewRepository.instance.getInitialProductReviewSummary(
+      productName: initialProduct.name,
+      storeName: initialProduct.store,
+      localReviews: localReviews,
+      fallbackRating: initialProduct.rating,
+      fallbackCount: initialProduct.reviewCount,
+    );
     _init();
   }
 
@@ -98,10 +116,67 @@ class ProductDetailViewModel extends ChangeNotifier {
     }
 
     _refreshProductExtrasFromSupabase();
+    unawaited(refreshReviewSummary());
+    unawaited(loadStoreLogo());
     _loadOtherStoresWithProducts();
     _loadVariantGroupData();
     _loadSimilarProducts();
     _loadComplementaryProducts();
+  }
+
+  ReviewSummary get reviewSummary => _reviewSummary;
+
+  String get storeName => initialProduct.store ?? 'Teknosa';
+
+  String? get storeLogoUrl => _storeLogoUrl;
+
+  Future<void> refreshReviewSummary() async {
+    final localReviews = appState.getProductReviewsFor(
+      productName: initialProduct.name,
+      storeName: initialProduct.store,
+    );
+    final summary = await ReviewRepository.instance.getProductReviewSummary(
+      productName: initialProduct.name,
+      storeName: initialProduct.store,
+      localReviews: localReviews,
+    );
+
+    final summaryChanged =
+        _reviewSummary.reviewCount != summary.reviewCount ||
+        _reviewSummary.averageRating != summary.averageRating ||
+        _reviewSummary.reviews.length != summary.reviews.length;
+    final productChanged =
+        initialProduct.rating != summary.averageRating ||
+        initialProduct.reviewCount != summary.reviewCount;
+
+    if (!summaryChanged && !productChanged) {
+      return;
+    }
+
+    _reviewSummary = summary;
+    if (productChanged) {
+      initialProduct = initialProduct.copyWith(
+        rating: summary.averageRating,
+        reviewCount: summary.reviewCount,
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<void> loadStoreLogo() async {
+    final resolvedStoreName = storeName.trim();
+    if (resolvedStoreName.isEmpty) {
+      return;
+    }
+
+    final logoUrl = await StoreService().getStoreLogoUrlByBusinessName(
+      resolvedStoreName,
+    );
+    if (_storeLogoUrl == logoUrl) {
+      return;
+    }
+    _storeLogoUrl = logoUrl;
+    notifyListeners();
   }
 
   void toggleAttribute(String value) {
@@ -896,18 +971,19 @@ class ProductDetailViewModel extends ChangeNotifier {
       final rating = 8.5 + (hash % 15) / 10.0;
 
       Color badgeColor = Colors.black;
-      if (name.contains('Teknosa') || name.contains('Trendyol'))
+      if (name.contains('Teknosa') || name.contains('Trendyol')) {
         badgeColor = Colors.orange;
-      else if (name.contains('MediaMarkt') || name.contains('H&M'))
+      } else if (name.contains('MediaMarkt') || name.contains('H&M')) {
         badgeColor = Colors.red;
-      else if (name.contains('Ikea') || name.contains('Vatan'))
+      } else if (name.contains('Ikea') || name.contains('Vatan')) {
         badgeColor = Colors.blue;
-      else if (name.contains('Vivense'))
+      } else if (name.contains('Vivense')) {
         badgeColor = Colors.orange[300]!;
-      else if (name.contains('ŞOK'))
+      } else if (name.contains('ŞOK')) {
         badgeColor = Colors.yellow[700]!;
-      else if (name.contains('A101'))
+      } else if (name.contains('A101')) {
         badgeColor = Colors.teal;
+      }
 
       return {
         'name': name,
@@ -1026,10 +1102,12 @@ class ProductDetailViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateReviewSummary({
-    required double rating,
-    required int reviewCount,
-  }) {
+  void updateReviewSummary({required double rating, required int reviewCount}) {
+    _reviewSummary = ReviewSummary(
+      reviews: _reviewSummary.reviews,
+      reviewCount: reviewCount,
+      averageRating: rating,
+    );
     if (initialProduct.rating == rating &&
         initialProduct.reviewCount == reviewCount) {
       return;

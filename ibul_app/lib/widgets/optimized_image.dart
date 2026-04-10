@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -71,8 +69,6 @@ class OptimizedImage extends StatefulWidget {
   /// a [StaggeredReveal.imageReadySignal] so the slide animation begins
   /// only after the GPU texture upload is complete.
   final VoidCallback? onFirstFrameReady;
-
-  bool get _isNetwork => imageUrlOrPath.startsWith('http');
 
   static const int mobileMaxDecodeDimension = 800;
   static const int webMaxDecodeDimension = 1200;

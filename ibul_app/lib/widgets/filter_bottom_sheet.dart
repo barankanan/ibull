@@ -106,7 +106,7 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                 return FilterChip(
                   label: Text(brand),
                   selected: _selectedBrands.contains(brand),
-                  selectedColor: AppColors.primary.withOpacity(0.2),
+                  selectedColor: AppColors.primary.withValues(alpha: 0.2),
                   checkmarkColor: AppColors.primary,
                   onSelected: (bool selected) {
                     setState(() {
@@ -146,7 +146,7 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                       ],
                     ),
                     selected: _minRating == rating,
-                    selectedColor: AppColors.primary.withOpacity(0.2),
+                    selectedColor: AppColors.primary.withValues(alpha: 0.2),
                     onSelected: (bool selected) {
                       setState(() {
                         _minRating = selected ? rating : 0;

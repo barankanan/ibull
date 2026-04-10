@@ -85,6 +85,7 @@ class _AddressesPageState extends State<AddressesPage> {
                 } else {
                   appState.removeBillingInfo(index);
                 }
+                if (!context.mounted) return;
                 Navigator.of(context).pop();
               },
             ),
@@ -375,7 +376,7 @@ class _AddressesPageState extends State<AddressesPage> {
             border: Border.all(color: Colors.grey.shade200),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.02),
+                color: Colors.black.withValues(alpha: 0.02),
                 blurRadius: 10,
                 offset: const Offset(0, 4),
               ),
@@ -390,7 +391,7 @@ class _AddressesPageState extends State<AddressesPage> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.1),
+                      color: AppColors.primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
@@ -508,7 +509,7 @@ class _AddressesPageState extends State<AddressesPage> {
                       child: ListTile(
                         contentPadding: const EdgeInsets.all(12),
                         leading: CircleAvatar(
-                          backgroundColor: AppColors.primary.withOpacity(0.1),
+                          backgroundColor: AppColors.primary.withValues(alpha: 0.1),
                           child: Icon(
                             _selectedTab == 0 ? Icons.place : Icons.receipt,
                             color: AppColors.primary,

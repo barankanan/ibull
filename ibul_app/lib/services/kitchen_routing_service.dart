@@ -1,3 +1,5 @@
+import '../models/mixed_service_order.dart';
+
 class KitchenRoutingItem {
   const KitchenRoutingItem({
     required this.productId,
@@ -35,39 +37,21 @@ class KitchenRoutingService {
         .map((item) {
           final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
           final unitPrice = _parsePrice(item['price']);
-          final name = item['name']?.toString().trim() ?? '';
+          final normalizedItem = MixedServiceOrder.normalizeOrderItem(item);
+          final name = normalizedItem['item_name']?.toString().trim() ?? '';
           return KitchenRoutingItem(
-            productId: item['product_id']?.toString(),
+            productId: normalizedItem['product_id']?.toString(),
             productName: name.isEmpty ? 'Ürün' : name,
             quantity: quantity <= 0 ? 1 : quantity,
             unitPrice: unitPrice,
-            stationId: item['station_id']?.toString(),
-            itemNote: item['notes']?.toString(),
+            stationId: normalizedItem['station_id']?.toString(),
+            itemNote: MixedServiceOrder.buildKitchenNote(normalizedItem),
           );
         })
         .toList(growable: false);
   }
 
   double _parsePrice(dynamic raw) {
-    if (raw is num) return raw.toDouble();
-    final text = (raw ?? '').toString().trim();
-    if (text.isEmpty) return 0;
-
-    var normalized = text.replaceAll(RegExp(r'[^0-9,.-]'), '');
-    if (normalized.isEmpty) return 0;
-    final hasComma = normalized.contains(',');
-    final hasDot = normalized.contains('.');
-
-    if (hasComma && hasDot) {
-      if (normalized.lastIndexOf(',') > normalized.lastIndexOf('.')) {
-        normalized = normalized.replaceAll('.', '').replaceAll(',', '.');
-      } else {
-        normalized = normalized.replaceAll(',', '');
-      }
-    } else if (hasComma) {
-      normalized = normalized.replaceAll('.', '').replaceAll(',', '.');
-    }
-
-    return double.tryParse(normalized) ?? 0;
+    return MixedServiceOrder.parsePrice(raw);
   }
 }

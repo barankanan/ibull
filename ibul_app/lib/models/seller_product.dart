@@ -1,3 +1,9 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show debugPrint;
+
+import 'product_pricing.dart';
+
 class SellerProduct {
   final String id;
   final String name;
@@ -5,6 +11,17 @@ class SellerProduct {
   final String mainCategory;
   final String subCategory;
   final double price;
+  final String pricingType;
+  final double? portionPrice;
+  final double? pricePerKg;
+  final String? serviceControlType;
+  final double? minPortion;
+  final double? maxPortion;
+  final double? portionStep;
+  final int? defaultWeightGrams;
+  final int? minWeightGrams;
+  final int? weightStepGrams;
+  final int? maxWeightGrams;
   final double? discountPrice;
   final int stock;
   final String sku;
@@ -13,6 +30,7 @@ class SellerProduct {
   final List<String> imageUrls;
   final String? description;
   final String? specifications;
+  final String? preparationTime;
   final DateTime createdAt;
   final List<String> attributes;
   final String? storeName;
@@ -28,6 +46,7 @@ class SellerProduct {
   final List<dynamic>? variants; // Add variants field
   final List<String>? accessories;
   final String? additionalInfo; // New: Ek Bilgiler (HTML/Text)
+  final List<String>? additionalInfoItems;
   final List<Map<String, String>>? faq; // New: Sıkça Sorulan Sorular
   final String? stationId;
   final bool printerRoutingEnabled;
@@ -39,6 +58,17 @@ class SellerProduct {
     required this.mainCategory,
     required this.subCategory,
     required this.price,
+    this.pricingType = 'portion',
+    this.portionPrice,
+    this.pricePerKg,
+    this.serviceControlType,
+    this.minPortion,
+    this.maxPortion,
+    this.portionStep,
+    this.defaultWeightGrams,
+    this.minWeightGrams,
+    this.weightStepGrams,
+    this.maxWeightGrams,
     this.discountPrice,
     required this.stock,
     required this.sku,
@@ -47,6 +77,7 @@ class SellerProduct {
     this.imageUrls = const [],
     this.description,
     this.specifications,
+    this.preparationTime,
     required this.createdAt,
     this.attributes = const [],
     this.storeName,
@@ -62,16 +93,108 @@ class SellerProduct {
     this.variants,
     this.accessories,
     this.additionalInfo,
+    this.additionalInfoItems,
     this.faq,
     this.stationId,
     this.printerRoutingEnabled = true,
   });
 
   String get displayPrice {
+    if (isWeightPriced) {
+      return ProductPriceCalculator.formatPerKgLabel(pricePerKg);
+    }
     if (discountPrice != null && discountPrice! > 0) {
       return '₺${discountPrice!.toStringAsFixed(0)}';
     }
     return '₺${price.toStringAsFixed(0)}';
+  }
+
+  ProductPricingType get resolvedPricingType =>
+      ProductPricingType.fromValue(pricingType);
+
+  ProductServiceControlType get resolvedServiceControlType {
+    final explicit = ProductServiceControlType.fromValue(serviceControlType);
+    if (explicit != ProductServiceControlType.none) {
+      return explicit;
+    }
+    if (resolvedPricingType == ProductPricingType.weight) {
+      return ProductServiceControlType.weightStepper;
+    }
+    return ProductServiceControlType.none;
+  }
+
+  bool get usesServiceControlStepper =>
+      ProductPriceCalculator.usesServiceControlStepper(
+        resolvedServiceControlType,
+      );
+
+  bool get usesPortionLikeStepper =>
+      ProductPriceCalculator.usesPortionLikeStepper(resolvedServiceControlType);
+
+  bool get isWeightPriced => ProductPriceCalculator.supportsWeightPricing(
+    pricingType: resolvedPricingType,
+    pricePerKg: pricePerKg,
+  );
+
+  double get effectiveBaseUnitPrice {
+    final direct = ProductPriceCalculator.sanitizePrice(portionPrice);
+    if (direct > 0) return direct;
+    return ProductPriceCalculator.sanitizePrice(price);
+  }
+
+  double get resolvedMinPortionAmount =>
+      ProductPriceCalculator.resolveMinPortionAmount(
+        resolvedServiceControlType,
+        minPortion,
+      );
+
+  double get resolvedMaxPortionAmount =>
+      ProductPriceCalculator.resolveMaxPortionAmount(
+        resolvedServiceControlType,
+        maxPortion,
+        minPortion: minPortion,
+      );
+
+  double get resolvedPortionStepAmount =>
+      ProductPriceCalculator.resolvePortionStepAmount(
+        resolvedServiceControlType,
+        portionStep,
+      );
+
+  double get resolvedDefaultServiceAmount =>
+      ProductPriceCalculator.resolveDefaultServiceAmount(
+        type: resolvedServiceControlType,
+        minPortion: minPortion,
+        maxPortion: maxPortion,
+        portionStep: portionStep,
+      );
+
+  int get resolvedMinWeightGrams =>
+      ProductPriceCalculator.resolveMinWeightGrams(minWeightGrams);
+
+  int get resolvedWeightStepGrams =>
+      ProductPriceCalculator.resolveWeightStepGrams(weightStepGrams);
+
+  int get resolvedDefaultWeightGrams =>
+      ProductPriceCalculator.resolveDefaultWeightGrams(
+        defaultWeightGrams: defaultWeightGrams,
+        minWeightGrams: minWeightGrams,
+        weightStepGrams: weightStepGrams,
+        maxWeightGrams: maxWeightGrams,
+      );
+
+  String? get displayServiceControlInfo {
+    final type = resolvedServiceControlType;
+    if (type == ProductServiceControlType.none) return null;
+    final info = ProductPriceCalculator.buildServiceControlSummary(
+      type: type,
+      minPortion: minPortion,
+      maxPortion: maxPortion,
+      portionStep: portionStep,
+      minWeightGrams: minWeightGrams,
+      defaultWeightGrams: defaultWeightGrams,
+    );
+    return info.trim().isEmpty ? null : info;
   }
 
   String get originalPrice {
@@ -92,6 +215,17 @@ class SellerProduct {
       'mainCategory': mainCategory,
       'subCategory': subCategory,
       'price': price,
+      'pricingType': pricingType,
+      'portionPrice': portionPrice,
+      'pricePerKg': pricePerKg,
+      'serviceControlType': serviceControlType,
+      'minPortion': minPortion,
+      'maxPortion': maxPortion,
+      'portionStep': portionStep,
+      'defaultWeightGrams': defaultWeightGrams,
+      'minWeightGrams': minWeightGrams,
+      'weightStepGrams': weightStepGrams,
+      'maxWeightGrams': maxWeightGrams,
       'discountPrice': discountPrice,
       'stock': stock,
       'sku': sku,
@@ -100,6 +234,7 @@ class SellerProduct {
       'imageUrls': imageUrls,
       'description': description,
       'specifications': specifications,
+      'preparationTime': preparationTime,
       'createdAt': createdAt.toIso8601String(),
       'attributes': attributes,
       'videoUrl': videoUrl,
@@ -114,6 +249,7 @@ class SellerProduct {
       'variants': variants,
       'accessories': accessories,
       'additional_info': additionalInfo,
+      'additionalInfoItems': additionalInfoItems,
       'faq': faq,
       'stationId': stationId,
       'printerRoutingEnabled': printerRoutingEnabled,
@@ -121,7 +257,7 @@ class SellerProduct {
   }
 
   factory SellerProduct.fromMap(Map<String, dynamic> map, String id) {
-    print('DB Verisi (SellerProduct): $map'); // Debug Print
+    debugPrint('DB Verisi (SellerProduct): $map'); // Debug Print
 
     DateTime created;
     if (map['created_at'] != null) {
@@ -157,6 +293,41 @@ class SellerProduct {
           map['main_category'] ?? map['mainCategory'] ?? map['category'] ?? '',
       subCategory: map['sub_category'] ?? map['subCategory'] ?? '',
       price: (map['price'] ?? 0).toDouble(),
+      pricingType:
+          map['pricing_type']?.toString() ??
+          map['pricingType']?.toString() ??
+          ProductPricingType.portion.storageValue,
+      portionPrice:
+          (map['portion_price'] as num?)?.toDouble() ??
+          (map['portionPrice'] as num?)?.toDouble() ??
+          ProductPriceCalculator.parsePriceValue(map['price']),
+      pricePerKg:
+          (map['price_per_kg'] as num?)?.toDouble() ??
+          (map['pricePerKg'] as num?)?.toDouble(),
+      serviceControlType:
+          map['service_control_type']?.toString() ??
+          map['serviceControlType']?.toString(),
+      minPortion:
+          (map['min_portion'] as num?)?.toDouble() ??
+          (map['minPortion'] as num?)?.toDouble(),
+      maxPortion:
+          (map['max_portion'] as num?)?.toDouble() ??
+          (map['maxPortion'] as num?)?.toDouble(),
+      portionStep:
+          (map['portion_step'] as num?)?.toDouble() ??
+          (map['portionStep'] as num?)?.toDouble(),
+      defaultWeightGrams:
+          (map['default_weight_grams'] as num?)?.toInt() ??
+          (map['defaultWeightGrams'] as num?)?.toInt(),
+      minWeightGrams:
+          (map['min_weight_grams'] as num?)?.toInt() ??
+          (map['minWeightGrams'] as num?)?.toInt(),
+      weightStepGrams:
+          (map['weight_step_grams'] as num?)?.toInt() ??
+          (map['weightStepGrams'] as num?)?.toInt(),
+      maxWeightGrams:
+          (map['max_weight_grams'] as num?)?.toInt() ??
+          (map['maxWeightGrams'] as num?)?.toInt(),
       discountPrice: (map['discount_price'] ?? map['discountPrice'] as num?)
           ?.toDouble(),
       stock: map['stock'] ?? 0,
@@ -165,7 +336,13 @@ class SellerProduct {
       imageUrl: mainImg,
       imageUrls: imgUrls,
       description: map['description'],
-      specifications: map['specifications']?.toString(),
+      specifications: _normalizeSpecificationsWithType(
+        map['specifications'],
+        map['product_type'],
+      ),
+      preparationTime:
+          map['preparation_time']?.toString() ??
+          map['preparationTime']?.toString(),
       createdAt: created,
       attributes: map['attributes'] != null
           ? List<String>.from(map['attributes'])
@@ -187,6 +364,7 @@ class SellerProduct {
           ? List<String>.from(map['accessories'])
           : null,
       additionalInfo: map['additional_info'],
+      additionalInfoItems: _parseAdditionalInfoItems(map['additional_info']),
       faq: map['faq'] != null
           ? (map['faq'] as List)
                 .map((e) => Map<String, String>.from(e))
@@ -195,5 +373,76 @@ class SellerProduct {
       stationId: map['station_id']?.toString(),
       printerRoutingEnabled: map['printer_routing_enabled'] != false,
     );
+  }
+
+  static String? _normalizeSpecifications(Object? value) {
+    if (value == null) return null;
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (value is Map || value is List) {
+      return jsonEncode(value);
+    }
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
+  }
+
+  /// Normalizes [specifications] and injects [rawProductType] into the JSON as
+  /// `_ibul_product_type` when the specs key is absent but the column value
+  /// identifies a known template type (e.g. products created via SQL migration).
+  static String? _normalizeSpecificationsWithType(
+    Object? specifications,
+    Object? rawProductType,
+  ) {
+    final normalized = _normalizeSpecifications(specifications);
+    if (rawProductType == null) return normalized;
+    final typeStr = rawProductType.toString().trim().toLowerCase();
+    if (typeStr.isEmpty) return normalized;
+    if (typeStr != 'service_template' &&
+        typeStr != 'menu_template' &&
+        typeStr != 'mixed_service_template') {
+      return normalized;
+    }
+    Map<String, dynamic> specsMap = {};
+    if (normalized != null) {
+      try {
+        final dynamic decoded = jsonDecode(normalized);
+        if (decoded is Map) specsMap = Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+    }
+    if (specsMap.containsKey('_ibul_product_type')) return normalized;
+    specsMap['_ibul_product_type'] = typeStr;
+    return jsonEncode(specsMap);
+  }
+
+  static List<String>? _parseAdditionalInfoItems(Object? value) {
+    if (value == null) return null;
+    if (value is List) {
+      final List<String> items = value
+          .map((Object? item) => item?.toString().trim() ?? '')
+          .where((String item) => item.isNotEmpty)
+          .toList(growable: false);
+      return items;
+    }
+    final String text = value.toString().trim();
+    if (text.isEmpty) return null;
+    if (text.startsWith('[')) {
+      try {
+        final dynamic decoded = jsonDecode(text);
+        if (decoded is List) {
+          final List<String> items = decoded
+              .map((Object? item) => item?.toString().trim() ?? '')
+              .where((String item) => item.isNotEmpty)
+              .toList(growable: false);
+          return items;
+        }
+      } catch (_) {}
+    }
+    return text
+        .split(RegExp(r'[\n,|•]'))
+        .map((String item) => item.trim())
+        .where((String item) => item.isNotEmpty)
+        .toList(growable: false);
   }
 }

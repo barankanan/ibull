@@ -188,10 +188,10 @@ class _SellerCollectionsManagementContentState
                                   fit: BoxFit.cover,
                                 )
                               : (coverImageUrl ?? '').trim().isNotEmpty
-                              ? OptimizedImage(imageUrlOrPath: 
-                                  coverImageUrl!,
+                              ? OptimizedImage(
+                                  imageUrlOrPath: coverImageUrl!,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) {
+                                  errorBuilder: (_, _, _) {
                                     return _buildCoverPlaceholder();
                                   },
                                 )
@@ -376,10 +376,10 @@ class _SellerCollectionsManagementContentState
       children: [
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
           child: Wrap(
@@ -396,16 +396,17 @@ class _SellerCollectionsManagementContentState
                     const Text(
                       'Listeler',
                       style: TextStyle(
-                        fontSize: 24,
+                        fontSize: 20,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF0F172A),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Text(
                       'Urunlerinizi listeler halinde gruplayin. Olusturdugunuz listeler reklam kampanyalarinda secilebilir.',
                       style: TextStyle(
                         color: Colors.grey.shade600,
+                        fontSize: 12.5,
                         height: 1.5,
                       ),
                     ),
@@ -414,6 +415,17 @@ class _SellerCollectionsManagementContentState
               ),
               FilledButton.icon(
                 onPressed: _showCreateCollectionDialog,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 38),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 icon: const Icon(Icons.collections_bookmark_outlined),
                 label: const Text('Liste olustur'),
               ),
@@ -426,32 +438,32 @@ class _SellerCollectionsManagementContentState
         if (lists.isEmpty)
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(28),
+            padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(color: const Color(0xFFE2E8F0)),
             ),
             child: Column(
               children: [
                 Container(
-                  width: 68,
-                  height: 68,
+                  width: 56,
+                  height: 56,
                   decoration: BoxDecoration(
                     color: const Color(0xFFEEF2FF),
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   child: const Icon(
                     Icons.collections_bookmark_outlined,
                     color: Color(0xFF4F46E5),
-                    size: 32,
+                    size: 26,
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 const Text(
                   'Henuz listeniz yok',
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 16,
                     fontWeight: FontWeight.w800,
                     color: Color(0xFF0F172A),
                   ),
@@ -465,6 +477,17 @@ class _SellerCollectionsManagementContentState
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: _showCreateCollectionDialog,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, 38),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   icon: const Icon(Icons.add_rounded),
                   label: const Text('Ilk listeyi olustur'),
                 ),
@@ -520,27 +543,28 @@ class _SellerCollectionsManagementContentState
   Widget _buildProductsSummaryCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Row(
         children: [
           Container(
-            width: 44,
-            height: 44,
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
               color: const Color(0xFFEEF2FF),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(
               Icons.inventory_2_outlined,
               color: Color(0xFF4F46E5),
+              size: 18,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -548,7 +572,7 @@ class _SellerCollectionsManagementContentState
                 const Text(
                   'Listeye eklenebilir urunler',
                   style: TextStyle(
-                    fontSize: 15,
+                    fontSize: 13.5,
                     fontWeight: FontWeight.w800,
                     color: Color(0xFF0F172A),
                   ),
@@ -560,13 +584,21 @@ class _SellerCollectionsManagementContentState
                       : _sellerProductsError != null
                       ? 'Urunler yuklenemedi, tekrar deneyin.'
                       : '${_sellerProducts.length} urun listelere eklenmeye hazir.',
-                  style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600),
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                 ),
               ],
             ),
           ),
           OutlinedButton.icon(
             onPressed: _isLoadingProducts ? null : _loadSellerProducts,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 36),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              textStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             icon: const Icon(Icons.refresh_rounded, size: 16),
             label: const Text('Yenile'),
           ),
@@ -580,10 +612,10 @@ class _SellerCollectionsManagementContentState
         ? list.productIds.length
         : list.products.length;
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Column(
@@ -592,18 +624,18 @@ class _SellerCollectionsManagementContentState
           Stack(
             children: [
               Container(
-                height: 118,
+                height: 104,
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(16),
                   color: const Color(0xFFF8FAFC),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: (list.iconUrl ?? '').trim().isNotEmpty
-                    ? OptimizedImage(imageUrlOrPath: 
-                        list.iconUrl!,
+                    ? OptimizedImage(
+                        imageUrlOrPath: list.iconUrl!,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) {
+                        errorBuilder: (_, _, _) {
                           return _buildCoverPlaceholder();
                         },
                       )
@@ -619,9 +651,14 @@ class _SellerCollectionsManagementContentState
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF0F172A),
                     foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 36),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   icon: const Icon(Icons.campaign_outlined, size: 16),
@@ -630,7 +667,7 @@ class _SellerCollectionsManagementContentState
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -639,18 +676,15 @@ class _SellerCollectionsManagementContentState
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 14.5,
                     fontWeight: FontWeight.w800,
                     color: Color(0xFF0F172A),
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: list.isPublic
                       ? const Color(0xFFDCFCE7)
@@ -660,7 +694,7 @@ class _SellerCollectionsManagementContentState
                 child: Text(
                   list.isPublic ? 'Acik' : 'Ozel',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 10.5,
                     fontWeight: FontWeight.w700,
                     color: list.isPublic
                         ? const Color(0xFF166534)
@@ -670,16 +704,20 @@ class _SellerCollectionsManagementContentState
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Text(
             (list.description ?? '').trim().isEmpty
                 ? 'Aciklama eklenmedi.'
                 : list.description!,
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: Colors.grey.shade600, height: 1.45),
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: 12,
+              height: 1.4,
+            ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -716,33 +754,63 @@ class _SellerCollectionsManagementContentState
                   .toList(growable: false),
             ),
           ],
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               SizedBox(
-                height: 40,
+                height: 36,
                 child: FilledButton.icon(
                   onPressed: () => _showManageProductsDialog(list),
                   icon: const Icon(Icons.add_shopping_cart_rounded, size: 16),
                   label: const Text('Urun ekle'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
               SizedBox(
-                height: 40,
+                height: 36,
                 child: OutlinedButton.icon(
                   onPressed: () => _showCreateCollectionDialog(list),
                   icon: const Icon(Icons.edit_outlined, size: 16),
                   label: const Text('Duzenle'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
               SizedBox(
-                height: 40,
+                height: 36,
                 child: OutlinedButton.icon(
                   onPressed: () => _deleteCollection(list),
-                  icon: const Icon(Icons.delete_outline, size: 18),
+                  icon: const Icon(Icons.delete_outline, size: 16),
                   label: const Text('Sil'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1070,8 +1138,8 @@ class _SellerCollectionsManagementContentState
       );
     }
 
-    return OptimizedImage(imageUrlOrPath: 
-      imageUrl,
+    return OptimizedImage(
+      imageUrlOrPath: imageUrl,
       width: 58,
       height: 58,
       fit: BoxFit.cover,
@@ -1099,7 +1167,7 @@ class _CollectionMetaChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(999),
@@ -1108,12 +1176,12 @@ class _CollectionMetaChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: const Color(0xFF64748B)),
-          const SizedBox(width: 6),
+          Icon(icon, size: 12, color: const Color(0xFF64748B)),
+          const SizedBox(width: 5),
           Text(
             label,
             style: const TextStyle(
-              fontSize: 11.5,
+              fontSize: 11,
               fontWeight: FontWeight.w700,
               color: Color(0xFF475569),
             ),
@@ -1133,7 +1201,7 @@ class _RemovableProductChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(999),
@@ -1147,19 +1215,19 @@ class _RemovableProductChip extends StatelessWidget {
               label,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 11.5,
+                fontSize: 11,
                 fontWeight: FontWeight.w700,
                 color: Color(0xFF334155),
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 5),
           InkWell(
             onTap: onRemove,
             borderRadius: BorderRadius.circular(999),
             child: const Icon(
               Icons.close_rounded,
-              size: 16,
+              size: 14,
               color: Color(0xFF64748B),
             ),
           ),

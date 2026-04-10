@@ -89,36 +89,6 @@ class _ProductDetailPageContent extends StatefulWidget {
 class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   final GlobalKey _descriptionKey = GlobalKey();
   final GlobalKey _specsKey = GlobalKey();
-  bool _didRequestReviewSummary = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_didRequestReviewSummary) return;
-    _didRequestReviewSummary = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _refreshReviewSummary();
-    });
-  }
-
-  Future<void> _refreshReviewSummary() async {
-    final appState = context.read<AppState>();
-    final viewModel = context.read<ProductDetailViewModel>();
-    final localReviews = appState.getProductReviewsFor(
-      productName: viewModel.initialProduct.name,
-      storeName: viewModel.initialProduct.store,
-    );
-    final summary = await ReviewRepository.instance.getProductReviewSummary(
-      productName: viewModel.initialProduct.name,
-      storeName: viewModel.initialProduct.store,
-      localReviews: localReviews,
-    );
-    if (!mounted) return;
-    viewModel.updateReviewSummary(
-      rating: summary.averageRating,
-      reviewCount: summary.reviewCount,
-    );
-  }
 
   void _scrollToDescription() {
     final ctx = _descriptionKey.currentContext;
@@ -242,7 +212,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
+                      color: Colors.black.withValues(alpha: 0.1),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),
@@ -502,8 +472,8 @@ class _CenterColumn extends StatelessWidget {
           border: Border.all(color: Colors.grey.shade200),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(
-                0.05,
+              color: Colors.black.withValues(
+                alpha: 0.05,
               ), // withValues -> withOpacity
               blurRadius: 10,
               offset: const Offset(0, 4),

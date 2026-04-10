@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
 class FakeStoreAPI {
@@ -13,11 +14,11 @@ class FakeStoreAPI {
         final List<dynamic> data = json.decode(response.body);
         return data.cast<Map<String, dynamic>>();
       } else {
-        print('API Hatası: ${response.statusCode}');
+        debugPrint('API Hatası: ${response.statusCode}');
         return [];
       }
     } catch (e) {
-      print('Ürünler yüklenirken hata: $e');
+      debugPrint('Ürünler yüklenirken hata: $e');
       return [];
     }
   }
@@ -31,11 +32,11 @@ class FakeStoreAPI {
         final List<dynamic> data = json.decode(response.body);
         return data.cast<String>();
       } else {
-        print('API Hatası: ${response.statusCode}');
+        debugPrint('API Hatası: ${response.statusCode}');
         return [];
       }
     } catch (e) {
-      print('Kategoriler yüklenirken hata: $e');
+      debugPrint('Kategoriler yüklenirken hata: $e');
       return [];
     }
   }
@@ -51,11 +52,11 @@ class FakeStoreAPI {
         final List<dynamic> data = json.decode(response.body);
         return data.cast<Map<String, dynamic>>();
       } else {
-        print('API Hatası: ${response.statusCode}');
+        debugPrint('API Hatası: ${response.statusCode}');
         return [];
       }
     } catch (e) {
-      print('Kategori ürünleri yüklenirken hata: $e');
+      debugPrint('Kategori ürünleri yüklenirken hata: $e');
       return [];
     }
   }

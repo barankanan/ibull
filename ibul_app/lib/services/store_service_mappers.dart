@@ -1,5 +1,21 @@
+import 'dart:convert';
+
 class StoreServiceMappers {
   const StoreServiceMappers._();
+
+  static dynamic _serializeSpecifications(Object? specifications) {
+    if (specifications == null) return null;
+    if (specifications is Map || specifications is List) {
+      return specifications;
+    }
+    final text = specifications.toString().trim();
+    if (text.isEmpty) return null;
+    try {
+      return jsonDecode(text);
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Map<String, dynamic> storeToCamelCase(Map<String, dynamic> data) {
     return {
@@ -91,6 +107,17 @@ class StoreServiceMappers {
       'main_category': data['mainCategory'],
       'sub_category': data['subCategory'],
       'price': data['price'],
+      'pricing_type': data['pricingType'],
+      'portion_price': data['portionPrice'],
+      'price_per_kg': data['pricePerKg'],
+      'service_control_type': data['serviceControlType'],
+      'min_portion': data['minPortion'],
+      'max_portion': data['maxPortion'],
+      'portion_step': data['portionStep'],
+      'default_weight_grams': data['defaultWeightGrams'],
+      'min_weight_grams': data['minWeightGrams'],
+      'weight_step_grams': data['weightStepGrams'],
+      'max_weight_grams': data['maxWeightGrams'],
       'discount_price': data['discountPrice'],
       'stock': data['stock'],
       'sku': data['sku'],
@@ -98,7 +125,8 @@ class StoreServiceMappers {
       'image_url': data['imageUrl'],
       'image_urls': data['imageUrls'],
       'description': data['description'],
-      'specifications': data['specifications'],
+      'specifications': _serializeSpecifications(data['specifications']),
+      'preparation_time': data['preparationTime'],
       'created_at': DateTime.now().toIso8601String(),
       'attributes': data['attributes'] ?? [],
       'video_url': data['videoPublicUrl'] ?? data['videoUrl'],
@@ -112,7 +140,7 @@ class StoreServiceMappers {
       'video_status': data['videoStatus'],
       'variants': data['variants'],
       'accessories': data['accessories'],
-      'additional_info': data['additional_info'],
+      'additional_info': data['additionalInfoItems'] ?? data['additional_info'],
       'faq': data['faq'],
       'station_id': data['stationId'],
       'printer_routing_enabled': data['printerRoutingEnabled'] ?? true,

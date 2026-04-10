@@ -137,7 +137,7 @@ class _AdvancedFilterDrawerState extends State<AdvancedFilterDrawer> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           decoration: BoxDecoration(
-                            color: isSelected ? AppColors.primary.withOpacity(0.1) : Colors.white,
+                            color: isSelected ? AppColors.primary.withValues(alpha: 0.1) : Colors.white,
                             border: Border.all(
                               color: isSelected ? AppColors.primary : Colors.grey.shade300,
                             ),
@@ -194,7 +194,7 @@ class _AdvancedFilterDrawerState extends State<AdvancedFilterDrawer> {
                               ),
                               boxShadow: isSelected ? [
                                 BoxShadow(
-                                  color: AppColors.primary.withOpacity(0.3),
+                                  color: AppColors.primary.withValues(alpha: 0.3),
                                   blurRadius: 4,
                                   spreadRadius: 2,
                                 )

@@ -363,7 +363,7 @@ class _CouponsPageState extends State<CouponsPage>
         border: isWeb ? Border.all(color: Colors.grey.shade200) : null,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -511,10 +511,10 @@ class _CouponsPageState extends State<CouponsPage>
                                     vertical: 4,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: AppColors.primary.withOpacity(0.1),
+                                    color: AppColors.primary.withValues(alpha: 0.1),
                                     borderRadius: BorderRadius.circular(20),
                                     border: Border.all(
-                                      color: AppColors.primary.withOpacity(0.5),
+                                      color: AppColors.primary.withValues(alpha: 0.5),
                                     ),
                                   ),
                                   child: Row(

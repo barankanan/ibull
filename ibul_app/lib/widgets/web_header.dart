@@ -7,7 +7,6 @@ import '../screens/notifications_page.dart';
 import '../core/route_observer.dart';
 import 'web_header_menu_items.dart';
 import 'search_overlay.dart';
-import 'advanced_filter_drawer.dart';
 import '../screens/map_page.dart';
 import '../screens/product_detail_page.dart';
 import '../screens/camera_page.dart';
@@ -69,6 +68,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
   }
 
   void _onFocusChange() {
+    setState(() {});
     _refreshOverlayEntry();
     if (_searchFocusNode.hasFocus) {
       _showOverlay();
@@ -218,7 +218,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
             color: Colors.white,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 10,
                 offset: const Offset(0, 2),
               ),
@@ -274,7 +274,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
               width: 32,
               height: 32,
               fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => Container(
+              errorBuilder: (_, _, _) => Container(
                 width: 32,
                 height: 32,
                 decoration: BoxDecoration(
@@ -305,62 +305,6 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
     );
   }
 
-  void _showSearchOverlay() {
-    showDialog(
-      context: context,
-      barrierColor: Colors.transparent, // Handled by overlay itself
-      builder: (context) => SearchOverlay(
-        onClose: () => Navigator.pop(context),
-        onSearch: (query) {
-          Navigator.pop(context);
-          widget.onSearch(query);
-        },
-      ),
-    );
-  }
-
-  void _showFilterDrawer() {
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) {
-        return Align(
-          alignment: Alignment.topRight,
-          child: Material(
-            color: Colors.transparent,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 80, right: 40),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: SizedBox(
-                  width: 350,
-                  height: 480,
-                  child: AdvancedFilterDrawer(
-                    onClose: () => Navigator.pop(context),
-                    onApply: () {
-                      Navigator.pop(context);
-                    },
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Widget _buildSearchBar() {
     return Row(
       children: [
@@ -379,7 +323,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
               border: Border.all(color: Colors.grey.shade200),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 4,
                   offset: const Offset(0, 2),
                 ),
@@ -401,8 +345,13 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
               height: 48,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _searchFocusNode.hasFocus
+                      ? AppColors.primary
+                      : AppColors.primary.withValues(alpha: 0.35),
+                  width: 1.0,
+                ),
               ),
               child: Row(
                 children: [
@@ -436,15 +385,12 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                         MaterialPageRoute(builder: (_) => const CameraPage()),
                       );
                     },
-                    borderRadius: BorderRadius.circular(4),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 8,
-                      ),
-                      child: const Icon(
+                    borderRadius: BorderRadius.circular(8),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      child: Icon(
                         Icons.photo_camera_outlined,
-                        color: Colors.black54,
+                        color: AppColors.primary,
                         size: 20,
                       ),
                     ),
@@ -627,7 +573,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                       gradient: LinearGradient(
                         begin: Alignment.centerRight,
                         end: Alignment.centerLeft,
-                        colors: [Colors.white, Colors.white.withOpacity(0.0)],
+                        colors: [Colors.white, Colors.white.withValues(alpha: 0.0)],
                         stops: const [0.5, 1.0],
                       ),
                     ),
@@ -640,7 +586,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
+                            color: Colors.black.withValues(alpha: 0.1),
                             blurRadius: 4,
                             offset: const Offset(0, 2),
                           ),
@@ -695,7 +641,7 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               blurRadius: 18,
               offset: const Offset(0, 8),
             ),
@@ -770,7 +716,7 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
             boxShadow: isActive
                 ? [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
+                      color: Colors.black.withValues(alpha: 0.04),
                       blurRadius: 6,
                       offset: const Offset(0, 2),
                     ),
@@ -888,7 +834,7 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
           width: 32,
           height: 32,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.06),
+            color: AppColors.primary.withValues(alpha: 0.06),
             shape: BoxShape.circle,
           ),
           child: const Icon(
@@ -934,7 +880,7 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.08),
+                    color: AppColors.primary.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Text(
@@ -966,7 +912,7 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
           width: 32,
           height: 32,
           decoration: BoxDecoration(
-            color: Colors.orange.withOpacity(0.08),
+            color: Colors.orange.withValues(alpha: 0.08),
             shape: BoxShape.circle,
           ),
           child: const Icon(

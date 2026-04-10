@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../../../models/seller_product.dart';
-import '../../../services/store_service.dart';
 
 class ProductDetailDialog extends StatefulWidget {
   final SellerProduct product;
@@ -21,7 +20,6 @@ class ProductDetailDialog extends StatefulWidget {
 
 class _ProductDetailDialogState extends State<ProductDetailDialog> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final StoreService _storeService = StoreService();
   bool _isLoading = false;
 
   @override
@@ -275,7 +273,7 @@ class _ProductDetailDialogState extends State<ProductDetailDialog> with SingleTi
             child: OptimizedImage(imageUrlOrPath: 
               allImages[index],
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.error)),
+              errorBuilder: (_, _, _) => const Center(child: Icon(Icons.error)),
             ),
           ),
         );

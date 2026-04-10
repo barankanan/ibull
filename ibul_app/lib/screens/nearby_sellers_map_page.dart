@@ -54,8 +54,10 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
         try {
           // Force get position with timeout and LOWER accuracy for Web
           position = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.low,
-            timeLimit: const Duration(seconds: 20),
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.low,
+              timeLimit: Duration(seconds: 20),
+            ),
           );
         } catch (e) {
           debugPrint('Primary location fetch failed: $e');
@@ -90,7 +92,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
           );
         } else if (mounted) {
           // Show explicit error message in console for debugging
-          print('Konum Hatası: $e');
+          debugPrint('Konum Hatası: $e');
         }
 
         if (mounted) {
@@ -148,8 +150,10 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
 
         try {
           final position = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.low,
-            timeLimit: const Duration(seconds: 3),
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.low,
+              timeLimit: Duration(seconds: 3),
+            ),
           );
 
           if (mounted) {
@@ -357,7 +361,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
+                              color: Colors.black.withValues(alpha: 0.2),
                               blurRadius: 8,
                               offset: const Offset(0, 2),
                             ),
@@ -423,7 +427,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                             height: 60,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: Colors.blue.withOpacity(0.2),
+                              color: Colors.blue.withValues(alpha: 0.2),
                             ),
                           ),
                           Container(
@@ -462,7 +466,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                 color: Colors.white,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
+                    color: Colors.black.withValues(alpha: 0.1),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -508,10 +512,10 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.05),
+                        color: AppColors.primary.withValues(alpha: 0.05),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: AppColors.primary.withOpacity(0.2),
+                          color: AppColors.primary.withValues(alpha: 0.2),
                         ),
                       ),
                       child: Row(
@@ -569,7 +573,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                                         vertical: 4,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: Colors.green.withOpacity(0.1),
+                                        color: Colors.green.withValues(alpha: 0.1),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: Text(
@@ -634,7 +638,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
+                    color: Colors.black.withValues(alpha: 0.1),
                     blurRadius: 10,
                     offset: const Offset(0, -4),
                   ),
@@ -688,7 +692,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                                       (isSelected
                                               ? AppColors.primary
                                               : Colors.black)
-                                          .withOpacity(0.1),
+                                          .withValues(alpha: 0.1),
                                   blurRadius: 8,
                                   offset: const Offset(0, 2),
                                 ),
@@ -703,9 +707,7 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
                                       width: 50,
                                       height: 50,
                                       decoration: BoxDecoration(
-                                        color: AppColors.primary.withOpacity(
-                                          0.1,
-                                        ),
+                                        color: AppColors.primary.withValues(alpha: 0.1,),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: Center(
