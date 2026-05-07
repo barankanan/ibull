@@ -1,7 +1,13 @@
 import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart'
-    show debugPrint, kDebugMode, kIsWeb, listEquals;
+    show
+        TargetPlatform,
+        debugPrint,
+        defaultTargetPlatform,
+        kDebugMode,
+        kIsWeb,
+        listEquals;
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +20,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:video_player/video_player.dart';
@@ -29,6 +36,10 @@ import '../services/support_service.dart';
 import '../services/campaign_service.dart';
 import '../services/order_service.dart';
 import '../services/order_print_job_service.dart';
+import '../services/desktop_print_orchestrator.dart';
+import '../services/desktop_print_hub.dart';
+import '../services/print_station_service.dart';
+import '../services/printer_event_log_service.dart';
 import '../services/product_question_service.dart';
 import '../services/seller_dashboard_service.dart';
 import '../services/seller_wallet_service.dart';
@@ -39,7 +50,9 @@ import 'seller/kitchen_display_screen.dart';
 import 'seller/table_history_screen.dart';
 import 'seller/waiter_performance_screen.dart';
 import '../models/restaurant_ops_models.dart';
+import '../models/desktop_printer_setup_models.dart';
 import '../models/garson_operation_rules.dart';
+import '../models/print_job_model.dart';
 import '../widgets/garson/transfer_table_modal.dart';
 import '../widgets/garson/payment_bottom_sheet.dart';
 import '../widgets/garson/undo_action_controller.dart';
@@ -54,7 +67,10 @@ import '../widgets/province_district_picker_dialog.dart';
 import '../widgets/restaurant_order/mixed_service_dialog.dart';
 import '../widgets/restaurant_order/mixed_service_template_editor_dialog.dart';
 import '../widgets/restaurant_order/product_quantity_stepper.dart';
+import '../widgets/waiter/product_search_bar.dart';
+import '../widgets/waiter/swipeable_product_card.dart';
 import '../utils/browser_file_download.dart';
+import '../utils/table_labels.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_overview_widgets.dart';
@@ -64,6 +80,7 @@ import '../features/seller/panel/widgets/seller_panel_common_widgets.dart';
 import '../features/seller/panel/widgets/seller_panel_detail_widgets.dart';
 import '../features/seller/panel/widgets/seller_panel_shell.dart';
 import '../ads/presentation/pages/seller_ads_manager_content.dart';
+import '../features/seller/finance/screens/finance_shell.dart';
 import 'seller/product_management/bulk_product_price_stock_update_button.dart';
 import 'seller/product_management/bulk_product_upload_button.dart';
 import 'seller/product_management/product_quick_edit_button.dart';
@@ -91,6 +108,57 @@ enum _ProductHealthFilter {
 enum _TemplateCreationFlow { menu, service }
 
 enum SellerPanelEntryRole { seller, waiter }
+
+class _KitchenDispatchFeedback {
+  const _KitchenDispatchFeedback({
+    this.error,
+    this.notice,
+    this.queuedOnly = false,
+    this.progressed = false,
+    this.orderId,
+    this.printJobIds = const <String>[],
+  });
+
+  final String? error;
+  final String? notice;
+  final bool queuedOnly;
+  final bool progressed;
+  final String? orderId;
+  final List<String> printJobIds;
+
+  bool get hasError => error != null && error!.trim().isNotEmpty;
+  bool get hasNotice => notice != null && notice!.trim().isNotEmpty;
+  bool get hasTrackedJobs => printJobIds.isNotEmpty;
+
+  static const none = _KitchenDispatchFeedback();
+}
+
+enum _GarsonSubmitFeedbackTone { loading, success, warning }
+
+String _normalizePrinterWorkflowMessageValue(
+  Object error, {
+  required String fallback,
+}) {
+  final rawMessage = error.toString().replaceFirst('Exception: ', '').trim();
+  if (rawMessage.isEmpty) {
+    return fallback;
+  }
+  final normalized = rawMessage.toLowerCase();
+  if (normalized.contains('macos yazıcıyı kilitledi')) {
+    return 'macOS yazıcıyı kilitledi. Sistem Ayarları > Yazıcılar içinde '
+        'POS58/CUPS kaydini kaldirin, sonra gelen izin penceresinden USB '
+        'kilidini acin.';
+  }
+  if (normalized.contains('aktif yazdirma yetkisi yok') ||
+      normalized.contains('bu restoranda aktif') ||
+      normalized.contains('bu restoran için işlem yetkiniz yok') ||
+      normalized.contains('permission denied') ||
+      normalized.contains('row-level security') ||
+      normalized.contains('42501')) {
+    return rawMessage;
+  }
+  return rawMessage;
+}
 
 class _SellerDashboardSnapshot {
   const _SellerDashboardSnapshot({
@@ -146,9 +214,12 @@ class SellerPanelPage extends StatefulWidget {
   State<SellerPanelPage> createState() => _SellerPanelPageState();
 }
 
-class _SellerPanelPageState extends State<SellerPanelPage> {
+class _SellerPanelPageState extends State<SellerPanelPage>
+    with WidgetsBindingObserver {
   static const String _sellerPanelLastModulePrefKey =
       'seller_panel.last_module';
+  static const String _sidebarCollapsedPrefKey =
+      'seller_panel.sidebar_collapsed';
   static const List<String> _cancelAppealWorkflowStatuses = <String>[
     'Yeni',
     'İnceleniyor',
@@ -163,6 +234,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     'Diğer',
   ];
   SellerModule _selectedModule = SellerModule.dashboard;
+  bool _sidebarCollapsed = false;
   final TextEditingController _feedbackSearchController =
       TextEditingController();
   String _selectedFeedbackTab = 'Tum';
@@ -188,6 +260,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       <String, ProductQuickEditDraft>{};
   final Set<String> _deletingProductIds = <String>{};
   StreamSubscription<List<SellerProduct>>? _productsSubscription;
+  Timer? _productsRealtimeRetryTimer;
   List<StoreCampaign> _campaigns = [];
   List<SubAdmin> _subAdmins = [];
   StreamSubscription<List<SubAdmin>>? _subAdminsSubscription;
@@ -197,6 +270,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   final Map<int, DateTime> _webGarsonClosedTableAt = <int, DateTime>{};
   // null = tümü, 'occupied' = dolu, 'preparing' = hazırlanıyor, 'payment_pending' = ödeme bekliyor
   String? _garsonStatusFilter;
+  String _garsonAreaFilterKey = 'all';
   final Map<int, List<Map<String, dynamic>>> _mobileGarsonDraftItemsByTable =
       <int, List<Map<String, dynamic>>>{};
   final Map<int, DateTime> _mobileGarsonDraftUpdatedAtByTable =
@@ -205,6 +279,12 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       <int, DateTime>{};
   final Map<int, List<Map<String, dynamic>>>
   _mobileGarsonOptimisticItemsByTable = <int, List<Map<String, dynamic>>>{};
+  OrderPrintJobService? _sellerPrintJobServiceInstance;
+  final PrintStationService _printStationService = PrintStationService();
+  final PrinterEventLogService _printerEventLogService =
+      PrinterEventLogService();
+  final DesktopPrintOrchestrator _printOrchestrator =
+      DesktopPrintOrchestrator();
   bool? _isLocalPrintAvailable;
   String _localPrintStatusLabel = 'Yazıcı kontrol ediliyor';
   String _localPrintStatusMessage = 'Yazıcı durumu kontrol ediliyor.';
@@ -214,10 +294,15 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       <String, String>{};
   final Map<String, String> _localPrintPanelRenderSignatures =
       <String, String>{};
+  Timer? _localPrintPollTimer;
+  DateTime? _lastLocalPrintSuccessAt;
+  bool _isRecoveringPendingPrintJobs = false;
   List<Map<String, dynamic>> _storeTables = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _storeTableAreas = <Map<String, dynamic>>[];
   bool _isLoadingStoreTables = false;
   bool _isMutatingStoreTables = false;
   Future<void>? _storeTablesLoadFuture;
+  String? _desktopPrintHubRestaurantId;
   List<Map<String, dynamic>> _sellerOrders = [];
   bool _isLoadingSellerOrders = false;
   int _sellerOrdersLoadRequestId = 0;
@@ -409,6 +494,20 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     _dashboardSnapshotCache = null;
   }
 
+  OrderPrintJobService get _sellerPrintJobService =>
+      _sellerPrintJobServiceInstance ??= OrderPrintJobService();
+
+  bool get _supportsDirectLocalPrintBridge =>
+      kIsWeb ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.linux;
+
+  bool _shouldMonitorLocalPrintForModule(SellerModule module) {
+    if (!_supportsDirectLocalPrintBridge) return false;
+    return module == SellerModule.garson;
+  }
+
   void _debugLogSellerBootstrap({
     required String branch,
     String? requestUrl,
@@ -437,6 +536,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (_isWaiterEntry) {
       _selectedModule = SellerModule.garson;
     }
@@ -449,6 +549,8 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     );
     _applySellerSeo();
     unawaited(_restoreLastSelectedModule());
+    unawaited(_restoreGarsonAreaFilter());
+    unawaited(_restoreSidebarCollapsed());
     _logSellerPanel(
       'Init',
       'branch=store_profile trigger=initState requestUrl=${_sellerPanelRestRequestUrl('stores', query: <String, String>{'select': '*', 'seller_id': 'eq.${_authService.currentUser?.id.trim().isNotEmpty == true ? _authService.currentUser!.id.trim() : '<missing>'}'})}',
@@ -461,6 +563,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
         'phase=postFrame activeTab=${_selectedModule.name} '
             'action=ensureModuleDataLoaded',
       );
+      unawaited(_ensureDesktopPrintHubStarted(reason: 'post_frame_init'));
       unawaited(_ensureModuleDataLoaded(_selectedModule));
       _scheduleLocalPrintStatusRefreshIfNeeded(
         module: _selectedModule,
@@ -487,6 +590,109 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       'action=restoreLastSelectedModule restored=${restored.name} applied=false',
     );
     await prefs.remove(_sellerPanelLastModulePrefKey);
+  }
+
+  static const String _garsonLastAreaPrefKey = 'seller_panel.garson.last_area';
+
+  Future<void> _restoreGarsonAreaFilter() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final restored = (prefs.getString(_garsonLastAreaPrefKey) ?? '').trim();
+      if (!mounted) return;
+      if (restored.isNotEmpty) {
+        setState(() => _garsonAreaFilterKey = restored);
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  Future<void> _persistGarsonAreaFilter(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_garsonLastAreaPrefKey, key);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  List<({String key, String label})> _garsonAreaOptions() {
+    final options = <({String key, String label})>[
+      (key: 'all', label: 'Tüm Alanlar'),
+    ];
+
+    if (_storeTableAreas.isNotEmpty) {
+      for (final area in _storeTableAreas) {
+        final id = area['id']?.toString().trim() ?? '';
+        final name = area['name']?.toString().trim() ?? '';
+        if (id.isEmpty || name.isEmpty) continue;
+        options.add((key: 'id:$id', label: name));
+      }
+      return options;
+    }
+
+    // Fallback: derive distinct area names from tables.
+    final seen = <String>{};
+    for (final t in _storeTables) {
+      final name = (t['area_name']?.toString().trim() ?? '');
+      if (name.isEmpty) continue;
+      final norm = name.toLowerCase();
+      if (seen.add(norm)) {
+        options.add((key: 'name:$name', label: name));
+      }
+    }
+    return options;
+  }
+
+  Map<String, dynamic>? _storeTableRowByNumber(int tableNumber) {
+    if (tableNumber <= 0) return null;
+    for (final row in _storeTables) {
+      if (_tableNumberFromRow(row) == tableNumber) return row;
+    }
+    return null;
+  }
+
+  bool _matchesGarsonAreaFilter(int tableNumber) {
+    return matchesAreaFilter(
+      filterKey: _garsonAreaFilterKey,
+      tableRow: _storeTableRowByNumber(tableNumber),
+    );
+  }
+
+  Future<void> _restoreSidebarCollapsed() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getBool(_sidebarCollapsedPrefKey);
+    if (stored != null && mounted) {
+      setState(() => _sidebarCollapsed = stored);
+    }
+  }
+
+  Future<void> _toggleSidebar() async {
+    setState(() => _sidebarCollapsed = !_sidebarCollapsed);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_sidebarCollapsedPrefKey, _sidebarCollapsed);
+  }
+
+  Future<void> _ensureDesktopPrintHubStarted({required String reason}) async {
+    if (!_supportsDirectLocalPrintBridge || !mounted) return;
+    final resolvedRestaurantId = _resolveGarsonSellerId().trim();
+    if (resolvedRestaurantId.isEmpty) {
+      _logSellerPanel(
+        'PrintHub',
+        'action=start skipped=true reason=$reason restaurantId=-',
+      );
+      return;
+    }
+    if (_desktopPrintHubRestaurantId == resolvedRestaurantId) {
+      return;
+    }
+    final hub = context.read<DesktopPrintHub>();
+    await hub.start(resolvedRestaurantId);
+    _desktopPrintHubRestaurantId = resolvedRestaurantId;
+    _logSellerPanel(
+      'PrintHub',
+      'action=start skipped=false reason=$reason restaurantId=$resolvedRestaurantId',
+    );
   }
 
   Future<void> _persistSelectedModule(SellerModule module) async {
@@ -951,9 +1157,9 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
   void _showRealtimeFallbackWarning(String message) {
     if (!mounted || _hasShownRealtimeTimeoutWarning) return;
     _hasShownRealtimeTimeoutWarning = true;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    // Debug-only — do not show a SnackBar to the user for infrastructure
+    // hiccups; the fallback snapshot query is transparent to the user.
+    debugPrint('[RealtimeFallback] $message');
   }
 
   void _invalidateOrdersDerivedState() {
@@ -1732,6 +1938,7 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           'packagingUploadTimer=${_packagingVideoUploadProgressTimer != null}',
     );
     _productsSubscription?.cancel();
+    _productsRealtimeRetryTimer?.cancel();
     _subAdminsSubscription?.cancel();
     _supportTicketsSubscription?.cancel();
     _cancelAppealNotificationsSubscription?.cancel();
@@ -1761,7 +1968,25 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     _feedbackSearchController.dispose();
     _sellerDetailTrackingController.dispose();
     _packagingVideoUploadProgressTimer?.cancel();
+    _localPrintPollTimer?.cancel();
+    _localPrintPollTimer = null;
+    if (_supportsDirectLocalPrintBridge) {
+      unawaited(context.read<DesktopPrintHub>().stop());
+    }
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed &&
+        _shouldMonitorLocalPrintForModule(_selectedModule)) {
+      debugPrint(
+        '[LocalPrint][Lifecycle] appResumed — re-checking print service status',
+      );
+      unawaited(_refreshLocalPrintStatus(reason: 'app_lifecycle_resumed'));
+    }
   }
 
   Future<void> _loadStoreProfile() async {
@@ -2063,6 +2288,17 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
     return int.tryParse(raw?.toString() ?? '') ?? 0;
   }
 
+  String _tableDisplayLabelFromRow(Map<String, dynamic> row) {
+    return resolveTableCardTitle(
+      tableRow: row,
+      tableNumber: _tableNumberFromRow(row),
+    );
+  }
+
+  String _areaNameFromRow(Map<String, dynamic> row) {
+    return row['area_name']?.toString().trim() ?? '';
+  }
+
   Future<void> _loadStoreTables({bool silent = false}) async {
     if (!_isFoodStoreCategory(_storeCategory)) {
       if (mounted && _storeTables.isNotEmpty) {
@@ -2103,13 +2339,28 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
           note: 'silent=$silent',
         );
         final tables = await _storeService.getStoreTables(sellerId: sellerId);
+        // Best-effort preload of dining areas (Salon/Bahçe/Teras...). This must
+        // not break older deployments where the areas table doesn't exist.
+        List<Map<String, dynamic>> areas = const <Map<String, dynamic>>[];
+        try {
+          areas = await _storeService.getTableAreas(sellerId: sellerId);
+        } catch (_) {
+          areas = const <Map<String, dynamic>>[];
+        }
         if (!mounted) return;
         tables.sort(
           (a, b) => _tableNumberFromRow(a).compareTo(_tableNumberFromRow(b)),
         );
         setState(() {
           _storeTables = tables;
+          _storeTableAreas = areas;
         });
+        debugPrint(
+          '[GarsonTables] count=${tables.length} '
+          'areas=${areas.length} '
+          'sample=${tables.take(5).map((t) => '{table=${t['table_number']} label=${t['display_label'] ?? ''} area=${t['area_name'] ?? ''} areaId=${t['area_id'] ?? ''} areaNo=${t['area_table_number'] ?? ''}}').join(' ')}',
+        );
+        unawaited(_ensureDesktopPrintHubStarted(reason: 'store_tables_loaded'));
         _debugLogSellerBootstrap(
           branch: 'store_tables:success',
           requestUrl: requestUrl,
@@ -2242,6 +2493,127 @@ class _SellerPanelPageState extends State<SellerPanelPage> {
       if (mounted) {
         setState(() => _isMutatingStoreTables = false);
       }
+    }
+  }
+
+  Future<void> _addTableArea() async {
+    if (_isMutatingStoreTables) return;
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Alan Ekle'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: 'Örn: Salon, Bahçe, Teras',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('İptal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Kaydet'),
+          ),
+        ],
+      ),
+    );
+    final normalized = name?.trim() ?? '';
+    if (normalized.isEmpty) return;
+    setState(() => _isMutatingStoreTables = true);
+    try {
+      await _storeService.addTableArea(name: normalized);
+      await _loadStoreTables(silent: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Alan eklendi: $normalized')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isMutatingStoreTables = false);
+    }
+  }
+
+  int _nextAreaTableNumber(String areaId, String areaName) {
+    return nextAreaTableNumberSuggestion(_storeTables, areaId);
+  }
+
+  Future<void> _addStoreTableForArea(Map<String, dynamic> area) async {
+    if (_isMutatingStoreTables) return;
+    final areaId = area['id']?.toString().trim() ?? '';
+    final areaName = area['name']?.toString().trim() ?? '';
+    if (areaId.isEmpty || areaName.isEmpty) return;
+
+    final suggestedNo = _nextAreaTableNumber(areaId, areaName);
+    final controller = TextEditingController(text: '$areaName $suggestedNo');
+    final tableName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Masa Ekle'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Alan: $areaName'),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'Masa adı',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('İptal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Ekle'),
+          ),
+        ],
+      ),
+    );
+    final normalized = tableName?.trim() ?? '';
+    if (normalized.isEmpty) return;
+
+    setState(() => _isMutatingStoreTables = true);
+    try {
+      await _storeService.addStoreTable(
+        tableNumber: null, // keep global numbering stable; service will pick next
+        preferMissingNumber: true,
+        areaId: areaId,
+        areaName: areaName,
+        areaTableNumber: suggestedNo,
+        tableName: normalized,
+      );
+      await _loadStoreTables(silent: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Masa eklendi: $normalized')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isMutatingStoreTables = false);
     }
   }
 
@@ -2727,6 +3099,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       'branch=products:subscribe requestUrl=$requestUrl',
     );
     _productsSubscription?.cancel();
+    _productsRealtimeRetryTimer?.cancel();
     unawaited(_loadProductsSnapshot());
     _productsSubscription = _storeService.getSellerProducts().listen(
       (products) {
@@ -2752,6 +3125,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           );
         }
         unawaited(_loadProductsSnapshot());
+        // Auto-retry realtime subscription after 10 seconds
+        _productsRealtimeRetryTimer?.cancel();
+        _productsRealtimeRetryTimer = Timer(const Duration(seconds: 10), () {
+          if (!mounted) return;
+          debugPrint('[RealtimeRetry] retrying products stream');
+          _loadProducts();
+        });
       },
     );
   }
@@ -3688,12 +4068,89 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  Widget? _buildWebPrintNoticeBanner() {
+    if (!kIsWeb) return null;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.download_for_offline_outlined,
+                size: 18,
+                color: Color(0xFFD97706),
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Profesyonel yazdırma için Satıcı Uygulamasını indirin.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF92400E),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Tarayıcı baskısı yerine Windows veya MacBook için Seller Desktop App kullanın. Adisyon ve mutfak fişleri uygulama içindeki yerel yazdırma servisiyle daha kararlı çalışır.',
+            style: TextStyle(
+              fontSize: 12.5,
+              color: Color(0xFF92400E),
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: () => BrowserFileDownload.openExternalUrl(
+                  AppRuntimeConfig.sellerDesktopWindowsDownloadUrl,
+                ),
+                icon: const Icon(Icons.desktop_windows_outlined),
+                label: const Text('Windows Uygulamasını İndir'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF92400E),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => BrowserFileDownload.openExternalUrl(
+                  AppRuntimeConfig.sellerDesktopMacosDownloadUrl,
+                ),
+                icon: const Icon(Icons.laptop_mac_outlined),
+                label: const Text('MacBook Uygulamasını İndir'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF92400E),
+                  side: const BorderSide(color: Color(0xFFF59E0B)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final buildId = ++_sellerPanelBuildCount;
     final buildWatch = Stopwatch()..start();
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 800;
+    final isTablet = screenWidth >= 800 && screenWidth < 1200;
     final storeLabel = _storeNameController.text.trim().isEmpty
         ? 'Mağazam'
         : _storeNameController.text.trim();
@@ -3702,15 +4159,26 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ? 'Satıcı ID: -'
         : 'Satıcı ID: ${sellerId.substring(0, sellerId.length < 8 ? sellerId.length : 8)}';
 
+    final String shellBranch;
+    if (isMobile) {
+      shellBranch = 'mobile_shell';
+    } else if (isTablet) {
+      shellBranch = 'tablet_shell';
+    } else {
+      shellBranch = 'desktop_shell';
+    }
+
     _logSellerPanel(
       'Build',
       'phase=start buildId=$buildId '
-          'branch=${isMobile ? 'mobile_shell' : 'desktop_shell'} '
+          'branch=$shellBranch '
           'orders=${_sellerOrders.length} '
           'products=${_products.length} '
           'isLoading=$_isLoading '
           'storeProfileLoaded=$_hasLoadedStoreProfile',
     );
+
+    final webPrintNoticeBanner = _buildWebPrintNoticeBanner();
 
     late final Widget result;
     if (isMobile) {
@@ -3728,6 +4196,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ),
         content: _buildMobileContentArea(),
         onRefresh: () => unawaited(_refreshDashboardData()),
+        contentBanner: webPrintNoticeBanner,
+      );
+    } else if (isTablet) {
+      result = SellerPanelTabletShell(
+        title: _moduleLabel(_selectedModule),
+        storeLabel: storeLabel,
+        sellerIdLabel: sellerIdLabel,
+        drawerItems: _buildPanelMenuEntries(
+          beforeSelect: () => Navigator.of(context).maybePop(),
+        ),
+        onLogoutTap: _exitSellerPanel,
+        content: _buildContent(),
+        onNotificationsTap: () {},
+        contentBanner: webPrintNoticeBanner,
       );
     } else {
       result = SellerPanelShell(
@@ -3736,12 +4218,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           storeLabel: storeLabel,
           sellerIdLabel: sellerIdLabel,
           onNotificationsTap: () {},
+          sidebarCollapsed: _sidebarCollapsed,
+          onToggleSidebar: _toggleSidebar,
         ),
         sidebar: SellerPanelSidebar(
           items: _buildPanelMenuEntries(),
           onLogoutTap: _exitSellerPanel,
+          collapsed: _sidebarCollapsed,
         ),
         content: _buildContent(),
+        contentBanner: webPrintNoticeBanner,
       );
     }
 
@@ -3749,7 +4235,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       'Build',
       'phase=end buildId=$buildId '
           'durationMs=${buildWatch.elapsedMilliseconds} '
-          'branch=${isMobile ? 'mobile_shell' : 'desktop_shell'}',
+          'branch=$shellBranch',
     );
     return result;
   }
@@ -6344,7 +6830,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildMobileGarsonModule() {
-    final sellerId = _authService.currentUser?.id ?? '';
+    final sellerId = _resolveGarsonSellerId();
     return ListView(
       padding: const EdgeInsets.only(bottom: 8),
       physics: const BouncingScrollPhysics(),
@@ -6358,8 +6844,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ),
         const SizedBox(height: 10),
         if (kIsWeb) ...[
-          _buildLocalPrintServicePanel(uiBranch: 'mobile_garson_panel'),
-          const SizedBox(height: 10),
+          _buildPrinterServiceCompactBar(uiBranch: 'mobile_garson_panel'),
+          const SizedBox(height: 8),
         ],
         if (sellerId.isEmpty)
           _mobileSurfaceCard(
@@ -6448,7 +6934,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             .where((entry) {
                               final at = entry.value;
                               return now.difference(at) <=
-                                  const Duration(seconds: 25);
+                                  const Duration(seconds: 45);
                             })
                             .map((entry) => entry.key)
                             .toSet();
@@ -6456,6 +6942,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     final tableNumbers = _sortedStoreTableNumbers().isNotEmpty
                         ? _sortedStoreTableNumbers()
                         : List<int>.generate(totalTables, (i) => i + 1);
+                    final filteredTableNumbers =
+                        tableNumbers.where(_matchesGarsonAreaFilter).toList(growable: false);
                     final activeTableNumbers = <int>{};
                     for (final entry in ordersByTable.entries) {
                       final hasActiveOrder = entry.value.any(
@@ -6500,6 +6988,54 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       children: [
                         Padding(
                           padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          child: _mobileSurfaceCard(
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.map_outlined,
+                                  size: 18,
+                                  color: Color(0xFF0F172A),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Alan Seç',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<String>(
+                                      isExpanded: true,
+                                      value: _garsonAreaOptions()
+                                              .any((o) => o.key == _garsonAreaFilterKey)
+                                          ? _garsonAreaFilterKey
+                                          : 'all',
+                                      items: _garsonAreaOptions()
+                                          .map(
+                                            (o) => DropdownMenuItem<String>(
+                                              value: o.key,
+                                              child: Text(
+                                                o.label,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          )
+                                          .toList(growable: false),
+                                      onChanged: (value) {
+                                        final next = (value ?? 'all').trim();
+                                        if (next.isEmpty) return;
+                                        setState(() => _garsonAreaFilterKey = next);
+                                        unawaited(_persistGarsonAreaFilter(next));
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                           child: Wrap(
                             spacing: 8,
                             runSpacing: 8,
@@ -6532,9 +7068,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   ),
                                 ),
                               ),
-                          itemCount: tableNumbers.length,
+                          itemCount: filteredTableNumbers.length,
                           itemBuilder: (context, index) {
-                            final tableNumber = tableNumbers[index];
+                            final tableNumber = filteredTableNumbers[index];
                             final tableOrders =
                                 ordersByTable[tableNumber] ??
                                 const <Map<String, dynamic>>[];
@@ -6610,7 +7146,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       .where((entry) {
                         final at = entry.value;
                         return now.difference(at) <=
-                            const Duration(seconds: 25);
+                            const Duration(seconds: 45);
                       })
                       .map((entry) => entry.key)
                       .toSet();
@@ -6646,9 +7182,66 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   .toSet()
                   .length;
 
+              // Use actual table numbers (e.g. [1, 3, 5, 10]) instead of
+              // assuming sequential 1..N, so cards map to the correct orders.
+              final tableNumbersForGrid = _sortedStoreTableNumbers().isNotEmpty
+                  ? _sortedStoreTableNumbers()
+                  : List<int>.generate(totalTables, (i) => i + 1);
+              final filteredTableNumbersForGrid = tableNumbersForGrid
+                  .where(_matchesGarsonAreaFilter)
+                  .toList(growable: false);
+
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: _mobileSurfaceCard(
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.map_outlined,
+                            size: 18,
+                            color: Color(0xFF0F172A),
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Alan Seç',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                value: _garsonAreaOptions()
+                                        .any((o) => o.key == _garsonAreaFilterKey)
+                                    ? _garsonAreaFilterKey
+                                    : 'all',
+                                items: _garsonAreaOptions()
+                                    .map(
+                                      (o) => DropdownMenuItem<String>(
+                                        value: o.key,
+                                        child: Text(
+                                          o.label,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(growable: false),
+                                onChanged: (value) {
+                                  final next = (value ?? 'all').trim();
+                                  if (next.isEmpty) return;
+                                  setState(() => _garsonAreaFilterKey = next);
+                                  unawaited(_persistGarsonAreaFilter(next));
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   _mobileSurfaceCard(
                     child: Wrap(
                       spacing: 8,
@@ -6678,7 +7271,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       return GridView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        itemCount: totalTables,
+                        itemCount: filteredTableNumbersForGrid.length,
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: mobileColumns,
                           crossAxisSpacing: 8,
@@ -6686,7 +7279,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           childAspectRatio: mobileAspectRatio,
                         ),
                         itemBuilder: (context, index) {
-                          final tableNumber = index + 1;
+                          final tableNumber = filteredTableNumbersForGrid[index];
                           final order = selectedOrderByTable[tableNumber];
                           final orderCount =
                               ordersByTable[tableNumber]?.length ?? 0;
@@ -6704,7 +7297,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           final hasRecentOptimistic =
                               optimisticAt != null &&
                               now.difference(optimisticAt) <=
-                                  const Duration(seconds: 25) &&
+                                  const Duration(seconds: 45) &&
                               !hasDraft &&
                               orderCount == 0;
 
@@ -6743,6 +7336,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           ),
       ],
     );
+  }
+
+  /// Returns the restaurant-owner seller_id used for DB lookups.
+  ///
+  /// Garson sub-accounts have their own auth UID which differs from the
+  /// restaurant owner UID stored in `seller_id` on every store row.
+  /// Preferring the value from [_storeTables] ensures that stream
+  /// subscriptions, order fetches, and adisyon prints all use the same
+  /// ID as the one used when submitting orders.
+  String _resolveGarsonSellerId() {
+    final fromTables = _storeTables
+        .map((row) => row['seller_id']?.toString().trim() ?? '')
+        .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+    return fromTables.isNotEmpty
+        ? fromTables
+        : (_authService.currentUser?.id ?? '');
   }
 
   int _garsonTableNumberFromOrder(Map<String, dynamic> order) {
@@ -6801,7 +7410,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   List<Map<String, dynamic>> _garsonExtractItems(Map<String, dynamic> order) {
-    final raw = order['items'];
+    dynamic raw = order['items'];
+    // Supabase realtime may deliver JSONB columns as a JSON-encoded string.
+    if (raw is String) {
+      try {
+        raw = jsonDecode(raw);
+      } catch (_) {
+        return const <Map<String, dynamic>>[];
+      }
+    }
     if (raw is! List) return const <Map<String, dynamic>>[];
     return raw
         .whereType<Map>()
@@ -6843,11 +7460,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final lines = <MixedServiceDisplayEntry>[];
     final gramaj = item['gramaj']?.toString().trim() ?? '';
     final notes = item['notes']?.toString().trim() ?? '';
+    final attrs =
+        (item['attributes'] as List?)
+            ?.whereType<String>()
+            .where((s) => s.isNotEmpty)
+            .toList() ??
+        const <String>[];
     if (gramaj.isNotEmpty) {
       lines.add(MixedServiceDisplayEntry.item(gramaj));
     }
-    if (notes.isNotEmpty) {
-      lines.add(MixedServiceDisplayEntry.item(notes));
+    final noteParts = <String>[if (notes.isNotEmpty) notes, ...attrs];
+    if (noteParts.isNotEmpty) {
+      lines.add(MixedServiceDisplayEntry.item('Not: ${noteParts.join(', ')}'));
     }
     lines.addAll(MixedServiceOrder.childItemDisplayEntries(item));
     return lines;
@@ -6912,21 +7536,80 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required SellerModule module,
     required String reason,
   }) {
-    if (!kIsWeb || module != SellerModule.garson) return;
-    unawaited(_refreshLocalPrintStatus(reason: reason));
+    if (_shouldMonitorLocalPrintForModule(module)) {
+      unawaited(_refreshLocalPrintStatus(reason: reason));
+      _startLocalPrintPollIfNeeded();
+    } else {
+      _stopLocalPrintPoll();
+    }
+  }
+
+  void _startLocalPrintPollIfNeeded() {
+    if (_localPrintPollTimer?.isActive == true) return;
+    _localPrintPollTimer?.cancel();
+    _localPrintPollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted || !_shouldMonitorLocalPrintForModule(_selectedModule)) {
+        _stopLocalPrintPoll();
+        return;
+      }
+      debugPrint('[LocalPrint][Poll] periodicCheck interval=30s');
+      unawaited(_refreshLocalPrintStatus(reason: 'poll_30s'));
+    });
+    debugPrint('[LocalPrint][Poll] timerStarted interval=30s');
+  }
+
+  void _stopLocalPrintPoll() {
+    if (_localPrintPollTimer != null) {
+      debugPrint('[LocalPrint][Poll] timerStopped');
+      _localPrintPollTimer?.cancel();
+      _localPrintPollTimer = null;
+    }
   }
 
   Future<LocalPrintHealthStatus?> _refreshLocalPrintStatus({
     required String reason,
   }) async {
-    if (!kIsWeb) return null;
+    if (!_supportsDirectLocalPrintBridge) return null;
     final printService = LocalPrintService();
     try {
       final status = await printService.checkAvailability();
       _applyLocalPrintStatus(status, reason: reason);
+      if (status.isAvailable) {
+        unawaited(
+          _recoverPendingKitchenPrintJobs(reason: 'bridge_available_$reason'),
+        );
+      }
       return status;
     } finally {
       printService.dispose();
+    }
+  }
+
+  Future<void> _recoverPendingKitchenPrintJobs({required String reason}) async {
+    if (!_shouldMonitorLocalPrintForModule(_selectedModule)) return;
+    if (_isRecoveringPendingPrintJobs) return;
+    final restaurantId = _resolveGarsonSellerId().trim();
+    if (restaurantId.isEmpty) return;
+
+    _isRecoveringPendingPrintJobs = true;
+    try {
+      final result = await _sellerPrintJobService.recoverPendingJobs(
+        restaurantId: restaurantId,
+        limit: 20,
+      );
+      debugPrint(
+        '[LocalPrint][Recovery] reason=$reason restaurantId=$restaurantId '
+        'pending=${result.pendingJobCount} dispatched=${result.dispatchedJobCount} '
+        'failed=${result.failedJobCount}',
+      );
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[LocalPrint][Recovery] failed reason=$reason restaurantId=$restaurantId '
+        'error=$error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+    } finally {
+      _isRecoveringPendingPrintJobs = false;
     }
   }
 
@@ -6934,9 +7617,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     LocalPrintHealthStatus status, {
     required String reason,
   }) {
+    if (status.isAvailable) {
+      _lastLocalPrintSuccessAt = DateTime.now();
+    }
     final nextLabel = status.isAvailable
         ? 'Yazıcı bağlı'
-        : 'Yazıcı servisi kapalı';
+        : switch (status.reason) {
+            'timeout' => 'Yanıt yok',
+            'connection_error' => 'Servise ulaşılamadı',
+            'web_cors_blocked' => 'CORS/PNA engeli',
+            'server_error' => 'Servis hatası',
+            _ => 'Servis kapalı',
+          };
     final nextMessage = _localPrintHealthMessage(status);
     final requiresUpdate =
         _isLocalPrintAvailable != status.isAvailable ||
@@ -6957,28 +7649,66 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       _localPrintStatusLabel = nextLabel;
       _localPrintStatusMessage = nextMessage;
     }
+    final lastSuccessStr = _lastLocalPrintSuccessAt != null
+        ? _lastLocalPrintSuccessAt!.toLocal().toString()
+        : 'never';
     debugPrint(
       '[LocalPrint][Status] uiUpdated reason=$reason '
       'available=${status.isAvailable} label=$nextLabel '
+      'failReason=${status.reason} '
       'message=$nextMessage requestUrl=${status.url} '
       'durationMs=${status.durationMs} statusCode=${status.statusCode ?? '-'} '
-      'stateUpdated=$requiresUpdate',
+      'stateUpdated=$requiresUpdate lastSuccess=$lastSuccessStr',
     );
   }
 
   String _localPrintHealthMessage(LocalPrintHealthStatus status) {
+    final lastSuccessStr = _lastLocalPrintSuccessAt != null
+        ? ' (Son başarılı bağlantı: ${_timeAgoShort(_lastLocalPrintSuccessAt!)})'
+        : '';
     switch (status.reason) {
       case 'ok':
         return 'Yazıcı servisi bu bilgisayarda hazır.';
       case 'connection_error':
-        return 'Yazıcı servisi kapalı. Lütfen bu bilgisayarda yazıcı servisini başlatın.';
+        // Detect likely CORS / Private Network Access block (browser-side)
+        final details = status.details?.toString() ?? '';
+        final isCorsLike =
+            details.contains('XMLHttpRequest') ||
+            details.contains('CORS') ||
+            details.contains('NetworkError') ||
+            details.contains('Failed to fetch');
+        if (isCorsLike) {
+          return 'Tarayıcı CORS kuralı nedeniyle bağlantıyı engelledi. '
+              'Yazıcı servisi 127.0.0.1:3001 adresinde çalışıyor olsa bile '
+              'tarayıcı Private Network Access hatası üretiyor. '
+              'Servisi yeniden başlatın veya DevTools Console’u kontrol edin.$lastSuccessStr';
+        }
+        return 'Yazıcı servisine bağlanamadı. '
+            'Servis çalışmıyor olabilir veya farklı bir port dinliyor olabilir. '
+            'Bu bilgisayarda http://127.0.0.1:3001 adresini kontrol edin.$lastSuccessStr';
       case 'timeout':
-        return 'Yazıcı servisi yanıt vermiyor. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+        return 'Yazıcı servisi ${status.durationMs}ms içinde yanıt vermedi. '
+            'Servis aşırı yüklendi veya takıldı olabilir.$lastSuccessStr';
       case 'server_error':
-        return 'Yazıcı servisi hazır değil. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+        final code = status.statusCode != null
+            ? ' (HTTP ${status.statusCode})'
+            : '';
+        return 'Yazıcı servisi bağlantıyı kabul etti ancak hata yanıtı döndürdü$code. '
+            '${status.details?.toString().isNotEmpty == true ? status.details : 'Servis log’una bakın.'}'
+            '$lastSuccessStr';
       default:
-        return 'Yazıcı servisine erişilemedi. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
+        return 'Yazıcı servis denetim isteği başarısız oldu. '
+            'Ağ erişimi veya servis ayarını kontrol edin.$lastSuccessStr';
     }
+  }
+
+  /// Human-readable relative time, max precision minutes
+  String _timeAgoShort(DateTime past) {
+    final diff = DateTime.now().difference(past);
+    if (diff.inSeconds < 60) return 'şimdi';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} dk önce';
+    if (diff.inHours < 24) return '${diff.inHours} sa önce';
+    return '${diff.inDays} gün önce';
   }
 
   Color _localPrintStatusColor(bool? isAvailable) {
@@ -7031,19 +7761,29 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         reason: 'panel_test_preflight',
       );
       if (healthStatus?.isAvailable != true) {
+        final blockReason = healthStatus?.reason ?? 'unknown';
         debugPrint(
           '[LocalPrint][Panel] testBlockedServiceUnavailable '
-          'uiBranch=$uiBranch reason=${healthStatus?.reason ?? 'unknown'}',
+          'uiBranch=$uiBranch reason=$blockReason',
         );
-        await _showLocalPrintPanelMessage(
-          message: 'Bu bilgisayarda yazıcı servisini başlatın.',
-        );
+        final blockMessage = blockReason == 'web_cors_blocked'
+            ? 'Tarayıcı bağlantıyı engelledi (CORS/PNA). '
+                  "Servisi başlatın ve DevTools Console'u kontrol edin."
+            : blockReason == 'timeout'
+            ? 'Yazıcı servisi yanıt vermedi. Servis takılmış olabilir.'
+            : 'Bu bilgisayarda yazıcı servisini başlatın.';
+        await _showLocalPrintPanelMessage(message: blockMessage);
         return;
       }
 
-      final printService = LocalPrintService();
       try {
-        await printService.printTest();
+        final result = await _printOrchestrator.printTestReceipt(
+          restaurantId: _resolveGarsonSellerId(),
+          role: PrinterSetupRole.adisyon,
+        );
+        if (!result.ok) {
+          throw Exception(result.message);
+        }
         debugPrint(
           '[LocalPrint][Panel] testSuccess '
           'uiBranch=$uiBranch route=/print/test',
@@ -7055,8 +7795,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
         debugPrint('$stackTrace');
         await _showLocalPrintPanelMessage(message: 'Test fişi yazdırılamadı');
-      } finally {
-        printService.dispose();
       }
     } finally {
       _setLocalPrintPanelBusy(testing: false);
@@ -7074,9 +7812,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Widget _buildLocalPrintServicePanel({required String uiBranch}) {
     final isAvailable = _isLocalPrintAvailable;
     final statusColor = _localPrintStatusColor(isAvailable);
-    final statusDetail = isAvailable == false
-        ? 'Bu bilgisayarda yazıcı servisini başlatın.'
-        : _localPrintStatusMessage;
+    final statusDetail = _localPrintStatusMessage;
     final signature =
         '$uiBranch|${isAvailable ?? 'unknown'}|$_localPrintStatusLabel|'
         '$statusDetail|$_isLocalPrintRefreshing|$_isLocalPrintTesting';
@@ -7289,6 +8025,224 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  /// Compact single-row bar shown in the garson page instead of the big panel.
+  Widget _buildPrinterServiceCompactBar({required String uiBranch}) {
+    final isAvailable = _isLocalPrintAvailable;
+    final isChecking = isAvailable == null;
+    final color = _localPrintStatusColor(isAvailable);
+    return GestureDetector(
+      onTap: () => _showPrinterServiceSheet(uiBranch: uiBranch),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Row(
+          children: [
+            if (isChecking)
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    const Color(0xFF9CA3AF),
+                  ),
+                ),
+              )
+            else
+              Icon(Icons.print_outlined, size: 14, color: color),
+            const SizedBox(width: 6),
+            const Text(
+              'Yazıcı Servisi',
+              style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+            ),
+            const SizedBox(width: 8),
+            _buildLocalPrintStatusBadge(uiBranch: '${uiBranch}_bar'),
+            const Spacer(),
+            const Text(
+              'Detay',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF9CA3AF),
+              ),
+            ),
+            const SizedBox(width: 2),
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 14,
+              color: Color(0xFF9CA3AF),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPrinterServiceSheet({required String uiBranch}) {
+    final isAvailable = _isLocalPrintAvailable;
+    final statusColor = _localPrintStatusColor(isAvailable);
+    final statusLabel = _localPrintStatusLabel;
+    // Use the rich detailed message produced by _localPrintHealthMessage,
+    // not a hardcoded fallback.
+    final statusDetail = _localPrintStatusMessage;
+    final lastSuccessStr = _lastLocalPrintSuccessAt != null
+        ? _timeAgoShort(_lastLocalPrintSuccessAt!)
+        : null;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.print_outlined, color: statusColor, size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Yazıcı Servisi',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close_rounded),
+                    iconSize: 20,
+                    tooltip: 'Kapat',
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(32, 32),
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: statusColor.withValues(alpha: 0.20),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      margin: const EdgeInsets.only(top: 4),
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            statusLabel,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: statusColor,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            statusDetail,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade700,
+                              height: 1.35,
+                            ),
+                          ),
+                          if (lastSuccessStr != null &&
+                              isAvailable != true) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Son başarılı bağlantı: $lastSuccessStr',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF6B7280),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _handleLocalPrintPanelRefresh(
+                          uiBranch: '${uiBranch}_sheet',
+                        );
+                      },
+                      icon: const Icon(Icons.refresh_rounded, size: 16),
+                      label: const Text('Yenile'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _handleLocalPrintPanelTest(
+                          uiBranch: '${uiBranch}_sheet',
+                        );
+                      },
+                      icon: const Icon(Icons.receipt_long_outlined, size: 16),
+                      label: const Text('Test Yazdır'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Bu bilgisayarda yazıcı servisi açık olmalıdır. '
+                'Kapalıysa kurulum dökümanındaki başlatma adımlarını uygulayın. '
+                'Servis durumu 30 saniyede bir otomatik kontrol edilir.',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade600,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   double _garsonRoundMoney(num amount) {
     final safe = amount.isFinite ? amount.toDouble() : 0.0;
     return double.parse(safe.toStringAsFixed(2));
@@ -7300,6 +8254,48 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required Map<String, String> storeContext,
     DateTime? createdAt,
   }) {
+    final now = DateTime.now().toLocal();
+    final selectedTableRaw = _storeTableRowByNumber(tableNumber);
+    final inferredFromOrders = () {
+      if (tableOrders.isEmpty) return null;
+      final first = tableOrders.first;
+      final display =
+          first['display_table_label'] ??
+          first['table_display_name'] ??
+          first['table_name'] ??
+          first['display_label'];
+      final areaName =
+          first['table_area_name'] ??
+          first['area_name'] ??
+          first['table_area'];
+      final areaTableNumber =
+          first['area_table_number'] ??
+          first['table_area_number'] ??
+          first['area_table_no'];
+      if ((display?.toString().trim() ?? '').isEmpty &&
+          (areaName?.toString().trim() ?? '').isEmpty &&
+          (areaTableNumber?.toString().trim() ?? '').isEmpty) {
+        return null;
+      }
+      return <String, dynamic>{
+        'display_label': display,
+        'table_name': display,
+        'area_name': areaName,
+        'area_table_number': areaTableNumber,
+      };
+    }();
+
+    final selectedTable =
+        selectedTableRaw ??
+        inferredFromOrders;
+
+    final tableFields = resolvePrintableTablePayloadFields(
+      tableRow: selectedTable,
+      tableNumber: tableNumber,
+    );
+    final resolvedDisplayLabel =
+        (tableFields['display_table_label']?.toString().trim() ?? '');
+
     final items = <Map<String, dynamic>>[];
     var subtotal = 0.0;
 
@@ -7326,17 +8322,118 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final roundedSubtotal = _garsonRoundMoney(subtotal);
     final grandTotal = _garsonRoundMoney(roundedSubtotal - discount);
 
-    return <String, dynamic>{
+    final payload = <String, dynamic>{
       'store_name': storeContext['store_name'] ?? 'Mağaza',
       'branch': storeContext['branch'] ?? 'MERKEZ ŞUBE',
       'phone': storeContext['phone'] ?? '-',
       'table_no': tableNumber.toString(),
-      'datetime': (createdAt ?? DateTime.now()).toLocal().toIso8601String(),
+      ...tableFields,
+      // The receipt renderer prefers these timestamps in order:
+      // receipt_printed_at -> printed_at -> order_created_at -> created_at -> datetime/date_time.
+      'receipt_printed_at': now.toIso8601String(),
+      'printed_at': now.toIso8601String(),
+      'order_created_at': (createdAt ?? now).toIso8601String(),
+      'created_at': (createdAt ?? now).toIso8601String(),
+      'datetime': (createdAt ?? now).toIso8601String(),
       'items': items,
       'subtotal': roundedSubtotal,
       'discount': _garsonRoundMoney(discount),
       'grand_total': grandTotal,
     };
+
+    debugPrint(
+      '[GARSON_RECEIPT_TABLE_LABEL] '
+      'selectedTableRaw=${selectedTableRaw ?? '<null>'} '
+      'tableNumber=$tableNumber '
+      'areaId=${selectedTable?['area_id'] ?? ''} '
+      'areaName=${selectedTable?['area_name'] ?? ''} '
+      'areaTableNumber=${selectedTable?['area_table_number'] ?? ''} '
+      'tableName=${selectedTable?['table_name'] ?? ''} '
+      'displayLabel=${selectedTable?['display_label'] ?? ''} '
+      'resolvedDisplayLabel=$resolvedDisplayLabel '
+      'payload.display_table_label=${payload['display_table_label']} '
+      'payload.table_display_name=${payload['table_display_name']} '
+      'payload.table_name=${payload['table_name']} '
+      'payload.table_area_name=${payload['table_area_name']}',
+    );
+
+    return payload;
+  }
+
+  Map<String, dynamic> _enrichQueuedReceiptPayloadWithPrinterRouting(
+    Map<String, dynamic> payload, {
+    required Map<String, dynamic>? stationConfig,
+  }) {
+    final nextPayload = Map<String, dynamic>.from(payload)
+      ..['printer_role'] = 'adisyon'
+      ..['document_type'] = 'receipt'
+      ..['job_type'] = 'receipt';
+
+    final roleMappings = stationConfig?['role_mappings'];
+    if (roleMappings is Map) {
+      final receiptRole = roleMappings['adisyon'];
+      if (receiptRole is Map) {
+        final printer = Map<String, dynamic>.from(receiptRole);
+        final bridgePrinterId =
+            printer['id']?.toString().trim() ??
+            printer['bridgePrinterId']?.toString().trim() ??
+            '';
+        final printerRecordId =
+            printer['printerRecordId']?.toString().trim() ??
+            printer['printer_record_id']?.toString().trim() ??
+            '';
+        final printerName =
+            printer['displayName']?.toString().trim() ??
+            printer['name']?.toString().trim() ??
+            '';
+        final printerQueue =
+            printer['queueName']?.toString().trim() ??
+            printer['queue']?.toString().trim() ??
+            '';
+        final printerBackend =
+            printer['backend']?.toString().trim() ??
+            printer['transportType']?.toString().trim() ??
+            '';
+        final deviceIdentifier =
+            printer['deviceIdentifier']?.toString().trim() ??
+            printer['device_identifier']?.toString().trim() ??
+            '';
+        nextPayload['printer'] = printer;
+        if (bridgePrinterId.isNotEmpty) {
+          nextPayload['printer_id'] = bridgePrinterId;
+        }
+        if (printerRecordId.isNotEmpty) {
+          nextPayload['printer_record_id'] = printerRecordId;
+        }
+        if (printerName.isNotEmpty) {
+          nextPayload['printer_name'] = printerName;
+        }
+        if (printerQueue.isNotEmpty) {
+          nextPayload['printer_queue'] = printerQueue;
+        }
+        if (printerBackend.isNotEmpty) {
+          nextPayload['printer_backend'] = printerBackend;
+        }
+        if (deviceIdentifier.isNotEmpty) {
+          nextPayload['printer_device_identifier'] = deviceIdentifier;
+        }
+        return nextPayload;
+      }
+    }
+
+    final printerId =
+        stationConfig?['adisyon_printer_id']?.toString().trim() ?? '';
+    final printerName =
+        stationConfig?['adisyon_printer_name']?.toString().trim() ?? '';
+    if (printerId.isNotEmpty) {
+      nextPayload['printer_id'] = printerId;
+      nextPayload['printer_record_id'] = printerId;
+    }
+    if (printerName.isNotEmpty) {
+      nextPayload['printer_name'] = printerName;
+    }
+
+    return nextPayload;
   }
 
   String _localReceiptPayloadSummary(Map<String, dynamic> payload) {
@@ -7437,54 +8534,37 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         : 'Adisyon yazdırılamadı: $rawMessage';
   }
 
+  String _normalizePrinterWorkflowMessage(
+    Object error, {
+    required String fallback,
+  }) {
+    return _normalizePrinterWorkflowMessageValue(error, fallback: fallback);
+  }
+
+  void _showPrinterWorkflowSnackBar(
+    String message, {
+    bool warning = false,
+  }) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: warning ? Colors.orange.shade700 : null,
+        ),
+      );
+  }
+
   Future<void> _printGarsonAdisyon({
     required int tableNumber,
     List<Map<String, dynamic>>? orders,
     String uiAction = 'adisyon_button',
   }) async {
     final watch = Stopwatch()..start();
-    _logLocalReceiptEvent(
-      'buttonPressed',
-      uiAction: uiAction,
-      tableNumber: tableNumber,
-      orders: orders,
-      guard: 'button_press',
-      guardResult: 'started',
-      mappingStatus: 'not_checked_yet',
-    );
-    if (!kIsWeb) {
-      _logLocalReceiptEvent(
-        'guardFail',
-        uiAction: uiAction,
-        tableNumber: tableNumber,
-        orders: orders,
-        guard: 'platform_web_only',
-        guardResult: 'blocked_non_web',
-        mappingStatus: 'not_applicable',
-        durationMs: watch.elapsedMilliseconds,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Adisyon yazdırma şu anda web panelde kullanılabilir.'),
-        ),
-      );
-      return;
-    }
-
-    final sellerId = _authService.currentUser?.id ?? '';
+    final sellerId = _resolveGarsonSellerId();
     if (sellerId.isEmpty) {
-      _logLocalReceiptEvent(
-        'guardFail',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-        orders: orders,
-        guard: 'seller_session',
-        guardResult: 'blocked_empty_seller',
-        mappingStatus: 'not_applicable',
-        durationMs: watch.elapsedMilliseconds,
-      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Satıcı oturumu bulunamadı.')),
@@ -7492,24 +8572,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       return;
     }
 
-    final printService = LocalPrintService();
-    var localPrintCallReached = false;
     var storeId = '';
-    const storeContextQuery =
-        'select=seller_id,business_name,phone,district,city '
-        'filter=seller_id=eq.{sellerId}';
     try {
-      _logLocalReceiptEvent(
-        'ordersFetchStart',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-        orders: orders,
-        guard: 'table_orders_fetch',
-        guardResult: 'started',
-        mappingStatus: 'not_required_local_print',
-        durationMs: watch.elapsedMilliseconds,
-      );
       final liveTableOrders = await _storeService.getTableOrdersByTable(
         sellerId: sellerId,
         tableNumber: tableNumber,
@@ -7517,235 +8581,168 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       final tableOrders = liveTableOrders.isNotEmpty
           ? liveTableOrders
           : (orders ?? const <Map<String, dynamic>>[]);
-      _logLocalReceiptEvent(
-        'ordersFetchDone',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-        orders: tableOrders,
-        guard: 'table_orders_fetch',
-        guardResult: 'resolved',
-        emptyBranch: tableOrders.isEmpty
-            ? 'table_orders_empty_after_live_and_fallback'
-            : 'table_orders_available',
-        mappingStatus: 'not_required_local_print',
-        durationMs: watch.elapsedMilliseconds,
-      );
       if (tableOrders.isEmpty) {
-        _logLocalReceiptEvent(
-          'guardFail',
-          uiAction: uiAction,
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-          orders: tableOrders,
-          guard: 'table_orders_non_empty',
-          guardResult: 'blocked_empty_orders',
-          emptyBranch: 'table_orders_empty_after_live_and_fallback',
-          mappingStatus: 'not_required_local_print',
-          durationMs: watch.elapsedMilliseconds,
-        );
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Masa $tableNumber için adisyon yok.')),
         );
         return;
       }
-
-      _logLocalReceiptEvent(
-        'preflightHealthCheck',
-        uiAction: uiAction,
-        sellerId: sellerId,
+      late final Map<String, String> storeContext;
+      storeContext = await _loadGarsonReceiptStoreContext(sellerId);
+      storeId = storeContext['store_id'] ?? '';
+      final basePayload = _buildGarsonReceiptPayload(
         tableNumber: tableNumber,
-        orders: tableOrders,
-        guard: 'local_print_service.health',
-        guardResult: 'started',
-        mappingStatus: 'not_required_local_print',
-        durationMs: watch.elapsedMilliseconds,
+        tableOrders: tableOrders,
+        storeContext: storeContext,
       );
-      final healthStatus = await printService.checkAvailability();
-      _applyLocalPrintStatus(healthStatus, reason: 'adisyon_preflight');
-      if (!healthStatus.isAvailable) {
-        _logLocalReceiptEvent(
-          'blockedByUnavailableService',
-          uiAction: uiAction,
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-          orders: tableOrders,
-          guard: 'local_print_service.health',
-          guardResult: 'blocked_unavailable_service',
-          emptyBranch: 'service_unavailable_preflight',
-          mappingStatus: 'not_required_local_print',
-          localPrintCallReached: false,
-          durationMs: watch.elapsedMilliseconds,
-          error: _localPrintHealthMessage(healthStatus),
-        );
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_localPrintHealthMessage(healthStatus))),
+      final stationConfig = await _printStationService.fetchStationConfig(
+        sellerId,
+      );
+      final printSystemEnabled =
+          stationConfig?['print_system_enabled'] != false;
+      if (!printSystemEnabled) {
+        _showPrinterWorkflowSnackBar(
+          'Baskı sistemi kapalı. Yazdırmak için Yazıcı Merkezi’nden sistemi açın.',
+          warning: true,
         );
         return;
       }
-
-      _logLocalReceiptEvent(
-        'storeContextFetchStart',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-        orders: tableOrders,
-        guard: 'stores.select',
-        guardResult: 'started',
-        emptyBranch: 'store_context_fetch_started',
-        mappingStatus: 'not_required_local_print',
-        durationMs: watch.elapsedMilliseconds,
-        queryTable: 'stores',
-        query: storeContextQuery.replaceFirst('{sellerId}', sellerId),
+      final payload = _enrichQueuedReceiptPayloadWithPrinterRouting(
+        basePayload,
+        stationConfig: stationConfig ?? const <String, dynamic>{},
       );
-      late final Map<String, String> storeContext;
-      try {
-        storeContext = await _loadGarsonReceiptStoreContext(sellerId);
-      } catch (error, stackTrace) {
-        _logLocalReceiptEvent(
-          'storeContextFetchFail',
-          uiAction: uiAction,
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-          orders: tableOrders,
-          error: error,
-          stackTrace: stackTrace,
-          guard: 'stores.select',
-          guardResult: 'failed',
-          emptyBranch: 'store_context_fetch_failed',
-          mappingStatus: 'not_required_local_print',
-          durationMs: watch.elapsedMilliseconds,
-          queryTable: 'stores',
-          query: storeContextQuery.replaceFirst('{sellerId}', sellerId),
-        );
-        rethrow;
-      }
-      storeId = storeContext['store_id'] ?? '';
-      _logLocalReceiptEvent(
-        'payloadBuildStart',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        storeId: storeId,
+      final currentUser = Supabase.instance.client.auth.currentUser;
+      final queueResponse = await _printStationService.enqueueReceiptPrintJob(
+        restaurantId: sellerId,
         tableNumber: tableNumber,
-        orders: tableOrders,
-        guard: 'payload_build',
-        guardResult: 'started',
-        emptyBranch: 'payload_build_started',
-        mappingStatus: 'not_required_local_print',
-        durationMs: watch.elapsedMilliseconds,
-      );
-      late final Map<String, dynamic> payload;
-      try {
-        payload = _buildGarsonReceiptPayload(
-          tableNumber: tableNumber,
-          tableOrders: tableOrders,
-          storeContext: storeContext,
-        );
-      } catch (error, stackTrace) {
-        _logLocalReceiptEvent(
-          'payloadBuildFail',
-          uiAction: uiAction,
-          sellerId: sellerId,
-          storeId: storeId,
-          tableNumber: tableNumber,
-          orders: tableOrders,
-          error: error,
-          stackTrace: stackTrace,
-          guard: 'payload_build',
-          guardResult: 'failed',
-          emptyBranch: 'payload_build_failed',
-          mappingStatus: 'not_required_local_print',
-          durationMs: watch.elapsedMilliseconds,
-        );
-        rethrow;
-      }
-      _logLocalReceiptEvent(
-        'payloadPrepared',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        storeId: storeId,
-        tableNumber: tableNumber,
-        orders: tableOrders,
         payload: payload,
-        guard: 'payload_build',
-        guardResult: 'passed',
-        mappingStatus: 'not_required_local_print',
-        durationMs: watch.elapsedMilliseconds,
+        waiterId: currentUser?.id,
+        waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
+        sourceDevice: _printStationService.currentPlatformLabel(),
       );
-      localPrintCallReached = true;
-      _logLocalReceiptEvent(
-        'serviceCallStart',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        storeId: storeId,
-        tableNumber: tableNumber,
-        orders: tableOrders,
-        payload: payload,
-        guard: 'local_print_service.printReceipt',
-        guardResult: 'reached',
-        mappingStatus: 'not_required_local_print',
-        localPrintCallReached: localPrintCallReached,
-        durationMs: watch.elapsedMilliseconds,
-      );
-      await printService.printReceipt(payload);
-      _logLocalReceiptEvent(
-        'requestSuccess',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        storeId: storeId,
-        tableNumber: tableNumber,
-        orders: tableOrders,
-        payload: payload,
-        guard: 'local_print_service.printReceipt',
-        guardResult: 'completed',
-        mappingStatus: 'not_required_local_print',
-        localPrintCallReached: localPrintCallReached,
-        durationMs: watch.elapsedMilliseconds,
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Adisyon yazdırıldı')));
-    } catch (error, stackTrace) {
-      _logLocalReceiptEvent(
-        'requestFail',
-        uiAction: uiAction,
-        sellerId: sellerId,
-        storeId: storeId,
-        tableNumber: tableNumber,
-        orders: orders,
-        error: error,
-        stackTrace: stackTrace,
-        guard: localPrintCallReached
-            ? 'local_print_service.printReceipt'
-            : 'pre_print_guard_or_fetch',
-        guardResult: 'failed',
-        emptyBranch: localPrintCallReached ? 'local_print_request_failed' : '-',
-        mappingStatus: 'not_required_local_print',
-        localPrintCallReached: localPrintCallReached,
-        durationMs: watch.elapsedMilliseconds,
-      );
+      final jobId = queueResponse['print_job_id']?.toString() ?? '';
       debugPrint(
-        'SellerPanel local receipt print failed for table '
-        '$tableNumber: $error',
+        '[AdisyonQueue] queued job_id=$jobId table=$tableNumber seller=$sellerId '
+        'storeId=$storeId durationMs=${watch.elapsedMilliseconds}',
       );
-      debugPrint('$stackTrace');
+      _printerEventLogService
+          .append(
+            restaurantId: sellerId,
+            event: 'adisyon_job_created',
+            message: 'Adisyon print job oluşturuldu.',
+            jobId: jobId,
+            role: 'adisyon',
+            details: <String, dynamic>{
+              'tableNumber': tableNumber,
+              'durationMs': watch.elapsedMilliseconds,
+            },
+          )
+          .ignore();
+      _printerEventLogService
+          .append(
+            restaurantId: sellerId,
+            event: 'job_created',
+            message: 'Adisyon print job oluşturuldu.',
+            jobId: jobId,
+            role: 'adisyon',
+            details: <String, dynamic>{
+              'tableNumber': tableNumber,
+              'durationMs': watch.elapsedMilliseconds,
+            },
+          )
+          .ignore();
+      _printerEventLogService
+          .append(
+            restaurantId: sellerId,
+            event: 'adisyon_job_queued',
+            message: 'Adisyon print job kuyruğa alındı.',
+            jobId: jobId,
+            role: 'adisyon',
+            details: <String, dynamic>{
+              'tableNumber': tableNumber,
+              'durationMs': watch.elapsedMilliseconds,
+            },
+          )
+          .ignore();
+
       if (!mounted) return;
+      final stationOnline = await _printStationService.isEffectivelyOnline(
+        sellerId,
+      );
+      if (!mounted) return;
+      if (jobId.isNotEmpty) {
+        unawaited(
+          _trackGarsonAdisyonPrintJob(sellerId: sellerId, jobId: jobId),
+        );
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _localPrintUserMessage(
-              error,
-              localPrintCallReached: localPrintCallReached,
-            ),
+            stationOnline
+                ? 'Kuyruğa alındı, henüz basılmadı'
+                : _printStationService.offlineWarningMessage(),
           ),
         ),
       );
-    } finally {
-      printService.dispose();
+    } catch (error, stackTrace) {
+      debugPrint(
+        'SellerPanel queued receipt print failed for table '
+        '$tableNumber storeId=$storeId uiAction=$uiAction error=$error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+      final message = _normalizePrinterWorkflowMessage(
+        error,
+        fallback: 'Adisyon yazdırma kuyruğuna alınamadı.',
+      );
+      _showPrinterWorkflowSnackBar(message, warning: true);
+    }
+  }
+
+  Future<void> _trackGarsonAdisyonPrintJob({
+    required String sellerId,
+    required String jobId,
+  }) async {
+    const attempts = 20;
+    for (var i = 0; i < attempts; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      if (!mounted) return;
+      try {
+        final row = await Supabase.instance.client
+            .from('print_jobs')
+            .select('status, last_error')
+            .eq('id', jobId)
+            .maybeSingle();
+        if (row == null) {
+          return;
+        }
+        final status = row['status']?.toString().trim().toLowerCase() ?? '';
+        if (status == 'completed') {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Adisyon fiziksel olarak yazdırıldı.'),
+              backgroundColor: Color(0xFF10B981),
+            ),
+          );
+          return;
+        }
+        if (status == 'failed') {
+          final error = row['last_error']?.toString().trim().isNotEmpty == true
+              ? _normalizePrinterWorkflowMessage(
+                  row['last_error'].toString().trim(),
+                  fallback: 'Adisyon yazdırılamadı.',
+                )
+              : 'Adisyon yazdırılamadı.';
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(error)));
+          return;
+        }
+      } catch (_) {
+        return;
+      }
     }
   }
 
@@ -7753,7 +8750,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required int tableNumber,
     List<Map<String, dynamic>>? existingOrders,
   }) async {
-    final sellerId = _authService.currentUser?.id ?? '';
+    final sellerId = _resolveGarsonSellerId();
     if (sellerId.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -7878,7 +8875,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return const Color(0xFFEF4444); // kırmızı – yeni sipariş
       case 'sent':
       case 'done':
-        return const Color(0xFFF97316); // turuncu – mutfağa iletildi
+        return const Color(0xFF16A34A); // yeşil – mutfağa iletildi / gönderildi
       case 'preparing':
         return const Color(0xFF0891B2); // teal – hazırlanıyor
       case 'served':
@@ -7940,6 +8937,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ? 'Az önce${orderCount > 1 ? ' • $orderCount sipariş' : ''}'
               : '$timeLabel önce${orderCount > 1 ? ' • $orderCount sipariş' : ''}')
         : 'Dokun ve sipariş gir';
+    final tableRow = _storeTableRowByNumber(tableNumber);
+    final tableTitle =
+        tableRow == null ? 'Masa $tableNumber' : _tableDisplayLabelFromRow(tableRow);
 
     return Material(
       color: Colors.transparent,
@@ -7971,7 +8971,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     children: [
                       Expanded(
                         child: Text(
-                          'Masa $tableNumber',
+                          tableTitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -8107,15 +9107,26 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       return;
     }
 
+    final tableRow = _storeTableRowByNumber(tableNumber);
+    final tableTitle = resolveTableCardTitle(
+      tableRow: tableRow,
+      tableNumber: tableNumber,
+    );
+
     final flowPage = _MobileGarsonTableFlowPage(
       sellerId: sellerId,
       tableNumber: tableNumber,
+      tableTitleOverride: tableTitle,
       products: List<SellerProduct>.from(_products),
       initialTabIndex: initialOrder == null ? 0 : 2,
       initialOrderId: initialOrder?['id']?.toString(),
+      tableOrdersStream: _tableOrdersStream,
       initialDraftItems:
           _mobileGarsonDraftItemsByTable[tableNumber] ??
           const <Map<String, dynamic>>[],
+      // Pass the already-loaded store table numbers so the transfer modal
+      // does not need a separate API call (which can fail with RLS errors).
+      storeTableNumbers: _sortedStoreTableNumbers(),
       configureProductItem: _configureGarsonProductItem,
       editItemSettings: _editGarsonItemSettings,
       onDraftChanged: _onMobileGarsonDraftChanged,
@@ -8138,30 +9149,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       },
     );
 
-    if (kIsWeb) {
-      showDialog<void>(
-        context: context,
-        barrierDismissible: true,
-        builder: (dialogContext) {
-          final size = MediaQuery.of(dialogContext).size;
-          final width = math.min(size.width * 0.82, 980.0);
-          final height = math.min(size.height * 0.88, 860.0);
-          return Dialog(
-            insetPadding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 20,
-            ),
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: SizedBox(width: width, height: height, child: flowPage),
-          );
-        },
-      );
-      return;
-    }
-
+    // Always open as a full-screen route — consistent on mobile and web.
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => flowPage));
   }
 
@@ -17225,6 +18213,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final tables = List<Map<String, dynamic>>.from(
       _storeTables,
     )..sort((a, b) => _tableNumberFromRow(a).compareTo(_tableNumberFromRow(b)));
+    final areas = List<Map<String, dynamic>>.from(_storeTableAreas)
+      ..sort(
+        (a, b) =>
+            (a['name']?.toString() ?? '').compareTo(b['name']?.toString() ?? ''),
+      );
 
     return SingleChildScrollView(
       child: Column(
@@ -17294,10 +18287,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   ),
                 ),
                 FilledButton.icon(
-                  onPressed: _isMutatingStoreTables ? null : _addStoreTable,
+                  onPressed: _isMutatingStoreTables ? null : _addTableArea,
                   icon: const Icon(Icons.add),
-                  label: const Text('Masa Ekle'),
+                  label: const Text('Alan Ekle'),
                 ),
+                if (areas.isNotEmpty)
+                  OutlinedButton.icon(
+                    onPressed: _isMutatingStoreTables ? null : _addStoreTable,
+                    icon: const Icon(Icons.table_restaurant_outlined),
+                    label: const Text('Genel Masa Ekle'),
+                  ),
                 OutlinedButton.icon(
                   onPressed: sellerId.isEmpty
                       ? null
@@ -17405,14 +18404,87 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ),
             )
           else
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: tables
-                  .map(
-                    (table) => _buildSystemTableCard(table, sellerId: sellerId),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (areas.isEmpty)
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: tables
+                        .map(
+                          (table) => _buildSystemTableCard(
+                            table,
+                            sellerId: sellerId,
+                          ),
+                        )
+                        .toList(),
                   )
-                  .toList(),
+                else
+                  ...areas.map((area) {
+                    final areaId = area['id']?.toString() ?? '';
+                    final areaName = area['name']?.toString() ?? '';
+                    final areaTables = tables
+                        .where(
+                          (t) => (t['area_id']?.toString() ?? '') == areaId,
+                        )
+                        .toList(growable: false);
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: ExpansionTile(
+                        initiallyExpanded: false,
+                        title: Text(
+                          areaName.isEmpty ? 'Alan' : areaName,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: Text('Masa: ${areaTables.length}'),
+                        trailing: Wrap(
+                          spacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: _isMutatingStoreTables
+                                  ? null
+                                  : () => _addStoreTableForArea(area),
+                              icon: const Icon(Icons.add, size: 16),
+                              label: const Text('Masa Ekle'),
+                            ),
+                          ],
+                        ),
+                        children: [
+                          if (areaTables.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                              child: Text(
+                                'Henüz masa yok.',
+                                style: TextStyle(color: Colors.grey.shade600),
+                              ),
+                            )
+                          else
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                              child: Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: areaTables
+                                    .map(
+                                      (table) => _buildSystemTableCard(
+                                        table,
+                                        sellerId: sellerId,
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
             ),
         ],
       ),
@@ -17424,6 +18496,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required String sellerId,
   }) {
     final tableNumber = _tableNumberFromRow(table);
+    final titleLabel = _tableDisplayLabelFromRow(table);
     final token = table['qr_token']?.toString() ?? '';
     final qrLink = _buildTableQrLink(
       sellerId: sellerId,
@@ -17459,7 +18532,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ),
               const SizedBox(width: 6),
               Text(
-                'Masa $tableNumber',
+                titleLabel,
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
@@ -17806,9 +18879,27 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 itemBuilder: (context, index) {
                                   final tableNumber =
                                       displayTableNumbers[index];
-                                  final tableOrders =
+                                  var tableOrders =
                                       ordersByTable[tableNumber] ??
                                       const <Map<String, dynamic>>[];
+                                  final opAt =
+                                      _mobileGarsonOptimisticSentAtByTable[tableNumber];
+                                  final opItems =
+                                      _mobileGarsonOptimisticItemsByTable[tableNumber] ??
+                                      const <Map<String, dynamic>>[];
+                                  if (opAt != null &&
+                                      DateTime.now().difference(opAt) <=
+                                          const Duration(seconds: 45) &&
+                                      tableOrders.isEmpty) {
+                                    tableOrders = [
+                                      <String, dynamic>{
+                                        'status': 'sent',
+                                        'table_number': tableNumber,
+                                        'created_at': opAt.toIso8601String(),
+                                        'items': opItems,
+                                      },
+                                    ];
+                                  }
                                   final order = tableOrders.firstWhere(
                                     (order) => !_isGarsonCompletedStatus(
                                       order['status']?.toString(),
@@ -17991,11 +19082,60 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               return true;
                           }
                         })
+                        .where(_matchesGarsonAreaFilter)
                         .toList(growable: false);
 
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _mobileSurfaceCard(
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.map_outlined,
+                                  size: 18,
+                                  color: Color(0xFF0F172A),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Alan Seç',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<String>(
+                                      isExpanded: true,
+                                      value: _garsonAreaOptions()
+                                              .any((o) => o.key == _garsonAreaFilterKey)
+                                          ? _garsonAreaFilterKey
+                                          : 'all',
+                                      items: _garsonAreaOptions()
+                                          .map(
+                                            (o) => DropdownMenuItem<String>(
+                                              value: o.key,
+                                              child: Text(
+                                                o.label,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          )
+                                          .toList(growable: false),
+                                      onChanged: (value) {
+                                        final next = (value ?? 'all').trim();
+                                        if (next.isEmpty) return;
+                                        setState(() => _garsonAreaFilterKey = next);
+                                        unawaited(_persistGarsonAreaFilter(next));
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                         // Status filter badges row
                         SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
@@ -18105,9 +19245,28 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                       itemBuilder: (context, index) {
                                         final tableNumber =
                                             displayTableNumbers[index];
-                                        final tableOrders =
+                                        var tableOrders =
                                             ordersByTable[tableNumber] ??
                                             const <Map<String, dynamic>>[];
+                                        final opAt =
+                                            _mobileGarsonOptimisticSentAtByTable[tableNumber];
+                                        final opItems =
+                                            _mobileGarsonOptimisticItemsByTable[tableNumber] ??
+                                            const <Map<String, dynamic>>[];
+                                        if (opAt != null &&
+                                            DateTime.now().difference(opAt) <=
+                                                const Duration(seconds: 45) &&
+                                            tableOrders.isEmpty) {
+                                          tableOrders = [
+                                            <String, dynamic>{
+                                              'status': 'sent',
+                                              'table_number': tableNumber,
+                                              'created_at': opAt
+                                                  .toIso8601String(),
+                                              'items': opItems,
+                                            },
+                                          ];
+                                        }
                                         Map<String, dynamic>? selectedOrder;
                                         if (tableOrders.isNotEmpty) {
                                           selectedOrder = tableOrders
@@ -18142,20 +19301,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   int _webGarsonGridColumns(double maxWidth) {
     const spacing = 10.0;
-    const minCardWidth = 260.0;
+    const minCardWidth = 200.0;
     final columns = ((maxWidth + spacing) / (minCardWidth + spacing)).floor();
-    return columns.clamp(1, 6);
+    return columns.clamp(1, 8);
   }
 
   double _webGarsonGridAspectRatio(double maxWidth, int columns) {
     const spacing = 10.0;
     final safeColumns = columns <= 0 ? 1 : columns;
     final cardWidth = (maxWidth - ((safeColumns - 1) * spacing)) / safeColumns;
-    if (cardWidth >= 330) return 1.45;
-    if (cardWidth >= 290) return 1.32;
-    if (cardWidth >= 250) return 1.18;
-    if (cardWidth >= 220) return 1.05;
-    return 0.92;
+    if (cardWidth >= 330) return 1.6;
+    if (cardWidth >= 280) return 1.45;
+    if (cardWidth >= 230) return 1.28;
+    if (cardWidth >= 200) return 1.15;
+    return 1.0;
   }
 
   // ── Garson Desktop Üst Bar ─────────────────────────────────────────────────
@@ -18326,8 +19485,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required List<Map<String, dynamic>> tableOrders,
   }) {
     final hasOrder = orderCount > 0;
-    final color = hasOrder ? const Color(0xFF16A34A) : const Color(0xFF94A3B8);
     final status = order?['status']?.toString();
+    final color = _mobileGarsonStatusColor(status, hasOrder: hasOrder);
     final statusLabel = _mobileGarsonStatusLabel(status, hasOrder: hasOrder);
     final cardItems = <Map<String, dynamic>>[];
     for (final tableOrder in tableOrders) {
@@ -18337,6 +19496,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final subtitle = hasOrder
         ? '${_garsonOrderTimeAgoLabel(order?['created_at']?.toString())} önce • $orderCount sipariş'
         : 'Sipariş yok';
+    final tableRow = _storeTableRowByNumber(tableNumber);
+    final tableTitle =
+        tableRow == null ? 'Masa $tableNumber' : _tableDisplayLabelFromRow(tableRow);
 
     return Material(
       color: Colors.transparent,
@@ -18349,7 +19511,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           );
         },
         child: Container(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
             color: hasOrder ? color.withValues(alpha: 0.12) : Colors.white,
             borderRadius: BorderRadius.circular(10),
@@ -18366,11 +19528,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 children: [
                   Expanded(
                     child: Text(
-                      'Masa $tableNumber',
+                      tableTitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF111827),
                       ),
@@ -18379,8 +19541,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   if (orderCount > 0)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
-                        vertical: 2,
+                        horizontal: 6,
+                        vertical: 1,
                       ),
                       decoration: BoxDecoration(
                         color: color,
@@ -18397,7 +19559,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 5),
               Row(
                 children: [
                   Icon(
@@ -18405,16 +19567,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         ? Icons.notifications_active_rounded
                         : Icons.table_restaurant_outlined,
                     color: color,
-                    size: 18,
+                    size: 15,
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 5),
                   Expanded(
                     child: Text(
                       statusLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 10,
                         fontWeight: FontWeight.w700,
                         color: color,
                       ),
@@ -18422,14 +19584,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
               Text(
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                style: TextStyle(fontSize: 9, color: Colors.grey.shade600),
               ),
-              const SizedBox(height: 5),
+              const SizedBox(height: 4),
               if (hasOrder)
                 Expanded(
                   child: SingleChildScrollView(
@@ -18541,11 +19703,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 const Spacer(),
               if (hasOrder)
                 Padding(
-                  padding: const EdgeInsets.only(top: 4),
+                  padding: const EdgeInsets.only(top: 3),
                   child: Text(
                     'Toplam: ${_garsonFormatMoney(tableTotal)}',
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 10,
                       fontWeight: FontWeight.w800,
                       color: Colors.grey.shade800,
                     ),
@@ -18562,16 +19724,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           uiAction: 'table_card_adisyon_button',
                         ),
                         style: OutlinedButton.styleFrom(
-                          minimumSize: const Size(0, 44),
+                          minimumSize: const Size(0, 34),
                           padding: EdgeInsets.zero,
                         ),
                         child: const Text(
                           'Adisyon',
-                          style: TextStyle(fontSize: 12),
+                          style: TextStyle(fontSize: 11),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 5),
                     Expanded(
                       child: FilledButton(
                         onPressed: () => _confirmCloseGarsonTable(
@@ -18579,13 +19741,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           existingOrders: tableOrders,
                         ),
                         style: FilledButton.styleFrom(
-                          minimumSize: const Size(0, 44),
+                          minimumSize: const Size(0, 34),
                           padding: EdgeInsets.zero,
                           backgroundColor: const Color(0xFF374151),
                         ),
                         child: const Text(
                           'Kapat',
-                          style: TextStyle(fontSize: 12),
+                          style: TextStyle(fontSize: 11),
                         ),
                       ),
                     ),
@@ -18635,6 +19797,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         (item['selectedWeightGrams'] as num?)?.toInt() ??
         matchedProduct?.resolvedDefaultWeightGrams ??
         0;
+    String? selectedSizeName =
+        item['selectedSizeName']?.toString() ??
+        matchedProduct?.defaultSizeOption?.name;
     final availableAttrs = <String>{
       ...?matchedProduct?.attributes,
       ...initialAttrs,
@@ -18939,6 +20104,43 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             ),
                             const SizedBox(height: 12),
                           ],
+                          if (matchedProduct?.hasSizeOptions == true) ...[
+                            const Text(
+                              'Boyut',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF111827),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: matchedProduct!.normalizedSizeOptions
+                                  .map((option) {
+                                    final isSelected =
+                                        selectedSizeName
+                                            ?.trim()
+                                            .toLowerCase() ==
+                                        option.name.trim().toLowerCase();
+                                    return ChoiceChip(
+                                      label: Text(
+                                        '${option.name} · ${ProductPriceCalculator.formatCurrency(option.price)}',
+                                      ),
+                                      selected: isSelected,
+                                      onSelected: (_) {
+                                        setStateDialog(() {
+                                          selectedSizeName = option.name;
+                                          gramajController.text = option.name;
+                                        });
+                                      },
+                                    );
+                                  })
+                                  .toList(growable: false),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
                           const Text(
                             'Açıklama / Not (isteğe bağlı)',
                             style: TextStyle(
@@ -19049,9 +20251,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                             .resolvedServiceControlType,
                                         pricingType:
                                             matchedProduct.resolvedPricingType,
+                                        pricingMode:
+                                            matchedProduct.resolvedPricingMode,
+                                        basePrice:
+                                            matchedProduct.basePrice ??
+                                            matchedProduct.portionPrice,
                                         portionPrice:
                                             matchedProduct.portionPrice,
                                         pricePerKg: matchedProduct.pricePerKg,
+                                        sizeOptions: matchedProduct
+                                            .normalizedSizeOptions,
+                                        selectedSizeName: selectedSizeName,
                                         fallbackPrice: matchedProduct.price,
                                         selectedAmount:
                                             matchedProduct
@@ -19066,9 +20276,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                             ? selectedWeightGrams
                                             : null,
                                       );
+                                final normalizedSizeName =
+                                    selectedSizeName?.trim() ?? '';
                                 final amountLabel =
-                                    matchedProduct?.usesServiceControlStepper ==
-                                        true
+                                    normalizedSizeName.isNotEmpty
+                                    ? normalizedSizeName
+                                    : matchedProduct
+                                              ?.usesServiceControlStepper ==
+                                          true
                                     ? ProductPriceCalculator.formatServiceAmountLabel(
                                         type: matchedProduct!
                                             .resolvedServiceControlType,
@@ -19091,6 +20306,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   ..['price'] = unitPrice
                                   ..['gramaj'] = amountLabel
                                   ..['amountLabel'] = amountLabel
+                                  ..['selectedSizeName'] =
+                                      normalizedSizeName.isEmpty
+                                      ? null
+                                      : normalizedSizeName
+                                  ..['selectedSizePrice'] =
+                                      normalizedSizeName.isEmpty
+                                      ? null
+                                      : unitPrice
                                   ..['serviceControlType'] = matchedProduct
                                       ?.resolvedServiceControlType
                                       .storageValue
@@ -19156,10 +20379,26 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     int qty = 1;
     double selectedServiceAmount = product.resolvedDefaultServiceAmount;
     int selectedWeightGrams = product.resolvedDefaultWeightGrams;
+    String? selectedSizeName = product.defaultSizeOption?.name;
     final gramajCtrl = TextEditingController();
     final notesCtrl = TextEditingController();
     final attrs = product.attributes;
     final selected = <String>{};
+
+    // Compute gramaj presets from product weight settings (non-stepper products).
+    // Only shown when at least one weight boundary is configured on the product.
+    final gramajPresets =
+        (!product.usesServiceControlStepper &&
+            (product.minWeightGrams != null ||
+                product.weightStepGrams != null ||
+                product.maxWeightGrams != null))
+        ? ProductPriceCalculator.buildPresetWeightOptions(
+            minWeightGrams: product.minWeightGrams,
+            defaultWeightGrams: product.defaultWeightGrams,
+            weightStepGrams: product.weightStepGrams,
+            maxWeightGrams: product.maxWeightGrams,
+          )
+        : const <int>[];
 
     // showModalBottomSheet correctly propagates MediaQuery.viewInsets so the
     // note field stays visible when the keyboard is shown (keyboard-safe).
@@ -19303,6 +20542,93 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           ),
                         ),
                         const SizedBox(height: 6),
+                        // Gramaj preset chips – only shown when the product
+                        // has at least one weight boundary configured.
+                        if (gramajPresets.isNotEmpty) ...[
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              ...gramajPresets.map((grams) {
+                                final label =
+                                    ProductPriceCalculator.formatWeight(grams);
+                                final isSelected =
+                                    gramajCtrl.text.trim() == label;
+                                return GestureDetector(
+                                  onTap: () => setStateDialog(() {
+                                    if (isSelected) {
+                                      gramajCtrl.text = '';
+                                    } else {
+                                      gramajCtrl.text = label;
+                                    }
+                                  }),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 150),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 7,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? AppColors.primary
+                                          : AppColors.primary.withValues(
+                                              alpha: 0.08,
+                                            ),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color: AppColors.primary.withValues(
+                                          alpha: isSelected ? 1.0 : 0.25,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      label,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: isSelected
+                                            ? Colors.white
+                                            : AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                              // "Miktar giriniz" chip – clears preset and
+                              // lets the user type a custom weight.
+                              GestureDetector(
+                                onTap: () => setStateDialog(() {
+                                  gramajCtrl.text = '';
+                                }),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 7,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: gramajCtrl.text.trim().isEmpty
+                                        ? Colors.grey.shade200
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: Colors.grey.shade400,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Miktar giriniz',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         TextField(
                           controller: gramajCtrl,
                           decoration: InputDecoration(
@@ -19316,6 +20642,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               vertical: 10,
                             ),
                           ),
+                          onChanged: (_) => setStateDialog(() {}),
                         ),
                         const SizedBox(height: 12),
                       ],
@@ -19520,6 +20847,40 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         ),
                         const SizedBox(height: 12),
                       ],
+                      if (product.hasSizeOptions) ...[
+                        const Text(
+                          'Boyut',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: product.normalizedSizeOptions
+                              .map((option) {
+                                final isSelected =
+                                    selectedSizeName?.trim().toLowerCase() ==
+                                    option.name.trim().toLowerCase();
+                                return ChoiceChip(
+                                  label: Text(
+                                    '${option.name} · ${ProductPriceCalculator.formatCurrency(option.price)}',
+                                  ),
+                                  selected: isSelected,
+                                  onSelected: (_) {
+                                    setStateDialog(() {
+                                      selectedSizeName = option.name;
+                                      gramajCtrl.text = option.name;
+                                    });
+                                  },
+                                );
+                              })
+                              .toList(growable: false),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       const Text(
                         'Açıklama / Not (isteğe bağlı)',
                         style: TextStyle(
@@ -19625,8 +20986,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   serviceControlType:
                                       product.resolvedServiceControlType,
                                   pricingType: product.resolvedPricingType,
+                                  pricingMode: product.resolvedPricingMode,
+                                  basePrice:
+                                      product.basePrice ?? product.portionPrice,
                                   portionPrice: product.portionPrice,
                                   pricePerKg: product.pricePerKg,
+                                  sizeOptions: product.normalizedSizeOptions,
+                                  selectedSizeName: selectedSizeName,
                                   fallbackPrice: product.price,
                                   selectedAmount: product.usesPortionLikeStepper
                                       ? selectedServiceAmount
@@ -19638,8 +21004,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                       ? selectedWeightGrams
                                       : null,
                                 );
-                            final amountLabel =
-                                product.usesServiceControlStepper
+                            final normalizedSizeName =
+                                selectedSizeName?.trim() ?? '';
+                            final amountLabel = normalizedSizeName.isNotEmpty
+                                ? normalizedSizeName
+                                : product.usesServiceControlStepper
                                 ? ProductPriceCalculator.formatServiceAmountLabel(
                                     type: product.resolvedServiceControlType,
                                     amount: product.usesPortionLikeStepper
@@ -19660,6 +21029,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               'quantity': quantity,
                               'gramaj': amountLabel,
                               'amountLabel': amountLabel,
+                              'selectedSizeName': normalizedSizeName.isEmpty
+                                  ? null
+                                  : normalizedSizeName,
+                              'selectedSizePrice': normalizedSizeName.isEmpty
+                                  ? null
+                                  : unitPrice,
                               'serviceControlType': product
                                   .resolvedServiceControlType
                                   .storageValue,
@@ -26264,6 +27639,9 @@ typedef _MobileGarsonPrintAdisyon =
 
 enum _GarsonOrderChangeType { added, removed, updated }
 
+/// Actions available in the draft-item edit bottom sheet.
+enum _DraftItemEditChoice { settings, price }
+
 class _GarsonOrderUpdatedEntry {
   const _GarsonOrderUpdatedEntry({required this.before, required this.after});
 
@@ -26337,16 +27715,52 @@ class _GarsonAggregatedOrderItem {
   final int quantity;
 }
 
+/// A single display row in the draft editor representing one or more
+/// [_draftItems] entries that share the same product identity.
+///
+/// Mixed-service items are never merged (each has a unique composition).
+class _MergedDraftDisplayRow {
+  const _MergedDraftDisplayRow({
+    required this.displayItem,
+    required this.totalQty,
+    required this.newQty,
+    required this.allIndices,
+  });
+
+  /// Item map used for name / details / amountLabel display.
+  /// Always the first (base) occurrence in [_draftItems].
+  final Map<String, dynamic> displayItem;
+
+  /// Combined quantity of all merged entries.
+  final int totalQty;
+
+  /// How many units are "new" (added on top of the sent base).
+  /// 0 when the order is not in editing mode.
+  final int newQty;
+
+  /// All [_draftItems] indices that belong to this product group.
+  final List<int> allIndices;
+
+  /// Index of the first (base) entry — used for "Düzenle".
+  int get primaryIndex => allIndices.first;
+
+  /// True when any portion of this row is newly added and not yet sent.
+  bool get hasNew => newQty > 0;
+}
+
 class _MobileGarsonTableFlowPage extends StatefulWidget {
   const _MobileGarsonTableFlowPage({
     super.key,
     required this.sellerId,
     required this.tableNumber,
+    this.tableTitleOverride,
     required this.products,
     required this.initialTabIndex,
     required this.configureProductItem,
     required this.editItemSettings,
+    this.tableOrdersStream,
     this.initialDraftItems = const <Map<String, dynamic>>[],
+    this.storeTableNumbers = const <int>[],
     this.onDraftChanged,
     this.onOrderSubmitted,
     this.onTableClosed,
@@ -26354,6 +27768,7 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     this.initialOrderId,
     this.debugDisableLiveSync = false,
     this.debugUseLocalSubmit = false,
+    this.debugPrintSystemEnabledOverride,
     this.debugInitialTableOrders = const <Map<String, dynamic>>[],
     this.debugSubmitFeedbackMessage,
     this.debugSubmitFeedbackIsWarning = false,
@@ -26361,10 +27776,20 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
 
   final String sellerId;
   final int tableNumber;
+  final String? tableTitleOverride;
   final List<SellerProduct> products;
   final int initialTabIndex;
   final String? initialOrderId;
   final List<Map<String, dynamic>> initialDraftItems;
+
+  /// Pre-opened table_orders realtime stream from the parent seller panel.
+  /// When provided, the garson flow reuses it instead of opening a second
+  /// realtime channel on the same table.
+  final Stream<List<Map<String, dynamic>>>? tableOrdersStream;
+
+  /// All configured store table numbers for this seller, pre-loaded by the
+  /// parent so that the transfer modal does not need a separate API call.
+  final List<int> storeTableNumbers;
   final _GarsonConfigureProductItem configureProductItem;
   final _GarsonEditItemSettings editItemSettings;
   final _MobileGarsonDraftChanged? onDraftChanged;
@@ -26373,6 +27798,7 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final _MobileGarsonPrintAdisyon? onPrintAdisyon;
   final bool debugDisableLiveSync;
   final bool debugUseLocalSubmit;
+  final bool? debugPrintSystemEnabledOverride;
   final List<Map<String, dynamic>> debugInitialTableOrders;
   final String? debugSubmitFeedbackMessage;
   final bool debugSubmitFeedbackIsWarning;
@@ -26382,10 +27808,12 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
       _MobileGarsonTableFlowPageState();
 }
 
-class _MobileGarsonTableFlowPageState
-    extends State<_MobileGarsonTableFlowPage> {
+class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
+    with WidgetsBindingObserver {
   StoreService? _storeServiceInstance;
   OrderPrintJobService? _orderPrintJobServiceInstance;
+  PrintStationService? _printStationServiceInstance;
+  DesktopPrintOrchestrator? _printOrchestratorInstance;
   final List<Map<String, dynamic>> _draftItems = <Map<String, dynamic>>[];
   late final Stream<List<Map<String, dynamic>>> _tableOrdersStream;
   Future<List<Map<String, dynamic>>>? _tableOrdersFallbackFuture;
@@ -26404,14 +27832,21 @@ class _MobileGarsonTableFlowPageState
   List<Map<String, dynamic>> _optimisticTableOrders =
       const <Map<String, dynamic>>[];
   String? _submitFeedbackMessage;
-  bool _submitFeedbackIsWarning = false;
-
-  // ── Undo System ──────────────────────────────────────────────────────────
-  late final GarsonUndoController _undoController;
+  _GarsonSubmitFeedbackTone _submitFeedbackTone =
+      _GarsonSubmitFeedbackTone.success;
+  Timer? _submitFeedbackAutoHideTimer;
+  StreamSubscription<List<Map<String, dynamic>>>? _printJobTrackingSubscription;
+  Timer? _printJobTrackingTimeoutTimer;
+  Timer? _printJobTrackingPollTimer;
+  Set<String> _trackedPrintJobIds = <String>{};
+  int _printTrackingGeneration = 0;
 
   // ── Duplicate Product Warning ────────────────────────────────────────────
   // Tracks product IDs added in the last 4 seconds to flag duplicates.
   final Map<String, DateTime> _recentlyAddedProductIds = {};
+
+  // ── Product search ────────────────────────────────────────────────────────
+  String _searchQuery = '';
 
   // ── Payment Session ──────────────────────────────────────────────────────
   String? _sessionKey;
@@ -26426,6 +27861,15 @@ class _MobileGarsonTableFlowPageState
 
   OrderPrintJobService get _orderPrintJobService =>
       _orderPrintJobServiceInstance ??= OrderPrintJobService();
+
+  bool get _debugPrintSystemEnabled =>
+      widget.debugPrintSystemEnabledOverride ?? true;
+
+  PrintStationService get _printStationService =>
+      _printStationServiceInstance ??= PrintStationService();
+
+  DesktopPrintOrchestrator get _printOrchestrator =>
+      _printOrchestratorInstance ??= DesktopPrintOrchestrator();
 
   User? _currentSupabaseUser() {
     if (widget.debugDisableLiveSync) return null;
@@ -26443,7 +27887,7 @@ class _MobileGarsonTableFlowPageState
   @override
   void initState() {
     super.initState();
-    _undoController = GarsonUndoController();
+    WidgetsBinding.instance.addObserver(this);
     debugPrint(
       '[GarsonRealtime] mode=flow_stream_init '
       'supabaseUrl=${AppRuntimeConfig.rawSupabaseUrl.trim().isEmpty ? '(missing)' : AppRuntimeConfig.rawSupabaseUrl.trim()} '
@@ -26463,9 +27907,13 @@ class _MobileGarsonTableFlowPageState
         seededTableOrders,
       );
       _submitFeedbackMessage = widget.debugSubmitFeedbackMessage;
-      _submitFeedbackIsWarning = widget.debugSubmitFeedbackIsWarning;
+      _submitFeedbackTone = widget.debugSubmitFeedbackIsWarning
+          ? _GarsonSubmitFeedbackTone.warning
+          : _GarsonSubmitFeedbackTone.success;
     } else {
-      _tableOrdersStream = _storeService.getTableOrdersStream(widget.sellerId);
+      _tableOrdersStream =
+          widget.tableOrdersStream ??
+          _storeService.getTableOrdersStream(widget.sellerId);
     }
     // TODO(debug): remove before production
     debugPrint(
@@ -26506,8 +27954,20 @@ class _MobileGarsonTableFlowPageState
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && _trackedPrintJobIds.isNotEmpty) {
+      unawaited(_refreshTrackedPrintJobs(generation: _printTrackingGeneration));
+    }
+  }
+
+  @override
   void dispose() {
-    _undoController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _submitFeedbackAutoHideTimer?.cancel();
+    _printJobTrackingSubscription?.cancel();
+    _printJobTrackingTimeoutTimer?.cancel();
+    _printJobTrackingPollTimer?.cancel();
     super.dispose();
   }
 
@@ -26570,20 +28030,308 @@ class _MobileGarsonTableFlowPageState
 
   void _notifyDraftChanged() {
     if (_draftItems.isNotEmpty) {
-      _submitFeedbackMessage = null;
-      _submitFeedbackIsWarning = false;
+      _clearSubmitFeedback();
     }
     widget.onDraftChanged?.call(widget.tableNumber, _draftSnapshot());
+  }
+
+  void _clearSubmitFeedback() {
+    _submitFeedbackAutoHideTimer?.cancel();
+    _submitFeedbackAutoHideTimer = null;
+    _submitFeedbackMessage = null;
+    _submitFeedbackTone = _GarsonSubmitFeedbackTone.success;
+  }
+
+  void _setSubmitFeedback(
+    String message, {
+    required _GarsonSubmitFeedbackTone tone,
+    Duration? autoHideAfter,
+  }) {
+    _submitFeedbackAutoHideTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _submitFeedbackMessage = message;
+      _submitFeedbackTone = tone;
+    });
+    if (autoHideAfter != null) {
+      _submitFeedbackAutoHideTimer = Timer(autoHideAfter, () {
+        if (!mounted) return;
+        setState(_clearSubmitFeedback);
+      });
+    }
+  }
+
+  void _showDispatchFeedbackSnackBar(
+    String message, {
+    bool warning = false,
+  }) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: warning ? Colors.orange.shade700 : null,
+        ),
+      );
+  }
+
+  void _applyKitchenDispatchFeedback(_KitchenDispatchFeedback feedback) {
+    if (!mounted) return;
+    if (feedback.hasNotice) {
+      final message = feedback.notice!.trim();
+      _setSubmitFeedback(
+        message,
+        tone: _GarsonSubmitFeedbackTone.warning,
+        autoHideAfter: const Duration(seconds: 6),
+      );
+      _showDispatchFeedbackSnackBar(message, warning: true);
+      return;
+    }
+    if (feedback.hasError) {
+      final message = _normalizePrinterWorkflowMessageValue(
+        feedback.error!,
+        fallback: 'Mutfak fişi yazdırılamadı.',
+      );
+      _setSubmitFeedback(
+        message,
+        tone: _GarsonSubmitFeedbackTone.warning,
+        autoHideAfter: const Duration(seconds: 6),
+      );
+      _showDispatchFeedbackSnackBar(message, warning: true);
+      return;
+    }
+    if (feedback.progressed) {
+      _setSubmitFeedback(
+        'Mutfak fişi yazdırma akışına girdi. Sonuç kontrol ediliyor.',
+        tone: _GarsonSubmitFeedbackTone.loading,
+        autoHideAfter: const Duration(seconds: 5),
+      );
+      return;
+    }
+    if (feedback.queuedOnly) {
+      _setSubmitFeedback(
+        'Mutfak fişi kuyruğa alındı. Yazıcı Merkezi baskıyı bekliyor.',
+        tone: _GarsonSubmitFeedbackTone.loading,
+        autoHideAfter: const Duration(seconds: 5),
+      );
+    }
+  }
+
+  void _cancelPrintTracking({bool resetTrackedJobs = true}) {
+    _printJobTrackingSubscription?.cancel();
+    _printJobTrackingSubscription = null;
+    _printJobTrackingTimeoutTimer?.cancel();
+    _printJobTrackingTimeoutTimer = null;
+    _printJobTrackingPollTimer?.cancel();
+    _printJobTrackingPollTimer = null;
+    if (resetTrackedJobs) {
+      _trackedPrintJobIds = <String>{};
+    }
+  }
+
+  void _finishPrintTrackingSuccess() {
+    _cancelPrintTracking();
+    _printTrackingGeneration += 1;
+    // Success message is already showing from immediate feedback.
+  }
+
+  void _finishPrintTrackingFailure() {
+    _cancelPrintTracking();
+    _printTrackingGeneration += 1;
+    _setSubmitFeedback(
+      'Yazdırma başarısız',
+      tone: _GarsonSubmitFeedbackTone.warning,
+      autoHideAfter: const Duration(seconds: 5),
+    );
+  }
+
+  Future<void> _finishPrintTrackingTimeoutOrOffline({
+    required int generation,
+  }) async {
+    if (!mounted || generation != _printTrackingGeneration) return;
+    _cancelPrintTracking();
+    _printTrackingGeneration += 1;
+    String message = 'Yazdırma başarısız';
+    try {
+      final stationOnline = await _printStationService.isEffectivelyOnline(
+        widget.sellerId,
+      );
+      if (!stationOnline) {
+        message = _printStationService.offlineWarningMessage();
+      }
+    } catch (_) {
+      // Fall back to the generic warning if the station status lookup fails.
+    }
+    if (!mounted) return;
+    _setSubmitFeedback(
+      message,
+      tone: _GarsonSubmitFeedbackTone.warning,
+      autoHideAfter: const Duration(seconds: 5),
+    );
+  }
+
+  void _evaluateTrackedPrintJobs(
+    List<PrintJobModel> jobs, {
+    required int generation,
+  }) {
+    if (!mounted || generation != _printTrackingGeneration) return;
+    if (_trackedPrintJobIds.isEmpty) return;
+
+    final jobsById = <String, PrintJobModel>{};
+    for (final job in jobs) {
+      jobsById[job.id] = job;
+    }
+    if (_trackedPrintJobIds.any((jobId) => !jobsById.containsKey(jobId))) {
+      return;
+    }
+
+    var hasFailure = false;
+    var allCompleted = true;
+    for (final jobId in _trackedPrintJobIds) {
+      final job = jobsById[jobId];
+      if (job == null) {
+        allCompleted = false;
+        continue;
+      }
+      if (job.isFailed) {
+        hasFailure = true;
+        break;
+      }
+      if (!job.isCompleted) {
+        allCompleted = false;
+      }
+    }
+
+    if (hasFailure) {
+      _finishPrintTrackingFailure();
+      return;
+    }
+    if (allCompleted) {
+      _finishPrintTrackingSuccess();
+    }
+  }
+
+  Future<void> _refreshTrackedPrintJobs({required int generation}) async {
+    if (_trackedPrintJobIds.isEmpty) return;
+    try {
+      final rows = await Supabase.instance.client
+          .from('print_jobs')
+          .select()
+          .inFilter('id', _trackedPrintJobIds.toList(growable: false));
+      if (!mounted || generation != _printTrackingGeneration) return;
+      final jobs = List<Map<String, dynamic>>.from(rows as List)
+          .map((row) => PrintJobModel.fromMap(Map<String, dynamic>.from(row)))
+          .toList(growable: false);
+      _evaluateTrackedPrintJobs(jobs, generation: generation);
+    } catch (error) {
+      debugPrint('[GarsonPrintTrack] refresh_failed error=$error');
+    }
+  }
+
+  void _startPrintCompletionTracking(_KitchenDispatchFeedback feedback) {
+    final normalizedIds = feedback.printJobIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (normalizedIds.isEmpty) {
+      _finishPrintTrackingFailure();
+      return;
+    }
+
+    _cancelPrintTracking();
+    _printTrackingGeneration += 1;
+    final generation = _printTrackingGeneration;
+    _trackedPrintJobIds = normalizedIds;
+
+    // NOTE: No realtime stream on print_jobs — REST polling is more reliable
+    // and avoids opening an extra WebSocket channel that competes with
+    // table_orders / products channels.
+
+    _printJobTrackingTimeoutTimer = Timer(const Duration(seconds: 25), () {
+      if (!mounted || generation != _printTrackingGeneration) return;
+      unawaited(_finishPrintTrackingTimeoutOrOffline(generation: generation));
+    });
+
+    // Periodic REST poll every 3s — sole tracking mechanism
+    _printJobTrackingPollTimer = Timer.periodic(const Duration(seconds: 3), (
+      _,
+    ) {
+      if (!mounted || generation != _printTrackingGeneration) return;
+      unawaited(_refreshTrackedPrintJobs(generation: generation));
+    });
+
+    unawaited(_refreshTrackedPrintJobs(generation: generation));
   }
 
   String? _currentWaiterName() {
     return _orderPrintJobService.safeUserDisplayName(_currentSupabaseUser());
   }
 
-  Future<String?> _dispatchKitchenPrintJobs(
+  _KitchenDispatchFeedback _feedbackFromDispatchResult(
+    OrderPrintJobDispatchResult result,
+  ) {
+    if (result.printSystemEnabled == false ||
+        result.printSuppressedReason == 'print_system_disabled') {
+      return _KitchenDispatchFeedback(
+        notice:
+            'Sipariş kaydedildi. Baskı sistemi kapalı olduğu için mutfak fişi yazdırılmadı.',
+        orderId: result.orderId,
+        printJobIds: result.printJobIds,
+      );
+    }
+    if (result.printJobCount == 0) {
+      return const _KitchenDispatchFeedback(
+        error: 'Mutfak yazdırma için eşleşen yazıcı/istasyon bulunamadı.',
+      );
+    }
+    if (result.dispatchedJobCount > 0) {
+      return _KitchenDispatchFeedback(
+        progressed: true,
+        orderId: result.orderId,
+        printJobIds: result.printJobIds,
+      );
+    }
+    return _KitchenDispatchFeedback(
+      queuedOnly: true,
+      orderId: result.orderId,
+      printJobIds: result.printJobIds,
+    );
+  }
+
+  _KitchenDispatchFeedback _mergeDispatchFeedbacks(
+    Iterable<_KitchenDispatchFeedback> feedbacks,
+  ) {
+    final errors = <String>[];
+    var queuedOnly = false;
+    var progressed = false;
+    String? orderId;
+    final printJobIds = <String>{};
+    for (final feedback in feedbacks) {
+      if (feedback.hasError) {
+        errors.add(feedback.error!.trim());
+      }
+      queuedOnly = queuedOnly || feedback.queuedOnly;
+      progressed = progressed || feedback.progressed;
+      orderId ??= feedback.orderId;
+      printJobIds.addAll(feedback.printJobIds);
+    }
+    if (errors.isNotEmpty) {
+      return _KitchenDispatchFeedback(error: errors.join(' | '));
+    }
+    return _KitchenDispatchFeedback(
+      queuedOnly: queuedOnly,
+      progressed: progressed,
+      orderId: orderId,
+      printJobIds: printJobIds.toList(growable: false),
+    );
+  }
+
+  Future<_KitchenDispatchFeedback> _dispatchKitchenPrintJobs(
     List<Map<String, dynamic>> items,
   ) async {
-    if (items.isEmpty) return null;
+    if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
       final result = await _orderPrintJobService.dispatchNewOrder(
         restaurantId: widget.sellerId,
@@ -26593,18 +28341,29 @@ class _MobileGarsonTableFlowPageState
         waiterName: _currentWaiterName(),
         jobType: 'new_order',
       );
+      debugPrint(
+        '[PrintPipeline] trace=${result.traceId} stage=mobile_dispatch_done '
+        'at=${DateTime.now().toIso8601String()} '
+        'orderId=${result.orderId} '
+        'order_saved_at=${result.orderSavedAt.isEmpty ? '-' : result.orderSavedAt} '
+        'print_job_created_at=${result.printJobCreatedAt.isEmpty ? '-' : result.printJobCreatedAt} '
+        'printJobCount=${result.printJobCount} '
+        'printJobIds=${result.printJobIds.isEmpty ? '-' : result.printJobIds.join(",")} '
+        'dispatchedLocal=${result.dispatchedJobCount} '
+        'table=${widget.tableNumber}',
+      );
       _orderPrintJobService.debugLogResult(result);
-      return null;
+      return _feedbackFromDispatchResult(result);
     } catch (error) {
-      return error.toString();
+      return _KitchenDispatchFeedback(error: error.toString());
     }
   }
 
-  Future<String?> _dispatchKitchenAdditions(
+  Future<_KitchenDispatchFeedback> _dispatchKitchenAdditions(
     List<Map<String, dynamic>> items, {
     String? note,
   }) async {
-    if (items.isEmpty) return null;
+    if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
       final result = await _orderPrintJobService.dispatchAddItem(
         restaurantId: widget.sellerId,
@@ -26615,17 +28374,17 @@ class _MobileGarsonTableFlowPageState
         notes: note,
       );
       _orderPrintJobService.debugLogResult(result);
-      return null;
+      return _feedbackFromDispatchResult(result);
     } catch (error) {
-      return error.toString();
+      return _KitchenDispatchFeedback(error: error.toString());
     }
   }
 
-  Future<String?> _dispatchKitchenRemovals(
+  Future<_KitchenDispatchFeedback> _dispatchKitchenRemovals(
     List<Map<String, dynamic>> items, {
     String? note,
   }) async {
-    if (items.isEmpty) return null;
+    if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
       final result = await _orderPrintJobService.dispatchCancelItem(
         restaurantId: widget.sellerId,
@@ -26636,17 +28395,17 @@ class _MobileGarsonTableFlowPageState
         notes: note,
       );
       _orderPrintJobService.debugLogResult(result);
-      return null;
+      return _feedbackFromDispatchResult(result);
     } catch (error) {
-      return error.toString();
+      return _KitchenDispatchFeedback(error: error.toString());
     }
   }
 
-  Future<String?> _dispatchKitchenReprintJobs(
+  Future<_KitchenDispatchFeedback> _dispatchKitchenReprintJobs(
     List<Map<String, dynamic>> items, {
     String? note,
   }) async {
-    if (items.isEmpty) return null;
+    if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
       final result = await _orderPrintJobService.dispatchReprint(
         restaurantId: widget.sellerId,
@@ -26657,9 +28416,9 @@ class _MobileGarsonTableFlowPageState
         notes: note,
       );
       _orderPrintJobService.debugLogResult(result);
-      return null;
+      return _feedbackFromDispatchResult(result);
     } catch (error) {
-      return error.toString();
+      return _KitchenDispatchFeedback(error: error.toString());
     }
   }
 
@@ -26673,11 +28432,6 @@ class _MobileGarsonTableFlowPageState
   DateTime _createdAt(Map<String, dynamic> order) {
     final parsed = DateTime.tryParse(order['created_at']?.toString() ?? '');
     return parsed?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
-  }
-
-  DateTime _updatedAt(Map<String, dynamic> order) {
-    final parsed = DateTime.tryParse(order['updated_at']?.toString() ?? '');
-    return parsed?.toLocal() ?? _createdAt(order);
   }
 
   int _parsePositiveInt(dynamic value, {int fallback = 0}) {
@@ -26744,10 +28498,6 @@ class _MobileGarsonTableFlowPageState
 
   int _orderRevision(Map<String, dynamic> order) {
     return _parsePositiveInt(order['revision'], fallback: 1);
-  }
-
-  Map<String, dynamic> _orderLastEditSummary(Map<String, dynamic> order) {
-    return _normalizedLastEditSummary(order['last_edit_summary']);
   }
 
   String _tableOrderIdentity(Map<String, dynamic> order) {
@@ -27012,11 +28762,18 @@ class _MobileGarsonTableFlowPageState
     final lines = <MixedServiceDisplayEntry>[];
     final gramaj = item['gramaj']?.toString().trim() ?? '';
     final notes = item['notes']?.toString().trim() ?? '';
+    final attrs =
+        (item['attributes'] as List?)
+            ?.whereType<String>()
+            .where((s) => s.isNotEmpty)
+            .toList() ??
+        const <String>[];
     if (gramaj.isNotEmpty) {
       lines.add(MixedServiceDisplayEntry.item(gramaj));
     }
-    if (notes.isNotEmpty) {
-      lines.add(MixedServiceDisplayEntry.item(notes));
+    final noteParts = <String>[if (notes.isNotEmpty) notes, ...attrs];
+    if (noteParts.isNotEmpty) {
+      lines.add(MixedServiceDisplayEntry.item('Not: ${noteParts.join(', ')}'));
     }
     lines.addAll(MixedServiceOrder.childItemDisplayEntries(item));
     return lines;
@@ -27266,6 +29023,7 @@ class _MobileGarsonTableFlowPageState
     List<String> attributes = const <String>[],
     double? selectedServiceAmount,
     int? selectedWeightGrams,
+    String? selectedSizeName,
   }) {
     final effectiveWeight =
         product.resolvedServiceControlType ==
@@ -27292,13 +29050,20 @@ class _MobileGarsonTableFlowPageState
     final unitPrice = ProductPriceCalculator.resolveServiceControlledUnitPrice(
       serviceControlType: product.resolvedServiceControlType,
       pricingType: product.resolvedPricingType,
+      pricingMode: product.resolvedPricingMode,
+      basePrice: product.basePrice ?? product.portionPrice,
       portionPrice: product.portionPrice,
       pricePerKg: product.pricePerKg,
+      sizeOptions: product.normalizedSizeOptions,
+      selectedSizeName: selectedSizeName,
       fallbackPrice: product.price,
       selectedAmount: effectiveServiceAmount,
       selectedWeightGrams: effectiveWeight,
     );
-    final amountLabel = product.usesServiceControlStepper
+    final normalizedSizeName = selectedSizeName?.trim() ?? '';
+    final amountLabel = normalizedSizeName.isNotEmpty
+        ? normalizedSizeName
+        : product.usesServiceControlStepper
         ? ProductPriceCalculator.formatServiceAmountLabel(
             type: product.resolvedServiceControlType,
             amount: effectiveServiceAmount,
@@ -27312,6 +29077,10 @@ class _MobileGarsonTableFlowPageState
       'quantity': quantity,
       'gramaj': amountLabel,
       'amountLabel': amountLabel,
+      'selectedSizeName': normalizedSizeName.isEmpty
+          ? null
+          : normalizedSizeName,
+      'selectedSizePrice': normalizedSizeName.isEmpty ? null : unitPrice,
       'serviceControlType': product.resolvedServiceControlType.storageValue,
       'selectedServiceAmount': effectiveServiceAmount,
       'selectedWeightGrams': effectiveWeight,
@@ -27370,6 +29139,35 @@ class _MobileGarsonTableFlowPageState
       );
       return;
     }
+
+    // ── Auto-enter edit mode when this product already lives in a sent ──
+    // ── order and the draft is still empty.                            ──
+    if (!_isEditingOrder && _draftItems.isEmpty) {
+      final currentOrders = _displayTableOrders(_hydratedTableOrders);
+      for (final o in currentOrders) {
+        final normalized = _normalizeTableOrder(o);
+        final statusKey = _normalizedOrderStatusKey(
+          normalized['status']?.toString(),
+        );
+        if (statusKey != 'sent' &&
+            statusKey != 'preparing' &&
+            statusKey != 'ready' &&
+            statusKey != 'served') {
+          continue;
+        }
+        final orderItems = _extractItems(normalized['items']);
+        final hasProduct = orderItems.any((item) {
+          final pid = item['product_id']?.toString() ?? '';
+          final pname = item['name']?.toString() ?? '';
+          return (pid.isNotEmpty && pid == product.id) || pname == product.name;
+        });
+        if (hasProduct) {
+          _loadOrderIntoDraft(normalized);
+          break;
+        }
+      }
+    }
+
     final index = _draftItems.indexWhere(
       (item) =>
           (item['name']?.toString() ?? '') == product.name &&
@@ -27415,7 +29213,8 @@ class _MobileGarsonTableFlowPageState
             _draftItems.add(<String, dynamic>{
               'product_id': product.id,
               'name': product.name,
-              'price': product.displayPrice,
+              'price': product.price,
+              'line_total': product.price,
               'quantity': 1,
               'gramaj': '',
               'notes': '',
@@ -27440,7 +29239,8 @@ class _MobileGarsonTableFlowPageState
         _draftItems.add(<String, dynamic>{
           'product_id': product.id,
           'name': product.name,
-          'price': product.displayPrice,
+          'price': product.price,
+          'line_total': product.price,
           'quantity': 1,
           'gramaj': '',
           'notes': '',
@@ -27451,6 +29251,44 @@ class _MobileGarsonTableFlowPageState
       }
     });
     _notifyDraftChanged();
+  }
+
+  /// Removes ALL draft entries for [product] and shows a SnackBar with an undo
+  /// action that re-adds the removed items. Called from the right-swipe action
+  /// in the product list.
+  void _quickRemoveProductFromDraft(SellerProduct product) {
+    final removed = <Map<String, dynamic>>[];
+    setState(() {
+      final toRemove = <int>[];
+      for (var i = 0; i < _draftItems.length; i++) {
+        final id = _draftItems[i]['product_id']?.toString();
+        final nameMatch =
+            (_draftItems[i]['name']?.toString() ?? '') == product.name;
+        if ((id != null && id.isNotEmpty && id == product.id) || nameMatch) {
+          toRemove.add(i);
+        }
+      }
+      for (final idx in toRemove.reversed) {
+        removed.insert(0, Map<String, dynamic>.from(_draftItems[idx]));
+        _draftItems.removeAt(idx);
+      }
+    });
+    if (removed.isEmpty) return;
+    _notifyDraftChanged();
+    if (!mounted) return;
+    final label = removed.length == 1
+        ? '"${product.name}" taslaktan çıkarıldı.'
+        : '"${product.name}" — ${removed.length} adet taslaktan çıkarıldı.';
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(label),
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   Future<void> _addConfiguredProduct(SellerProduct product) async {
@@ -27522,6 +29360,221 @@ class _MobileGarsonTableFlowPageState
       isWarning: rules.showEditWarning,
       isLocked: !rules.canEdit,
     );
+  }
+
+  /// Returns `true` when [item] in the draft is newly added (i.e. not present
+  /// in [_editingBaseItems]) while the waiter is editing an existing order.
+  bool _isDraftItemNew(Map<String, dynamic> item) {
+    if (!_isEditingOrder) return false;
+    final id = item['product_id']?.toString() ?? '';
+    final name = item['name']?.toString() ?? '';
+    return !_editingBaseItems.any((base) {
+      final baseId = base['product_id']?.toString() ?? '';
+      final baseName = base['name']?.toString() ?? '';
+      if (id.isNotEmpty && baseId.isNotEmpty) return id == baseId;
+      return name == baseName;
+    });
+  }
+
+  /// Returns a composite string key that uniquely identifies an order item from
+  /// a business perspective. Two items with the same key are merge-compatible.
+  ///
+  /// Mixed-service items should be handled before calling this; the caller is
+  /// responsible for keeping them in separate rows.
+  String _draftItemCompositeKey(Map<String, dynamic> item) {
+    final productId = item['product_id']?.toString() ?? '';
+    final name = item['name']?.toString() ?? '';
+    final identity = productId.isNotEmpty ? 'id:$productId' : 'name:$name';
+    final gramaj = item['gramaj']?.toString().trim() ?? '';
+    final note = item['notes']?.toString().trim() ?? '';
+    final unitPrice = MixedServiceOrder.parsePrice(
+      item['unitPriceSnapshot'] ?? item['price'],
+    ).toStringAsFixed(2);
+    final attrs =
+        ((item['attributes'] as List?)?.whereType<String>().toList() ??
+              <String>[])
+          ..sort();
+    return '$identity\x00$gramaj\x00$note\x00$unitPrice\x00${attrs.join('|')}';
+  }
+
+  /// Builds a merged list of display rows for [_draftItems].
+  ///
+  /// Items that share the same composite key (product identity, gramaj, note,
+  /// unit price, attributes) are collapsed into a single
+  /// [_MergedDraftDisplayRow].  Mixed-service items are NEVER merged.
+  ///
+  /// [newQty] is computed as `max(0, totalDraftQty - totalBaseQty)` using the
+  /// same composite key.  This correctly covers both the case where
+  /// [_quickAddProduct] *incremented* an existing [_draftItems] entry in-place
+  /// and the case where it *appended* a brand-new entry.
+  List<_MergedDraftDisplayRow> _computeMergedDraftRows() {
+    final editing = _isEditingOrder;
+    final merged = <_MergedDraftDisplayRow>[];
+    final keyToIdx = <String, int>{}; // composite key → index into [merged]
+
+    // Pre-compute base quantities by composite key so we can compute the
+    // per-row new-qty delta in a single final pass.
+    final baseQtyByKey = <String, int>{};
+    if (editing) {
+      for (final base in _editingBaseItems) {
+        if (_isMixedServiceItem(base)) continue;
+        final k = _draftItemCompositeKey(base);
+        baseQtyByKey[k] =
+            (baseQtyByKey[k] ?? 0) + ((base['quantity'] as num?)?.toInt() ?? 1);
+      }
+    }
+
+    for (int i = 0; i < _draftItems.length; i++) {
+      final item = _draftItems[i];
+      final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+
+      // Mixed-service items are never merged — each has a unique composition.
+      if (_isMixedServiceItem(item)) {
+        merged.add(
+          _MergedDraftDisplayRow(
+            displayItem: item,
+            totalQty: qty,
+            newQty: editing && _isDraftItemNew(item) ? qty : 0,
+            allIndices: [i],
+          ),
+        );
+        continue;
+      }
+
+      final key = _draftItemCompositeKey(item);
+
+      if (keyToIdx.containsKey(key)) {
+        final mIdx = keyToIdx[key]!;
+        final ex = merged[mIdx];
+        merged[mIdx] = _MergedDraftDisplayRow(
+          displayItem: ex.displayItem,
+          totalQty: ex.totalQty + qty,
+          newQty: 0, // recalculated in the final pass below
+          allIndices: [...ex.allIndices, i],
+        );
+      } else {
+        keyToIdx[key] = merged.length;
+        merged.add(
+          _MergedDraftDisplayRow(
+            displayItem: item,
+            totalQty: qty,
+            newQty: 0, // recalculated in the final pass below
+            allIndices: [i],
+          ),
+        );
+      }
+    }
+
+    // Final pass: compute newQty as the delta between draft total and base total.
+    if (!editing) return merged;
+    return merged.map((row) {
+      final key = _draftItemCompositeKey(row.displayItem);
+      final baseQty = baseQtyByKey[key] ?? 0;
+      final newQty = (row.totalQty - baseQty).clamp(0, row.totalQty);
+      return _MergedDraftDisplayRow(
+        displayItem: row.displayItem,
+        totalQty: row.totalQty,
+        newQty: newQty,
+        allIndices: row.allIndices,
+      );
+    }).toList();
+  }
+
+  /// Shows a modal dialog that lets the waiter change the unit price of a
+  /// draft item. The updated price is reflected in `line_total` immediately.
+  Future<void> _showPriceChangeDialog(int draftIndex) async {
+    if (draftIndex < 0 || draftIndex >= _draftItems.length) return;
+    final item = _draftItems[draftIndex];
+    final currentPrice = MixedServiceOrder.parsePrice(
+      item['unitPriceSnapshot'] ?? item['price'],
+    );
+    final controller = TextEditingController(
+      text: currentPrice.toStringAsFixed(2),
+    );
+    final result = await showDialog<double>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          item['name']?.toString() ?? 'Ürün',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Fiyatı Değiştir',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Mevcut fiyat: ${_formatMoney(currentPrice)}',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Yeni Fiyat (₺)',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+              ),
+              onSubmitted: (_) {
+                final parsed = double.tryParse(
+                  controller.text.replaceAll(',', '.'),
+                );
+                Navigator.of(ctx).pop(parsed);
+              },
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Bu değişiklik sipariş özetine ve adisyona yansır.',
+              style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('İptal'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final parsed = double.tryParse(
+                controller.text.replaceAll(',', '.'),
+              );
+              Navigator.of(ctx).pop(parsed);
+            },
+            child: const Text('Uygula'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (result == null || result < 0 || !mounted) return;
+    if (draftIndex >= _draftItems.length) return;
+    final updatedItem = Map<String, dynamic>.from(_draftItems[draftIndex]);
+    final qty = (updatedItem['quantity'] as num?)?.toInt() ?? 1;
+    updatedItem['price'] = result;
+    updatedItem['unitPriceSnapshot'] = result;
+    updatedItem['line_total'] = result * qty;
+    updatedItem['total_price'] = result * qty;
+    // Flag as manually overridden so it can be flagged in summaries
+    updatedItem['price_override'] = true;
+    setState(() {
+      if (draftIndex < _draftItems.length) {
+        _draftItems[draftIndex] = _normalizeItem(updatedItem);
+      }
+    });
+    _notifyDraftChanged();
   }
 
   String _draftItemAmountLabel(Map<String, dynamic> item) {
@@ -27875,7 +29928,7 @@ class _MobileGarsonTableFlowPageState
   bool _shouldDispatchFullKitchenTicket(String? status) =>
       KitchenPrintPolicy.shouldDispatchFullTicket(status);
 
-  Future<String?> _dispatchUpdatedOrderPrintJobs({
+  Future<_KitchenDispatchFeedback> _dispatchUpdatedOrderPrintJobs({
     required String? previousStatus,
     required _GarsonOrderChangeSummary changeSummary,
     required List<Map<String, dynamic>> nextItems,
@@ -27884,36 +29937,29 @@ class _MobileGarsonTableFlowPageState
       return _dispatchKitchenPrintJobs(nextItems);
     }
 
-    final errors = <String>[];
-    final removalError = await _dispatchKitchenRemovals(
+    final feedbacks = <_KitchenDispatchFeedback>[];
+    final removalFeedback = await _dispatchKitchenRemovals(
       changeSummary.kitchenRemovedItems,
       note: KitchenPrintPolicy.removeItemsNote,
     );
-    if (removalError != null && removalError.isNotEmpty) {
-      errors.add(removalError);
-    }
+    feedbacks.add(removalFeedback);
 
-    final additionError = await _dispatchKitchenAdditions(
+    final additionFeedback = await _dispatchKitchenAdditions(
       changeSummary.kitchenAddedItems,
       note: KitchenPrintPolicy.addItemsNote,
     );
-    if (additionError != null && additionError.isNotEmpty) {
-      errors.add(additionError);
-    }
+    feedbacks.add(additionFeedback);
 
     if (changeSummary.kitchenRemovedItems.isEmpty &&
         changeSummary.kitchenAddedItems.isEmpty) {
-      final reprintError = await _dispatchKitchenReprintJobs(
+      final reprintFeedback = await _dispatchKitchenReprintJobs(
         nextItems,
         note: KitchenPrintPolicy.reprintNote,
       );
-      if (reprintError != null && reprintError.isNotEmpty) {
-        errors.add(reprintError);
-      }
+      feedbacks.add(reprintFeedback);
     }
 
-    if (errors.isEmpty) return null;
-    return errors.join(' | ');
+    return _mergeDispatchFeedbacks(feedbacks);
   }
 
   void _changeDraftQty(int index, int delta) {
@@ -27992,6 +30038,9 @@ class _MobileGarsonTableFlowPageState
   Future<void> _editDraftItem(int index) async {
     if (index < 0 || index >= _draftItems.length) return;
     final original = Map<String, dynamic>.from(_draftItems[index]);
+
+    // For mixed-service items (menus / services), go directly to the
+    // specialised editor — "Fiyatı Değiştir" is not applicable there.
     if (_isMixedServiceItem(original)) {
       final updated = await showMixedServiceDialog(
         context: context,
@@ -28012,6 +30061,66 @@ class _MobileGarsonTableFlowPageState
       _notifyDraftChanged();
       return;
     }
+
+    // For regular items show an action sheet with edit options.
+    final choice = await showModalBottomSheet<_DraftItemEditChoice>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                original['name']?.toString() ?? 'Ürün',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    Navigator.of(context).pop(_DraftItemEditChoice.settings),
+                icon: const Icon(Icons.tune_rounded, size: 18),
+                label: const Text('Ayarları Düzenle'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 44),
+                  alignment: Alignment.centerLeft,
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    Navigator.of(context).pop(_DraftItemEditChoice.price),
+                icon: const Icon(Icons.price_change_outlined, size: 18),
+                label: const Text('Fiyatı Değiştir'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 44),
+                  alignment: Alignment.centerLeft,
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (choice == null || !mounted) return;
+
+    if (choice == _DraftItemEditChoice.price) {
+      await _showPriceChangeDialog(index);
+      return;
+    }
+
     await widget.editItemSettings(context, original, (updated) {
       if (!mounted) return;
       setState(() {
@@ -28021,48 +30130,6 @@ class _MobileGarsonTableFlowPageState
       });
       _notifyDraftChanged();
     });
-  }
-
-  String _statusLabel(String status) {
-    switch (_normalizedOrderStatusKey(status)) {
-      case 'draft':
-      case 'waiting':
-      case 'new':
-        return 'Yeni Sipariş';
-      case 'sent':
-        return 'Mutfağa İletildi';
-      case 'preparing':
-        return 'Hazırlanıyor';
-      case 'ready':
-        return 'Hazır';
-      case 'served':
-        return 'Servis Edildi';
-      case 'closed':
-        return 'Kapatıldı';
-      default:
-        return 'Bilinmiyor';
-    }
-  }
-
-  Color _statusColor(String status) {
-    switch (_normalizedOrderStatusKey(status)) {
-      case 'draft':
-      case 'waiting':
-      case 'new':
-        return const Color(0xFFEF4444); // kırmızı – yeni
-      case 'sent':
-        return const Color(0xFFF97316); // turuncu – mutfağa iletildi
-      case 'preparing':
-        return const Color(0xFF0891B2); // teal – hazırlanıyor
-      case 'ready':
-        return const Color(0xFF0F766E); // yeşil-teal – hazır
-      case 'served':
-        return const Color(0xFF16A34A); // yeşil – servis edildi
-      case 'closed':
-        return const Color(0xFF6B7280); // gri – kapatıldı
-      default:
-        return const Color(0xFF6B7280);
-    }
   }
 
   String _timeAgo(DateTime createdAt) {
@@ -28110,8 +30177,7 @@ class _MobileGarsonTableFlowPageState
               .map((item) => Map<String, dynamic>.from(item))
               .toList(growable: false),
         );
-      _submitFeedbackMessage = null;
-      _submitFeedbackIsWarning = false;
+      _clearSubmitFeedback();
       _bottomIndex = 2;
     });
     _notifyDraftChanged();
@@ -28212,21 +30278,24 @@ class _MobileGarsonTableFlowPageState
 
     setState(() => _isSubmitting = true);
     try {
-      final dispatchError = await _dispatchKitchenReprintJobs(
+      final dispatchFeedback = await _dispatchKitchenReprintJobs(
         items,
         note: 'Sipariş tekrar iletimi',
       );
+      final snackMessage = dispatchFeedback.hasError
+          ? dispatchFeedback.error!
+          : dispatchFeedback.progressed
+          ? 'Mutfak fişi tekrar gönderildi.'
+          : dispatchFeedback.queuedOnly
+          ? 'Mutfak fişi yazdırma kuyruğuna alındı.'
+          : 'Mutfak fişi tekrar iletimi bekleniyor.';
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            dispatchError == null
-                ? 'Sipariş mutfağa tekrar iletildi.'
-                : 'Sipariş tekrar iletildi fakat mutfak kuyruğu kontrol edilmeli.',
-          ),
-          backgroundColor: dispatchError == null
-              ? null
-              : Colors.orange.shade700,
+          content: Text(snackMessage),
+          backgroundColor: dispatchFeedback.hasError
+              ? Colors.orange.shade700
+              : null,
         ),
       );
     } finally {
@@ -28234,45 +30303,48 @@ class _MobileGarsonTableFlowPageState
     }
   }
 
-  Future<void> _changeOrderStatus(
-    String orderId,
-    String nextStatus, {
-    Map<String, dynamic>? sourceOrder,
-  }) async {
-    if (_isSubmitting) return;
-    setState(() => _isSubmitting = true);
-    try {
-      _tableOrdersFallbackFuture = null;
-      await _storeService.updateTableOrderStatus(orderId, nextStatus);
-      String? dispatchError;
-      if (nextStatus.toLowerCase() == 'sent') {
-        final items = sourceOrder == null
-            ? const <Map<String, dynamic>>[]
-            : _extractItems(sourceOrder['items']);
-        dispatchError = await _dispatchKitchenPrintJobs(items);
+  /// Enters edit mode for [order] (if not already editing it) then calls
+  /// [act] with the [_draftItems] index that corresponds to [sentItemIndex].
+  ///
+  /// Fast-path (no conflicting draft): [_loadOrderIntoDraft] runs
+  /// synchronously and [act] is invoked immediately after.
+  /// Slow-path (conflicting draft exists): shows the confirmation dialog
+  /// first, then invokes [act] once editing is set up.
+  void _enterEditAndAct(
+    Map<String, dynamic> order,
+    void Function(int draftItemIndex) act,
+    int sentItemIndex,
+  ) {
+    final normalized = _normalizeTableOrder(order);
+    final orderId = normalized['id']?.toString() ?? '';
+    if (orderId.isEmpty) return;
+
+    if (_editingOrderId == orderId) {
+      // Already editing this order — apply directly.
+      if (sentItemIndex >= 0 && sentItemIndex < _draftItems.length) {
+        act(sentItemIndex);
       }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            dispatchError == null
-                ? 'Sipariş durumu: ${_statusLabel(nextStatus)}'
-                : 'Sipariş güncellendi fakat mutfak kuyruğu oluşturulamadı.',
-          ),
-          backgroundColor: dispatchError == null
-              ? null
-              : Colors.orange.shade700,
-        ),
-      );
-      unawaited(_refreshTableOrdersAfterSubmit());
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Durum güncellenemedi: $error')));
-    } finally {
-      if (mounted) setState(() => _isSubmitting = false);
+      return;
     }
+
+    // Fast path: no conflicting draft.
+    if (_draftItems.isEmpty) {
+      _loadOrderIntoDraft(normalized);
+      if (mounted && sentItemIndex >= 0 && sentItemIndex < _draftItems.length) {
+        act(sentItemIndex);
+      }
+      return;
+    }
+
+    // Slow path: existing draft — ask for confirmation first.
+    _beginOrderEditing(normalized).then((_) {
+      if (!mounted) return;
+      if (_editingOrderId == orderId &&
+          sentItemIndex >= 0 &&
+          sentItemIndex < _draftItems.length) {
+        act(sentItemIndex);
+      }
+    });
   }
 
   Future<void> _submitDraft(
@@ -28280,10 +30352,11 @@ class _MobileGarsonTableFlowPageState
   ) async {
     if (!_canSubmitDraft()) return;
     setState(() => _isSubmitting = true);
+    _KitchenDispatchFeedback? parallelDispatchFeedback;
     try {
       _tableOrdersFallbackFuture = null;
       final items = _draftItems
-          .map((item) => Map<String, dynamic>.from(item))
+          .map((item) => _normalizeItem(Map<String, dynamic>.from(item)))
           .toList(growable: false);
       final editingId = _editingOrderId;
       final originalOrder = editingId == null || editingId.isEmpty
@@ -28389,6 +30462,7 @@ class _MobileGarsonTableFlowPageState
           ? _orderChangeSummaryPayload(changeSummary)
           : const <String, dynamic>{};
       late final Map<String, dynamic> submittedOrder;
+      _KitchenDispatchFeedback? parallelDispatchFeedback;
       if (widget.debugUseLocalSubmit) {
         submittedOrder = <String, dynamic>{
           'id': editingId != null && editingId.isNotEmpty
@@ -28406,6 +30480,14 @@ class _MobileGarsonTableFlowPageState
           'last_edit_summary': lastEditSummary,
           'last_edit_note': editPolicyMessage ?? '',
         };
+        if (!_debugPrintSystemEnabled) {
+          parallelDispatchFeedback = _KitchenDispatchFeedback(
+            notice:
+                'Sipariş kaydedildi. Baskı sistemi kapalı olduğu için mutfak fişi yazdırılmadı.',
+            orderId: submittedOrder['id']?.toString(),
+            printJobIds: const <String>['debug-print-disabled'],
+          );
+        }
       } else if (editingId != null && editingId.isNotEmpty) {
         final updatedOrder = await _storeService.updateTableOrder(
           editingId,
@@ -28432,22 +30514,39 @@ class _MobileGarsonTableFlowPageState
               'last_edit_note': editPolicyMessage ?? '',
             };
       } else {
-        submittedOrder = await _storeService.submitTableOrder(
-          sellerId: widget.sellerId,
-          tableNumber: widget.tableNumber,
-          items: items,
-          status: nextStatus,
+        // Fire table_orders insert AND print_jobs RPC in parallel.
+        // They write to different tables – no dependency between them.
+        final orderSaveWatch = Stopwatch()..start();
+        debugPrint(
+          '[PrintPipeline] table_order_save_started_at=${DateTime.now().toIso8601String()} '
+          'table=${widget.tableNumber} seller=${widget.sellerId}',
         );
+        final results = await Future.wait<dynamic>([
+          _storeService.submitTableOrder(
+            sellerId: widget.sellerId,
+            tableNumber: widget.tableNumber,
+            items: items,
+            status: nextStatus,
+          ),
+          _dispatchKitchenPrintJobs(items),
+        ]);
+        debugPrint(
+          '[PrintPipeline] parallel_save_ms=${orderSaveWatch.elapsedMilliseconds} '
+          'table=${widget.tableNumber} '
+          'table_order_saved_at=${DateTime.now().toIso8601String()}',
+        );
+        submittedOrder = results[0] as Map<String, dynamic>;
+        parallelDispatchFeedback = results[1] as _KitchenDispatchFeedback;
       }
-      final dispatchError = widget.debugUseLocalSubmit
-          ? null
+      final dispatchFeedback = widget.debugUseLocalSubmit
+          ? (parallelDispatchFeedback ?? _KitchenDispatchFeedback.none)
           : editingId != null && editingId.isNotEmpty
           ? await _dispatchUpdatedOrderPrintJobs(
               previousStatus: originalStatus,
               changeSummary: changeSummary,
               nextItems: items,
             )
-          : await _dispatchKitchenPrintJobs(items);
+          : parallelDispatchFeedback ?? _KitchenDispatchFeedback.none;
       final optimisticOrders = _buildOptimisticTableOrders(
         existingTableOrders: existingTableOrders,
         submittedOrder: submittedOrder,
@@ -28462,46 +30561,17 @@ class _MobileGarsonTableFlowPageState
         _bottomIndex = 2;
         _hydratedTableOrders = optimisticOrders;
         _optimisticTableOrders = optimisticOrders;
-        _submitFeedbackMessage = editingId != null && editingId.isNotEmpty
-            ? dispatchError == null
-                  ? 'Sipariş güncellendi ve mutfağa tekrar iletildi.'
-                  : 'Sipariş güncellendi. Mutfak iletimi kontrol edilmeli.'
-            : dispatchError == null
-            ? 'Sipariş masaya yansıtıldı. Aktif siparişler aşağıda hazır.'
-            : 'Sipariş kaydedildi. Mutfak yazdırma kuyruğu kontrol edilmeli.';
-        _submitFeedbackIsWarning = dispatchError != null;
       });
+      _applyKitchenDispatchFeedback(dispatchFeedback);
+      // No "Sipariş gönderildi" banner — the physical kitchen ticket is the
+      // confirmation.  Showing premature success feedback before the printer
+      // acknowledges would be misleading.
+      // Track printing in background; override with warning only on failure.
+      if (!dispatchFeedback.hasError && dispatchFeedback.hasTrackedJobs) {
+        _startPrintCompletionTracking(dispatchFeedback);
+      }
       _notifyDraftChanged();
       widget.onOrderSubmitted?.call(widget.tableNumber, items, submittedOrder);
-      // Register 30-second undo window so the waiter can roll back accidents.
-      final submittedId = submittedOrder['id']?.toString() ?? '';
-      if (submittedId.isNotEmpty && mounted) {
-        final wasEditing = editingId != null && editingId.isNotEmpty;
-        // Capture the snapshot we want to restore BEFORE they get cleared.
-        final restoredItems = List<Map<String, dynamic>>.from(
-          wasEditing ? List.from(_editingBaseItems) : items,
-        );
-        final restoredStatus = originalStatus;
-        _undoController.push(
-          GarsonUndoAction(
-            tableNumber: widget.tableNumber,
-            label: wasEditing
-                ? '${items.length} ürün düzenlendi'
-                : '${items.length} ürünlü sipariş gönderildi',
-            undo: () async {
-              if (wasEditing) {
-                await _storeService.updateTableOrder(
-                  submittedId,
-                  items: restoredItems,
-                  status: restoredStatus,
-                );
-              } else {
-                await _storeService.deleteTableOrder(submittedId);
-              }
-            },
-          ),
-        );
-      }
       if (!widget.debugDisableLiveSync && !widget.debugUseLocalSubmit) {
         unawaited(_refreshTableOrdersAfterSubmit());
       }
@@ -28661,20 +30731,35 @@ class _MobileGarsonTableFlowPageState
   Widget _buildProductsTab() {
     final sourceProducts = _allGarsonProducts();
     final allProducts = _activeProducts();
-    // Compact live bar is ~70 px; give extra breathing room for the product list.
     final extraBottomPadding = _showProductsLiveSummaryBar() ? 88.0 : 16.0;
     final categories = _productCategories(allProducts);
     final effectiveCategory =
         (_selectedCategory == 'Tümü' || categories.contains(_selectedCategory))
         ? _selectedCategory
         : 'Tümü';
-    final products = effectiveCategory == 'Tümü'
+
+    // Category filter
+    var products = effectiveCategory == 'Tümü'
         ? allProducts
         : allProducts
-              .where(
-                (product) => _productCategory(product) == effectiveCategory,
-              )
+              .where((p) => _productCategory(p) == effectiveCategory)
               .toList(growable: false);
+
+    // Search filter (debounced query is stored in _searchQuery)
+    final query = _searchQuery.toLowerCase();
+    if (query.isNotEmpty) {
+      products = products
+          .where((p) {
+            final name = p.name.toLowerCase();
+            final main = p.mainCategory.toLowerCase();
+            final sub = p.subCategory.toLowerCase();
+            return name.contains(query) ||
+                main.contains(query) ||
+                sub.contains(query);
+          })
+          .toList(growable: false);
+    }
+
     _debugLogProductPipeline(
       sourceProducts: sourceProducts,
       allProducts: allProducts,
@@ -28682,27 +30767,57 @@ class _MobileGarsonTableFlowPageState
       selectedCategory: effectiveCategory,
     );
 
+    // ── Empty states ──
+    final String emptyMessage;
+    if (_isLoadingProducts && sourceProducts.isEmpty) {
+      emptyMessage = '';
+    } else if (query.isNotEmpty && products.isEmpty) {
+      emptyMessage = '"$_searchQuery" için sonuç bulunamadı.';
+    } else if (products.isEmpty) {
+      emptyMessage = 'Bu kategoride ürün yok.';
+    } else {
+      emptyMessage = '';
+    }
+
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-          child: Column(
-            children: [
-              _buildCategoryChips(
-                categories,
-                selectedCategory: effectiveCategory,
-              ),
-            ],
+        // ── Sticky header: category chips + search bar ───────────────────
+        Material(
+          color: const Color(0xFFF3F4F6),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildCategoryChips(
+                  categories,
+                  selectedCategory: effectiveCategory,
+                ),
+                const SizedBox(height: 8),
+                ProductSearchBar(
+                  initialQuery: _searchQuery,
+                  onChanged: (value) => setState(() => _searchQuery = value),
+                ),
+              ],
+            ),
           ),
         ),
+        // ── Product list ─────────────────────────────────────────────────
         Expanded(
           child: _isLoadingProducts && sourceProducts.isEmpty
               ? const Center(child: CircularProgressIndicator())
-              : products.isEmpty
+              : emptyMessage.isNotEmpty
               ? Center(
-                  child: Text(
-                    'Bu kategoride ürün yok.',
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      emptyMessage,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
                   ),
                 )
               : ListView.builder(
@@ -29018,7 +31133,8 @@ class _MobileGarsonTableFlowPageState
                         ),
                       ],
                     );
-                    return AnimatedContainer(
+
+                    final card = AnimatedContainer(
                       duration: const Duration(milliseconds: 160),
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.all(10),
@@ -29081,6 +31197,21 @@ class _MobileGarsonTableFlowPageState
                         },
                       ),
                     );
+
+                    // Wrap card with swipe actions:
+                    //   ← left  swipe → Edit (configure product)
+                    //   → right swipe → Quick remove from draft (with undo)
+                    return SwipeableProductCard(
+                      productKey: product.id.isNotEmpty
+                          ? product.id
+                          : '${product.name}_$index',
+                      isInDraft: isAdded,
+                      enabled: !outOfStock,
+                      onEdit: () => _addConfiguredProduct(product),
+                      onQuickRemove: () =>
+                          _quickRemoveProductFromDraft(product),
+                      child: card,
+                    );
                   },
                 ),
         ),
@@ -29132,7 +31263,7 @@ class _MobileGarsonTableFlowPageState
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    'Masa ${widget.tableNumber} — Hesap',
+                    '${(widget.tableTitleOverride ?? '').trim().isNotEmpty ? widget.tableTitleOverride!.trim() : 'Masa ${widget.tableNumber}'} — Hesap',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w800,
@@ -29406,30 +31537,20 @@ class _MobileGarsonTableFlowPageState
   }
 
   Future<void> _printGarsonTestAdisyon() async {
-    if (!kIsWeb) {
-      await _showOperationInfo(
-        message: 'Test yazdırma şu anda yalnızca web panelde kullanılabilir.',
-      );
-      return;
-    }
-
-    final printService = LocalPrintService();
     try {
-      final healthStatus = await printService.checkAvailability();
-      if (!healthStatus.isAvailable) {
-        await _showOperationInfo(
-          message: 'Bu bilgisayarda yazıcı servisini başlatın.',
-        );
+      final result = await _printOrchestrator.printTestReceipt(
+        restaurantId: widget.sellerId,
+        role: PrinterSetupRole.adisyon,
+      );
+      if (!result.ok) {
+        await _showOperationInfo(message: result.message);
         return;
       }
-      await printService.printTest();
       await _showOperationInfo(message: 'Test fişi yazdırıldı');
     } catch (error, stackTrace) {
       debugPrint('SellerPanel local print test failed: $error');
       debugPrint('$stackTrace');
       await _showOperationInfo(message: 'Test fişi yazdırılamadı');
-    } finally {
-      printService.dispose();
     }
   }
 
@@ -29710,24 +31831,46 @@ class _MobileGarsonTableFlowPageState
                               : TableLevelPolicy.transferBlocked,
                           onTap: canTransferTable
                               ? () => runAction(() async {
-                                  // Fetch all active table numbers to
-                                  // populate the target table grid.
-                                  final allOrders = await _storeService
-                                      .getTableOrdersSnapshot(widget.sellerId)
-                                      .catchError(
-                                        (_) => <Map<String, dynamic>>[],
-                                      );
-                                  final otherTables =
-                                      allOrders
-                                          .map(
-                                            (o) => (o['table_number'] as num?)
-                                                ?.toInt(),
-                                          )
-                                          .whereType<int>()
-                                          .toSet()
-                                          .where((t) => t != widget.tableNumber)
-                                          .toList()
-                                        ..sort();
+                                  // Prefer the pre-loaded store table numbers
+                                  // passed from the parent (avoids an extra API
+                                  // call that can fail silently on some RLS
+                                  // configurations, making the list appear
+                                  // empty even when tables exist).
+                                  List<int> otherTables;
+                                  if (widget.storeTableNumbers.isNotEmpty) {
+                                    otherTables = widget.storeTableNumbers
+                                        .where((t) => t != widget.tableNumber)
+                                        .toList();
+                                  } else {
+                                    // Fallback: fetch from Supabase when no
+                                    // pre-loaded list is available.
+                                    final allStoreTables = await _storeService
+                                        .getStoreTables(
+                                          sellerId: widget.sellerId,
+                                        )
+                                        .catchError(
+                                          (Object _) =>
+                                              <Map<String, dynamic>>[],
+                                        );
+                                    otherTables =
+                                        allStoreTables
+                                            .map((row) {
+                                              final raw = row['table_number'];
+                                              if (raw is int) return raw;
+                                              return int.tryParse(
+                                                    raw?.toString() ?? '',
+                                                  ) ??
+                                                  0;
+                                            })
+                                            .where(
+                                              (t) =>
+                                                  t > 0 &&
+                                                  t != widget.tableNumber,
+                                            )
+                                            .toSet()
+                                            .toList()
+                                          ..sort();
+                                  }
                                   // Flatten all items across orders on this
                                   // table for the partial/customer-based modes.
                                   final allItems = tableOrders
@@ -29777,48 +31920,52 @@ class _MobileGarsonTableFlowPageState
                               : null,
                           accentColor: const Color(0xFF2563EB),
                         ),
-                        const SizedBox(height: 8),
-                        actionTile(
-                          icon: Icons.receipt_long_outlined,
-                          title: 'Adisyon Yazdır',
-                          subtitle: hasTableOrders
-                              ? TableLevelPolicy.adisyonEnabled
-                              : TableLevelPolicy.adisyonBlocked,
-                          onTap: hasTableOrders && widget.onPrintAdisyon != null
-                              ? () => runAction(
-                                  () => widget.onPrintAdisyon!(
-                                    widget.tableNumber,
-                                    tableOrders,
-                                  ),
-                                )
-                              : null,
-                          accentColor: const Color(0xFF92400E),
-                        ),
-                        if (kDebugMode && kIsWeb) ...[
+                        // Print actions — desktop only (>= 1200 px)
+                        if (MediaQuery.of(sheetContext).size.width >= 1200) ...[
                           const SizedBox(height: 8),
                           actionTile(
-                            icon: Icons.bug_report_outlined,
-                            title: 'Test Adisyon Yazdır',
-                            subtitle:
-                                'Gelistirme amacli localhost:3001/print/test cagrisi.',
-                            onTap: () => runAction(_printGarsonTestAdisyon),
-                            accentColor: const Color(0xFF0F766E),
+                            icon: Icons.print_outlined,
+                            title: 'Tekrar Yazdır',
+                            subtitle: canReprintKitchen
+                                ? TableLevelPolicy.reprintEnabled
+                                : TableLevelPolicy.reprintBlocked,
+                            onTap: canReprintKitchen
+                                ? () => runAction(
+                                    () => _reprintKitchenTickets(tableOrders),
+                                  )
+                                : null,
+                            accentColor: const Color(0xFF0D9488),
                           ),
+                          const SizedBox(height: 8),
+                          actionTile(
+                            icon: Icons.receipt_long_outlined,
+                            title: 'Adisyon Yazdır',
+                            subtitle: hasTableOrders
+                                ? TableLevelPolicy.adisyonEnabled
+                                : TableLevelPolicy.adisyonBlocked,
+                            onTap:
+                                hasTableOrders && widget.onPrintAdisyon != null
+                                ? () => runAction(
+                                    () => widget.onPrintAdisyon!(
+                                      widget.tableNumber,
+                                      tableOrders,
+                                    ),
+                                  )
+                                : null,
+                            accentColor: const Color(0xFF92400E),
+                          ),
+                          if (kDebugMode && kIsWeb) ...[
+                            const SizedBox(height: 8),
+                            actionTile(
+                              icon: Icons.bug_report_outlined,
+                              title: 'Test Adisyon Yazdır',
+                              subtitle:
+                                  'Gelistirme amacli localhost:3001/print/test cagrisi.',
+                              onTap: () => runAction(_printGarsonTestAdisyon),
+                              accentColor: const Color(0xFF0F766E),
+                            ),
+                          ],
                         ],
-                        const SizedBox(height: 8),
-                        actionTile(
-                          icon: Icons.print_outlined,
-                          title: 'Mutfağa Yazdır',
-                          subtitle: canReprintKitchen
-                              ? TableLevelPolicy.reprintEnabled
-                              : TableLevelPolicy.reprintBlocked,
-                          onTap: canReprintKitchen
-                              ? () => runAction(
-                                  () => _reprintKitchenTickets(tableOrders),
-                                )
-                              : null,
-                          accentColor: const Color(0xFFF97316),
-                        ),
                         const SizedBox(height: 8),
                         actionTile(
                           icon: Icons.person_search_outlined,
@@ -29962,76 +32109,6 @@ class _MobileGarsonTableFlowPageState
     );
   }
 
-  List<String> _persistedChangeSummaryLabels(Map<String, dynamic> order) {
-    final summary = _orderLastEditSummary(order);
-    final rawChanges = summary['changes'];
-    if (rawChanges is! List) return const <String>[];
-    return rawChanges
-        .whereType<Map>()
-        .map((row) => row['label']?.toString().trim() ?? '')
-        .where((label) => label.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  Widget? _buildPersistedChangeSummaryCard(Map<String, dynamic> order) {
-    final labels = _persistedChangeSummaryLabels(order);
-    final revision = _orderRevision(order);
-    if (labels.isEmpty && revision <= 1) return null;
-    final updatedAt = _updatedAt(order);
-    final visibleLabels = labels.take(3).toList(growable: false);
-    final remainingCount = labels.length - visibleLabels.length;
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Son Revizyon • Rev $revision',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF111827),
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            'Son güncelleme ${_timeAgo(updatedAt)}',
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-          ),
-          if (visibleLabels.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            ...visibleLabels.map(
-              (label) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF334155),
-                  ),
-                ),
-              ),
-            ),
-            if (remainingCount > 0)
-              Text(
-                '+$remainingCount değişiklik daha',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
   Widget _buildReservationTab() {
     return Center(
       child: Padding(
@@ -30076,14 +32153,12 @@ class _MobileGarsonTableFlowPageState
   String _draftSubmitButtonLabel({required bool hasExistingOrders}) {
     final isEditing = _editingOrderId != null && _editingOrderId!.isNotEmpty;
     if (isEditing) return 'Siparişi Güncelle';
-    if (hasExistingOrders) return 'Siparişi Ekle';
     return 'Siparişi Gönder';
   }
 
   IconData _draftSubmitButtonIcon({required bool hasExistingOrders}) {
     final isEditing = _editingOrderId != null && _editingOrderId!.isNotEmpty;
     if (isEditing) return Icons.save_outlined;
-    if (hasExistingOrders) return Icons.add_shopping_cart_outlined;
     return Icons.send_rounded;
   }
 
@@ -30094,6 +32169,9 @@ class _MobileGarsonTableFlowPageState
     final canSubmit = _canSubmitDraft();
     final totalQuantity = _draftTotalQuantity();
     final totalPrice = _draftTotal();
+    final tableTitle = (widget.tableTitleOverride ?? '').trim().isNotEmpty
+        ? widget.tableTitleOverride!.trim()
+        : 'Masa ${widget.tableNumber}';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
@@ -30137,7 +32215,7 @@ class _MobileGarsonTableFlowPageState
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          '$totalQuantity ürün • Masa ${widget.tableNumber}',
+                          '$totalQuantity ürün • $tableTitle',
                           style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
@@ -30203,7 +32281,11 @@ class _MobileGarsonTableFlowPageState
   }
 
   Widget _buildSubmitFeedbackCard() {
-    final accentColor = _submitFeedbackIsWarning
+    final isLoading = _submitFeedbackTone == _GarsonSubmitFeedbackTone.loading;
+    final isWarning = _submitFeedbackTone == _GarsonSubmitFeedbackTone.warning;
+    final accentColor = isLoading
+        ? const Color(0xFF2563EB)
+        : isWarning
         ? const Color(0xFFD97706)
         : const Color(0xFF16A34A);
     return Container(
@@ -30217,12 +32299,21 @@ class _MobileGarsonTableFlowPageState
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            _submitFeedbackIsWarning
-                ? Icons.info_outline_rounded
-                : Icons.check_circle_rounded,
-            size: 18,
-            color: accentColor,
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: isLoading
+                ? CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(accentColor),
+                  )
+                : Icon(
+                    isWarning
+                        ? Icons.info_outline_rounded
+                        : Icons.check_circle_rounded,
+                    size: 18,
+                    color: accentColor,
+                  ),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -30240,6 +32331,129 @@ class _MobileGarsonTableFlowPageState
     );
   }
 
+  /// Shows a confirmation bottom sheet before deleting a draft item.
+  /// Returns true if the user confirmed, false if cancelled.
+  Future<bool> _confirmDraftItemDelete(String itemName) async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 32,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCBD5E1),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF2F2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: Color(0xFFDC2626),
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Bu ürünü silmek istiyor musunuz?',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          itemName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF6B7280),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Vazgeç',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFDC2626),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Sil',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return result ?? false;
+  }
+
+  /// True when the screen is narrow (phone in portrait).
+  /// Used to shrink action chips and quantity controls.
+  bool get _isNarrowScreen => MediaQuery.sizeOf(context).width < 400;
+
   Widget _buildDraftActionChip({
     required IconData icon,
     required String label,
@@ -30247,28 +32461,34 @@ class _MobileGarsonTableFlowPageState
     Color foregroundColor = const Color(0xFF334155),
     Color backgroundColor = Colors.white,
     Color borderColor = const Color(0xFFE2E8F0),
+    bool compact = false,
   }) {
+    final hPad = compact ? 6.0 : 8.0;
+    final vPad = compact ? 4.0 : 6.0;
+    final iconSize = compact ? 11.0 : 13.0;
+    final fontSize = compact ? 10.0 : 11.0;
+    final radius = compact ? 8.0 : 10.0;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onPressed,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(radius),
         child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
           decoration: BoxDecoration(
             color: backgroundColor,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(radius),
             border: Border.all(color: borderColor),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 15, color: foregroundColor),
-              const SizedBox(width: 6),
+              Icon(icon, size: iconSize, color: foregroundColor),
+              SizedBox(width: compact ? 3 : 4),
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 11.5,
+                  fontSize: fontSize,
                   fontWeight: FontWeight.w800,
                   color: foregroundColor,
                 ),
@@ -30285,12 +32505,19 @@ class _MobileGarsonTableFlowPageState
     required String label,
     required VoidCallback? onDecrement,
     required VoidCallback? onIncrement,
+    bool compact = false,
   }) {
+    final btnMin = compact ? 26.0 : 30.0;
+    final iconSize = compact ? 14.0 : 15.0;
+    final btnPad = compact ? 2.0 : 4.0;
+    final labelMinWidth = compact ? 46.0 : 58.0;
+    final qtyFontSize = compact ? 9.0 : 10.0;
+    final labelFontSize = compact ? 8.5 : 9.5;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(compact ? 8 : 10),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Row(
@@ -30298,22 +32525,24 @@ class _MobileGarsonTableFlowPageState
         children: [
           IconButton(
             onPressed: onDecrement,
-            icon: const Icon(Icons.remove_circle_outline, size: 17),
+            icon: Icon(Icons.remove_circle_outline, size: iconSize),
             color: const Color(0xFF475569),
-            splashRadius: 18,
+            splashRadius: compact ? 14 : 16,
             visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.all(btnPad),
+            constraints: BoxConstraints(minWidth: btnMin, minHeight: btnMin),
           ),
           ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 74),
+            constraints: BoxConstraints(minWidth: labelMinWidth),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   '$quantity adet',
-                  style: const TextStyle(
-                    fontSize: 11,
+                  style: TextStyle(
+                    fontSize: qtyFontSize,
                     fontWeight: FontWeight.w800,
-                    color: Color(0xFF111827),
+                    color: const Color(0xFF111827),
                   ),
                 ),
                 Text(
@@ -30321,10 +32550,10 @@ class _MobileGarsonTableFlowPageState
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 10.5,
+                  style: TextStyle(
+                    fontSize: labelFontSize,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF64748B),
+                    color: const Color(0xFF64748B),
                   ),
                 ),
               ],
@@ -30332,10 +32561,12 @@ class _MobileGarsonTableFlowPageState
           ),
           IconButton(
             onPressed: onIncrement,
-            icon: const Icon(Icons.add_circle_outline, size: 17),
+            icon: Icon(Icons.add_circle_outline, size: iconSize),
             color: AppColors.primary,
-            splashRadius: 18,
+            splashRadius: compact ? 14 : 16,
             visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.all(btnPad),
+            constraints: BoxConstraints(minWidth: btnMin, minHeight: btnMin),
           ),
         ],
       ),
@@ -30354,7 +32585,7 @@ class _MobileGarsonTableFlowPageState
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFFE2E8F0)),
         ),
@@ -30398,7 +32629,7 @@ class _MobileGarsonTableFlowPageState
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
@@ -30418,7 +32649,33 @@ class _MobileGarsonTableFlowPageState
                   ),
                 ),
               ),
-              if (isEditing)
+              // "Yeni Nx" badge — shown when editing and new items were added
+              if (isEditing) ...[
+                Builder(
+                  builder: (ctx) {
+                    final added = _currentEditingChangeSummary().addedQuantity;
+                    if (added <= 0) return const SizedBox.shrink();
+                    return Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF16A34A).withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        'Yeni ${added}x',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF16A34A),
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -30437,6 +32694,7 @@ class _MobileGarsonTableFlowPageState
                     ),
                   ),
                 ),
+              ],
               const SizedBox(width: 6),
               TextButton(
                 onPressed: _isSubmitting ? null : _clearDraftComposer,
@@ -30451,10 +32709,11 @@ class _MobileGarsonTableFlowPageState
             _buildCurrentEditChangeSummaryCard(),
             const SizedBox(height: 8),
           ],
-          ..._draftItems.asMap().entries.map((entry) {
-            final index = entry.key;
-            final item = entry.value;
-            final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+          // Build merged display rows: items sharing the same product_id are
+          // collapsed into one row showing total qty and a "Nx yeni" badge.
+          ..._computeMergedDraftRows().map((row) {
+            final item = row.displayItem;
+            final qty = row.totalQty;
             final isMixedService = _isMixedServiceItem(item);
             final rawAmountLabel = item['amountLabel']?.toString().trim() ?? '';
             final amountLabel = rawAmountLabel.isNotEmpty
@@ -30465,15 +32724,25 @@ class _MobileGarsonTableFlowPageState
             final quantityLabel = amountLabel.isNotEmpty && !isMixedService
                 ? amountLabel
                 : 'Standart';
+            // Total price across all constituent _draftItems entries
+            final totalLinePrice = row.allIndices.fold<double>(
+              0,
+              (sum, idx) => sum + _itemLineTotal(_draftItems[idx]),
+            );
+            // Colour: green if fully sent (editing + no new qty), white otherwise
+            final rowIsSent = isEditing && !row.hasNew;
             return AnimatedContainer(
+              width: double.infinity,
               duration: const Duration(milliseconds: 160),
               margin: const EdgeInsets.only(bottom: 6),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: rowIsSent ? const Color(0xFFF0FFF4) : Colors.white,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: isMixedService
+                  color: rowIsSent
+                      ? const Color(0xFFBBF7D0)
+                      : isMixedService
                       ? AppColors.primary.withValues(alpha: 0.18)
                       : const Color(0xFFE5E7EB),
                 ),
@@ -30488,48 +32757,79 @@ class _MobileGarsonTableFlowPageState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── ROW 1: qty badge + name + price ──────────────────
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Container(
-                        width: 30,
-                        height: 30,
+                        width: 28,
+                        height: 28,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
                           color: isMixedService
                               ? AppColors.primary.withValues(alpha: 0.12)
+                              : rowIsSent
+                              ? const Color(0xFF16A34A).withValues(alpha: 0.14)
                               : const Color(0xFFF3F4F6),
-                          borderRadius: BorderRadius.circular(9),
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           '$qty',
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 11,
                             fontWeight: FontWeight.w900,
                             color: isMixedService
                                 ? AppColors.primary
+                                : rowIsSent
+                                ? const Color(0xFF16A34A)
                                 : const Color(0xFF111827),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      // "Nx yeni" badge shown when this row has new additions
+                      if (row.hasNew) ...[
+                        const SizedBox(width: 5),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(
+                              0xFF16A34A,
+                            ).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '${row.newQty}x yeni',
+                            style: const TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF16A34A),
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                             if (isMixedService) ...[
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 3),
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 3,
+                                  horizontal: 7,
+                                  vertical: 2,
                                 ),
                                 decoration: BoxDecoration(
                                   color: AppColors.primary.withValues(
@@ -30540,7 +32840,7 @@ class _MobileGarsonTableFlowPageState
                                 child: const Text(
                                   'Karışık Servis',
                                   style: TextStyle(
-                                    fontSize: 10,
+                                    fontSize: 9,
                                     fontWeight: FontWeight.w800,
                                     color: AppColors.primary,
                                   ),
@@ -30550,77 +32850,86 @@ class _MobileGarsonTableFlowPageState
                           ],
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Text(
-                        _formatMoney(_itemLineTotal(item)),
-                        style: const TextStyle(
+                        _formatMoney(totalLinePrice),
+                        style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w900,
-                          color: AppColors.primary,
+                          color: rowIsSent
+                              ? const Color(0xFF16A34A)
+                              : AppColors.primary,
                         ),
                       ),
                     ],
                   ),
                   if (detailLines.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: detailLines
-                          .map((entry) {
-                            final isChildLine =
-                                isMixedService && !entry.isGroupHeader;
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 2),
-                              child: Text(
-                                isChildLine ? '• ${entry.label}' : entry.label,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: entry.isGroupHeader
-                                      ? FontWeight.w800
-                                      : FontWeight.w500,
-                                  color: entry.isGroupHeader
-                                      ? const Color(0xFF334155)
-                                      : Colors.grey.shade600,
-                                ),
-                              ),
-                            );
-                          })
-                          .toList(growable: false),
-                    ),
+                    const SizedBox(height: 3),
+                    ...detailLines.map((e) {
+                      final isChildLine = isMixedService && !e.isGroupHeader;
+                      return Padding(
+                        padding: const EdgeInsets.only(left: 36, bottom: 2),
+                        child: Text(
+                          isChildLine ? '• ${e.label}' : e.label,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: e.isGroupHeader
+                                ? FontWeight.w800
+                                : FontWeight.w500,
+                            color: e.isGroupHeader
+                                ? const Color(0xFF334155)
+                                : Colors.grey.shade600,
+                          ),
+                        ),
+                      );
+                    }),
                   ],
+                  // ── ROW 2: action controls ────────────────────────────
                   const SizedBox(height: 6),
-                  // Action row: Wrap handles overflow on very narrow screens.
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       _buildDraftQuantityControl(
                         quantity: qty,
                         label: quantityLabel,
+                        compact: _isNarrowScreen,
+                        // Decrement/increment always targets the last
+                        // index in the group (the most recently added).
                         onDecrement: _isSubmitting
                             ? null
-                            : () => _changeDraftQty(index, -1),
+                            : () => _changeDraftQty(row.allIndices.last, -1),
                         onIncrement: _isSubmitting
                             ? null
-                            : () => _changeDraftQty(index, 1),
+                            : () => _changeDraftQty(row.allIndices.last, 1),
                       ),
+                      const SizedBox(width: 4),
                       _buildDraftActionChip(
                         icon: Icons.tune_rounded,
                         label: 'Düzenle',
+                        compact: _isNarrowScreen,
+                        // Edit always operates on the primary (first) entry
                         onPressed: _isSubmitting
                             ? null
-                            : () => _editDraftItem(index),
+                            : () => _editDraftItem(row.primaryIndex),
                       ),
+                      const SizedBox(width: 4),
                       _buildDraftActionChip(
                         icon: Icons.delete_outline_rounded,
                         label: 'Sil',
+                        compact: _isNarrowScreen,
+                        // Delete removes all entries in this product group
                         onPressed: _isSubmitting
                             ? null
-                            : () {
+                            : () async {
+                                final confirmed = await _confirmDraftItemDelete(
+                                  name,
+                                );
+                                if (!confirmed || !mounted) return;
                                 setState(() {
-                                  if (index < _draftItems.length) {
-                                    _draftItems.removeAt(index);
+                                  for (final idx in row.allIndices.reversed) {
+                                    if (idx < _draftItems.length) {
+                                      _draftItems.removeAt(idx);
+                                    }
                                   }
                                 });
                                 _notifyDraftChanged();
@@ -30647,386 +32956,357 @@ class _MobileGarsonTableFlowPageState
     final status = normalizedOrder['status']?.toString() ?? 'new';
     final statusKey = _normalizedOrderStatusKey(status);
     final policy = _orderEditPolicy(status);
-    final color = _statusColor(status);
     final createdAt = _createdAt(normalizedOrder);
-    final updatedAt = _updatedAt(normalizedOrder);
-    final hasUpdatedTimestamp =
-        updatedAt.difference(createdAt).inSeconds.abs() >= 2;
     final items = _extractItems(normalizedOrder['items']);
     final isEditingThis = _editingOrderId == orderId;
     final revision = _orderRevision(normalizedOrder);
-    final persistedChangeSummaryCard = _buildPersistedChangeSummaryCard(
-      normalizedOrder,
-    );
     final orderTotal = items.fold<double>(0, (sum, item) {
       return sum + _itemLineTotal(item);
     });
 
+    final isSentOrLater = switch (statusKey) {
+      'sent' || 'preparing' || 'ready' || 'served' => true,
+      _ => false,
+    };
+    final cardBg = isSentOrLater ? const Color(0xFFF0FFF4) : Colors.white;
+    final cardBorder = isSentOrLater
+        ? const Color(0xFFBBF7D0)
+        : const Color(0xFFE2E8F0);
+    final priceColor = isSentOrLater
+        ? const Color(0xFF16A34A)
+        : AppColors.primary;
+
+    // Resolve table number once — shared by preview and inline desktop actions.
+    final tableNo = normalizedOrder['table_number'] is int
+        ? normalizedOrder['table_number'] as int
+        : int.tryParse(normalizedOrder['table_number']?.toString() ?? '') ??
+              widget.tableNumber;
+
+    // Helper to open the order preview sheet
+    void openPreview() {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => OrderPreviewSheet(
+          record: OrderPreviewRecord.fromTableOrder(normalizedOrder),
+          onPrintAdisyon: widget.onPrintAdisyon != null
+              ? () => widget.onPrintAdisyon!(tableNo, [normalizedOrder])
+              : null,
+          onResendToKitchen: policy.canResend && orderId.isNotEmpty
+              ? () => _resendOrderToKitchen(normalizedOrder)
+              : null,
+        ),
+      );
+    }
+
+    final canAct = policy.canEdit || _isWaitingStatus(status);
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
+        border: Border.all(color: cardBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.08),
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(14),
+          // ── Minimal header row ─────────────────────────────────────────
+          Row(
+            children: [
+              Text(
+                _timeAgo(createdAt),
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
               ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
+              if (revision > 1) ...[
+                const SizedBox(width: 5),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                   child: Text(
-                    _statusLabel(status),
-                    style: TextStyle(
-                      fontSize: 13,
+                    'Rev $revision',
+                    style: const TextStyle(
+                      fontSize: 9,
                       fontWeight: FontWeight.w800,
-                      color: color,
-                    ),
-                  ),
-                ),
-                if (isEditingThis)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
                       color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: const Text(
-                      'Düzenleniyor',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                if (orderId.isNotEmpty && !isEditingThis)
-                  Text(
-                    '#${orderId.length > 8 ? orderId.substring(0, 8) : orderId} • Rev $revision',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                  ),
-                const SizedBox(width: 4),
-                GestureDetector(
-                  onTap: () {
-                    final tableNo = normalizedOrder['table_number'] is int
-                        ? normalizedOrder['table_number'] as int
-                        : int.tryParse(
-                                normalizedOrder['table_number']?.toString() ??
-                                    '',
-                              ) ??
-                              widget.tableNumber;
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (_) => OrderPreviewSheet(
-                        record: OrderPreviewRecord.fromTableOrder(
-                          normalizedOrder,
-                        ),
-                        onPrintAdisyon: widget.onPrintAdisyon != null
-                            ? () => widget.onPrintAdisyon!(tableNo, [
-                                normalizedOrder,
-                              ])
-                            : null,
-                        onResendToKitchen:
-                            policy.canResend && orderId.isNotEmpty
-                            ? () => _resendOrderToKitchen(normalizedOrder)
-                            : null,
-                      ),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.visibility_outlined,
-                          size: 13,
-                          color: AppColors.primary,
-                        ),
-                        SizedBox(width: 3),
-                        Text(
-                          'Önizle',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ],
                     ),
                   ),
                 ),
               ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${_timeAgo(createdAt)} • ${items.length} ürün${revision > 1 ? ' • Rev $revision' : ''}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
-                if (hasUpdatedTimestamp && revision > 1) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    'Son düzenleme ${_timeAgo(updatedAt)}',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+              if (isEditingThis) ...[
+                const SizedBox(width: 5),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
                   ),
-                ],
-                const SizedBox(height: 6),
-                ...items.take(4).map((item) {
-                  final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-                  final name = item['name']?.toString() ?? '-';
-                  final lineTotal = _itemLineTotal(item);
-                  final detailLines = _itemDetailLines(item);
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                    'Düzenleniyor',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+              const Spacer(),
+              // Önizle icon
+              GestureDetector(
+                onTap: openPreview,
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(
+                    Icons.visibility_outlined,
+                    size: 18,
+                    color: Colors.grey.shade400,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // Compact revision warning (only for preparing / ready / served)
+          if (policy.isWarning) ...[
+            const SizedBox(height: 4),
+            Text(
+              policy.message,
+              style: const TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFFD97706),
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          // ── Flat item rows (always-visible adet/düzenle/sil actions) ──
+          ...List.generate(items.length, (i) {
+            final item = items[i];
+            final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+            final isMixedService = _isMixedServiceItem(item);
+            final name = item['name']?.toString() ?? '-';
+            final detailLines = _itemDetailLines(item);
+            final lineTotal = _itemLineTotal(item);
+            final rawAmountLabel = item['amountLabel']?.toString().trim() ?? '';
+            final amountLabel = rawAmountLabel.isNotEmpty
+                ? rawAmountLabel
+                : item['amount_label']?.toString().trim() ?? '';
+            final quantityLabel = amountLabel.isNotEmpty && !isMixedService
+                ? amountLabel
+                : 'Standart';
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: cardBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: cardBorder),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ── ROW 1: qty badge + name + price ──────────────────
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 26,
+                        height: 26,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: isMixedService
+                              ? AppColors.primary.withValues(alpha: 0.12)
+                              : isSentOrLater
+                              ? const Color(0xFF16A34A).withValues(alpha: 0.14)
+                              : const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(
+                          '$qty',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            color: isMixedService
+                                ? AppColors.primary
+                                : isSentOrLater
+                                ? const Color(0xFF16A34A)
+                                : const Color(0xFF111827),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFEDE9FE),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                '$qty',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
-                                  color: AppColors.primary,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
                             Text(
-                              _formatMoney(lineTotal),
+                              name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 11,
+                                fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
-                                color: AppColors.primary,
                               ),
                             ),
+                            if (isMixedService) ...[
+                              const SizedBox(height: 2),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.10,
+                                  ),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: const Text(
+                                  'Karışık Servis',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (detailLines.isNotEmpty) ...[
+                              const SizedBox(height: 3),
+                              ...detailLines.map((e) {
+                                final isChild =
+                                    isMixedService && !e.isGroupHeader;
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 2),
+                                  child: Text(
+                                    isChild ? '• ${e.label}' : e.label,
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: e.isGroupHeader
+                                          ? FontWeight.w800
+                                          : FontWeight.w500,
+                                      color: e.isGroupHeader
+                                          ? const Color(0xFF334155)
+                                          : Colors.grey.shade600,
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ],
                           ],
                         ),
-                        if (detailLines.isNotEmpty) ...[
-                          const SizedBox(height: 3),
-                          ...detailLines
-                              .take(3)
-                              .map(
-                                (entry) => Padding(
-                                  padding: const EdgeInsets.only(
-                                    left: 30,
-                                    bottom: 2,
-                                  ),
-                                  child: entry.isGroupHeader
-                                      ? Text(
-                                          entry.label,
-                                          style: const TextStyle(
-                                            fontSize: 10.5,
-                                            fontWeight: FontWeight.w800,
-                                            color: Color(0xFF334155),
-                                          ),
-                                        )
-                                      : Text(
-                                          '• ${entry.label}',
-                                          style: TextStyle(
-                                            fontSize: 10.5,
-                                            color: Colors.grey.shade600,
-                                          ),
-                                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _formatMoney(lineTotal),
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w900,
+                          color: priceColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                  // ── ROW 2: action controls (only when editable) ───────
+                  if (canAct) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        _buildDraftQuantityControl(
+                          quantity: qty,
+                          label: quantityLabel,
+                          compact: _isNarrowScreen,
+                          onDecrement: _isSubmitting
+                              ? null
+                              : () => _enterEditAndAct(
+                                  normalizedOrder,
+                                  (di) => _changeDraftQty(di, -1),
+                                  i,
                                 ),
-                              ),
-                        ],
+                          onIncrement: _isSubmitting
+                              ? null
+                              : () => _enterEditAndAct(
+                                  normalizedOrder,
+                                  (di) => _changeDraftQty(di, 1),
+                                  i,
+                                ),
+                        ),
+                        const SizedBox(width: 4),
+                        _buildDraftActionChip(
+                          icon: Icons.tune_rounded,
+                          label: 'Düzenle',
+                          compact: _isNarrowScreen,
+                          onPressed: _isSubmitting
+                              ? null
+                              : () async {
+                                  await _beginOrderEditing(normalizedOrder);
+                                  if (mounted &&
+                                      _editingOrderId == orderId &&
+                                      i < _draftItems.length) {
+                                    await _editDraftItem(i);
+                                  }
+                                },
+                        ),
+                        const SizedBox(width: 4),
+                        _buildDraftActionChip(
+                          icon: Icons.delete_outline_rounded,
+                          label: 'Sil',
+                          compact: _isNarrowScreen,
+                          onPressed: _isSubmitting
+                              ? null
+                              : () async {
+                                  final confirmed =
+                                      await _confirmDraftItemDelete(name);
+                                  if (!confirmed || !mounted) return;
+                                  _enterEditAndAct(normalizedOrder, (di) {
+                                    setState(() {
+                                      if (di < _draftItems.length) {
+                                        _draftItems.removeAt(di);
+                                      }
+                                    });
+                                    _notifyDraftChanged();
+                                  }, i);
+                                },
+                          foregroundColor: const Color(0xFFDC2626),
+                          backgroundColor: const Color(0xFFFEF2F2),
+                          borderColor: const Color(0xFFFECACA),
+                        ),
                       ],
                     ),
-                  );
-                }),
-                if (items.length > 4)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      '+${items.length - 4} ürün daha',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 8),
-                if (_isWaitingStatus(status)) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _isSubmitting || orderId.isEmpty
-                              ? null
-                              : () => _beginOrderEditing(normalizedOrder),
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(0, 34),
-                            foregroundColor: AppColors.primary,
-                          ),
-                          icon: const Icon(Icons.edit_outlined, size: 15),
-                          label: const Text('Düzenle'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: _isSubmitting || orderId.isEmpty
-                              ? null
-                              : () => _changeOrderStatus(
-                                  orderId,
-                                  'sent',
-                                  sourceOrder: normalizedOrder,
-                                ),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 34),
-                            backgroundColor: const Color(0xFFF97316),
-                          ),
-                          icon: const Icon(Icons.send_rounded, size: 15),
-                          label: const Text('Mutfağa İlet'),
-                        ),
-                      ),
-                    ],
-                  ),
+                  ],
                 ],
-                if (!_isWaitingStatus(status) &&
-                    (policy.canEdit || policy.canResend)) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _isSubmitting || orderId.isEmpty
-                              ? null
-                              : isEditingThis
-                              ? () => setState(() => _bottomIndex = 2)
-                              : () => _beginOrderEditing(normalizedOrder),
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(0, 34),
-                            foregroundColor: AppColors.primary,
-                          ),
-                          icon: Icon(
-                            isEditingThis
-                                ? Icons.receipt_long_outlined
-                                : Icons.edit_outlined,
-                            size: 15,
-                          ),
-                          label: Text(
-                            isEditingThis ? 'Taslağa Git' : 'Düzenle',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: _isSubmitting || orderId.isEmpty
-                              ? null
-                              : () => _resendOrderToKitchen(normalizedOrder),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 34),
-                            backgroundColor: const Color(0xFFF97316),
-                          ),
-                          icon: const Icon(Icons.send_rounded, size: 15),
-                          label: const Text('Tekrar İlet'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-                if (statusKey == 'sent') ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _isSubmitting || orderId.isEmpty
-                          ? null
-                          : () => _changeOrderStatus(
-                              orderId,
-                              'preparing',
-                              sourceOrder: normalizedOrder,
-                            ),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(0, 34),
-                        backgroundColor: const Color(0xFF0891B2),
-                      ),
-                      icon: const Icon(Icons.restaurant_outlined, size: 15),
-                      label: const Text('Hazırlanıyor'),
-                    ),
-                  ),
-                ] else if (statusKey == 'preparing' ||
-                    statusKey == 'ready') ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _isSubmitting || orderId.isEmpty
-                          ? null
-                          : () => _changeOrderStatus(
-                              orderId,
-                              'served',
-                              sourceOrder: normalizedOrder,
-                            ),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(0, 34),
-                        backgroundColor: const Color(0xFF16A34A),
-                      ),
-                      icon: const Icon(Icons.check_circle_outline, size: 15),
-                      label: const Text('Servis Edildi'),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 8),
-                _buildOrderPolicyNotice(status),
-                ?persistedChangeSummaryCard,
-                const SizedBox(height: 6),
+              ),
+            );
+          }),
+          // ── Footer: count + total ──────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Row(
+              children: [
                 Text(
-                  'Toplam: ${_formatMoney(orderTotal)}',
+                  '${items.length} ürün',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                ),
+                const Spacer(),
+                Text(
+                  _formatMoney(orderTotal),
                   style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade700,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: priceColor,
                   ),
                 ),
               ],
@@ -31040,45 +33320,43 @@ class _MobileGarsonTableFlowPageState
   Widget _buildOrdersTab(List<Map<String, dynamic>> tableOrders) {
     final extraBottomPadding = _showDraftBottomActionBar() ? 96.0 : 16.0;
 
+    // When editing an existing order the draft card already shows the full
+    // merged state for that order, so skip its incoming card to avoid duplication.
+    final editingId = _editingOrderId ?? '';
+    final visibleOrders = editingId.isEmpty
+        ? tableOrders
+        : tableOrders
+              .where(
+                (o) => _normalizeTableOrder(o)['id']?.toString() != editingId,
+              )
+              .toList(growable: false);
+
+    final draftTotal = _draftItems.fold<double>(
+      0,
+      (s, item) => s + _itemLineTotal(item),
+    );
+    final ordersTotal = visibleOrders.fold<double>(0, (s, order) {
+      return s +
+          _extractItems(
+            order['items'],
+          ).fold<double>(0, (s2, i) => s2 + _itemLineTotal(i));
+    });
+    final grandTotal = draftTotal + ordersTotal;
+    final hasAnyItems = _draftItems.isNotEmpty || visibleOrders.isNotEmpty;
+
     return ListView(
       padding: EdgeInsets.fromLTRB(12, 10, 12, extraBottomPadding),
       children: [
         _buildDraftEditorCard(),
         if (_submitFeedbackMessage != null) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           _buildSubmitFeedbackCard(),
         ],
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Masaya Düşen Siparişler',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEDE9FE),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                '${tableOrders.length}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.primary,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        if (tableOrders.isEmpty)
+        if (visibleOrders.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          ...visibleOrders.map(_buildIncomingOrderCard),
+        ] else if (_draftItems.isEmpty) ...[
+          const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -31087,12 +33365,43 @@ class _MobileGarsonTableFlowPageState
               border: Border.all(color: const Color(0xFFE5E7EB)),
             ),
             child: Text(
-              'Bu masaya henüz müşteri siparişi düşmedi.',
+              'Bu masaya henüz sipariş düşmedi.',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
             ),
-          )
-        else
-          ...tableOrders.map(_buildIncomingOrderCard),
+          ),
+        ],
+        if (hasAnyItems) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              children: [
+                const Text(
+                  'Toplam',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF374151),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  _formatMoney(grandTotal),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -31136,12 +33445,9 @@ class _MobileGarsonTableFlowPageState
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted || _hasShownRealtimeFallbackWarning) return;
               _hasShownRealtimeFallbackWarning = true;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Canlı sipariş akışı bağlanamadı. Masa ekranı sorgu verisi ile çalışıyor.',
-                  ),
-                ),
+              debugPrint(
+                '[RealtimeFallback] Canlı sipariş akışı bağlanamadı. '
+                'Masa ekranı sorgu verisi ile çalışıyor.',
               );
             });
           }
@@ -31189,6 +33495,9 @@ class _MobileGarsonTableFlowPageState
         }
 
         final isNarrowHeader = MediaQuery.of(context).size.width < 380;
+        final headerTableTitle = (widget.tableTitleOverride ?? '').trim().isNotEmpty
+            ? widget.tableTitleOverride!.trim()
+            : 'Masa ${widget.tableNumber}';
 
         return Scaffold(
           backgroundColor: const Color(0xFFF3F4F6),
@@ -31201,7 +33510,7 @@ class _MobileGarsonTableFlowPageState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Masa ${widget.tableNumber}',
+                  headerTableTitle,
                   style: TextStyle(
                     fontSize: isNarrowHeader ? 15 : 18,
                     fontWeight: FontWeight.w800,
@@ -31262,7 +33571,6 @@ class _MobileGarsonTableFlowPageState
               if (_showProductsLiveSummaryBar()) _buildProductsLiveSummaryBar(),
               if (_showDraftBottomActionBar())
                 _buildDraftBottomActionBar(tableOrders: tableOrders),
-              UndoActionBanner(controller: _undoController),
               BottomNavigationBar(
                 currentIndex: _bottomIndex,
                 onTap: (index) => setState(() => _bottomIndex = index),
