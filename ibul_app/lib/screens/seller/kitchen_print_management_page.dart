@@ -121,6 +121,7 @@ class _KitchenPrintManagementPageState
   bool _printSystemSourceIsLocalRuntime = false;
   final Set<String> _deletingPrinterIds = <String>{};
   List<Map<String, dynamic>> _bridgePrinters = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _staleBridgePrinters = const <Map<String, dynamic>>[];
   bool _usbCupsConflictWarning = false;
   Map<String, dynamic>? _remotePrintStationConfig;
   Map<String, dynamic>? _localQueueStatus;
@@ -200,7 +201,10 @@ class _KitchenPrintManagementPageState
               'Yerel bridge runtime değeri gösteriliyor. Bulut ayarı senkronlanamadı.';
         }
       }
-      final bridgePrinters = snapshot.printers
+      final bridgePrinters = snapshot.livePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
+      final staleBridgePrinters = snapshot.stalePrinters
           .map(_printerToLegacyMap)
           .toList(growable: false);
       final nextBridgePrinterRefreshKey = bridgePrinters
@@ -236,6 +240,7 @@ class _KitchenPrintManagementPageState
             : <String, dynamic>{'warning': snapshot.discoveryWarning};
         _usbCupsConflictWarning = _hasUsbCupsConflict(snapshot.printers);
         _bridgePrinters = bridgePrinters;
+        _staleBridgePrinters = staleBridgePrinters;
         _selectedPrintStationPlatform = _selectedPrintStationPlatform.isEmpty
             ? selectedPlatform
             : _selectedPrintStationPlatform;
@@ -249,14 +254,20 @@ class _KitchenPrintManagementPageState
             remotePrintSystemEnabled != null ||
             queueStatus != null;
         _printSystemSyncNotice = syncNotice;
-        _selectedReceiptPrinterId =
-            snapshot.selectedReceiptPrinterRecordId ??
-            remoteConfig?['adisyon_printer_id']?.toString() ??
-            snapshot.localConfig?.receiptSelection?.printer.printerRecordId;
-        _selectedKitchenPrinterId =
-            snapshot.selectedKitchenPrinterRecordId ??
-            remoteConfig?['kitchen_printer_id']?.toString() ??
-            snapshot.localConfig?.kitchenSelection?.printer.printerRecordId;
+        _selectedReceiptPrinterId = _coerceLiveBridgeSelectionId(
+          snapshotSelectedId:
+              snapshot.selectedReceiptPrinterRecordId ??
+              remoteConfig?['adisyon_printer_id']?.toString() ??
+              snapshot.localConfig?.receiptSelection?.printer.printerRecordId,
+          bridgePrinters: bridgePrinters,
+        );
+        _selectedKitchenPrinterId = _coerceLiveBridgeSelectionId(
+          snapshotSelectedId:
+              snapshot.selectedKitchenPrinterRecordId ??
+              remoteConfig?['kitchen_printer_id']?.toString() ??
+              snapshot.localConfig?.kitchenSelection?.printer.printerRecordId,
+          bridgePrinters: bridgePrinters,
+        );
         _selectedReceiptPrinterLabel =
             _printerNameById(_selectedReceiptPrinterId) == ''
             ? snapshot.localConfig?.receiptSelection?.printer.displayName
@@ -315,9 +326,19 @@ class _KitchenPrintManagementPageState
       _printStationService.isStationOnline(_remotePrintStationConfig);
 
   String _localSetupStatusKey() {
-    return (_localSetupStatus?['status']?.toString() ?? '')
+    final remote = (_localSetupStatus?['status']?.toString() ?? '')
         .trim()
         .toLowerCase();
+    if (remote.isNotEmpty) {
+      if (_bridgeReachable && _bridgeHealthy && remote == 'bridge_not_running') {
+        return 'ready';
+      }
+      return remote;
+    }
+    return bridgeOperatorSetupStatusKey(
+      bridgeReachable: _bridgeReachable,
+      bridgeHealthy: _bridgeHealthy,
+    );
   }
 
   String _localSetupActionRequired() {
@@ -992,16 +1013,41 @@ class _KitchenPrintManagementPageState
           printer.raw['deviceIdentifier'] ??
           printer.queueName,
       'source': printer.raw['source'] ?? 'usb_scan',
-      'isLive': printer.raw['source'] != 'saved_record',
-      'isSavedOnly': printer.raw['source'] == 'saved_record',
+      'isLive': printer.isLiveDiscovery,
+      'isSavedOnly': printer.isStaleSavedMapping,
       'backend': printer.backend.value,
       'vendorId': printer.vendorId,
       'productId': printer.productId,
-      'statusLevel': printer.canPrint
+      'statusLevel': printer.isStaleSavedMapping
+          ? 'error'
+          : printer.canPrint
           ? 'ready'
           : (printer.isAvailable ? 'warning' : 'error'),
-      'statusMessage': printer.statusMessage,
+      'statusMessage': printer.isStaleSavedMapping
+          ? 'Eski/kayıp — canlı taramada yok'
+          : printer.statusMessage,
     };
+  }
+
+  String? _coerceLiveBridgeSelectionId({
+    required String? snapshotSelectedId,
+    required List<Map<String, dynamic>> bridgePrinters,
+  }) {
+    final id = snapshotSelectedId?.trim() ?? '';
+    if (id.isEmpty) return null;
+    for (final printer in bridgePrinters) {
+      if (printer['isLive'] != true) continue;
+      final bridgeId = printer['id']?.toString().trim() ?? '';
+      final selectionId = printer['selectionId']?.toString().trim() ?? '';
+      final recordId =
+          printer['printerRecordId']?.toString().trim() ??
+          printer['printer_record_id']?.toString().trim() ??
+          '';
+      if (bridgeId == id || selectionId == id || recordId == id) {
+        return selectionId.isNotEmpty ? selectionId : bridgeId;
+      }
+    }
+    return null;
   }
 
   Future<List<dynamic>> _loadProductRoutingData() async {
@@ -2051,6 +2097,27 @@ class _KitchenPrintManagementPageState
                     _selectedReceiptPrinterId != null &&
                     _selectedKitchenPrinterId != null,
               ),
+              if (_staleBridgePrinters.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFECACA)),
+                  ),
+                  child: Text(
+                    '${_staleBridgePrinters.length} kayıtlı yazıcı canlı taramada yok. '
+                    'Eski Mac/CUPS eşlemesi aktif rol olarak kullanılamaz; yeni bir Windows yazıcısı seçin.',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFF991B1B),
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Wrap(
                 spacing: 10,
@@ -4900,6 +4967,7 @@ class _KitchenPrintManagementPageState
         .toLowerCase();
     final printerName = _normalizePrinterMatchText(printer.name);
     for (final bridgePrinter in _bridgePrinters) {
+      if (bridgePrinter['isLive'] != true) continue;
       final recordId =
           bridgePrinter['printerRecordId']?.toString().trim() ?? '';
       final bridgeDevice =
@@ -4948,6 +5016,7 @@ class _KitchenPrintManagementPageState
       }
     }
     for (final bridgePrinter in _bridgePrinters) {
+      if (bridgePrinter['isLive'] != true) continue;
       final bridgeId = bridgePrinter['id']?.toString().trim() ?? '';
       final bridgeRecordId =
           bridgePrinter['printerRecordId']?.toString().trim() ??
