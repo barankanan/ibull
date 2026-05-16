@@ -1,54 +1,36 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
+# =============================================================================
+# ibul2026 monorepo — generated artifacts, secrets, local tooling
+# =============================================================================
 
-# IntelliJ related
+# --- OS junk ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# --- IDE / editor ---
+.idea/
 *.iml
 *.ipr
 *.iws
-.idea/
+.atom/
+.history
+.swiftpm/
+migrate_working_dir/
+.codex/
+Qoder/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# VS Code: ignore local state; keep shared launch/tasks if you commit them intentionally.
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-/coverage/
-
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
-
-android/key.properties
-android/app/*.jks
-android/app/*.keystore
-
-# Secrets and local config
+# --- Secrets & local config (never commit) ---
 .env
 .env.*
 !.env.example
@@ -60,8 +42,122 @@ android/app/*.keystore
 **/key.properties
 **/*.jks
 **/*.keystore
-**/supabase/.temp/
+android/key.properties
+android/app/*.jks
+android/app/*.keystore
+
+# Firebase / hosting local state
 .firebase/
 **/.firebase/
 .vercel/
 **/.vercel/
+**/supabase/.temp/
+
+# =============================================================================
+# Flutter / Dart (all packages: root, ibul_app, ihiz_web, …)
+# =============================================================================
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+**/build/
+**/coverage/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+*.dill
+*.cache.dill
+app.*.symbols
+app.*.map.json
+
+# =============================================================================
+# Android / iOS native caches (regenerate with flutter pub get / pod install)
+# =============================================================================
+**/.gradle/
+**/android/.gradle/
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/ios/Pods/
+**/macos/Pods/
+**/ios/.symlinks/
+**/macos/.symlinks/
+**/ios/Flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+**/DerivedData/
+**/xcuserdata/
+
+# =============================================================================
+# Python (local_print_bridge, app.py legacy server, scripts)
+# =============================================================================
+.venv/
+venv/
+ENV/
+env/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+!local_print_bridge/windows/installer/
+local_print_bridge/.deps/
+local_print_bridge/windows/dist/
+local_print_bridge/.venv/
+
+# =============================================================================
+# Node / Next.js (restaurant-ops-web)
+# =============================================================================
+**/node_modules/
+**/.next/
+**/out/
+**/.turbo/
+**/.parcel-cache/
+**/tsconfig.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =============================================================================
+# Installers & release binaries (build on CI or release machine)
+# =============================================================================
+**/*.exe
+**/*.msi
+**/*.dmg
+**/*.pkg
+**/*.ipa
+**/*.apk
+**/*.aab
+**/*.app
+!**/*.iss
+
+# Hosted installer copies under build output
+build/web/downloads/*.exe
+build/windows/installer/*.exe
+build/macos/dist/*.dmg
+
+# =============================================================================
+# Logs & temp
+# =============================================================================
+*.log
+logs/
+**/logs/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# =============================================================================
+# Misc (legacy / tooling)
+# =============================================================================
+*.class
+.build/
+.buildlog/
+.svn/
