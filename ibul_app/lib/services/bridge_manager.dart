@@ -125,6 +125,20 @@ class BridgeManager {
 
   // ── Health ──────────────────────────────────────────────────────────────────
 
+  /// Suggested manual start command for Windows/macOS dev (flutter run -d windows).
+  static Future<String> devStartCommandHint() async {
+    final parent = await _findBridgeParentDir();
+    if (parent == null) {
+      return Platform.isWindows
+          ? 'py -3 -m local_print_bridge'
+          : 'python3 -m local_print_bridge';
+    }
+    final module = Platform.isWindows
+        ? 'py -3 -m local_print_bridge'
+        : 'python3 -m local_print_bridge';
+    return 'cd "$parent"\n$module';
+  }
+
   /// Returns true if the bridge is reachable right now.
   static Future<bool> isAlive({Duration? timeout}) async {
     if (kIsWeb) return false;

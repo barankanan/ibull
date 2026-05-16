@@ -198,6 +198,7 @@ class _PrintersTabState extends State<_PrintersTab> {
   bool _bridgeReachable = false;
   bool _bridgeHealthy = false;
   List<Map<String, dynamic>> _bridgePrinters = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _staleBridgePrinters = const <Map<String, dynamic>>[];
   Map<String, dynamic>? _bridgeHealth;
   Map<String, dynamic>? _printSystemQueueStatus;
 
@@ -252,7 +253,10 @@ class _PrintersTabState extends State<_PrintersTab> {
         restaurantId: widget.restaurantId,
         forceRefresh: true,
       );
-      final bridgePrinters = snapshot.printers
+      final bridgePrinters = snapshot.livePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
+      final staleBridgePrinters = snapshot.stalePrinters
           .map(_printerToLegacyMap)
           .toList(growable: false);
       var localPrintSystemEnabled = _extractLocalPrintSystemEnabled(
@@ -300,6 +304,7 @@ class _PrintersTabState extends State<_PrintersTab> {
             ? null
             : <String, dynamic>{'warning': snapshot.discoveryWarning};
         _bridgePrinters = bridgePrinters;
+        _staleBridgePrinters = staleBridgePrinters;
         _selectedReceiptPrinterId = _coerceSelectedPrinterId(
           printers: bridgePrinters,
           currentSelectedId: _selectedReceiptPrinterId,
@@ -354,7 +359,17 @@ class _PrintersTabState extends State<_PrintersTab> {
   }
 
   String _setupStatusKey() {
-    return (_setupStatus?['status']?.toString() ?? '').trim().toLowerCase();
+    final remote = (_setupStatus?['status']?.toString() ?? '').trim().toLowerCase();
+    if (remote.isNotEmpty) {
+      if (_bridgeReachable && _bridgeHealthy && remote == 'bridge_not_running') {
+        return 'ready';
+      }
+      return remote;
+    }
+    return bridgeOperatorSetupStatusKey(
+      bridgeReachable: _bridgeReachable,
+      bridgeHealthy: _bridgeHealthy,
+    );
   }
 
   String _setupActionRequired() {
@@ -1261,15 +1276,19 @@ class _PrintersTabState extends State<_PrintersTab> {
           printer.raw['deviceIdentifier'] ??
           printer.queueName,
       'source': printer.raw['source'] ?? 'usb_scan',
-      'isLive': printer.raw['source'] != 'saved_record',
-      'isSavedOnly': printer.raw['source'] == 'saved_record',
+      'isLive': printer.isLiveDiscovery,
+      'isSavedOnly': printer.isStaleSavedMapping,
       'backend': printer.backend.value,
       'vendorId': printer.vendorId,
       'productId': printer.productId,
-      'statusLevel': printer.canPrint
+      'statusLevel': printer.isStaleSavedMapping
+          ? 'error'
+          : printer.canPrint
           ? 'ready'
           : (printer.isAvailable ? 'warning' : 'error'),
-      'statusMessage': printer.statusMessage,
+      'statusMessage': printer.isStaleSavedMapping
+          ? 'Eski/kayıp — canlı taramada yok'
+          : printer.statusMessage,
     };
   }
 
@@ -1364,6 +1383,7 @@ class _PrintersTabState extends State<_PrintersTab> {
                       const <Map<String, dynamic>>[],
                   onOpenGuidedSetup: _openGuidedSetup,
                   bridgePrinters: _bridgePrinters,
+                  staleBridgePrinters: _staleBridgePrinters,
                   selectedReceiptPrinterId: _selectedReceiptPrinterId,
                   selectedKitchenPrinterId: _selectedKitchenPrinterId,
                   onRefreshPrinters: _loadPrintCenterState,
@@ -1530,6 +1550,7 @@ class _PrintersTabState extends State<_PrintersTab> {
     final id = selectedId?.trim() ?? '';
     if (id.isEmpty) return false;
     return printers.any((printer) {
+      if (printer['isLive'] != true) return false;
       final bridgeId = printer['id']?.toString().trim() ?? '';
       final selectionId = printer['selectionId']?.toString().trim() ?? '';
       final recordId =
@@ -1614,6 +1635,7 @@ class _DesktopPrintCenterCard extends StatelessWidget {
     required this.setupChecks,
     required this.onOpenGuidedSetup,
     required this.bridgePrinters,
+    this.staleBridgePrinters = const <Map<String, dynamic>>[],
     required this.selectedReceiptPrinterId,
     required this.selectedKitchenPrinterId,
     required this.onRefreshPrinters,
@@ -1645,6 +1667,7 @@ class _DesktopPrintCenterCard extends StatelessWidget {
   final List<Map<String, dynamic>> setupChecks;
   final Future<void> Function() onOpenGuidedSetup;
   final List<Map<String, dynamic>> bridgePrinters;
+  final List<Map<String, dynamic>> staleBridgePrinters;
   final String? selectedReceiptPrinterId;
   final String? selectedKitchenPrinterId;
   final Future<void> Function() onRefreshPrinters;
@@ -1811,6 +1834,28 @@ class _DesktopPrintCenterCard extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 12.5,
                   color: Color(0xFF92400E),
+                  height: 1.45,
+                ),
+              ),
+            ),
+          ],
+          if (staleBridgePrinters.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFECACA)),
+              ),
+              child: Text(
+                '${staleBridgePrinters.length} kayıtlı yazıcı canlı taramada yok '
+                '(${staleBridgePrinters.map((p) => p['name']?.toString() ?? 'Yazıcı').join(', ')}). '
+                'Aktif rol için aşağıdan yeni bir Windows yazıcısı seçin.',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  color: Color(0xFF991B1B),
                   height: 1.45,
                 ),
               ),

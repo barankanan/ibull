@@ -1017,8 +1017,20 @@ class DesktopPrintOrchestrator {
       localConfig: effectiveLocalConfig,
       remoteConfig: remoteConfig,
       queueStatus: queueStatus,
-      setupStatus: setupStatus,
-      prerequisites: prerequisites,
+      setupStatus: _mergeOperatorSetupStatus(
+        bridgeReachable: bridgeReachable,
+        bridgeHealthy: bridgeHealthy,
+        livePrinterCount: printers.where((p) => p.isLiveDiscovery).length,
+        remoteStatus: setupStatus,
+        bridgeHealth: health,
+      ),
+      prerequisites: _mergeOperatorPrerequisites(
+        bridgeReachable: bridgeReachable,
+        bridgeHealthy: bridgeHealthy,
+        livePrinterCount: printers.where((p) => p.isLiveDiscovery).length,
+        remotePrerequisites: prerequisites,
+        bridgeHealth: health,
+      ),
       discoveryWarning: discoveryWarning,
       workingPrinter: workingPrinter,
       bridgeStatusLabel: bridgeStatusLabel,
@@ -3774,9 +3786,74 @@ class DesktopPrintOrchestrator {
 
   bool _isBridgeReadyPrinter(UnifiedPrinterModel? printer) {
     if (printer == null) return false;
-    return printer.id.trim().isNotEmpty &&
+    return printer.isLiveDiscovery &&
+        printer.isAvailable &&
+        printer.canPrint &&
+        printer.id.trim().isNotEmpty &&
         printer.queueName.trim().isNotEmpty &&
         printer.backend.value.trim().isNotEmpty;
+  }
+
+  Map<String, dynamic> _mergeOperatorSetupStatus({
+    required bool bridgeReachable,
+    required bool bridgeHealthy,
+    required int livePrinterCount,
+    required Map<String, dynamic>? remoteStatus,
+    Map<String, dynamic>? bridgeHealth,
+  }) {
+    final operator = buildBridgeOperatorSetupStatus(
+      bridgeReachable: bridgeReachable,
+      bridgeHealthy: bridgeHealthy,
+      livePrinterCount: livePrinterCount,
+      bridgeHealth: bridgeHealth,
+    );
+    if (remoteStatus == null || remoteStatus.isEmpty) {
+      return operator;
+    }
+    final remoteKey = remoteStatus['status']?.toString().trim().toLowerCase();
+    if (!bridgeReachable) {
+      return operator;
+    }
+    if (bridgeHealthy) {
+      return <String, dynamic>{
+        ...remoteStatus,
+        ...operator,
+        'status': 'ready',
+        'message': operator['message'],
+        'errorCode': null,
+        'ok': true,
+      };
+    }
+    if (remoteKey == 'driver_missing' || remoteKey == 'printer_offline') {
+      return <String, dynamic>{...operator, ...remoteStatus};
+    }
+    return <String, dynamic>{...remoteStatus, ...operator};
+  }
+
+  Map<String, dynamic>? _mergeOperatorPrerequisites({
+    required bool bridgeReachable,
+    required bool bridgeHealthy,
+    required int livePrinterCount,
+    required Map<String, dynamic>? remotePrerequisites,
+    Map<String, dynamic>? bridgeHealth,
+  }) {
+    final operatorChecks = buildBridgeOperatorSetupStatus(
+      bridgeReachable: bridgeReachable,
+      bridgeHealthy: bridgeHealthy,
+      livePrinterCount: livePrinterCount,
+      bridgeHealth: bridgeHealth,
+    )['checks'];
+    if (remotePrerequisites == null || remotePrerequisites.isEmpty) {
+      return <String, dynamic>{
+        'ok': bridgeReachable && bridgeHealthy,
+        'checks': operatorChecks,
+      };
+    }
+    return <String, dynamic>{
+      ...remotePrerequisites,
+      'ok': bridgeReachable && bridgeHealthy,
+      'checks': operatorChecks,
+    };
   }
 
   Future<UnifiedPrinterModel?> _resolveStoredPrinterCandidate({

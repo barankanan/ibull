@@ -43,6 +43,47 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('Bridge reachable shows Hazir even if legacy setup status was offline', (
+    tester,
+  ) async {
+    await pumpWizard(
+      tester,
+      orchestrator: _FakeOrchestrator._(
+        snapshot: PrinterSetupSnapshot(
+          os: DesktopPrinterOs.windows,
+          bridgeReachable: true,
+          bridgeHealthy: true,
+          printers: const <UnifiedPrinterModel>[
+            UnifiedPrinterModel(
+              id: 'windows:POS-80',
+              displayName: 'POS-80',
+              queueName: 'POS-80',
+              backend: DesktopPrinterBackend.windowsSpool,
+              os: DesktopPrinterOs.windows,
+              isAvailable: true,
+              canPrint: true,
+              raw: <String, dynamic>{'source': 'usb_scan'},
+            ),
+          ],
+          steps: const <PrinterSetupStepStatus>[],
+          setupStatus: buildBridgeOperatorSetupStatus(
+            bridgeReachable: true,
+            bridgeHealthy: true,
+            livePrinterCount: 1,
+          ),
+          prerequisites: const <String, dynamic>{
+            'checks': <Map<String, dynamic>>[],
+          },
+        ),
+      ),
+      service: _FakeLocalPrintService(),
+      platformOverride: 'windows',
+    );
+
+    expect(find.text('Hazır'), findsWidgets);
+    expect(find.text('Bridge Çalışmıyor'), findsNothing);
+  });
+
   testWidgets('Bridge unreachable shows offline message', (tester) async {
     await pumpWizard(
       tester,
@@ -170,19 +211,50 @@ void main() {
     expect(find.text('Kuyruğu Temizle'), findsOneWidget);
   });
 
-  testWidgets('Windows platform shows installer CTA', (tester) async {
-    await pumpWizard(
-      tester,
-      orchestrator: _FakeOrchestrator.offline(),
-      service: _FakeLocalPrintService(),
-      platformOverride: 'windows',
+  testWidgets('Windows packaged mode shows installer CTA', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PrinterSystemSetupWizard(
+          restaurantId: 'restaurant-1',
+          printOrchestrator: _FakeOrchestrator.offline(),
+          printerRepository: _FakePrinterRepository(),
+          localPrintServiceFactory: () => _FakeLocalPrintService(),
+          detectedPlatformOverride: 'windows',
+          windowsBridgeUiModeOverride: 'packaged',
+        ),
+      ),
     );
+    await tester.pumpAndSettle();
 
     await goToStep(tester, 'Bridge Kurulumu');
 
     expect(
       find.text('Windows Yazıcı Kurulum Uygulamasını İndir'),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('Windows dev mode shows manual bridge start hint', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PrinterSystemSetupWizard(
+          restaurantId: 'restaurant-1',
+          printOrchestrator: _FakeOrchestrator.withPrinters(const []),
+          printerRepository: _FakePrinterRepository(),
+          localPrintServiceFactory: () => _FakeLocalPrintService(),
+          detectedPlatformOverride: 'windows',
+          windowsBridgeUiModeOverride: 'dev',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await goToStep(tester, 'Bridge Kurulumu');
+
+    expect(find.text('Bridge başlatma komutunu kopyala'), findsOneWidget);
+    expect(
+      find.text('Windows Yazıcı Kurulum Uygulamasını İndir'),
+      findsNothing,
     );
   });
 

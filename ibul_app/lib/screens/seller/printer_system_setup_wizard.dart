@@ -1,13 +1,13 @@
 import 'dart:convert';
-
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/config/runtime_config.dart';
 import '../../models/desktop_printer_setup_models.dart';
 import '../../models/printer_model.dart';
+import '../../services/bridge_manager.dart';
 import '../../services/desktop_print_orchestrator.dart';
 import '../../services/desktop_print_ports.dart';
 import '../../services/local_print_service.dart';
@@ -35,6 +35,7 @@ class PrinterSystemSetupWizard extends StatefulWidget {
     this.printOrchestrator,
     this.localPrintServiceFactory,
     this.detectedPlatformOverride,
+    this.windowsBridgeUiModeOverride,
   });
 
   final String restaurantId;
@@ -42,6 +43,9 @@ class PrinterSystemSetupWizard extends StatefulWidget {
   final DesktopPrintOrchestrator? printOrchestrator;
   final LocalPrintServiceFactory? localPrintServiceFactory;
   final String? detectedPlatformOverride;
+
+  /// Test/release override: `dev` shows manual bridge commands, `packaged` shows installer.
+  final String? windowsBridgeUiModeOverride;
 
   @override
   State<PrinterSystemSetupWizard> createState() =>
@@ -84,13 +88,37 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   bool _testPassed = false;
 
   List<Map<String, dynamic>> _detectedPrinters = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _stalePrinters = const <Map<String, dynamic>>[];
   bool _duplicatePrinterWarning = false;
   String? _selectedTestPrinterId;
   String? _receiptPrinterId;
   String? _kitchenPrinterId;
+  bool _bridgeReachable = false;
+  bool _bridgeHealthy = false;
+  Map<String, dynamic>? _bridgeHealth;
+  int _livePrinterCount = 0;
+  String? _bridgeDevStartCommand;
 
   String get _windowsInstallerUrl =>
       AppRuntimeConfig.windowsInstallerDownloadUrl;
+
+  bool get _windowsDevBridgeMode {
+    switch (widget.windowsBridgeUiModeOverride) {
+      case 'dev':
+        return true;
+      case 'packaged':
+        return false;
+      default:
+        return !kIsWeb &&
+            kDebugMode &&
+            _selectedPlatform == 'windows' &&
+            (defaultTargetPlatform == TargetPlatform.windows ||
+                widget.detectedPlatformOverride == 'windows');
+    }
+  }
+
+  bool get _showPackagedWindowsInstaller =>
+      _selectedPlatform == 'windows' && !_windowsDevBridgeMode;
 
   @override
   void initState() {
@@ -107,13 +135,21 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
 
     final service = _localPrintServiceFactory();
     try {
+      if (_windowsDevBridgeMode && _bridgeDevStartCommand == null) {
+        _bridgeDevStartCommand = await BridgeManager.devStartCommandHint();
+      }
       final snapshot = await _printOrchestrator.loadSetupSnapshot(
         restaurantId: widget.restaurantId,
+        forceRefresh: true,
       );
       final driverHelp = await service.driverHelp();
       if (!mounted) return;
-      final legacyPrinters =
-          snapshot.printers.map(_printerToLegacyMap).toList(growable: false);
+      final legacyPrinters = snapshot.livePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
+      final stalePrinters = snapshot.stalePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
       final duplicateMeta = _computeDuplicateMeta(
         legacyPrinters,
         queueStatus: snapshot.queueStatus,
@@ -129,10 +165,20 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
           .toList(growable: false);
       final recommendedId = _firstRecommendedPrinterId(decoratedPrinters);
       setState(() {
-        _setupStatus = snapshot.setupStatus ?? _offlineSetupStatus();
-        _prerequisites = snapshot.prerequisites ?? _offlinePrerequisites();
+        _bridgeReachable = snapshot.bridgeReachable;
+        _bridgeHealthy = snapshot.bridgeHealthy;
+        _bridgeHealth = snapshot.bridgeHealth;
+        _livePrinterCount = snapshot.livePrinterCount;
+        _setupStatus = snapshot.setupStatus ??
+            snapshot.buildOperatorSetupStatus();
+        _prerequisites = snapshot.prerequisites ??
+            <String, dynamic>{
+              'ok': snapshot.bridgeReachable && snapshot.bridgeHealthy,
+              'checks': snapshot.buildOperatorSetupStatus()['checks'],
+            };
         _driverHelp = driverHelp;
         _detectedPrinters = decoratedPrinters;
+        _stalePrinters = stalePrinters;
         _duplicatePrinterWarning = duplicateMeta.isNotEmpty;
         _selectedTestPrinterId =
             _selectedTestPrinterId ??
@@ -258,9 +304,14 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     try {
       final snapshot = await _printOrchestrator.loadSetupSnapshot(
         restaurantId: widget.restaurantId,
+        forceRefresh: true,
       );
-      final legacyPrinters =
-          snapshot.printers.map(_printerToLegacyMap).toList(growable: false);
+      final legacyPrinters = snapshot.livePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
+      final stalePrinters = snapshot.stalePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
       final duplicateMeta = _computeDuplicateMeta(
         legacyPrinters,
         queueStatus: snapshot.queueStatus,
@@ -277,7 +328,13 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       final recommendedId = _firstRecommendedPrinterId(printers);
       if (!mounted) return;
       setState(() {
+        _bridgeReachable = snapshot.bridgeReachable;
+        _bridgeHealthy = snapshot.bridgeHealthy;
+        _bridgeHealth = snapshot.bridgeHealth;
+        _livePrinterCount = snapshot.livePrinterCount;
+        _setupStatus = snapshot.setupStatus ?? snapshot.buildOperatorSetupStatus();
         _detectedPrinters = printers;
+        _stalePrinters = stalePrinters;
         _duplicatePrinterWarning = duplicateMeta.isNotEmpty;
         _selectedTestPrinterId =
             _selectedTestPrinterId ??
@@ -330,12 +387,16 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       'printer_record_id': printer.printerRecordId,
       'vendorId': printer.vendorId,
       'productId': printer.productId,
-      'isLive': printer.raw['source'] != 'saved_record',
-      'isSavedOnly': printer.raw['source'] == 'saved_record',
-      'statusLevel': printer.canPrint
+      'isLive': printer.isLiveDiscovery,
+      'isSavedOnly': printer.isStaleSavedMapping,
+      'statusLevel': printer.isStaleSavedMapping
+          ? 'error'
+          : printer.canPrint
           ? 'ready'
           : (printer.isAvailable ? 'warning' : 'error'),
-      'statusMessage': printer.statusMessage,
+      'statusMessage': printer.isStaleSavedMapping
+          ? 'Eski/kayıp — canlı taramada yok'
+          : printer.statusMessage,
     };
   }
 
@@ -677,9 +738,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       case 1:
         return _setupStatus != null;
       case 2:
-        final status =
-            (_setupStatus?['status']?.toString().trim().toLowerCase() ?? '');
-        return status == 'ready' || status == 'running_unhealthy';
+        return _bridgeReachable;
       case 3:
         return true;
       case 4:
@@ -724,9 +783,26 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     _detectPrinters();
   }
 
+  String get _headerStatusKey =>
+      _setupStatus?['status']?.toString() ??
+      bridgeOperatorSetupStatusKey(
+        bridgeReachable: _bridgeReachable,
+        bridgeHealthy: _bridgeHealthy,
+      );
+
+  Future<void> _copyBridgeDevStartCommand() async {
+    final command =
+        _bridgeDevStartCommand ?? await BridgeManager.devStartCommandHint();
+    await Clipboard.setData(ClipboardData(text: command));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Bridge başlatma komutu panoya kopyalandı.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final status = _setupStatus?['status']?.toString();
+    final status = _headerStatusKey;
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(title: const Text('Sistem Kur')),
@@ -1026,23 +1102,59 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   }
 
   Widget _buildInstallStep() {
-    final status = _setupStatus?['status']?.toString();
+    final status = _headerStatusKey;
     final isWindows = _selectedPlatform == 'windows';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          isWindows
+          _windowsDevBridgeMode
+              ? 'Geliştirme modunda bridge zaten bu bilgisayarda çalışıyor olmalı. Aşağıdaki sağlık ve yazıcı listesi doğrudan http://127.0.0.1:3001 üzerinden okunur.'
+              : isWindows
               ? 'Tarayıcı Windows cihazınıza doğrudan servis kuramaz. Kurulum için yükleyiciyi indirip çalıştırın, sonra tekrar kontrol edin.'
               : 'Yerel yazıcı servisini işletim sistemi üzerinde kurup çalıştırdıktan sonra tekrar kontrol edin.',
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 13,
             color: Color(0xFF4B5563),
             height: 1.45,
           ),
         ),
         const SizedBox(height: 14),
-        if (isWindows) ...[
+        if (_windowsDevBridgeMode) ...[
+          _StatusRow(
+            title: 'Bridge (/health)',
+            value: _bridgeReachable ? 'Erişilebilir' : 'Kapalı',
+            color: _bridgeReachable
+                ? const Color(0xFF15803D)
+                : const Color(0xFFB91C1C),
+          ),
+          const SizedBox(height: 8),
+          _StatusRow(
+            title: 'Yazıcılar (/printers)',
+            value: '$_livePrinterCount yazıcı',
+            color: _livePrinterCount > 0
+                ? const Color(0xFF15803D)
+                : const Color(0xFFB45309),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _copyBridgeDevStartCommand,
+            icon: const Icon(Icons.terminal_rounded, size: 16),
+            label: const Text('Bridge başlatma komutunu kopyala'),
+          ),
+          if (_bridgeDevStartCommand != null) ...[
+            const SizedBox(height: 8),
+            SelectableText(
+              _bridgeDevStartCommand!,
+              style: const TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: Color(0xFF374151),
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+        ] else if (_showPackagedWindowsInstaller) ...[
           FilledButton.icon(
             onPressed: _downloadWindowsInstaller,
             icon: const Icon(Icons.download_rounded),
@@ -1231,15 +1343,47 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: const Color(0xFFFDE68A)),
             ),
-            child: const Text(
-              'Henüz seçilebilir yazıcı bulunamadı. Önce "Yazıcıları Tara" ile tekrar deneyin. MacBook üzerinde yazıcı listesi boşsa sistemi veya CUPS yazıcısını eklemeniz gerekir.',
-              style: TextStyle(
+            child: Text(
+              _selectedPlatform == 'windows'
+                  ? 'Canlı taramada yazıcı bulunamadı. Bridge açıkken "Yazıcıları Tara" ile GET /printers sonucunu yenileyin.'
+                  : 'Henüz seçilebilir yazıcı bulunamadı. Önce "Yazıcıları Tara" ile tekrar deneyin. MacBook üzerinde yazıcı listesi boşsa sistemi veya CUPS yazıcısını eklemeniz gerekir.',
+              style: const TextStyle(
                 fontSize: 12.5,
                 color: Color(0xFF92400E),
                 height: 1.4,
               ),
             ),
           ),
+        ],
+        if (_stalePrinters.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFECACA)),
+            ),
+            child: Text(
+              '${_stalePrinters.length} kayıtlı yazıcı bu bilgisayarda canlı taramada yok '
+              '(ör. eski Mac/CUPS). Aktif yazıcı olarak kullanılamaz; aşağıdan yeni bir Windows yazıcısı seçin.',
+              style: const TextStyle(
+                fontSize: 12.5,
+                color: Color(0xFF991B1B),
+                height: 1.4,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (final printer in _stalePrinters)
+            _DetectedPrinterCard(
+              printer: printer,
+              selected: false,
+              onTap: () {},
+              levelLabel: 'Eski/kayıp',
+              levelColor: const Color(0xFFB91C1C),
+            ),
         ],
         const SizedBox(height: 12),
         for (final printer in _detectedPrinters)

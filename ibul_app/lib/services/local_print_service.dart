@@ -377,29 +377,21 @@ class LocalPrintService {
   }
 
   Future<Map<String, dynamic>?> setupStatus() async {
-    try {
-      return await _send(
-        section: 'Setup',
-        branch: 'setup_status',
-        method: 'GET',
-        path: '/setup/status',
-      );
-    } on LocalPrintServiceException {
-      return null;
-    }
+    return _sendSoftOk(
+      section: 'Setup',
+      branch: 'setup_status',
+      method: 'GET',
+      path: '/setup/status',
+    );
   }
 
   Future<Map<String, dynamic>?> setupPrerequisites() async {
-    try {
-      return await _send(
-        section: 'Setup',
-        branch: 'setup_prerequisites',
-        method: 'GET',
-        path: '/setup/prerequisites',
-      );
-    } on LocalPrintServiceException {
-      return null;
-    }
+    return _sendSoftOk(
+      section: 'Setup',
+      branch: 'setup_prerequisites',
+      method: 'GET',
+      path: '/setup/prerequisites',
+    );
   }
 
   Future<Map<String, dynamic>?> setupInstall() async {
@@ -619,12 +611,36 @@ class LocalPrintService {
     return merged;
   }
 
+  /// Like [_send] but returns the JSON body even when `ok` is false.
+  /// Used for operator setup endpoints that encode soft failures in the payload.
+  Future<Map<String, dynamic>?> _sendSoftOk({
+    required String section,
+    required String branch,
+    required String method,
+    required String path,
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      return await _send(
+        section: section,
+        branch: branch,
+        method: method,
+        path: path,
+        body: body,
+        requireOk: false,
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> _send({
     required String section,
     required String branch,
     required String method,
     required String path,
     Map<String, dynamic>? body,
+    bool requireOk = true,
   }) async {
     final url = _endpoint(path);
     final watch = Stopwatch()..start();
@@ -727,14 +743,31 @@ class LocalPrintService {
       'allowPrivateNetwork=${response.headers['access-control-allow-private-network'] ?? '-'} '
       'postDispatched=${method == 'POST'}',
     );
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300 ||
-        responseOk != true) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       final message = _errorMessage(
         response,
         jsonBody,
         fallback:
             'Yazici servisi ${response.statusCode} durum kodu ile hata dondu.',
+      );
+      _log(
+        effectiveSection,
+        'requestFail requestType=$requestType branch=$branch routeUrl=$url method=$method '
+        'durationMs=${watch.elapsedMilliseconds} responseStatus=${response.statusCode} '
+        'itemCount=$itemCount serviceCount=$serviceCount plateCount=$plateCount tableNo=$tableNo',
+        error: message,
+      );
+      throw LocalPrintServiceException(
+        message,
+        statusCode: response.statusCode,
+        details: jsonBody,
+      );
+    }
+    if (requireOk && responseOk != true) {
+      final message = _errorMessage(
+        response,
+        jsonBody,
+        fallback: 'Yazici servisi gecersiz yanit dondu.',
       );
       _log(
         effectiveSection,
