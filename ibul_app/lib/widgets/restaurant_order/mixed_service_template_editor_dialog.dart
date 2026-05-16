@@ -1,9 +1,13 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart' show XFile;
 
 import '../../core/constants.dart';
 import '../../models/mixed_service_order.dart';
 import '../../models/product_pricing.dart';
 import '../../models/seller_product.dart';
+import '../../services/store_service.dart';
+import '../../utils/pick_image_file.dart';
 import '../optimized_image.dart';
 
 enum MixedServiceTemplateSubmitAction { draft, publish }
@@ -66,6 +70,7 @@ class _MixedServiceTemplateEditorDialog extends StatefulWidget {
 
 class _MixedServiceTemplateEditorDialogState
     extends State<_MixedServiceTemplateEditorDialog> {
+  final StoreService _storeService = StoreService();
   late final TextEditingController _searchController;
   late final TextEditingController _nameController;
   final Map<String, _TemplateChildDraft> _selectedItems =
@@ -75,6 +80,11 @@ class _MixedServiceTemplateEditorDialogState
   String _searchQuery = '';
   String _pricingMode = MixedServiceOrder.autoSumPriceMode;
   String? _coverProductId;
+  /// Kapak için havuz dışı özel URL (yüklenen veya daha önce kaydedilmiş özel görsel).
+  String? _explicitCoverUrl;
+  /// Kullanıcı "Görsel kaldır" dediğinde havuz görseline geri dönülmez.
+  bool _suppressPoolCover = false;
+  bool _uploadingCover = false;
 
   String get _resolvedTemplateProductType => widget.initialProduct == null
       ? MixedServiceOrder.normalizeTemplateProductType(
@@ -208,6 +218,7 @@ class _MixedServiceTemplateEditorDialogState
       );
     }
 
+    _explicitCoverUrl = _initialExplicitCoverUrl();
     _coverProductId = _initialCoverProductId();
     _nameController.addListener(() {
       setState(() {});
@@ -219,11 +230,31 @@ class _MixedServiceTemplateEditorDialogState
     });
   }
 
+  bool _poolProductImageMatchesUrl(SellerProduct product, String url) {
+    if ((product.imageUrl?.trim() ?? '') == url) return true;
+    for (final u in product.imageUrls) {
+      if (u.trim() == url) return true;
+    }
+    return false;
+  }
+
+  /// Havuz ürünü görseliyle birebir aynıysa otomatik kapak sayılır; aksi halde özel kapaktır.
+  String? _initialExplicitCoverUrl() {
+    final url = widget.initialProduct?.imageUrl?.trim() ?? '';
+    if (url.isEmpty) return null;
+    for (final product in widget.products) {
+      if (MixedServiceOrder.isTemplateProduct(product)) continue;
+      if (_poolProductImageMatchesUrl(product, url)) return null;
+    }
+    return url;
+  }
+
   String? _initialCoverProductId() {
     final initialUrl = widget.initialProduct?.imageUrl?.trim() ?? '';
-    if (initialUrl.isNotEmpty) {
+    if (_explicitCoverUrl == null && initialUrl.isNotEmpty) {
       for (final product in widget.products) {
-        if ((product.imageUrl?.trim() ?? '') == initialUrl) {
+        if (MixedServiceOrder.isTemplateProduct(product)) continue;
+        if (_poolProductImageMatchesUrl(product, initialUrl)) {
           return product.id;
         }
       }
@@ -512,7 +543,7 @@ class _MixedServiceTemplateEditorDialogState
         .toList(growable: false);
   }
 
-  String? _coverImageUrl() {
+  String? _pooledCoverImageUrl() {
     if (_coverProductId == null) return null;
     final product = widget.products.cast<SellerProduct?>().firstWhere(
       (candidate) => candidate?.id == _coverProductId,
@@ -520,6 +551,69 @@ class _MixedServiceTemplateEditorDialogState
     );
     final imageUrl = product?.imageUrl?.trim() ?? '';
     return imageUrl.isEmpty ? null : imageUrl;
+  }
+
+  String? _resolvedCoverImageUrl() {
+    final explicit = _explicitCoverUrl?.trim() ?? '';
+    if (explicit.isNotEmpty) return explicit;
+    if (_suppressPoolCover) return null;
+    return _pooledCoverImageUrl();
+  }
+
+  Future<void> _pickCustomCover() async {
+    if (_uploadingCover) return;
+    PickedImageFile? picked;
+    try {
+      picked = await pickImageFile();
+    } catch (e, st) {
+      debugPrint('[service-cover] pick failed: $e $st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Görsel seçilemedi: $e')),
+      );
+      return;
+    }
+    if (picked == null || !mounted) return;
+
+    setState(() => _uploadingCover = true);
+    try {
+      final file = XFile.fromData(
+        picked.bytes,
+        name: picked.name,
+        mimeType: 'image/jpeg',
+      );
+      final url = await _storeService.uploadStoreImage(
+        file,
+        'service-template-covers',
+      );
+      if (!mounted) return;
+      setState(() {
+        _explicitCoverUrl = url;
+        _suppressPoolCover = false;
+        _uploadingCover = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uploadingCover = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Görsel yüklenemedi: $e')),
+      );
+    }
+  }
+
+  void _clearExplicitCover() {
+    setState(() {
+      _explicitCoverUrl = null;
+      _coverProductId = null;
+      _suppressPoolCover = true;
+    });
+  }
+
+  bool get _canRemoveCover {
+    final explicit = _explicitCoverUrl?.trim() ?? '';
+    if (explicit.isNotEmpty) return true;
+    if (_suppressPoolCover) return false;
+    return (_pooledCoverImageUrl()?.trim().isNotEmpty ?? false);
   }
 
   void _submit(MixedServiceTemplateSubmitAction action) {
@@ -530,7 +624,7 @@ class _MixedServiceTemplateEditorDialogState
         templateProductType: _resolvedTemplateProductType,
         name: _nameController.text.trim(),
         description: widget.initialProduct?.description?.trim() ?? '',
-        coverImageUrl: _coverImageUrl(),
+        coverImageUrl: _resolvedCoverImageUrl(),
         pricingMode: _isMenuTemplate
             ? _pricingMode
             : widget.initialProduct == null
@@ -555,6 +649,128 @@ class _MixedServiceTemplateEditorDialogState
 
   String _formatMoney(double amount) {
     return '₺${amount.toStringAsFixed(2)}';
+  }
+
+  Widget _buildCoverImageSection() {
+    final previewUrl = _resolvedCoverImageUrl();
+    final title = _isMenuTemplate ? 'Menü görseli' : 'Servis görseli';
+    final helper = _isMenuTemplate
+        ? 'Müşteri menüsünde gösterilir; boş bırakılırsa havuzdaki bir ürünün görseli kullanılır.'
+        : 'Müşteri menüsünde gösterilir; boş bırakılırsa havuzdaki ürün görseli kullanılır (aynı görsel tekrarlanabilir).';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF111827),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            helper,
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF64748B),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: (previewUrl != null && previewUrl.isNotEmpty)
+                    ? OptimizedImage(
+                        imageUrlOrPath: previewUrl,
+                        width: 88,
+                        height: 88,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 88,
+                          height: 88,
+                          color: const Color(0xFFE5E7EB),
+                          alignment: Alignment.center,
+                          child: const Icon(
+                            Icons.broken_image_outlined,
+                            color: Color(0xFF9CA3AF),
+                          ),
+                        ),
+                      )
+                    : Container(
+                        width: 88,
+                        height: 88,
+                        color: const Color(0xFFE5E7EB),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.image_outlined,
+                          size: 32,
+                          color: Colors.grey.shade400,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_explicitCoverUrl != null &&
+                        _explicitCoverUrl!.trim().isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          'Özel kapak görseli',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.tonalIcon(
+                          onPressed: _uploadingCover ? null : _pickCustomCover,
+                          icon: _uploadingCover
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.add_photo_alternate_outlined),
+                          label: Text(
+                            _uploadingCover ? 'Yükleniyor…' : 'Görsel yükle',
+                          ),
+                        ),
+                        if (_canRemoveCover)
+                          OutlinedButton(
+                            onPressed: _uploadingCover ? null : _clearExplicitCover,
+                            child: const Text('Görsel kaldır'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildProductListSection() {
@@ -881,6 +1097,8 @@ class _MixedServiceTemplateEditorDialogState
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    _buildCoverImageSection(),
                     if (_isMenuTemplate) ...[
                       const SizedBox(height: 10),
                       Wrap(

@@ -22,10 +22,18 @@ class StoreMediaService {
   static const Duration uploadTimeout = Duration(seconds: 180);
 
   int get _targetImageBytes => kIsWeb ? 500 * 1024 : 700 * 1024;
+
+  /// Web and macOS encoders do not support WebP output in flutter_image_compress.
+  bool get _useJpegEncoding =>
+      kIsWeb || defaultTargetPlatform == TargetPlatform.macOS;
+
   CompressFormat get _compressFormat =>
-      kIsWeb ? CompressFormat.jpeg : CompressFormat.webp;
-  String get _contentType => kIsWeb ? 'image/jpeg' : 'image/webp';
-  String get _fileExt => kIsWeb ? 'jpg' : 'webp';
+      _useJpegEncoding ? CompressFormat.jpeg : CompressFormat.webp;
+
+  String get _contentType =>
+      _useJpegEncoding ? 'image/jpeg' : 'image/webp';
+
+  String get _fileExt => _useJpegEncoding ? 'jpg' : 'webp';
 
   String get _currentUserId {
     final currentUserId = _currentUserIdResolver()?.trim() ?? '';
@@ -252,17 +260,14 @@ class StoreMediaService {
         '${DateTime.now().millisecondsSinceEpoch}_$index.$_fileExt';
     final path = '$currentUserId/$productId/$fileName';
 
-    final bytes = await file.readAsBytes();
+    final bytes = await compressImage(file);
 
     await _supabase.storage
         .from('product-images')
         .uploadBinary(
           path,
           bytes,
-          fileOptions: const FileOptions(
-            contentType: 'image/jpeg',
-            upsert: true,
-          ),
+          fileOptions: FileOptions(contentType: _contentType, upsert: true),
         );
 
     return _supabase.storage.from('product-images').getPublicUrl(path);
@@ -304,6 +309,20 @@ class StoreMediaService {
   Future<Uint8List> compressBytes(Uint8List input) async {
     if (input.isEmpty) return input;
 
+    try {
+      return await _compressBytesWithFormat(input, _compressFormat);
+    } on UnsupportedError {
+      if (_compressFormat == CompressFormat.jpeg) {
+        return input;
+      }
+      return _compressBytesWithFormat(input, CompressFormat.jpeg);
+    }
+  }
+
+  Future<Uint8List> _compressBytesWithFormat(
+    Uint8List input,
+    CompressFormat format,
+  ) async {
     int quality = kIsWeb ? 60 : 68;
     int minSide = kIsWeb ? 840 : 960;
     Uint8List best = input;
@@ -314,7 +333,7 @@ class StoreMediaService {
         minWidth: minSide,
         minHeight: minSide,
         quality: quality,
-        format: _compressFormat,
+        format: format,
       );
 
       if (out.isNotEmpty) {

@@ -1,0 +1,66 @@
+# -*- mode: python ; coding: utf-8 -*-
+
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+
+project_root = Path.cwd().resolve().parents[1]
+bridge_root = project_root / "local_print_bridge"
+script_root = bridge_root / "windows"
+
+pillow_datas, pillow_binaries, pillow_hiddenimports = collect_all("PIL")
+usb_datas, usb_binaries, usb_hiddenimports = collect_all("usb")
+
+hiddenimports = sorted(
+    set(
+        collect_submodules("local_print_bridge")
+        + pillow_hiddenimports
+        + usb_hiddenimports
+        + [
+            "pythoncom",
+            "pywintypes",
+            "win32print",
+            "win32ui",
+        ]
+    )
+)
+
+datas = pillow_datas + usb_datas + [(str(bridge_root / ".env.example"), ".")]
+binaries = pillow_binaries + usb_binaries
+
+a = Analysis(
+    [str(script_root / "bridge_entry.py")],
+    pathex=[str(project_root)],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name="IbulPrintBridge",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)

@@ -179,6 +179,7 @@ extension _AppStateAuthDomain on AppState {
             resolvedFollowed.map((e) => Map<String, dynamic>.from(e)),
           );
         }
+        unawaited(refreshFollowedStoresFromServer());
 
         final cardsData = await _authService.getUserDataField('savedCards');
         if (requestVersion != null && _isStaleAuthRequest(requestVersion)) {

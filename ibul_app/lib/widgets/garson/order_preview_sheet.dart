@@ -78,8 +78,7 @@ class _OrderPreviewSheetState extends State<OrderPreviewSheet>
     super.dispose();
   }
 
-  String _money(double v) =>
-      '${v.toStringAsFixed(2).replaceAll('.', ',')} ₺';
+  String _money(double v) => '${v.toStringAsFixed(2).replaceAll('.', ',')} ₺';
 
   // ── Build ──────────────────────────────────────────────────────────────────
 
@@ -124,7 +123,9 @@ class _OrderPreviewSheetState extends State<OrderPreviewSheet>
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 5),
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: color.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(8),
@@ -151,12 +152,15 @@ class _OrderPreviewSheetState extends State<OrderPreviewSheet>
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: const Color(0xFFFFF7ED),
                               borderRadius: BorderRadius.circular(6),
                               border: Border.all(
-                                  color: const Color(0xFFFED7AA)),
+                                color: const Color(0xFFFED7AA),
+                              ),
                             ),
                             child: Text(
                               'Rev.${r.revision}',
@@ -193,8 +197,7 @@ class _OrderPreviewSheetState extends State<OrderPreviewSheet>
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
-                      unselectedLabelStyle:
-                          const TextStyle(fontSize: 12),
+                      unselectedLabelStyle: const TextStyle(fontSize: 12),
                       labelColor: AppColors.primary,
                       unselectedLabelColor: const Color(0xFF6B7280),
                       indicatorColor: AppColors.primary,
@@ -227,11 +230,7 @@ class _OrderPreviewSheetState extends State<OrderPreviewSheet>
                       onPrintKitchenTicket: widget.onPrintKitchenTicket,
                       onResendToKitchen: widget.onResendToKitchen,
                     ),
-                    _OrderDetailTab(
-                      record: r,
-                      money: _money,
-                      dtFmt: _dtFmt,
-                    ),
+                    _OrderDetailTab(record: r, money: _money, dtFmt: _dtFmt),
                   ],
                 ),
               ),
@@ -241,7 +240,42 @@ class _OrderPreviewSheetState extends State<OrderPreviewSheet>
       },
     );
   }
+}
 
+String _orderItemPrimaryLabel(Map<String, dynamic> item) {
+  final name = item['name']?.toString().trim() ?? '-';
+  final selectedSizeName = item['selectedSizeName']?.toString().trim() ?? '';
+  if (selectedSizeName.isEmpty) {
+    return name;
+  }
+  return '$name — $selectedSizeName';
+}
+
+String _orderItemSecondaryLabel(Map<String, dynamic> item) {
+  final parts = <String>[];
+  final amountLabel = item['amountLabel']?.toString().trim() ?? '';
+  final weightGrams = (item['selectedWeightGrams'] as num?)?.toInt();
+  final notes = item['notes']?.toString().trim() ?? '';
+  final attrs =
+      (item['selectedAttrs'] as List?)?.whereType<String>().toList() ??
+      const <String>[];
+
+  if (amountLabel.isNotEmpty) {
+    final selectedSizeName = item['selectedSizeName']?.toString().trim() ?? '';
+    if (amountLabel != selectedSizeName) {
+      parts.add(amountLabel);
+    }
+  } else if (weightGrams != null && weightGrams > 0) {
+    parts.add('$weightGrams gr');
+  }
+
+  if (attrs.isNotEmpty) {
+    parts.add(attrs.join(', '));
+  }
+  if (notes.isNotEmpty) {
+    parts.add(notes);
+  }
+  return parts.join(' · ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -334,17 +368,23 @@ class _AdisyonTab extends StatelessWidget {
                   Text(
                     'Tarih: ${dateFmt.format(record.createdAt)}',
                     style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w600),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   Text(
                     'Saat: ${timeFmt.format(record.createdAt)}',
                     style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w600),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   Text(
                     'Masa: ${record.tableNumber}',
                     style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w700),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ],
               ),
@@ -355,12 +395,11 @@ class _AdisyonTab extends StatelessWidget {
               // Items
               ...items.map((item) {
                 final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-                final price =
-                    (item['price'] as num?)?.toDouble() ?? 0.0;
+                final price = (item['price'] as num?)?.toDouble() ?? 0.0;
                 final lineTotal = qty * price;
-                final name = item['name']?.toString() ?? '-';
                 return _ReceiptItemRow(
-                  name: name,
+                  name: _orderItemPrimaryLabel(item),
+                  subtitle: _orderItemSecondaryLabel(item),
                   qty: qty,
                   lineTotal: lineTotal,
                   money: money,
@@ -371,15 +410,26 @@ class _AdisyonTab extends StatelessWidget {
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: Text(
                     'Ürün yok',
-                    style: TextStyle(
-                        color: Color(0xFF94A3B8), fontSize: 12),
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
                   ),
                 ),
               const Divider(height: 12),
               // Totals
-              _TotalRow(label: 'Adisyon Toplam', value: money(record.grandTotal), bold: false),
-              _TotalRow(label: 'İndirim', value: money(discountTotal), bold: false),
-              _TotalRow(label: 'Net Toplam', value: money(netTotal), bold: false),
+              _TotalRow(
+                label: 'Adisyon Toplam',
+                value: money(record.grandTotal),
+                bold: false,
+              ),
+              _TotalRow(
+                label: 'İndirim',
+                value: money(discountTotal),
+                bold: false,
+              ),
+              _TotalRow(
+                label: 'Net Toplam',
+                value: money(netTotal),
+                bold: false,
+              ),
               const Divider(thickness: 1.5, height: 12),
               Center(
                 child: Text(
@@ -443,8 +493,10 @@ class _KitchenTicketTab extends StatelessWidget {
   final OrderPreviewRecord record;
   final String Function(double) money;
   final DateFormat timeFmt;
+
   /// "Mutfak Fişi Yazdır" — fires a thermal printer job (local print only).
   final VoidCallback? onPrintKitchenTicket;
+
   /// "Mutfağa Yeniden Yolla" — re-dispatches via service pipeline (status aware).
   final VoidCallback? onResendToKitchen;
 
@@ -471,8 +523,11 @@ class _KitchenTicketTab extends StatelessWidget {
               // Header
               Row(
                 children: [
-                  const Icon(Icons.restaurant_menu_rounded,
-                      color: Colors.white54, size: 16),
+                  const Icon(
+                    Icons.restaurant_menu_rounded,
+                    color: Colors.white54,
+                    size: 16,
+                  ),
                   const SizedBox(width: 6),
                   const Text(
                     'MUTFAK FİŞİ',
@@ -487,14 +542,15 @@ class _KitchenTicketTab extends StatelessWidget {
                   if (hasRevision)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 3),
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF59E0B)
-                            .withValues(alpha: 0.2),
+                        color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                            color: const Color(0xFFF59E0B)
-                                .withValues(alpha: 0.5)),
+                          color: const Color(0xFFF59E0B).withValues(alpha: 0.5),
+                        ),
                       ),
                       child: Text(
                         'REV ${r.revision}',
@@ -510,19 +566,19 @@ class _KitchenTicketTab extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               // Masa / Sipariş / Saat row
+              _KitchenInfoRow(label: 'MASA', value: '${r.tableNumber}'),
               _KitchenInfoRow(
-                  label: 'MASA', value: '${r.tableNumber}'),
+                label: 'SİPARİŞ',
+                value: r.orderId.length > 8
+                    ? '#${r.orderId.substring(0, 8).toUpperCase()}'
+                    : '#${r.orderId.toUpperCase()}',
+              ),
               _KitchenInfoRow(
-                  label: 'SİPARİŞ',
-                  value: r.orderId.length > 8
-                      ? '#${r.orderId.substring(0, 8).toUpperCase()}'
-                      : '#${r.orderId.toUpperCase()}'),
-              _KitchenInfoRow(
-                  label: 'SAAT',
-                  value: timeFmt.format(r.createdAt)),
+                label: 'SAAT',
+                value: timeFmt.format(r.createdAt),
+              ),
               if (r.waiterName != null)
-                _KitchenInfoRow(
-                    label: 'GARSON', value: r.waiterName!),
+                _KitchenInfoRow(label: 'GARSON', value: r.waiterName!),
               const SizedBox(height: 10),
               // If revised: show additions/removals first; else show all items
               if (hasRevision && (hasAdditions || hasRemovals)) ...[
@@ -532,10 +588,12 @@ class _KitchenTicketTab extends StatelessWidget {
                     color: const Color(0xFF22C55E),
                   ),
                   const SizedBox(height: 4),
-                  ...r.addedItems.map((item) => _KitchenItemRow(
-                        item: item,
-                        color: const Color(0xFF22C55E),
-                      )),
+                  ...r.addedItems.map(
+                    (item) => _KitchenItemRow(
+                      item: item,
+                      color: const Color(0xFF22C55E),
+                    ),
+                  ),
                   const SizedBox(height: 8),
                 ],
                 if (hasRemovals) ...[
@@ -544,10 +602,12 @@ class _KitchenTicketTab extends StatelessWidget {
                     color: const Color(0xFFEF4444),
                   ),
                   const SizedBox(height: 4),
-                  ...r.removedItems.map((item) => _KitchenItemRow(
-                        item: item,
-                        color: const Color(0xFFEF4444),
-                      )),
+                  ...r.removedItems.map(
+                    (item) => _KitchenItemRow(
+                      item: item,
+                      color: const Color(0xFFEF4444),
+                    ),
+                  ),
                   const SizedBox(height: 8),
                 ],
                 // Still show full current items for kitchen reference
@@ -560,28 +620,28 @@ class _KitchenTicketTab extends StatelessWidget {
               // All items
               ...r.items.map((item) => _KitchenItemRow(item: item)),
               // Notes / last edit note
-              if (r.lastEditNote != null &&
-                  r.lastEditNote!.isNotEmpty) ...[
+              if (r.lastEditNote != null && r.lastEditNote!.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF59E0B)
-                        .withValues(alpha: 0.1),
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: const Color(0xFFF59E0B)
-                          .withValues(alpha: 0.4),
+                      color: const Color(0xFFF59E0B).withValues(alpha: 0.4),
                     ),
                   ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('⚠ ',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFFF59E0B))),
+                      const Text(
+                        '⚠ ',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFFF59E0B),
+                        ),
+                      ),
                       Expanded(
                         child: Text(
                           r.lastEditNote!,
@@ -678,8 +738,10 @@ class _OrderDetailTab extends StatelessWidget {
           title: 'Sipariş Bilgileri',
           icon: Icons.receipt_outlined,
           children: [
-            _DetailRow(label: 'Sipariş ID',
-                value: r.orderId.isNotEmpty ? r.orderId : '-'),
+            _DetailRow(
+              label: 'Sipariş ID',
+              value: r.orderId.isNotEmpty ? r.orderId : '-',
+            ),
             _DetailRow(label: 'Masa No', value: '${r.tableNumber}'),
             _DetailRow(label: 'Durum', value: _statusLabel(r.status)),
             _DetailRow(label: 'Revizyon', value: '${r.revision}'),
@@ -721,8 +783,11 @@ class _OrderDetailTab extends StatelessWidget {
                   padding: const EdgeInsets.only(top: 6),
                   child: Row(
                     children: [
-                      const Icon(Icons.timer_outlined,
-                          size: 13, color: Color(0xFF94A3B8)),
+                      const Icon(
+                        Icons.timer_outlined,
+                        size: 13,
+                        color: Color(0xFF94A3B8),
+                      ),
                       const SizedBox(width: 4),
                       Text(
                         'Oturum süresi: ${_formatDuration(sessionDuration)}',
@@ -746,11 +811,14 @@ class _OrderDetailTab extends StatelessWidget {
             icon: Icons.schedule_rounded,
             children: [
               _DetailRow(
-                  label: 'Oluşturuldu', value: dtFmt.format(r.createdAt)),
+                label: 'Oluşturuldu',
+                value: dtFmt.format(r.createdAt),
+              ),
               if (r.updatedAt != null)
                 _DetailRow(
-                    label: 'Son Güncelleme',
-                    value: dtFmt.format(r.updatedAt!)),
+                  label: 'Son Güncelleme',
+                  value: dtFmt.format(r.updatedAt!),
+                ),
             ],
           ),
         ],
@@ -761,8 +829,9 @@ class _OrderDetailTab extends StatelessWidget {
           icon: Icons.person_outline_rounded,
           children: [
             _DetailRow(
-                label: 'Garson / İşlemci',
-                value: r.waiterName ?? 'Bilinmiyor'),
+              label: 'Garson / İşlemci',
+              value: r.waiterName ?? 'Bilinmiyor',
+            ),
             if (r.waiterId != null && r.waiterId!.isNotEmpty)
               _DetailRow(label: 'Garson ID', value: r.waiterId!),
             if (hasClosedAt && closedBy != null)
@@ -776,14 +845,15 @@ class _OrderDetailTab extends StatelessWidget {
             title: 'Ödeme',
             icon: Icons.payments_outlined,
             children: [
-              _DetailRow(label: 'Yöntem',
-                  value: _paymentLabel(r.paymentMethod)),
+              _DetailRow(
+                label: 'Yöntem',
+                value: _paymentLabel(r.paymentMethod),
+              ),
               _DetailRow(label: 'Tutar', value: money(r.grandTotal)),
               if (r.paymentNote != null && r.paymentNote!.isNotEmpty)
                 _DetailRow(label: 'Not', value: r.paymentNote!),
               if (hasClosedAt)
-                _DetailRow(
-                    label: 'Tarih', value: dtFmt.format(r.closedAt!)),
+                _DetailRow(label: 'Tarih', value: dtFmt.format(r.closedAt!)),
             ],
           ),
         ],
@@ -793,14 +863,22 @@ class _OrderDetailTab extends StatelessWidget {
           title: 'Operasyon Kuralları',
           icon: Icons.policy_outlined,
           children: [
-            _DetailRow(label: 'Düzenlenebilir',
-                value: rules.canEdit ? 'Evet' : 'Hayır'),
-            _DetailRow(label: 'Geri Alınabilir',
-                value: rules.canUndo ? '30 sn içinde' : 'Hayır'),
-            _DetailRow(label: 'Mutfağa İletilebilir',
-                value: rules.canResend ? 'Evet' : 'Hayır'),
-            _DetailRow(label: 'Aktarılabilir',
-                value: rules.canTransfer ? 'Evet' : 'Hayır'),
+            _DetailRow(
+              label: 'Düzenlenebilir',
+              value: rules.canEdit ? 'Evet' : 'Hayır',
+            ),
+            _DetailRow(
+              label: 'Geri Alınabilir',
+              value: rules.canUndo ? '30 sn içinde' : 'Hayır',
+            ),
+            _DetailRow(
+              label: 'Mutfağa İletilebilir',
+              value: rules.canResend ? 'Evet' : 'Hayır',
+            ),
+            _DetailRow(
+              label: 'Aktarılabilir',
+              value: rules.canTransfer ? 'Evet' : 'Hayır',
+            ),
             if (rules.editNote.isNotEmpty)
               _DetailRow(label: 'Kural Notu', value: rules.editNote),
           ],
@@ -838,11 +916,15 @@ class _OrderDetailTab extends StatelessWidget {
               if (r.printerTarget != null)
                 _DetailRow(label: 'Hedef', value: r.printerTarget!),
               ...r.printHistory.map((ph) {
-                final statusColor = ph.status == 'printed'
+                final normalizedStatus =
+                    ph.status.trim().toLowerCase() == 'printed'
+                    ? 'completed'
+                    : ph.status.trim().toLowerCase();
+                final statusColor = normalizedStatus == 'completed'
                     ? const Color(0xFF16A34A)
-                    : ph.status == 'failed'
-                        ? const Color(0xFFDC2626)
-                        : const Color(0xFFF59E0B);
+                    : normalizedStatus == 'failed'
+                    ? const Color(0xFFDC2626)
+                    : const Color(0xFFF59E0B);
                 final target = [
                   if (ph.stationName != null) ph.stationName!,
                   if (ph.printerName != null) ph.printerName!,
@@ -970,25 +1052,26 @@ class _OrderDetailTab extends StatelessWidget {
 class _DashedDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, constraints) {
-      const dashWidth = 6.0;
-      const dashSpace = 4.0;
-      final count =
-          (constraints.maxWidth / (dashWidth + dashSpace)).floor();
-      return Row(
-        children: List.generate(
-          count,
-          (_) => Padding(
-            padding: const EdgeInsets.only(right: dashSpace),
-            child: Container(
-              width: dashWidth,
-              height: 1,
-              color: Colors.black,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const dashWidth = 6.0;
+        const dashSpace = 4.0;
+        final count = (constraints.maxWidth / (dashWidth + dashSpace)).floor();
+        return Row(
+          children: List.generate(
+            count,
+            (_) => Padding(
+              padding: const EdgeInsets.only(right: dashSpace),
+              child: Container(
+                width: dashWidth,
+                height: 1,
+                color: Colors.black,
+              ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 }
 
@@ -1014,10 +1097,7 @@ class _ReceiptRowHeader extends StatelessWidget {
           child: Text(
             'Adet',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
           ),
         ),
         SizedBox(
@@ -1025,10 +1105,7 @@ class _ReceiptRowHeader extends StatelessWidget {
           child: Text(
             'Tutar',
             textAlign: TextAlign.right,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
           ),
         ),
       ],
@@ -1039,12 +1116,14 @@ class _ReceiptRowHeader extends StatelessWidget {
 class _ReceiptItemRow extends StatelessWidget {
   const _ReceiptItemRow({
     required this.name,
+    this.subtitle,
     required this.qty,
     required this.lineTotal,
     required this.money,
   });
 
   final String name;
+  final String? subtitle;
   final int qty;
   final double lineTotal;
   final String Function(double) money;
@@ -1057,9 +1136,31 @@ class _ReceiptItemRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Text(name,
-                style: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w600)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (subtitle?.trim().isNotEmpty ?? false)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      subtitle!,
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF64748B),
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           SizedBox(
             width: 60,
@@ -1074,8 +1175,7 @@ class _ReceiptItemRow extends StatelessWidget {
             child: Text(
               money(lineTotal),
               textAlign: TextAlign.right,
-              style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w700),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
             ),
           ),
         ],
@@ -1149,8 +1249,7 @@ class _KitchenInfoRow extends StatelessWidget {
 }
 
 class _KitchenSectionHeader extends StatelessWidget {
-  const _KitchenSectionHeader(
-      {required this.label, required this.color});
+  const _KitchenSectionHeader({required this.label, required this.color});
   final String label;
   final Color color;
 
@@ -1169,20 +1268,19 @@ class _KitchenSectionHeader extends StatelessWidget {
 }
 
 class _KitchenItemRow extends StatelessWidget {
-  const _KitchenItemRow({
-    required this.item,
-    this.color = Colors.white,
-  });
+  const _KitchenItemRow({required this.item, this.color = Colors.white});
   final Map<String, dynamic> item;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
     final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-    final name = item['name']?.toString() ?? '-';
+    final name = _orderItemPrimaryLabel(item);
+    final subtitle = _orderItemSecondaryLabel(item);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             '$qty×',
@@ -1194,13 +1292,30 @@ class _KitchenItemRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              name,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: color,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                  ),
+                ),
+                if (subtitle.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: color.withValues(alpha: 0.74),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],

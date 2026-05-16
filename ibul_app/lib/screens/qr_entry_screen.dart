@@ -150,8 +150,15 @@ class _QrEntryScreenState extends State<QrEntryScreen> {
       }
 
       final qrVerified = token.isNotEmpty && resolvedTable != null;
-      if (!qrVerified && token.isNotEmpty) {
-        debugPrint('[QrEntryScreen] WARNING: QR token unverified — proceeding anyway.');
+      if (!qrVerified && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'QR doğrulanamadı: menü önizleme modu. Sipariş için garson onayı gerekir.',
+            ),
+            duration: Duration(seconds: 5),
+          ),
+        );
       }
 
       // Navigate instantly (zero-duration transition) → BusinessDetailPage.
@@ -167,6 +174,7 @@ class _QrEntryScreenState extends State<QrEntryScreen> {
             forceTableSelection: true,
             initialTableNumber: tableNumber,
             fromQr: true,
+            unverifiedQrTableFlow: !qrVerified,
           ),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,

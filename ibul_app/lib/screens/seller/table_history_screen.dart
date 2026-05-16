@@ -8,13 +8,14 @@ import '../../widgets/garson/order_preview_sheet.dart';
 /// Historical closed-table orders browser.
 ///
 /// Features:
-///   - Period filter: Today / Week / 30 Days
+///   - Period filter: Today / Week / 30 Days / Tarih Seç (özel aralık)
 ///   - Waiter filter (chips from loaded records)
 ///   - Payment method filter (Nakit / Kart / Online / Diğer)
 ///   - Payment method revenue breakdown in the summary bar
-///   - Per-record drill-down: items, totals, revision badge, last-edit note
+///   - Tap-anywhere drill-down: items, totals, revision badge, last-edit note
 ///   - "Kim kapattı" row in expanded detail
-///   - Quick kitchen-reprint button via [onReprint] callback
+///   - "(ESKİ MASA)" etiketiyle adisyon yeniden bas → [onPrintAdisyon]
+///   - "(ESKİ MASA)" etiketiyle mutfak fişi yeniden bas → [onReprint]
 ///
 /// Navigation: Admin panel → Geçmiş Masalar
 class TableHistoryScreen extends StatefulWidget {
@@ -22,13 +23,19 @@ class TableHistoryScreen extends StatefulWidget {
     super.key,
     required this.sellerId,
     this.onReprint,
+    this.onPrintAdisyon,
   });
 
   final String sellerId;
 
-  /// Called when the user taps "Yeniden Yolla" on a history record.
+  /// Called when the user requests a kitchen reprint for a history record.
   /// The parent is responsible for dispatching the print job.
   final void Function(TableOrderHistoryRecord record)? onReprint;
+
+  /// Called when the user requests an adisyon (receipt) reprint for a
+  /// history record. The parent is responsible for dispatching the print job
+  /// with the "(ESKİ MASA)" header.
+  final void Function(TableOrderHistoryRecord record)? onPrintAdisyon;
 
   @override
   State<TableHistoryScreen> createState() => _TableHistoryScreenState();
@@ -889,39 +896,36 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
             setState(() => _filterTable = record.tableNumber);
             _loadHistory();
           },
-          onPreview: () {
-            showModalBottomSheet(
-              context: context,
-              isScrollControlled: true,
-              backgroundColor: Colors.transparent,
-              builder: (_) => OrderPreviewSheet(
-                record: OrderPreviewRecord.fromHistory(record),
-                initialTab: 2,   // open on Sipariş Detayı for history
-                onResendToKitchen: widget.onReprint != null
-                    ? () => widget.onReprint!(record)
-                    : null,
-              ),
-            );
-          },
-          onPrintAdisyon: () {
-            showModalBottomSheet(
-              context: context,
-              isScrollControlled: true,
-              backgroundColor: Colors.transparent,
-              builder: (_) => OrderPreviewSheet(
-                record: OrderPreviewRecord.fromHistory(record),
-                initialTab: 0,   // open directly on Adisyon tab
-                onResendToKitchen: widget.onReprint != null
-                    ? () => widget.onReprint!(record)
-                    : null,
-              ),
-            );
-          },
+          onPreview: () => _openHistoryPreview(record),
+          onPrintAdisyon: widget.onPrintAdisyon != null
+              ? () => widget.onPrintAdisyon!(record)
+              : null,
           onReprint: widget.onReprint != null
               ? () => widget.onReprint!(record)
               : null,
         );
       },
+    );
+  }
+
+  void _openHistoryPreview(TableOrderHistoryRecord record) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => OrderPreviewSheet(
+        record: OrderPreviewRecord.fromHistory(record),
+        initialTab: 2, // open on Sipariş Detayı for history
+        onPrintAdisyon: widget.onPrintAdisyon != null
+            ? () => widget.onPrintAdisyon!(record)
+            : null,
+        onPrintKitchenTicket: widget.onReprint != null
+            ? () => widget.onReprint!(record)
+            : null,
+        onResendToKitchen: widget.onReprint != null
+            ? () => widget.onReprint!(record)
+            : null,
+      ),
     );
   }
 }
@@ -941,12 +945,13 @@ class _HistoryRecordCard extends StatelessWidget {
   final VoidCallback onFilterByTable;
   /// Open the OrderPreviewSheet on the Sipariş Detayı tab.
   final VoidCallback? onPreview;
-  /// Open the OrderPreviewSheet directly on the Adisyon (receipt) tab.
+  /// Reprint the receipt (adisyon) with "(ESKİ MASA)" header.
   final VoidCallback? onPrintAdisyon;
-  /// Called when the user requests a kitchen reprint for this record.
+  /// Reprint the kitchen ticket with "(ESKİ MASA)" header.
   final VoidCallback? onReprint;
 
-  static final _dateFmt = DateFormat('d MMM HH:mm');
+  static final _dateFmt = DateFormat('d MMM yyyy');
+  static final _timeFmt = DateFormat('HH:mm');
 
   String get _paymentBadge {
     return _TableHistoryScreenState._paymentLabel(record.paymentMethod);
@@ -966,103 +971,168 @@ class _HistoryRecordCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       elevation: 0,
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        collapsedShape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        leading: GestureDetector(
-          onTap: onFilterByTable,
-          child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF6FF),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  'MASA',
-                  style: TextStyle(
-                    fontSize: 8,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF2563EB),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onPreview,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Üst satır: Masa rozeti + ödeme + rev. + sağ üst tarih/saat
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  GestureDetector(
+                    onTap: onFilterByTable,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF6FF),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'MASA',
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF2563EB),
+                            ),
+                          ),
+                          Text(
+                            '${record.tableNumber}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF2563EB),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-                Text(
-                  '${record.tableNumber}',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF2563EB),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              formatMoney(record.grandTotal),
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF111827),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFECFDF5),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  _paymentBadge,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF16A34A),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (record.revision > 1) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFF7ED),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                      color: const Color(0xFFFED7AA)),
+                                ),
+                                child: Text(
+                                  'Rev.${record.revision}',
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFFEA580C),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          record.waiterName?.isNotEmpty == true
+                              ? '${record.items.length} kalem • ${record.waiterName}'
+                              : '${record.items.length} kalem',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        title: Row(
-          children: [
-            Text(
-              formatMoney(record.grandTotal),
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF111827),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: const Color(0xFFECFDF5),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                _paymentBadge,
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF16A34A),
-                ),
-              ),
-            ),
-            if (record.revision > 1) ...[
-              const SizedBox(width: 6),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF7ED),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFFFED7AA)),
-                ),
-                child: Text(
-                  'Rev.${record.revision}',
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFFEA580C),
+                  // Sağ üst: kapatılma tarihi + saati (kullanıcı isteği)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          _dateFmt.format(record.closedAt),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF334155),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.schedule_rounded,
+                              size: 11, color: Color(0xFF64748B)),
+                          const SizedBox(width: 3),
+                          Text(
+                            _timeFmt.format(record.closedAt),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ),
+                ],
               ),
-            ],
-          ],
-        ),
-        subtitle: Text(
-          '${_dateFmt.format(record.closedAt)}${record.waiterName != null ? ' • ${record.waiterName}' : ''}',
-          style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-        ),
-        children: [
-          const Divider(height: 1),
-          const SizedBox(height: 8),
+              const SizedBox(height: 10),
+              const Divider(height: 1),
+              const SizedBox(height: 8),
           // ── Session duration ──────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
@@ -1328,7 +1398,7 @@ class _HistoryRecordCard extends StatelessWidget {
                             size: 13, color: Color(0xFFEA580C)),
                         SizedBox(width: 4),
                         Text(
-                          'Mutfağa Yeniden Yolla',
+                          'Mutfak Fişi Yazdır',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
@@ -1341,7 +1411,9 @@ class _HistoryRecordCard extends StatelessWidget {
                 ),
             ],
           ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }

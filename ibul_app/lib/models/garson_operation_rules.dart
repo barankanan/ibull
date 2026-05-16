@@ -166,11 +166,12 @@ class GarsonOperationRules {
     status: GarsonOrderStatus.served,
     canUndo: false,
     showUndoWarning: false,
-    canEdit: false,
-    showEditWarning: false,
-    canResend: false,
+    canEdit: true,
+    showEditWarning: true,
+    canResend: true,
     canTransfer: false,
-    editNote: 'Bu sipariş servis edildi ve artık düzenlenemez.',
+    editNote:
+        'Bu sipariş servis edildi. Yapılan değişiklik revizyon olarak işlenecek.',
   );
 
   static const _closed = GarsonOperationRules._(

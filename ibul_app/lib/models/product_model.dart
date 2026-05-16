@@ -9,9 +9,14 @@ class Product {
   final String name;
   final String brand;
   final String price;
+  final String pricingMode;
+  final double? basePrice;
   final String pricingType;
   final double? portionPrice;
   final double? pricePerKg;
+  final List<ProductSizeOption> sizeOptions;
+  final String? selectedSizeName;
+  final double? selectedSizePrice;
   final String? serviceControlType;
   final double? minPortion;
   final double? maxPortion;
@@ -64,9 +69,14 @@ class Product {
     required this.name,
     required this.brand,
     required this.price,
+    this.pricingMode = 'base_only',
+    this.basePrice,
     this.pricingType = 'portion',
     this.portionPrice,
     this.pricePerKg,
+    this.sizeOptions = const <ProductSizeOption>[],
+    this.selectedSizeName,
+    this.selectedSizePrice,
     this.serviceControlType,
     this.minPortion,
     this.maxPortion,
@@ -118,9 +128,14 @@ class Product {
     String? name,
     String? brand,
     String? price,
+    String? pricingMode,
+    double? basePrice,
     String? pricingType,
     double? portionPrice,
     double? pricePerKg,
+    List<ProductSizeOption>? sizeOptions,
+    String? selectedSizeName,
+    double? selectedSizePrice,
     String? serviceControlType,
     double? minPortion,
     double? maxPortion,
@@ -171,9 +186,14 @@ class Product {
       name: name ?? this.name,
       brand: brand ?? this.brand,
       price: price ?? this.price,
+      pricingMode: pricingMode ?? this.pricingMode,
+      basePrice: basePrice ?? this.basePrice,
       pricingType: pricingType ?? this.pricingType,
       portionPrice: portionPrice ?? this.portionPrice,
       pricePerKg: pricePerKg ?? this.pricePerKg,
+      sizeOptions: sizeOptions ?? this.sizeOptions,
+      selectedSizeName: selectedSizeName ?? this.selectedSizeName,
+      selectedSizePrice: selectedSizePrice ?? this.selectedSizePrice,
       serviceControlType: serviceControlType ?? this.serviceControlType,
       minPortion: minPortion ?? this.minPortion,
       maxPortion: maxPortion ?? this.maxPortion,
@@ -231,9 +251,14 @@ class Product {
       'productId': productId,
       'brand': brand,
       'price': price,
+      'pricingMode': pricingMode,
+      'basePrice': basePrice,
       'pricingType': pricingType,
       'portionPrice': portionPrice,
       'pricePerKg': pricePerKg,
+      'sizeOptions': sizeOptions.map((option) => option.toJson()).toList(),
+      'selectedSizeName': selectedSizeName,
+      'selectedSizePrice': selectedSizePrice,
       'serviceControlType': serviceControlType,
       'minPortion': minPortion,
       'maxPortion': maxPortion,
@@ -288,6 +313,27 @@ class Product {
           json['productId']?.toString() ?? json['product_id']?.toString(),
       brand: json['brand'] ?? '',
       price: json['price'] ?? '0',
+        pricingMode:
+          json['pricingMode']?.toString() ??
+          json['pricing_mode']?.toString() ??
+          ProductPriceCalculator.resolvePricingMode(
+          basePrice:
+            (json['basePrice'] as num?)?.toDouble() ??
+            (json['base_price'] as num?)?.toDouble() ??
+            (json['portionPrice'] as num?)?.toDouble() ??
+            (json['portion_price'] as num?)?.toDouble(),
+          pricePerKg:
+            (json['pricePerKg'] as num?)?.toDouble() ??
+            (json['price_per_kg'] as num?)?.toDouble(),
+          sizeOptions: ProductSizeOption.listFromDynamic(
+            json['sizeOptions'] ?? json['size_options'],
+          ),
+          ).storageValue,
+        basePrice:
+          (json['basePrice'] as num?)?.toDouble() ??
+          (json['base_price'] as num?)?.toDouble() ??
+          (json['portionPrice'] as num?)?.toDouble() ??
+          (json['portion_price'] as num?)?.toDouble(),
       pricingType:
           json['pricingType']?.toString() ??
           json['pricing_type']?.toString() ??
@@ -299,6 +345,15 @@ class Product {
       pricePerKg:
           (json['pricePerKg'] as num?)?.toDouble() ??
           (json['price_per_kg'] as num?)?.toDouble(),
+        sizeOptions: ProductSizeOption.listFromDynamic(
+        json['sizeOptions'] ?? json['size_options'],
+        ),
+        selectedSizeName:
+          json['selectedSizeName']?.toString() ??
+          json['selected_size_name']?.toString(),
+        selectedSizePrice:
+          (json['selectedSizePrice'] as num?)?.toDouble() ??
+          (json['selected_size_price'] as num?)?.toDouble(),
       serviceControlType:
           json['serviceControlType']?.toString() ??
           json['service_control_type']?.toString(),
@@ -637,9 +692,14 @@ class Product {
     String? productId;
     String brand = '';
     String price = '0';
+    String pricingMode = ProductPricingMode.baseOnly.storageValue;
+    double? basePrice;
     String pricingType = ProductPricingType.portion.storageValue;
     double? portionPrice;
     double? pricePerKg;
+    List<ProductSizeOption> sizeOptions = const <ProductSizeOption>[];
+    String? selectedSizeName;
+    double? selectedSizePrice;
     String? serviceControlType;
     double? minPortion;
     double? maxPortion;
@@ -676,6 +736,13 @@ class Product {
       price = (dbProduct as dynamic).price?.toString() ?? price;
     } catch (_) {}
     try {
+      pricingMode =
+          (dbProduct as dynamic).pricingMode?.toString() ?? pricingMode;
+    } catch (_) {}
+    try {
+      basePrice = ((dbProduct as dynamic).basePrice as num?)?.toDouble();
+    } catch (_) {}
+    try {
       pricingType =
           (dbProduct as dynamic).pricingType?.toString() ??
           ProductPricingType.portion.storageValue;
@@ -685,6 +752,18 @@ class Product {
     } catch (_) {}
     try {
       pricePerKg = ((dbProduct as dynamic).pricePerKg as num?)?.toDouble();
+    } catch (_) {}
+    try {
+      sizeOptions = ProductSizeOption.listFromDynamic(
+        (dbProduct as dynamic).sizeOptions,
+      );
+    } catch (_) {}
+    try {
+      selectedSizeName = (dbProduct as dynamic).selectedSizeName?.toString();
+    } catch (_) {}
+    try {
+      selectedSizePrice =
+          ((dbProduct as dynamic).selectedSizePrice as num?)?.toDouble();
     } catch (_) {}
     try {
       serviceControlType = (dbProduct as dynamic).serviceControlType
@@ -743,6 +822,14 @@ class Product {
       name = dbProduct['name']?.toString() ?? name;
       brand = dbProduct['brand']?.toString() ?? brand;
       price = dbProduct['price']?.toString() ?? price;
+      pricingMode =
+          dbProduct['pricing_mode']?.toString() ??
+          dbProduct['pricingMode']?.toString() ??
+          pricingMode;
+      basePrice =
+          (dbProduct['base_price'] as num?)?.toDouble() ??
+          (dbProduct['basePrice'] as num?)?.toDouble() ??
+          basePrice;
       pricingType =
           dbProduct['pricing_type']?.toString() ??
           dbProduct['pricingType']?.toString() ??
@@ -755,6 +842,17 @@ class Product {
           (dbProduct['price_per_kg'] as num?)?.toDouble() ??
           (dbProduct['pricePerKg'] as num?)?.toDouble() ??
           pricePerKg;
+      sizeOptions = ProductSizeOption.listFromDynamic(
+        dbProduct['size_options'] ?? dbProduct['sizeOptions'],
+      );
+      selectedSizeName =
+          dbProduct['selected_size_name']?.toString() ??
+          dbProduct['selectedSizeName']?.toString() ??
+          selectedSizeName;
+      selectedSizePrice =
+          (dbProduct['selected_size_price'] as num?)?.toDouble() ??
+          (dbProduct['selectedSizePrice'] as num?)?.toDouble() ??
+          selectedSizePrice;
       serviceControlType =
           dbProduct['service_control_type']?.toString() ??
           dbProduct['serviceControlType']?.toString() ??
@@ -898,9 +996,14 @@ class Product {
       name: name,
       brand: brand,
       price: price,
+      pricingMode: pricingMode,
+      basePrice: basePrice,
       pricingType: resolvedPricingType.storageValue,
       portionPrice: portionPrice,
       pricePerKg: pricePerKg,
+      sizeOptions: sizeOptions,
+      selectedSizeName: selectedSizeName,
+      selectedSizePrice: selectedSizePrice,
       serviceControlType: serviceControlType,
       minPortion: minPortion,
       maxPortion: maxPortion,
@@ -959,6 +1062,14 @@ class Product {
   ProductPricingType get resolvedPricingType =>
       ProductPricingType.fromValue(pricingType);
 
+  ProductPricingMode get resolvedPricingMode =>
+      ProductPriceCalculator.resolvePricingMode(
+        explicitMode: pricingMode,
+        basePrice: effectiveBaseUnitPrice,
+        pricePerKg: pricePerKg,
+        sizeOptions: sizeOptions,
+      );
+
   ProductServiceControlType get resolvedServiceControlType {
     final explicit = ProductServiceControlType.fromValue(serviceControlType);
     if (explicit != ProductServiceControlType.none) {
@@ -981,6 +1092,17 @@ class Product {
   bool get usesWeightSelector =>
       resolvedServiceControlType == ProductServiceControlType.weightStepper;
 
+  bool get hasWeightPricing =>
+      ProductPriceCalculator.sanitizePrice(pricePerKg) > 0;
+
+  List<ProductSizeOption> get normalizedSizeOptions =>
+      ProductPriceCalculator.normalizeSizeOptions(sizeOptions);
+
+  bool get hasSizeOptions => normalizedSizeOptions.isNotEmpty;
+
+  ProductSizeOption? get defaultSizeOption =>
+      ProductPriceCalculator.defaultSizeOption(normalizedSizeOptions);
+
   double get effectivePricePerKg {
     final direct = ProductPriceCalculator.sanitizePrice(pricePerKg);
     if (direct > 0) return direct;
@@ -990,7 +1112,7 @@ class Product {
     return 0;
   }
 
-  bool get isWeightPriced => usesWeightSelector && effectivePricePerKg > 0;
+  bool get isWeightPriced => hasWeightPricing;
 
   double get effectivePortionPrice {
     final direct = ProductPriceCalculator.sanitizePrice(portionPrice);
@@ -998,7 +1120,17 @@ class Product {
     return ProductPriceCalculator.parsePriceValue(price);
   }
 
-  double get effectiveBaseUnitPrice => effectivePortionPrice;
+  double get effectiveBaseUnitPrice {
+    final direct = ProductPriceCalculator.sanitizePrice(basePrice);
+    if (direct > 0) return direct;
+    final portionDirect = ProductPriceCalculator.sanitizePrice(portionPrice);
+    if (portionDirect > 0) return portionDirect;
+    final selectedDefaultSize = defaultSizeOption;
+    if (selectedDefaultSize != null && !hasWeightPricing) {
+      return ProductPriceCalculator.sanitizePrice(selectedDefaultSize.price);
+    }
+    return effectivePortionPrice;
+  }
 
   double get resolvedMinPortionAmount =>
       ProductPriceCalculator.resolveMinPortionAmount(
@@ -1042,10 +1174,14 @@ class Product {
       );
 
   String get displayPricingText {
-    if (usesWeightSelector) {
+    final defaultSize = defaultSizeOption;
+    if (defaultSize != null && effectiveBaseUnitPrice <= 0 && !hasWeightPricing) {
+      return ProductPriceCalculator.formatCurrency(defaultSize.price);
+    }
+    if (hasWeightPricing && !hasSizeOptions) {
       return ProductPriceCalculator.formatPerKgLabel(effectivePricePerKg);
     }
-    return ProductPriceCalculator.formatCurrency(effectivePortionPrice);
+    return ProductPriceCalculator.formatCurrency(effectiveBaseUnitPrice);
   }
 
   String? get displayWeightInfo {

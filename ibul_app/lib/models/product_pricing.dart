@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 enum ProductPricingType {
   portion,
   weight;
@@ -86,6 +88,155 @@ enum ProductServiceControlType {
   }
 }
 
+enum ProductPricingMode {
+  baseOnly,
+  weightOnly,
+  sizeOnly,
+  hybrid;
+
+  static ProductPricingMode fromValue(Object? value) {
+    final normalized = value?.toString().trim().toLowerCase();
+    switch (normalized) {
+      case 'weight_only':
+      case 'weight':
+        return ProductPricingMode.weightOnly;
+      case 'size_only':
+      case 'size':
+        return ProductPricingMode.sizeOnly;
+      case 'hybrid':
+        return ProductPricingMode.hybrid;
+      case 'base_only':
+      case 'base':
+      default:
+        return ProductPricingMode.baseOnly;
+    }
+  }
+
+  String get storageValue {
+    switch (this) {
+      case ProductPricingMode.weightOnly:
+        return 'weight_only';
+      case ProductPricingMode.sizeOnly:
+        return 'size_only';
+      case ProductPricingMode.hybrid:
+        return 'hybrid';
+      case ProductPricingMode.baseOnly:
+        return 'base_only';
+    }
+  }
+}
+
+class ProductSizeOption {
+  const ProductSizeOption({
+    required this.id,
+    required this.name,
+    required this.price,
+    this.isDefault = false,
+    this.sortOrder = 0,
+  });
+
+  final String id;
+  final String name;
+  final double price;
+  final bool isDefault;
+  final int sortOrder;
+
+  ProductSizeOption copyWith({
+    String? id,
+    String? name,
+    double? price,
+    bool? isDefault,
+    int? sortOrder,
+  }) {
+    return ProductSizeOption(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      price: price ?? this.price,
+      isDefault: isDefault ?? this.isDefault,
+      sortOrder: sortOrder ?? this.sortOrder,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'price': price,
+      'is_default': isDefault,
+      'sort_order': sortOrder,
+    };
+  }
+
+  factory ProductSizeOption.fromJson(Map<String, dynamic> json) {
+    final rawName =
+        json['name']?.toString() ?? json['size_name']?.toString() ?? '';
+    final trimmedName = rawName.trim();
+    final sortOrder =
+        (json['sort_order'] as num?)?.toInt() ??
+        (json['sortOrder'] as num?)?.toInt() ??
+        0;
+    final idCandidate =
+        json['id']?.toString().trim() ?? json['size_id']?.toString().trim();
+    return ProductSizeOption(
+      id: (idCandidate ?? '').isNotEmpty
+          ? idCandidate!
+          : _fallbackId(trimmedName, sortOrder),
+      name: trimmedName,
+      price:
+          (json['price'] as num?)?.toDouble() ??
+          (json['size_price'] as num?)?.toDouble() ??
+          0,
+      isDefault:
+          json['is_default'] == true ||
+          json['isDefault'] == true ||
+          json['default'] == true,
+      sortOrder: sortOrder,
+    );
+  }
+
+  static List<ProductSizeOption> listFromDynamic(dynamic raw) {
+    if (raw == null) return const <ProductSizeOption>[];
+    if (raw is List) {
+      return raw
+          .whereType<Object>()
+          .map((entry) {
+            if (entry is ProductSizeOption) return entry;
+            if (entry is Map<String, dynamic>) {
+              return ProductSizeOption.fromJson(entry);
+            }
+            if (entry is Map) {
+              return ProductSizeOption.fromJson(
+                Map<String, dynamic>.from(entry),
+              );
+            }
+            return null;
+          })
+          .whereType<ProductSizeOption>()
+          .toList(growable: false);
+    }
+    if (raw is String) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) return const <ProductSizeOption>[];
+      try {
+        final decoded = jsonDecode(trimmed);
+        return listFromDynamic(decoded);
+      } catch (_) {
+        return const <ProductSizeOption>[];
+      }
+    }
+    return const <ProductSizeOption>[];
+  }
+
+  static String _fallbackId(String name, int sortOrder) {
+    final normalized = name.trim().toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9]+'),
+      '_',
+    );
+    final safeName = normalized.isEmpty ? 'size' : normalized;
+    return '${safeName}_$sortOrder';
+  }
+}
+
 class ProductPriceCalculator {
   const ProductPriceCalculator._();
 
@@ -118,6 +269,117 @@ class ProductPriceCalculator {
       return 0;
     }
     return value;
+  }
+
+  static ProductPricingMode resolvePricingMode({
+    Object? explicitMode,
+    double? basePrice,
+    double? pricePerKg,
+    List<ProductSizeOption> sizeOptions = const <ProductSizeOption>[],
+  }) {
+    final normalizedExplicit = explicitMode?.toString().trim();
+    if ((normalizedExplicit ?? '').isNotEmpty) {
+      return ProductPricingMode.fromValue(normalizedExplicit);
+    }
+    final hasBase = sanitizePrice(basePrice) > 0;
+    final hasWeight = sanitizePrice(pricePerKg) > 0;
+    final hasSizes = normalizeSizeOptions(sizeOptions).isNotEmpty;
+    final enabledCount = [hasBase, hasWeight, hasSizes]
+        .where((value) => value)
+        .length;
+    if (enabledCount > 1) return ProductPricingMode.hybrid;
+    if (hasSizes) return ProductPricingMode.sizeOnly;
+    if (hasWeight) return ProductPricingMode.weightOnly;
+    return ProductPricingMode.baseOnly;
+  }
+
+  static List<ProductSizeOption> normalizeSizeOptions(
+    Iterable<ProductSizeOption> raw,
+  ) {
+    final cleaned = raw
+        .map(
+          (entry) => entry.copyWith(
+            name: entry.name.trim(),
+            price: sanitizePrice(entry.price),
+          ),
+        )
+        .where((entry) => entry.name.isNotEmpty && entry.price > 0)
+        .toList(growable: false)
+      ..sort((left, right) {
+        final sortCompare = left.sortOrder.compareTo(right.sortOrder);
+        if (sortCompare != 0) return sortCompare;
+        return left.name.toLowerCase().compareTo(right.name.toLowerCase());
+      });
+    if (cleaned.isEmpty) return const <ProductSizeOption>[];
+    final hasDefault = cleaned.any((entry) => entry.isDefault);
+    if (hasDefault) return cleaned;
+    return [
+      cleaned.first.copyWith(isDefault: true),
+      ...cleaned.skip(1),
+    ];
+  }
+
+  static ProductSizeOption? defaultSizeOption(
+    List<ProductSizeOption> sizeOptions,
+  ) {
+    final normalized = normalizeSizeOptions(sizeOptions);
+    if (normalized.isEmpty) return null;
+    return normalized.firstWhere(
+      (entry) => entry.isDefault,
+      orElse: () => normalized.first,
+    );
+  }
+
+  static ProductSizeOption? findSizeOption({
+    required List<ProductSizeOption> sizeOptions,
+    String? selectedSizeName,
+    double? selectedSizePrice,
+    bool preferDefault = false,
+  }) {
+    final normalized = normalizeSizeOptions(sizeOptions);
+    if (normalized.isEmpty) return null;
+    final safeName = selectedSizeName?.trim().toLowerCase() ?? '';
+    if (safeName.isNotEmpty) {
+      for (final option in normalized) {
+        if (option.name.trim().toLowerCase() == safeName) {
+          return option;
+        }
+      }
+    }
+    final safePrice = sanitizePrice(selectedSizePrice);
+    if (safePrice > 0) {
+      for (final option in normalized) {
+        if ((option.price - safePrice).abs() < 0.001) {
+          return option;
+        }
+      }
+    }
+    if (!preferDefault) return null;
+    return defaultSizeOption(normalized);
+  }
+
+  static List<String> validateSizeOptions(List<ProductSizeOption> sizeOptions) {
+    final normalized = normalizeSizeOptions(sizeOptions);
+    if (normalized.isEmpty) return const <String>[];
+    final errors = <String>[];
+    final seenNames = <String>{};
+    var defaultCount = 0;
+    for (final option in normalized) {
+      final normalizedName = option.name.trim().toLowerCase();
+      if (!seenNames.add(normalizedName)) {
+        errors.add('Ayni boyut adi birden fazla kez kullanilamaz.');
+        break;
+      }
+      if (option.isDefault) defaultCount++;
+      if (option.sortOrder < 0) {
+        errors.add('Boyut sirasi negatif olamaz.');
+        break;
+      }
+    }
+    if (defaultCount > 1) {
+      errors.add('Sadece bir varsayilan boyut secilebilir.');
+    }
+    return errors;
   }
 
   static bool usesServiceControlStepper(ProductServiceControlType type) {
@@ -487,12 +749,26 @@ class ProductPriceCalculator {
   static double resolveServiceControlledUnitPrice({
     required ProductServiceControlType serviceControlType,
     required ProductPricingType pricingType,
+    ProductPricingMode? pricingMode,
+    double? basePrice,
     double? portionPrice,
     double? pricePerKg,
+    List<ProductSizeOption> sizeOptions = const <ProductSizeOption>[],
+    String? selectedSizeName,
+    double? selectedSizePrice,
     double? fallbackPrice,
     double? selectedAmount,
     int? selectedWeightGrams,
   }) {
+    final selectedSize = findSizeOption(
+      sizeOptions: sizeOptions,
+      selectedSizeName: selectedSizeName,
+      selectedSizePrice: selectedSizePrice,
+    );
+    if (selectedSize != null) {
+      return sanitizePrice(selectedSize.price);
+    }
+
     if (serviceControlType == ProductServiceControlType.weightStepper) {
       final grams = selectedWeightGrams ?? selectedAmount?.round();
       return resolveUnitPrice(
@@ -505,7 +781,7 @@ class ProductPriceCalculator {
     }
 
     if (usesPortionLikeStepper(serviceControlType)) {
-      final baseUnitPrice = sanitizePrice(portionPrice);
+      final baseUnitPrice = sanitizePrice(basePrice ?? portionPrice);
       final fallbackUnitPrice = sanitizePrice(fallbackPrice);
       final selected = sanitizeAmount(selectedAmount);
       final amount = selected > 0
@@ -515,9 +791,29 @@ class ProductPriceCalculator {
       return unit * amount;
     }
 
+    if (selectedWeightGrams != null &&
+        selectedWeightGrams > 0 &&
+        sanitizePrice(pricePerKg) > 0) {
+      return calculateWeightPrice(
+        selectedGrams: selectedWeightGrams,
+        pricePerKg: pricePerKg!,
+      );
+    }
+
+    final resolvedMode = resolvePricingMode(
+      explicitMode: pricingMode?.storageValue,
+      basePrice: basePrice ?? portionPrice,
+      pricePerKg: pricePerKg,
+      sizeOptions: sizeOptions,
+    );
+    if (resolvedMode == ProductPricingMode.sizeOnly) {
+      final defaultSize = defaultSizeOption(sizeOptions);
+      if (defaultSize != null) return sanitizePrice(defaultSize.price);
+    }
+
     return resolveUnitPrice(
       pricingType: pricingType,
-      portionPrice: portionPrice,
+      portionPrice: basePrice ?? portionPrice,
       pricePerKg: pricePerKg,
       selectedWeightGrams: selectedWeightGrams,
       fallbackPrice: fallbackPrice,

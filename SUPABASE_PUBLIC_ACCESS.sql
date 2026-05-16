@@ -3,7 +3,7 @@
 DROP POLICY IF EXISTS "Public can view active products" ON public.products;
 CREATE POLICY "Public can view active products"
 ON public.products FOR SELECT
-USING (status = 'Aktif');
+USING (status IN ('Aktif', 'pending_approval'));
 
 -- 2. Sellers can view ALL their own products (Approved, Pending, Draft, etc.)
 DROP POLICY IF EXISTS "Sellers can view own products" ON public.products;

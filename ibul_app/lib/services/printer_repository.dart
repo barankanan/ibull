@@ -3,8 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/printer_model.dart';
 import '../models/station_printer_model.dart';
+import 'desktop_print_ports.dart';
 
-class PrinterRepository {
+class PrinterRepository implements PrinterRepositoryPort {
   PrinterRepository({SupabaseClient? client})
     : _client = client ?? Supabase.instance.client;
 
@@ -45,6 +46,7 @@ class PrinterRepository {
         });
   }
 
+  @override
   Future<List<PrinterModel>> fetchPrinters(String restaurantId) async {
     final backendPath =
         'printers?restaurant_id=eq.$restaurantId&order=created_at.asc';
@@ -78,6 +80,7 @@ class PrinterRepository {
     }
   }
 
+  @override
   Future<PrinterModel> upsertPrinter({
     required String restaurantId,
     String? printerId,
@@ -89,7 +92,26 @@ class PrinterRepository {
     String? deviceIdentifier,
     int paperWidthMm = 80,
     bool isActive = true,
+    bool supportsCut = false,
+    PrinterCharset charset = PrinterCharset.cp857,
+    int? codePage,
+    List<PrinterRole> assignedRoles = const [],
+    String? printerProfileId,
   }) async {
+    final encodingSelection = PrinterEncodingSelection.normalize(
+      charset: charset,
+      codePage: codePage,
+    );
+    if (encodingSelection.fallbackApplied) {
+      debugPrint(
+        '[PrinterRepository] encoding_guard '
+        'restaurantId=$restaurantId printerId=${printerId ?? "-"} '
+        'requestedCharset=${charset.value} requestedCodePage=${codePage ?? "-"} '
+        'effectiveEncoding=${encodingSelection.encoding} '
+        'effectiveCodePage=${encodingSelection.codePage ?? "-"} '
+        'warning=${encodingSelection.warning}',
+      );
+    }
     final payload = <String, dynamic>{
       if (printerId != null && printerId.isNotEmpty) 'id': printerId,
       'restaurant_id': restaurantId,
@@ -101,6 +123,12 @@ class PrinterRepository {
       'device_identifier': deviceIdentifier,
       'paper_width_mm': paperWidthMm,
       'is_active': isActive,
+      'supports_cut': supportsCut,
+      'charset': encodingSelection.charset.value,
+      'code_page': encodingSelection.codePage,
+      'assigned_roles': assignedRoles.map((r) => r.value).toList(),
+      if (printerProfileId != null && printerProfileId.isNotEmpty)
+        'printer_profile_id': printerProfileId,
     };
 
     final row = await _client
@@ -111,6 +139,43 @@ class PrinterRepository {
     return PrinterModel.fromMap(Map<String, dynamic>.from(row as Map));
   }
 
+  @override
+  Future<PrinterModel?> fetchPrinterById(String printerId) async {
+    if (printerId.trim().isEmpty) return null;
+    try {
+      final row = await _client
+          .from('printers')
+          .select()
+          .eq('id', printerId)
+          .maybeSingle();
+      if (row == null) return null;
+      return PrinterModel.fromMap(Map<String, dynamic>.from(row as Map));
+    } catch (error, stackTrace) {
+      _logPrinterSettings(
+        'Error',
+        'source=fetchPrinterById printerId=$printerId',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+  }
+
+  @override
+  Future<PrinterModel?> getPrinterByRecordId(String recordId) async {
+    return fetchPrinterById(recordId);
+  }
+
+  @override
+  Future<void> deletePrinter(String printerId) async {
+    await _client.from('printers').delete().eq('id', printerId);
+  }
+
+  @override
+  Future<void> deletePrintersForRestaurant(String restaurantId) async {
+    await _client.from('printers').delete().eq('restaurant_id', restaurantId);
+  }
+
   Future<void> setPrinterActive(String printerId, bool isActive) async {
     await _client
         .from('printers')
@@ -118,6 +183,35 @@ class PrinterRepository {
         .eq('id', printerId);
   }
 
+  @override
+  Future<void> recordTestPrintResult({
+    required String printerId,
+    required bool success,
+    String? error,
+  }) async {
+    await _client
+        .from('printers')
+        .update({
+          'last_test_print_at': DateTime.now().toIso8601String(),
+          'last_error': success ? null : error,
+          'test_print_status': success ? 'ok' : 'failed',
+          if (success) 'is_active': true,
+        })
+        .eq('id', printerId);
+  }
+
+  @override
+  Future<void> updateAssignedRoles(
+    String printerId,
+    List<PrinterRole> roles,
+  ) async {
+    await _client
+        .from('printers')
+        .update({'assigned_roles': roles.map((role) => role.value).toList()})
+        .eq('id', printerId);
+  }
+
+  @override
   Future<List<StationPrinterModel>> fetchStationPrinterMappings(
     String restaurantId,
   ) async {
@@ -185,6 +279,21 @@ class PrinterRepository {
       'printer_id': printerId,
       'is_primary': isPrimary,
     }, onConflict: 'station_id,printer_id');
+  }
+
+  @override
+  Future<void> deleteStationPrinterMappingsForPrinter(String printerId) async {
+    await _client.from('station_printers').delete().eq('printer_id', printerId);
+  }
+
+  @override
+  Future<void> deleteStationPrinterMappingsForRestaurant(
+    String restaurantId,
+  ) async {
+    final mappings = await fetchStationPrinterMappings(restaurantId);
+    for (final mapping in mappings.whereType<StationPrinterModel>()) {
+      await _client.from('station_printers').delete().eq('id', mapping.id);
+    }
   }
 
   void _logPrinterSettings(

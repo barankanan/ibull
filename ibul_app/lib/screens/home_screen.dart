@@ -769,23 +769,29 @@ class _HomeScreenState extends State<HomeScreen>
       final resolvedBusiness = business;
       debugPrint('[QR] resolved business = $resolvedBusiness');
 
-      if (mounted && token.isNotEmpty && !qrVerified) {
-        debugPrint('[QR] WARNING: QR token could not be verified against store_tables. Proceeding anyway.');
+      if (mounted && !qrVerified) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('QR doğrulanamadı, masa ekranı yine de açılıyor.'),
-            duration: Duration(seconds: 4),
+            content: Text(
+              'QR doğrulanamadı: sadece menü önizleme. Sipariş garson onayıyla açılır.',
+            ),
+            duration: Duration(seconds: 5),
           ),
         );
       }
 
-      debugPrint('[QR] Pushing BusinessDetailPage — business=${resolvedBusiness["name"]} table=$tableNumber forceTableSelection=true');
+      debugPrint(
+        '[QR] Pushing BusinessDetailPage — business=${resolvedBusiness["name"]} '
+        'table=$tableNumber verified=$qrVerified',
+      );
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => BusinessDetailPage(
             business: resolvedBusiness,
             forceTableSelection: true,
             initialTableNumber: tableNumber,
+            fromQr: true,
+            unverifiedQrTableFlow: !qrVerified,
           ),
         ),
       );
@@ -833,7 +839,7 @@ class _HomeScreenState extends State<HomeScreen>
         _warmHomeProductRatings(_dbProducts);
         unawaited(_saveHomeProductsToCache(_dbProducts));
         debugPrint('✅ Supabase: ${_dbProducts.length} ürün yüklendi');
-      } else {
+      } else if (_dbProducts.isEmpty) {
         await _dbHelper.initializeDatabase();
         _dbProducts = await _dbHelper.getProductsPage(
           limit: SupabaseService.homePageSize,
@@ -841,6 +847,12 @@ class _HomeScreenState extends State<HomeScreen>
         _productDataVersion++;
         _warmHomeProductRatings(_dbProducts);
         debugPrint('✅ Local DB: ${_dbProducts.length} ürün yüklendi');
+      } else {
+        _productDataVersion++;
+        _warmHomeProductRatings(_dbProducts);
+        debugPrint(
+          '⚠️ Supabase boş döndü; önbellekteki ${_dbProducts.length} ürün korunuyor.',
+        );
       }
 
       final withImages = _dbProducts.where((p) => p.imageUrl.isNotEmpty).length;
@@ -1358,10 +1370,13 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     if (scored.isEmpty) {
-      final resolved = products
+      final withOldPrice = products
           .where((p) => p.oldPrice?.isNotEmpty == true)
           .take(limit)
           .toList(growable: false);
+      final resolved = withOldPrice.isNotEmpty
+          ? withOldPrice
+          : products.take(limit).toList(growable: false);
       _cachedOpportunityProductsKey = cacheKey;
       _cachedOpportunityProducts = resolved;
       return resolved;

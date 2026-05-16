@@ -7,6 +7,7 @@ import '../models/seller_product.dart';
 import '../models/sub_admin.dart';
 import 'store/store_media_service.dart';
 import 'store/store_mapping_helpers.dart';
+import 'store_notification_trigger_service.dart';
 import 'store/store_table_service.dart';
 import 'store/store_upload_progress_details.dart';
 import 'store_service_mappers.dart';
@@ -338,6 +339,10 @@ class StoreService {
     dbData['seller_id'] = currentUserId; // Ensure ID is set
 
     await _supabase.from('stores').upsert(dbData);
+
+    if (dbData.containsKey('banners')) {
+      unawaited(_notifyFollowersStoreAnnouncement());
+    }
   }
 
   // Upload Store Image (Logo, Cover, Gallery)
@@ -511,9 +516,8 @@ class StoreService {
       final Map<String, dynamic> uploadedProductData = <String, dynamic>{
         'image_urls': uploadedUrls,
         'image_url': uploadedUrls.isNotEmpty ? uploadedUrls.first : null,
-        'status': (product.status == 'Aktif')
-            ? 'pending_approval'
-            : product.status,
+        // Satıcı "Aktif" dediğinde vitrinde görünsün (anonim RLS ile uyumlu).
+        'status': (product.status == 'Aktif') ? 'Aktif' : product.status,
         'updated_at': DateTime.now().toIso8601String(),
       };
       if (updatedVariants != null) {
@@ -523,6 +527,15 @@ class StoreService {
           .from('products')
           .update(uploadedProductData)
           .eq('id', productId);
+
+      if (uploadedProductData['status'] == 'Aktif') {
+        unawaited(
+          _notifyFollowersNewProduct(
+            productId: productId,
+            productName: product.name,
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('Add Product Error: $e');
       throw Exception('Ürün eklenirken hata oluştu: $e');
@@ -535,13 +548,20 @@ class StoreService {
     Function(String)? onProgress,
     String? previousStatus,
     List<dynamic>? variants,
+    @Deprecated('Yayın anında Aktif; parametre geriye uyumluluk için tutuluyor.')
     bool bypassApproval = false,
   }) async {
     if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
 
     try {
-      // Mevcut resimleri koru
+      // Mevcut resimleri koru; yalnızca imageUrl dolu imageUrls boş senaryosunu birleştir
+      // (şablon kapak vb. bazı akışlarda image_url güncellenirken liste boş kalabiliyordu).
       List<String> finalImageUrls = List.from(product.imageUrls);
+      final String primaryImage = (product.imageUrl ?? '').trim();
+      if (primaryImage.isNotEmpty &&
+          !finalImageUrls.any((u) => u.trim() == primaryImage)) {
+        finalImageUrls = <String>[primaryImage, ...finalImageUrls];
+      }
 
       // Yeni resimler varsa yükle ve listeye ekle
       if (newImages != null && newImages.isNotEmpty) {
@@ -580,7 +600,7 @@ class StoreService {
           product.status.trim().toLowerCase() == 'aktif' ||
           product.status.trim().toLowerCase() == 'active';
       if (isActiveStatus) {
-        updateData['status'] = bypassApproval ? 'Aktif' : 'pending_approval';
+        updateData['status'] = 'Aktif';
       }
 
       if (variants != null) {
@@ -628,11 +648,28 @@ class StoreService {
         updateData['variants'] = updatedVariants;
       }
 
+      SellerProduct? previousProduct;
+      try {
+        previousProduct = await getProductById(product.id);
+      } catch (_) {}
+
       await _runProductWriteWithFallback(
         updateData,
         (payload) =>
             _supabase.from('products').update(payload).eq('id', product.id),
       );
+
+      if (isActiveStatus) {
+        final hadDiscount = previousProduct?.hasDiscount ?? false;
+        if (!hadDiscount && product.hasDiscount) {
+          unawaited(
+            _notifyFollowersProductDiscount(
+              productId: product.id,
+              productName: product.name,
+            ),
+          );
+        }
+      }
     } catch (e) {
       debugPrint('Update Product Error: $e');
       throw Exception('Ürün güncellenirken hata: $e');
@@ -793,10 +830,17 @@ class StoreService {
       product.toMap(),
     );
     productDbData['seller_id'] = currentUserId;
-    // Taslakta image_url ve image_urls zaten product içinde varsa kullanılır
-    // Eğer product.imageUrls boşsa boş array, değilse mevcutları kullan
-    productDbData['image_urls'] = product.imageUrls;
-    productDbData['image_url'] = product.imageUrl;
+    // Taslakta image_url ile image_urls tutarlı olsun (tek alan dolu kalmayı önle).
+    final List<String> mergedImageUrls = List<String>.from(product.imageUrls);
+    final String draftPrimary = (product.imageUrl ?? '').trim();
+    if (draftPrimary.isNotEmpty &&
+        !mergedImageUrls.any((u) => u.trim() == draftPrimary)) {
+      mergedImageUrls.insert(0, draftPrimary);
+    }
+    productDbData['image_urls'] = mergedImageUrls;
+    productDbData['image_url'] = draftPrimary.isNotEmpty
+        ? draftPrimary
+        : (mergedImageUrls.isNotEmpty ? mergedImageUrls.first : null);
     productDbData['status'] = 'Taslak';
     productDbData['updated_at'] = DateTime.now().toIso8601String();
     if (product.accessories != null) {
@@ -1002,22 +1046,53 @@ class StoreService {
   Future<List<Map<String, dynamic>>> getStoreTables({
     String? sellerId,
     bool onlyActive = true,
+    String? areaId,
   }) {
     return _tableService.getStoreTables(
       sellerId: sellerId,
       onlyActive: onlyActive,
+      areaId: areaId,
     );
+  }
+
+  Future<List<Map<String, dynamic>>> getTableAreas({
+    String? sellerId,
+    bool onlyActive = true,
+  }) {
+    return _tableService.getTableAreas(sellerId: sellerId, onlyActive: onlyActive);
+  }
+
+  Future<Map<String, dynamic>> addTableArea({
+    String? sellerId,
+    required String name,
+  }) {
+    return _tableService.addTableArea(sellerId: sellerId, name: name);
+  }
+
+  Future<Map<String, dynamic>> ensureDefaultTableArea({
+    String? sellerId,
+    String defaultName = 'Salon',
+  }) {
+    return _tableService.ensureDefaultArea(sellerId: sellerId, defaultName: defaultName);
   }
 
   Future<Map<String, dynamic>> addStoreTable({
     String? sellerId,
     int? tableNumber,
     bool preferMissingNumber = true,
+    String? areaId,
+    String? areaName,
+    int? areaTableNumber,
+    String? tableName,
   }) {
     return _tableService.addStoreTable(
       sellerId: sellerId,
       tableNumber: tableNumber,
       preferMissingNumber: preferMissingNumber,
+      areaId: areaId,
+      areaName: areaName,
+      areaTableNumber: areaTableNumber,
+      tableName: tableName,
     );
   }
 
@@ -1031,6 +1106,10 @@ class StoreService {
 
   Future<List<int>> getActiveTableNumbers(String sellerId) {
     return _tableService.getActiveTableNumbers(sellerId);
+  }
+
+  Future<Set<int>> getOccupiedTableNumbers(String sellerId) {
+    return _tableService.getOccupiedTableNumbers(sellerId);
   }
 
   Future<Map<String, dynamic>?> resolveStoreTableQr({
@@ -1050,12 +1129,16 @@ class StoreService {
     required int tableNumber,
     required List<Map<String, dynamic>> items,
     String status = 'new',
+    Map<String, dynamic>? tableRow,
+    String? placementSource,
   }) {
     return _tableService.submitTableOrder(
       sellerId: sellerId,
       tableNumber: tableNumber,
       items: items,
       status: status,
+      tableRow: tableRow,
+      placementSource: placementSource,
     );
   }
 
@@ -1737,6 +1820,63 @@ class StoreService {
       }
       rethrow;
     }
+  }
+
+  Future<String> _currentStoreBusinessName() async {
+    final userId = currentUserId;
+    if (userId == null) return 'Mağaza';
+
+    try {
+      final row = await _supabase
+          .from('stores')
+          .select('business_name')
+          .eq('seller_id', userId)
+          .maybeSingle();
+      final name = row?['business_name']?.toString().trim() ?? '';
+      return name.isNotEmpty ? name : 'Mağaza';
+    } catch (_) {
+      return 'Mağaza';
+    }
+  }
+
+  Future<void> _notifyFollowersNewProduct({
+    required String productId,
+    required String productName,
+  }) async {
+    final storeId = currentUserId;
+    if (storeId == null) return;
+    final storeName = await _currentStoreBusinessName();
+    await StoreNotificationTriggerService.instance.notifyNewProduct(
+      storeId: storeId,
+      storeName: storeName,
+      productName: productName,
+      productId: productId,
+    );
+  }
+
+  Future<void> _notifyFollowersProductDiscount({
+    required String productId,
+    required String productName,
+  }) async {
+    final storeId = currentUserId;
+    if (storeId == null) return;
+    final storeName = await _currentStoreBusinessName();
+    await StoreNotificationTriggerService.instance.notifyProductDiscount(
+      storeId: storeId,
+      storeName: storeName,
+      productName: productName,
+      productId: productId,
+    );
+  }
+
+  Future<void> _notifyFollowersStoreAnnouncement() async {
+    final storeId = currentUserId;
+    if (storeId == null) return;
+    final storeName = await _currentStoreBusinessName();
+    await StoreNotificationTriggerService.instance.notifyStoreAnnouncement(
+      storeId: storeId,
+      storeName: storeName,
+    );
   }
 
   Future<Map<String, dynamic>?> getPendingLocationChangeRequest() async {

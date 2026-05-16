@@ -8,6 +8,14 @@ class PrintJobRepository {
 
   final SupabaseClient _client;
 
+  bool _matchesStatus(PrintJobModel job, String status) {
+    final normalizedFilter = status.trim().toLowerCase();
+    if (normalizedFilter == 'completed' || normalizedFilter == 'printed') {
+      return job.normalizedStatus == 'completed';
+    }
+    return job.normalizedStatus == normalizedFilter;
+  }
+
   Stream<List<PrintJobModel>> watchJobs(String restaurantId, {String? status}) {
     final base = _client
         .from('print_jobs')
@@ -23,7 +31,7 @@ class PrintJobRepository {
         return mapped;
       }
       return mapped
-          .where((job) => job.status.toLowerCase() == status.toLowerCase())
+          .where((job) => _matchesStatus(job, status))
           .toList(growable: false);
     });
   }
@@ -41,7 +49,12 @@ class PrintJobRepository {
         .limit(limit);
 
     if (status != null && status != 'all') {
-      query = query.eq('status', status);
+      final normalizedStatus = status.trim().toLowerCase();
+      if (normalizedStatus == 'completed' || normalizedStatus == 'printed') {
+        query = query.inFilter('status', ['completed', 'printed']);
+      } else {
+        query = query.eq('status', normalizedStatus);
+      }
     }
 
     final rows = await query;

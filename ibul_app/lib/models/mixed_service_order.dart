@@ -344,6 +344,21 @@ class MixedServiceOrder {
         : item['name']?.toString().trim().isNotEmpty == true
         ? item['name'].toString().trim()
         : defaultItemName;
+    // Keep a stable unit-price snapshot so draft diffs (add/remove/update)
+    // don't mis-classify pure quantity changes as "cancel + re-add total".
+    final explicitUnitPriceSnapshot = parsePrice(
+      item['unitPriceSnapshot'] ??
+          item['unit_price_snapshot'] ??
+          item['unit_price'] ??
+          item['unitPrice'],
+    );
+    final explicitTotalPrice = parsePrice(item['total_price'] ?? item['price']);
+    final fallbackUnitPrice = explicitTotalPrice > 0
+        ? (explicitTotalPrice / quantity).toDouble()
+        : 0.0;
+    final unitPriceSnapshot =
+        explicitUnitPriceSnapshot > 0 ? explicitUnitPriceSnapshot : fallbackUnitPrice;
+
     final normalized = <String, dynamic>{
       'product_id':
           item['product_id']?.toString() ??
@@ -358,8 +373,12 @@ class MixedServiceOrder {
           item['productId']?.toString(),
       'name': resolvedName,
       'item_name': resolvedName,
-      'price': item['price'] ?? item['total_price'],
-      'total_price': item['total_price'] ?? item['price'],
+      // In the app layer, `price` is treated as UNIT price (see receipt renderers).
+      // Persist total separately so callers can display or recompute line totals.
+      'unit_price_snapshot': unitPriceSnapshot,
+      'unitPriceSnapshot': unitPriceSnapshot,
+      'price': unitPriceSnapshot > 0 ? unitPriceSnapshot : (item['price'] ?? 0),
+      'total_price': item['total_price'] ?? item['totalPrice'] ?? item['price'],
       'fixed_price': item['fixed_price'],
       'quantity': quantity,
       'gramaj': item['gramaj']?.toString() ?? '',
@@ -408,12 +427,23 @@ class MixedServiceOrder {
       final unitTotal = resolveMainItemTotal(normalized);
       final lineTotal = unitTotal * quantity;
       normalized['price'] = unitTotal;
+      normalized['unit_price_snapshot'] = unitTotal;
+      normalized['unitPriceSnapshot'] = unitTotal;
       normalized['total_price'] = lineTotal;
       normalized['line_total'] = lineTotal;
     } else {
-      normalized['total_price'] = resolveMainItemTotal(normalized);
-      normalized['line_total'] = normalized['total_price'];
-      normalized['price'] = normalized['total_price'];
+      // Ensure `price` stays UNIT price and totals are derived from it.
+      final unit = parsePrice(
+        normalized['unitPriceSnapshot'] ??
+            normalized['unit_price_snapshot'] ??
+            normalized['price'],
+      );
+      final lineTotal = (unit * quantity).toDouble();
+      normalized['price'] = unit;
+      normalized['unit_price_snapshot'] = unit;
+      normalized['unitPriceSnapshot'] = unit;
+      normalized['total_price'] = lineTotal;
+      normalized['line_total'] = lineTotal;
     }
     return normalized;
   }
@@ -486,6 +516,9 @@ class MixedServiceOrder {
                 map['name']?.toString() ??
                 '-',
             'quantity': quantity,
+            'attributes':
+                (map['attributes'] as List?)?.whereType<String>().toList() ??
+                    const <String>[],
             'selected_pricing_type': selectedPricingType,
             'selected_portion_value': selectedServiceAmount,
             'unit_price': unitPrice,
@@ -658,29 +691,90 @@ class MixedServiceOrder {
     return grouped;
   }
 
+  /// Returns the plain text note for a kitchen print item.
+  ///
+  /// Only the user-entered note and product attributes are included.
+  /// Plate/child structure is NO longer encoded in this string — it is stored
+  /// as structured [buildKitchenPlates] / [buildKitchenServiceChildren] data.
   static String buildKitchenNote(Map<String, dynamic> item) {
-    final baseNotes = <String>[];
-    final note = item['notes']?.toString().trim() ?? '';
-    if (note.isNotEmpty) {
-      baseNotes.add(note);
-    }
+    final note =
+        (item['notes'] ?? item['note'] ?? item['general_note'])
+            ?.toString()
+            .trim() ??
+        '';
+    final attrs =
+        (item['attributes'] as List?)
+            ?.whereType<String>()
+            .where((s) => s.isNotEmpty)
+            .toList() ??
+        const <String>[];
+    final noteParts = <String>[if (note.isNotEmpty) note, ...attrs];
+    return noteParts.join(', ');
+  }
 
-    if (!usesPlateGrouping(item)) {
-      for (final child in normalizeChildItems(item['child_items'])) {
-        baseNotes.add(' - ${_childDisplayLabel(child)}');
-      }
-      return baseNotes.join('\n');
-    }
+  static Map<String, dynamic> _buildKitchenChildMap(
+    Map<String, dynamic> child,
+  ) {
+    return <String, dynamic>{
+      'id': (child['order_item_id'] ??
+              child['product_id'] ??
+              child['linked_product_id'] ??
+              '')
+          .toString(),
+      'name': (child['product_name'] ??
+              child['item_name'] ??
+              child['name'] ??
+              'Ürün')
+          .toString(),
+      'quantity': (child['quantity'] as num?)?.toInt() ?? 1,
+      'amount_label': _storedChildOptionLabel(
+        child,
+        selectedServiceAmount:
+            (child['selected_portion_value'] as num?)?.toDouble() ??
+            (child['selected_service_amount'] as num?)?.toDouble() ??
+            (child['selectedServiceAmount'] as num?)?.toDouble(),
+        selectedWeightGrams:
+            (child['selected_weight_grams'] as num?)?.toInt() ??
+            (child['selectedWeightGrams'] as num?)?.toInt(),
+      ),
+      'note': (child['note'] ?? child['notes'] ?? '').toString().trim(),
+      'station_id': (child['station_id'] ?? '').toString(),
+    };
+  }
 
-    for (final entry in groupChildItemsByRound(
-      item,
-    ).entries.toList()..sort((a, b) => a.key.compareTo(b.key))) {
-      baseNotes.add('Tabak ${entry.key}');
-      for (final child in entry.value) {
-        baseNotes.add(' - ${_childDisplayLabel(child)}');
-      }
-    }
-    return baseNotes.join('\n');
+  /// Returns structured plate data for kitchen print payloads.
+  ///
+  /// Each plate map has `{'label': 'Tabak N', 'items': [...]}`.
+  /// Returns an empty list when the item has no plate-grouped children.
+  static List<Map<String, dynamic>> buildKitchenPlates(
+    Map<String, dynamic> item,
+  ) {
+    if (!usesPlateGrouping(item)) return const <Map<String, dynamic>>[];
+    final grouped = groupChildItemsByRound(item);
+    if (grouped.isEmpty) return const <Map<String, dynamic>>[];
+    final rounds = grouped.keys.toList()..sort();
+    return rounds
+        .map(
+          (round) => <String, dynamic>{
+            'label': 'Tabak $round',
+            'items': grouped[round]!
+                .map(_buildKitchenChildMap)
+                .toList(growable: false),
+          },
+        )
+        .toList(growable: false);
+  }
+
+  /// Returns a flat service-children list for non-plate-grouped items.
+  ///
+  /// Returns an empty list when the item uses plate grouping.
+  static List<Map<String, dynamic>> buildKitchenServiceChildren(
+    Map<String, dynamic> item,
+  ) {
+    if (usesPlateGrouping(item)) return const <Map<String, dynamic>>[];
+    return normalizeChildItems(item['child_items'])
+        .map(_buildKitchenChildMap)
+        .toList(growable: false);
   }
 
   static MixedServiceDisplayEntry _childDisplayEntry(
@@ -699,8 +793,8 @@ class MixedServiceOrder {
           (child['selectedWeightGrams'] as num?)?.toInt(),
     );
     final note = child['note']?.toString().trim() ?? '';
-    // Mirror _childDisplayLabel: include amountLabel in the main label string
-    // so that childItemDisplayLines and buildKitchenNote share the same format.
+    // Include amountLabel in the main label string so that childItemDisplayLines
+    // and buildKitchenNote share the same child presentation format.
     final label = amountLabel.isNotEmpty
         ? '$productName${quantity > 1 ? ' x$quantity' : ''} • $amountLabel'
         : '$productName x$quantity';
@@ -885,6 +979,7 @@ class MixedServiceOrder {
     int? selectedWeightGrams,
     int serviceRound = 1,
     String note = '',
+    List<String> attributes = const <String>[],
     String? localRowId,
   }) {
     final safeQuantity = _safeQuantity(quantity);
@@ -919,6 +1014,10 @@ class MixedServiceOrder {
       ...selectionSnapshot,
       'service_round': normalizedServiceRound,
       'note': note.trim(),
+      'attributes': attributes
+          .where((s) => s.trim().isNotEmpty)
+          .map((s) => s.trim())
+          .toList(growable: false),
       'station_id': product.stationId,
       'printer_routing_enabled': product.printerRoutingEnabled,
     };
@@ -1468,29 +1567,6 @@ class MixedServiceOrder {
       return value;
     }
     return fallback;
-  }
-
-  static String _childDisplayLabel(Map<String, dynamic> child) {
-    final quantity = (child['quantity'] as num?)?.toInt() ?? 1;
-    final productName = child['product_name']?.toString() ?? '-';
-    final amountLabel = _storedChildOptionLabel(
-      child,
-      selectedServiceAmount:
-          (child['selected_portion_value'] as num?)?.toDouble() ??
-          (child['selected_service_amount'] as num?)?.toDouble() ??
-          (child['selectedServiceAmount'] as num?)?.toDouble(),
-      selectedWeightGrams:
-          (child['selected_weight_grams'] as num?)?.toInt() ??
-          (child['selectedWeightGrams'] as num?)?.toInt(),
-    );
-    final note = child['note']?.toString().trim() ?? '';
-    final itemLabel = amountLabel.isNotEmpty
-        ? '$productName${quantity > 1 ? ' x$quantity' : ''} • $amountLabel'
-        : '$productName x$quantity';
-    if (note.isEmpty) {
-      return itemLabel;
-    }
-    return '$itemLabel · $note';
   }
 
   static int _safeQuantity(int? quantity) {

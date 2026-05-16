@@ -6,6 +6,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'app/app_navigator.dart';
 import 'app/app_bootstrap.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
 import 'core/app_ready.dart';
@@ -23,7 +24,6 @@ import 'firebase_options.dart';
 import 'services/push_notification_service.dart';
 import 'core/qr_initial_params.dart';
 
-final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 final SeoRouteObserver seoRouteObserver = SeoRouteObserver();
 
 void main() async {

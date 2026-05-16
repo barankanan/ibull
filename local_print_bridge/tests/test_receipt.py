@@ -19,9 +19,17 @@ class ReceiptRendererTests(unittest.TestCase):
             chars_per_line=32,
             encoding="cp857",
             codepage=13,
+            render_mode="image",
+            raster_chunk_height=256,
             allowed_origins=("https://ibul-ecommerce.web.app",),
             healthcheck_queue=False,
+            print_system_enabled=True,
             cut_mode="partial",
+            transport_mode="auto",
+            usb_vendor_id=None,
+            usb_product_id=None,
+            network_host="",
+            network_port=9100,
         )
         payload = ReceiptPayload(
             store_name="IBUL RESTAURANT",
@@ -53,7 +61,7 @@ class ReceiptRendererTests(unittest.TestCase):
         self.assertIn(b"\x1b@", data)
         self.assertIn(b"\x1bt\r", data)
         self.assertIn("IBUL RESTAURANT".encode("cp857"), data)
-        self.assertIn("Masa".encode("cp857"), data)
+        self.assertIn("Masa:".encode("cp857"), data)
         self.assertIn("Mercimek Corba".encode("cp857"), data)
         self.assertIn("160,00 TL".encode("cp857"), data)
         self.assertIn(b"\x1dV\x01", data)

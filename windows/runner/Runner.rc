@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "ibul2026" "\0"
+            VALUE "CompanyName", "Ibul" "\0"
+            VALUE "FileDescription", "Ibul Seller Desktop" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "ibul2026" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "ibul2026.exe" "\0"
-            VALUE "ProductName", "ibul2026" "\0"
+            VALUE "InternalName", "IbulSellerDesktop" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Ibul. All rights reserved." "\0"
+            VALUE "OriginalFilename", "IbulSellerDesktop.exe" "\0"
+            VALUE "ProductName", "Ibul Seller Desktop" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../core/store_logo_helper.dart';
 import '../services/database_helper.dart';
+import '../services/store_follow_service.dart';
 import '../models/db_product.dart';
 import '../models/product_model.dart';
 import 'business_detail_page.dart';
@@ -22,6 +25,28 @@ class FollowedStoresPage extends StatefulWidget {
 class _FollowedStoresPageState extends State<FollowedStoresPage> {
   Future<Map<String, List<DBProduct>>>? _storePreviewFuture;
   String _storePreviewSignature = '';
+  bool _isRefreshingFollows = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_refreshFollowedStores());
+    });
+  }
+
+  Future<void> _refreshFollowedStores() async {
+    if (_isRefreshingFollows) return;
+    _isRefreshingFollows = true;
+    final appState = AppState();
+    await appState.refreshFollowedStoresFromServer();
+    if (!mounted) return;
+    setState(() {
+      _storePreviewFuture = null;
+      _storePreviewSignature = '';
+      _isRefreshingFollows = false;
+    });
+  }
 
   Future<Map<String, List<DBProduct>>> _getStorePreviewFuture(
     List<Map<String, dynamic>> followedStores,
@@ -358,7 +383,7 @@ class _FollowedStoresPageState extends State<FollowedStoresPage> {
   }) {
     final storeName = store['name'] ?? 'Mağaza';
     final storeRating = store['rating']?.toString() ?? '9.0';
-    final storeFollowers = store['followers']?.toString() ?? '12,7B Takipçi';
+    final storeFollowers = store['followers']?.toString() ?? '0 Takipçi';
     final logoPath = StoreLogoHelper.getStoreLogo(storeName);
 
     return Container(

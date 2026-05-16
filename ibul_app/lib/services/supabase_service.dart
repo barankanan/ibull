@@ -7,8 +7,10 @@ import '../models/db_banner.dart';
 import '../models/db_category.dart';
 import '../models/paged_result.dart';
 import '../models/product_model.dart';
+import '../models/product_pricing.dart';
 import 'store/store_mapping_helpers.dart';
 import '../utils/text_normalizer.dart';
+import 'store_follow_service.dart';
 
 class SupabaseService {
   // Singleton pattern
@@ -18,10 +20,91 @@ class SupabaseService {
   final SupabaseClient _supabase = Supabase.instance.client;
   static const int homePageSize = 24;
   static const int defaultPageSize = 20;
+
+  /// Anonim alışveriş vitrininde gösterilen ürün durumları.
+  /// Satıcı arayüzünde "Aktif" seçilse bile kayıt `pending_approval` olarak
+  /// tutulabiliyordu; bu yüzden her iki durum da sorguya dahildir.
+  /// Supabase `products` SELECT RLS politikası bu liste ile uyumlu olmalıdır.
+  static const List<String> publicCatalogProductStatuses = [
+    'Aktif',
+    'pending_approval',
+  ];
+
+  static bool isPublicCatalogProductStatus(String? status) {
+    final s = status?.trim() ?? '';
+    return s == 'Aktif' || s == 'pending_approval';
+  }
+
+  String _stripUnsupportedColumnsFromSelect(
+    String select, {
+    required String message,
+  }) {
+    // PostgREST errors look like:
+    // "column products.pricing_mode does not exist"
+    final rawTokens = select
+        .split(',')
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .toList(growable: false);
+
+    List<String> filtered = rawTokens.where((token) {
+      // Keep embedded selects like stores(business_name) intact.
+      if (token.contains('(') && token.contains(')')) return true;
+      for (final col in optionalProductColumns) {
+        if (message.contains(col) && token == col) return false;
+      }
+      return true;
+    }).toList();
+
+    // If message didn't match any token, fall back to removing *all* optional
+    // columns from the selection (best-effort).
+    if (filtered.length == rawTokens.length) {
+      filtered = rawTokens.where((token) {
+        if (token.contains('(') && token.contains(')')) return true;
+        return !optionalProductColumns.contains(token);
+      }).toList();
+    }
+
+    return filtered.join(', ');
+  }
+
+  Future<List<Map<String, dynamic>>> _runProductsSelectWithFallback({
+    required String select,
+    required Future<dynamic> Function(String effectiveSelect) action,
+  }) async {
+    String currentSelect = select;
+    Object? lastError;
+
+    // Some environments have a "minimal" products schema. PostgREST fails fast
+    // on unknown columns, so we progressively strip optional columns until the
+    // SELECT works (or we hit a non-column error).
+    for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
+      try {
+        final response = await action(currentSelect);
+        return List<Map<String, dynamic>>.from(response as List);
+      } catch (e) {
+        lastError = e;
+        final message = e.toString();
+        if (!isOptionalProductColumnError(message)) rethrow;
+
+        final stripped = _stripUnsupportedColumnsFromSelect(
+          currentSelect,
+          message: message,
+        );
+        // If stripping no longer changes the projection, stop retrying.
+        if (stripped == currentSelect) break;
+        currentSelect = stripped;
+      }
+    }
+
+    if (lastError != null) throw lastError;
+    throw StateError('Product select fallback ended unexpectedly.');
+  }
   // Full field set — used for product detail, search, category pages
   static const String _productSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, pricing_type, portion_price, price_per_kg, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, '
       'default_weight_grams, min_weight_grams, weight_step_grams, '
       'max_weight_grams, discount_price, stock, status, description, '
       'specifications, attributes, video_url, variants, created_at, '
@@ -31,21 +114,39 @@ class SupabaseService {
   // displayed in ProductCard, reducing payload by ~60%.
   static const String _homeProductSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, discount_price, status, created_at, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, discount_price, status, created_at, '
       'stores(business_name)';
+  /// Same as [_homeProductSelectFields] but without `stores(...)` embed.
+  /// PostgREST can fail on embeds when FK hints are missing or store RLS differs;
+  /// we retry with this projection so the home grid still loads.
+  static const String _homeProductSelectFieldsSansStore =
+      'id, seller_id, name, brand, image_url, image_urls, main_category, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, discount_price, status, created_at';
+  static const String _productSelectFieldsSansStore =
+      'id, seller_id, name, brand, image_url, image_urls, main_category, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, '
+      'default_weight_grams, min_weight_grams, weight_step_grams, '
+      'max_weight_grams, discount_price, stock, status, description, '
+      'specifications, attributes, video_url, variants, created_at';
   static const String _productSuggestionSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, discount_price, status, created_at, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, discount_price, status, created_at, '
       'stores(business_name)';
   static const String _productStorePreviewSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, price, '
-      'pricing_type, portion_price, price_per_kg, default_weight_grams, '
+      'pricing_type, pricing_mode, base_price, portion_price, price_per_kg, '
+      'size_options, default_weight_grams, '
       'min_weight_grams, weight_step_grams, max_weight_grams, '
       'discount_price, description, specifications, status, created_at, '
       'stores(business_name)';
   static const String _categoryProductsSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
-      'sub_category, price, pricing_type, portion_price, price_per_kg, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, '
       'default_weight_grams, min_weight_grams, weight_step_grams, '
       'max_weight_grams, discount_price, status, description, specifications, '
       'created_at, stores(business_name)';
@@ -65,49 +166,127 @@ class SupabaseService {
     String? brand,
     String? searchQuery,
   }) async {
+    Future<List<DBProduct>> runSelect(String fields) async {
+      final rows = await _runProductsSelectWithFallback(
+        select: fields,
+        action: (effectiveSelect) async {
+          var query = _supabase
+              .from('products')
+              .select(effectiveSelect)
+              .inFilter('status', publicCatalogProductStatuses);
+
+          if (category != null && category.isNotEmpty) {
+            query = query.eq('main_category', category);
+          }
+          if (brand != null && brand.isNotEmpty) {
+            query = query.eq('brand', brand);
+          }
+          if (searchQuery != null && searchQuery.trim().isNotEmpty) {
+            query = query.ilike('name', '%${searchQuery.trim()}%');
+          }
+
+          return await query
+              .order('created_at', ascending: false)
+              .range(offset, offset + limit - 1);
+        },
+      );
+
+      return rows.map(_mapToDBProduct).toList(growable: false);
+    }
+
     try {
-      var query = _supabase
-          .from('products')
-          .select(_productSelectFields)
-          .eq('status', 'Aktif');
-
-      if (category != null && category.isNotEmpty) {
-        query = query.eq('main_category', category);
-      }
-      if (brand != null && brand.isNotEmpty) {
-        query = query.eq('brand', brand);
-      }
-      if (searchQuery != null && searchQuery.trim().isNotEmpty) {
-        query = query.ilike('name', '%${searchQuery.trim()}%');
-      }
-
-      final response = await query
-          .order('created_at', ascending: false)
-          .range(offset, offset + limit - 1);
-
-      final List<dynamic> data = response as List<dynamic>;
-      return data.map((item) => _mapToDBProduct(item)).toList();
+      return await runSelect(_productSelectFields);
     } catch (e) {
-      debugPrint('Error getting paged products: $e');
-      return [];
+      debugPrint('Error getting paged products (with store embed): $e');
+      try {
+        return await runSelect(_productSelectFieldsSansStore);
+      } catch (e2) {
+        debugPrint('Error getting paged products (sans store embed): $e2');
+        return [];
+      }
     }
   }
 
   Future<List<DBProduct>> getInitialHomeProducts() async {
-    try {
-      final response = await _supabase
-          .from('products')
-          .select(_homeProductSelectFields)
-          .eq('status', 'Aktif')
-          .order('created_at', ascending: false)
-          .range(0, homePageSize - 1);
+    final followedStoreIds =
+        await StoreFollowService.instance.fetchFollowedStoreIds();
+    final fetchLimit = followedStoreIds.isEmpty
+        ? homePageSize
+        : (homePageSize * 3).clamp(homePageSize, 72);
 
-      final List<dynamic> data = response as List<dynamic>;
-      return data.map((item) => _mapToDBProduct(item)).toList();
-    } catch (e) {
-      debugPrint('Error getting initial home products: $e');
-      return [];
+    Future<List<DBProduct>> runSelect(String fields) async {
+      final rows = await _runProductsSelectWithFallback(
+        select: fields,
+        action: (effectiveSelect) async {
+          return await _supabase
+              .from('products')
+              .select(effectiveSelect)
+              .inFilter('status', publicCatalogProductStatuses)
+              .order('created_at', ascending: false)
+              .range(0, fetchLimit - 1);
+        },
+      );
+      return rows.map(_mapToDBProduct).toList(growable: false);
     }
+
+    List<DBProduct> products;
+    try {
+      products = await runSelect(_homeProductSelectFields);
+    } catch (e) {
+      debugPrint('Error getting initial home products (with store embed): $e');
+      try {
+        products = await runSelect(_homeProductSelectFieldsSansStore);
+      } catch (e2) {
+        debugPrint('Error getting initial home products (sans store embed): $e2');
+        return [];
+      }
+    }
+
+    if (followedStoreIds.isEmpty) {
+      return products.take(homePageSize).toList(growable: false);
+    }
+
+    final scored = products
+        .map(
+          (product) => MapEntry(
+            product,
+            _homeFeedScore(product, followedStoreIds),
+          ),
+        )
+        .toList(growable: false)
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return scored
+        .map((entry) => entry.key)
+        .take(homePageSize)
+        .toList(growable: false);
+  }
+
+  double _homeFeedScore(DBProduct product, Set<String> followedStoreIds) {
+    const followBoost = 48.0;
+    const discountBoost = 15.0;
+    const popularityBoostCap = 20.0;
+    const ratingBoostCap = 12.0;
+
+    var score = 0.0;
+
+    final sellerId = product.sellerId?.trim() ?? '';
+    if (sellerId.isNotEmpty && followedStoreIds.contains(sellerId)) {
+      score += followBoost;
+    }
+
+    final oldPrice = double.tryParse(product.oldPrice ?? '') ?? 0;
+    final price = double.tryParse(product.price) ?? 0;
+    if (oldPrice > price && price > 0) {
+      score += discountBoost;
+    }
+
+    score += (product.reviewCount.clamp(0, 100) / 5.0)
+        .clamp(0, popularityBoostCap);
+
+    score += product.rating.clamp(0, 5) * (ratingBoostCap / 5);
+
+    return score;
   }
 
   Future<List<DBProduct>> getAllProducts() async {
@@ -165,7 +344,7 @@ class SupabaseService {
         var builder = _supabase
             .from('products')
             .select(_productSuggestionSelectFields)
-            .eq('status', 'Aktif');
+            .inFilter('status', publicCatalogProductStatuses);
 
         if (useNormalizedFields && normalizedPattern.isNotEmpty) {
           builder = builder.or(
@@ -446,7 +625,7 @@ class SupabaseService {
         var builder = _supabase
             .from('products')
             .select(_productSelectFields)
-            .eq('status', 'Aktif');
+            .inFilter('status', publicCatalogProductStatuses);
 
         if (category != null && category.isNotEmpty) {
           builder = builder.eq('main_category', category);
@@ -512,7 +691,7 @@ class SupabaseService {
           .from('products')
           .select(_productSelectFields)
           .eq('seller_id', sellerId)
-          .eq('status', 'Aktif')
+          .inFilter('status', publicCatalogProductStatuses)
           .order('created_at', ascending: false)
           .range(offset, offset + limit - 1);
       final items = List<Map<String, dynamic>>.from(
@@ -570,7 +749,7 @@ class SupabaseService {
       var builder = _supabase
           .from('products')
           .select(_categoryProductsSelectFields)
-          .eq('status', 'Aktif')
+          .inFilter('status', publicCatalogProductStatuses)
           .eq('main_category', trimmedCategory);
 
       if (trimmedSubCategory.isNotEmpty &&
@@ -616,7 +795,7 @@ class SupabaseService {
           .from('products')
           .select(_productStorePreviewSelectFields)
           .eq('seller_id', sellerId)
-          .eq('status', 'Aktif')
+          .inFilter('status', publicCatalogProductStatuses)
           .order('created_at', ascending: false)
           .limit(limit);
 
@@ -694,7 +873,7 @@ class SupabaseService {
           .from('products')
           .select(_productStorePreviewSelectFields)
           .inFilter('seller_id', sellerIds.toList(growable: false))
-          .eq('status', 'Aktif')
+          .inFilter('status', publicCatalogProductStatuses)
           .order('seller_id')
           .order('created_at', ascending: false);
 
@@ -789,7 +968,7 @@ class SupabaseService {
             .select(
               'id, seller_id, name, brand, main_category, stores(business_name)',
             )
-            .eq('status', 'Aktif')
+            .inFilter('status', publicCatalogProductStatuses)
             .inFilter('name', names);
         if (effectiveSellerIds.isNotEmpty) {
           query = query.inFilter('seller_id', effectiveSellerIds);
@@ -1053,9 +1232,14 @@ class SupabaseService {
       brand: data['brand'] ?? '',
       store: storeName,
       price: '${data['price']} TL', // DBProduct expects string "100 TL"
+      pricingMode: data['pricing_mode']?.toString() ?? 'base_only',
+      basePrice: (data['base_price'] as num?)?.toDouble(),
       pricingType: data['pricing_type']?.toString() ?? 'portion',
       portionPrice: (data['portion_price'] as num?)?.toDouble(),
       pricePerKg: (data['price_per_kg'] as num?)?.toDouble(),
+      sizeOptions: ProductSizeOption.listFromDynamic(data['size_options']),
+      selectedSizeName: data['selected_size_name']?.toString(),
+      selectedSizePrice: (data['selected_size_price'] as num?)?.toDouble(),
       serviceControlType: data['service_control_type']?.toString(),
       minPortion: (data['min_portion'] as num?)?.toDouble(),
       maxPortion: (data['max_portion'] as num?)?.toDouble(),
@@ -1081,7 +1265,7 @@ class SupabaseService {
           ? jsonEncode(data['specifications'])
           : null,
       stock: data['stock'],
-      isActive: data['status'] == 'Aktif',
+      isActive: isPublicCatalogProductStatus(data['status']?.toString()),
       attributes: data['attributes'] != null
           ? jsonEncode(data['attributes'])
           : null,
@@ -1110,9 +1294,14 @@ class SupabaseService {
       'price':
           double.tryParse(product.price.replaceAll(RegExp(r'[^0-9.]'), '')) ??
           0,
+        'pricing_mode': product.pricingMode,
+        'base_price': product.basePrice ?? product.portionPrice,
       'pricing_type': product.pricingType,
       'portion_price': product.portionPrice,
       'price_per_kg': product.pricePerKg,
+        'size_options': product.sizeOptions.map((option) => option.toJson()).toList(),
+        'selected_size_name': product.selectedSizeName,
+        'selected_size_price': product.selectedSizePrice,
       'service_control_type': product.serviceControlType,
       'min_portion': product.minPortion,
       'max_portion': product.maxPortion,

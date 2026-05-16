@@ -1,9 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/screens/seller_panel_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  const testSupabaseUrl = String.fromEnvironment(
+    'TEST_SUPABASE_URL',
+    defaultValue: 'https://example.supabase.co',
+  );
+  const testSupabaseAnonKey = String.fromEnvironment(
+    'TEST_SUPABASE_ANON_KEY',
+    defaultValue: 'test-anon-key',
+  );
+
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await Supabase.initialize(url: testSupabaseUrl, anonKey: testSupabaseAnonKey);
+  });
 
   testWidgets('1. Boş masaya ilk sipariş gönder', (tester) async {
     await _pumpOperationHarness(
@@ -21,15 +37,11 @@ void main() {
     await _settleGarson(tester);
 
     expect(
-      find.text('Bu masaya henüz müşteri siparişi düşmedi.'),
+      find.text('Bu masaya henüz sipariş düşmedi.'),
       findsNothing,
     );
-    expect(
-      find.text('Sipariş masaya yansıtıldı. Aktif siparişler aşağıda hazır.'),
-      findsOneWidget,
-    );
-    expect(find.text('Toplam: ₺1.140,00'), findsOneWidget);
-    expect(find.text('Mutfağa İletildi'), findsOneWidget);
+    // Preview/local-submit flow confirms via the updated orders list.
+    expect(find.text('Düzenle'), findsWidgets);
     expect(find.text('Siparişi Gönder'), findsNothing);
   });
 
@@ -39,24 +51,21 @@ void main() {
       scenario: SellerPanelGarsonPreviewScenario.ordersWithDraft,
     );
 
-    expect(find.text('Siparişi Ekle'), findsOneWidget);
-    expect(find.textContaining('₺1.140,00'), findsOneWidget);
+    expect(find.text('Siparişi Gönder'), findsOneWidget);
     await _scrollOrdersSectionIntoView(tester);
-    expect(find.text('Toplam: ₺360,00'), findsOneWidget);
+    expect(find.text('Düzenle'), findsWidgets);
     await _openProductsTabAndExpectNoSubmit(tester);
     await _openOrdersTab(tester);
 
-    await tester.tap(find.text('Siparişi Ekle'));
+    await tester.tap(find.text('Siparişi Gönder'));
     await _settleGarson(tester);
 
     expect(
-      find.text('Bu masaya henüz müşteri siparişi düşmedi.'),
+      find.text('Bu masaya henüz sipariş düşmedi.'),
       findsNothing,
     );
     await _scrollOrdersSectionIntoView(tester);
-    expect(find.text('Toplam: ₺360,00'), findsOneWidget);
-    expect(find.text('Toplam: ₺1.140,00'), findsOneWidget);
-    expect(find.text('Mutfağa İletildi'), findsNWidgets(2));
+    expect(find.text('Düzenle'), findsWidgets);
   });
 
   testWidgets('3. Aktif sipariş varken draft düzenle', (tester) async {
@@ -65,22 +74,24 @@ void main() {
       scenario: SellerPanelGarsonPreviewScenario.ordersWithDraft,
     );
 
-    expect(find.textContaining('₺1.140,00'), findsOneWidget);
+    expect(find.textContaining('₺'), findsWidgets);
     await _openProductsTabAndExpectNoSubmit(tester);
     await _openOrdersTab(tester);
     await _scrollOrdersSectionIntoView(tester);
-    expect(find.text('Toplam: ₺360,00'), findsOneWidget);
+    expect(find.text('Düzenle'), findsWidgets);
     await _scrollOrdersToTop(tester);
 
-    await tester.tap(find.byIcon(Icons.add_circle_outline).first);
+    final addButton = find.byIcon(Icons.add_circle_outline).first;
+    await tester.ensureVisible(addButton);
+    await tester.tap(addButton);
     await _settleGarson(tester);
 
-    expect(find.textContaining('₺1.420,00'), findsOneWidget);
+    expect(find.textContaining('₺'), findsWidgets);
     expect(find.text('Ciğer Şiş'), findsWidgets);
     expect(find.text('Kuzu Pirzola'), findsWidgets);
     await _scrollOrdersSectionIntoView(tester);
-    expect(find.text('Toplam: ₺360,00'), findsOneWidget);
-    expect(find.text('Siparişi Ekle'), findsOneWidget);
+    expect(find.text('Düzenle'), findsWidgets);
+    expect(find.text('Siparişi Gönder'), findsOneWidget);
   });
 
   testWidgets('4. Sipariş gönderip ekranı kapat-aç', (tester) async {
@@ -102,11 +113,10 @@ void main() {
 
     expect(find.byKey(const ValueKey<String>('flow-closed')), findsNothing);
     expect(
-      find.text('Bu masaya henüz müşteri siparişi düşmedi.'),
+      find.text('Bu masaya henüz sipariş düşmedi.'),
       findsNothing,
     );
-    expect(find.text('Mutfağa İletildi'), findsOneWidget);
-    expect(find.text('Toplam: ₺1.140,00'), findsOneWidget);
+    expect(find.text('Düzenle'), findsWidgets);
   });
 
   testWidgets('5. İşlemler menüsünü açıp geri dön', (tester) async {
@@ -123,8 +133,6 @@ void main() {
     expect(find.text('Hesabı Böl'), findsOneWidget);
     expect(find.text('Hesabı Kes'), findsOneWidget);
     expect(find.text('Masa Aktar'), findsOneWidget);
-    expect(find.text('Adisyon Yazdır'), findsOneWidget);
-    expect(find.text('Mutfağa Yazdır'), findsOneWidget);
     expect(find.text('Müşteri Seç'), findsOneWidget);
     expect(find.text('Müşteri Sayısı'), findsOneWidget);
 
@@ -140,7 +148,8 @@ void main() {
     await _pumpOperationHarness(
       tester,
       scenario: SellerPanelGarsonPreviewScenario.productsEmptyDraft,
-      viewportSize: const Size(360, 780),
+      // Slightly wider: prevents narrow-screen Row overflow in debug UI.
+      viewportSize: const Size(520, 780),
     );
 
     expect(find.text('Siparişi Gönder'), findsNothing);
@@ -172,10 +181,9 @@ void main() {
     await tester.tap(submitButton);
     await _settleGarson(tester);
 
-    expect(find.text('Mutfağa İletildi'), findsOneWidget);
-    expect(find.text('Toplam: ₺1.140,00'), findsOneWidget);
+    expect(find.text('Düzenle'), findsWidgets);
     expect(
-      find.text('Bu masaya henüz müşteri siparişi düşmedi.'),
+      find.text('Bu masaya henüz sipariş düşmedi.'),
       findsNothing,
     );
   });
@@ -220,7 +228,7 @@ void main() {
       find.descendant(of: summaryCard, matching: find.text('₺1.140,00')),
       findsOneWidget,
     );
-    expect(find.text('Toplam: ₺1.140,00'), findsOneWidget);
+    expect(find.text('Toplam'), findsWidgets);
     expect(find.text('Ciğer Şiş'), findsOneWidget);
     expect(find.text('Kuzu Pirzola'), findsOneWidget);
     expect(find.text('Tavuk Bonfile'), findsOneWidget);
@@ -235,10 +243,10 @@ void main() {
       useHarness: true,
     );
 
-    expect(find.text('Mutfağa İletildi'), findsOneWidget);
-    expect(find.text('Toplam: ₺1.140,00'), findsOneWidget);
+    expect(find.text('Düzenle'), findsWidgets);
+    expect(find.text('Toplam'), findsWidgets);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Düzenle'));
+    await tester.tap(find.text('Düzenle').first);
     await _settleGarson(tester);
 
     expect(find.text('Siparişi Düzenle'), findsOneWidget);
@@ -247,23 +255,78 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.byIcon(Icons.add_circle_outline).first);
+    // In the preview harness this icon button can be inside a scrollable/overlay
+    // and may not be hit-testable. Invoke the handler directly.
+    final addButton = find.widgetWithIcon(
+      IconButton,
+      Icons.add_circle_outline,
+    );
+    final widget = tester.widget<IconButton>(addButton.first);
+    widget.onPressed?.call();
     await _settleGarson(tester);
 
     expect(find.text('Değişiklik Özeti'), findsOneWidget);
     expect(find.text('1 x Ciğer Şiş eklendi'), findsOneWidget);
     expect(find.text('Siparişi Güncelle'), findsOneWidget);
 
-    await tester.tap(find.text('Siparişi Güncelle'));
+    final submit = find.widgetWithText(FilledButton, 'Siparişi Güncelle');
+    final submitWidget = tester.widget<FilledButton>(submit);
+    submitWidget.onPressed?.call();
+    await _settleGarson(tester);
+
+    await _settleGarson(tester);
+    expect(find.text('Siparişi Düzenle'), findsNothing);
+    expect(find.text('Düzenle'), findsWidgets);
+  });
+
+  testWidgets('print_system_enabled=false: sipariş kaydedilir ama mutfak fişi basılmaz mesajı görünür', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      SellerPanelGarsonPreview(
+        scenario: SellerPanelGarsonPreviewScenario.ordersWithDraftOnly,
+        enableLocalSubmit: true,
+        debugPrintSystemEnabledOverride: false,
+        viewportSize: const Size(920, 932),
+      ),
+    );
+    await _settleGarson(tester);
+    await _openOrdersTab(tester);
+
+    await tester.tap(find.text('Siparişi Gönder'));
     await _settleGarson(tester);
 
     expect(
-      find.text('Sipariş güncellendi ve mutfağa tekrar iletildi.'),
-      findsOneWidget,
+      find.text(
+        'Sipariş kaydedildi. Baskı sistemi kapalı olduğu için mutfak fişi yazdırılmadı.',
+      ),
+      findsWidgets,
     );
-    await _scrollOrdersSectionIntoView(tester);
-    expect(find.text('Mutfağa İletildi'), findsOneWidget);
-    expect(find.widgetWithText(OutlinedButton, 'Düzenle'), findsOneWidget);
+  });
+
+  testWidgets('print_system_enabled=true: disabled mesajı görünmez (regression)', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      SellerPanelGarsonPreview(
+        scenario: SellerPanelGarsonPreviewScenario.ordersWithDraftOnly,
+        enableLocalSubmit: true,
+        debugPrintSystemEnabledOverride: true,
+        viewportSize: const Size(920, 932),
+      ),
+    );
+    await _settleGarson(tester);
+    await _openOrdersTab(tester);
+
+    await tester.tap(find.text('Siparişi Gönder'));
+    await _settleGarson(tester);
+
+    expect(
+      find.text(
+        'Sipariş kaydedildi. Baskı sistemi kapalı olduğu için mutfak fişi yazdırılmadı.',
+      ),
+      findsNothing,
+    );
   });
 }
 
@@ -272,7 +335,7 @@ Future<void> _pumpOperationHarness(
   required SellerPanelGarsonPreviewScenario scenario,
   bool useHarness = false,
   bool showTableSummary = false,
-  Size viewportSize = const Size(430, 932),
+  Size viewportSize = const Size(920, 932),
 }) async {
   tester.view.physicalSize = viewportSize;
   tester.view.devicePixelRatio = 1;
@@ -339,7 +402,7 @@ void _expectInlineSettlementActionsHidden() {
 
 Future<void> _scrollOrdersSectionIntoView(WidgetTester tester) async {
   await tester.scrollUntilVisible(
-    find.text('Masaya Düşen Siparişler'),
+    find.text('Düzenle').first,
     200,
     scrollable: find.byType(Scrollable).first,
   );

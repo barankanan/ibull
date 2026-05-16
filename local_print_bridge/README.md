@@ -1,240 +1,232 @@
 # Local Print Bridge
 
-Tek yazıcılı ilk sürüm için önerilen akış:
+Cross-platform local print service for the restaurant waiter system.
 
-`Web app -> http://127.0.0.1:19001 -> CUPS queue -> USB termal yazıcı`
+It runs on the same machine as the browser and gives the web app a native
+`localhost` API for receipt and kitchen printing.
 
-Bu tasarımda uygulama USB'ye doğrudan dokunmaz. macOS zaten yazıcıyı gördüğü için, transport katmanını CUPS yönetir; Python servis ise sadece:
+## What It Solves
 
-- payload doğrular
-- ESC/POS raw fiş üretir
-- `lp -d <queue> -o raw` ile CUPS kuyruğuna teslim eder
+- Flutter Web cannot access USB printers directly.
+- macOS receipt printers usually work through CUPS.
+- Windows receipt printers usually work through the native print spooler.
+- This bridge hides those differences behind one local API.
 
-Bu yaklaşım Node `usb` katmanındaki kararsızlıktan kaçınır ve ilk hedef olan tek yazıcıya düzgün adisyon basmayı sadeleştirir.
+## Supported Transports
 
-## Neden bu yol?
+- `macOS`: CUPS raw queue and optional direct USB (`pyusb`)
+- `Windows`: native Windows spooler RAW printing (`pywin32`) and optional USB targeting
+- `Network`: raw TCP (`9100`) for Ethernet/Wi-Fi ESC/POS printers
 
-- USB sürücü/claim işini uygulama yerine macOS+CUPS üstlenir.
-- ESC/POS render katmanı saf Python olduğu için `escpos-usb` benzeri kırılgan bağımlılıklar yoktur.
-- Aynı servis daha sonra mutfak routing veya çoklu queue desteği eklenerek büyütülebilir.
+## Main API
 
-## Minimum API
+- `GET /health`
+- `GET /printers`
+- `POST /print`
+- `POST /print/receipt`
+- `POST /print/kitchen`
+- `POST /print/test`
+- `POST /configure`
+- `POST /setup`
 
-### `GET /health`
+Legacy `GET /discover` is still available for older Flutter screens.
 
-Servisin ayakta olup olmadığını ve hedef CUPS kuyruğunun kontrol sonucunu döner.
+## Printer Response Shape
 
-### `POST /print/test`
-
-Body istemez. Dahili örnek adisyonu hedef yazıcıya gönderir.
-
-### `POST /print/receipt`
-
-Önerilen body:
+`GET /printers`
 
 ```json
 {
-  "store_name": "IBUL RESTAURANT",
-  "branch": "MERKEZ SUBE",
-  "phone": "0326 000 00 00",
-  "table_no": "12",
-  "datetime": "2026-04-08T14:35:00+03:00",
-  "items": [
+  "ok": true,
+  "count": 2,
+  "printers": [
     {
-      "name": "Izgara Kofte",
-      "qty": 2,
-      "price": "195.00",
-      "total": "390.00"
+      "id": "windows:USB POS-80",
+      "name": "USB POS-80",
+      "vendorId": "0x0416",
+      "productId": "0x5011",
+      "connectionType": "usb",
+      "backend": "windows-spool",
+      "queue": "USB POS-80",
+      "status": "online"
     }
-  ],
-  "subtotal": "390.00",
-  "discount": "0.00",
-  "grand_total": "390.00",
-  "currency": "TRY",
-  "footer_note": "Tesekkur ederiz"
+  ]
 }
 ```
 
-Alanlar:
+Required fields from the project brief are covered by:
 
-- `store_name`
-- `branch`
-- `phone`
-- `table_no`
-- `datetime`
-- `items[]`
-- `subtotal`
-- `discount`
-- `grand_total`
+- `name`
+- `vendorId`
+- `productId`
+- `connectionType`
 
-Notlar:
+## Generic Print Endpoint
 
-- `items[].quantity` yerine `qty` da kabul edilir.
-- `items[].unit_price` yerine `price` da kabul edilir.
-- `items[].line_total` yerine `total` da kabul edilir.
-- `date_time`, `datetime`, `dateTime` alanları kabul edilir.
-- Nested `totals` objesi de halen kabul edilir.
-- `subtotal` gelmezse kalem toplamlarından hesaplanır.
-- `grand_total` gelmezse `subtotal - discount + service_charge` olarak hesaplanır.
+### 1. Raw ESC/POS bytes
 
-## Kurulum
-
-### 1. CUPS queue adını öğren
-
-```bash
-lpstat -p -d
+```json
+{
+  "printer_id": "windows:USB POS-80",
+  "job_name": "adisyon-12",
+  "raw_base64": "G0BB..."
+}
 ```
 
-Mümkünse termal yazıcı için ayrı bir queue kullan. ESC/POS raw iş akışı için düz/raw bir queue en temiz seçenek olur.
+You can also send `raw_hex`.
 
-### 2. Ortam değişkenlerini ayarla
+### 2. Structured ESC/POS document
+
+```json
+{
+  "printer_id": "windows:USB POS-80",
+  "job_name": "mutfak-42",
+  "document": {
+    "lines": [
+      { "type": "text", "value": "MUTFAK", "align": "center", "bold": true, "width": 2, "height": 2 },
+      { "type": "separator" },
+      { "type": "text", "value": "Masa 12" },
+      { "type": "text", "value": "1 x Adana" },
+      { "type": "newline", "count": 1 }
+    ],
+    "feed": 3,
+    "cut": true
+  }
+}
+```
+
+This supports:
+
+- bold text
+- left / center / right alignment
+- separators
+- explicit line breaks
+- Turkish-safe ESC/POS encoding via `cp857` default
+
+### 3. Existing receipt payload
+
+`POST /print/receipt` still accepts the current structured receipt body.
+
+`POST /print` can also receive:
+
+```json
+{
+  "printer_id": "windows:USB POS-80",
+  "receipt": {
+    "store_name": "IBUL RESTAURANT",
+    "table_no": "12",
+    "items": [
+      { "name": "Izgara Kofte", "qty": 2, "price": "195.00", "total": "390.00" }
+    ],
+    "subtotal": "390.00",
+    "discount": "0.00",
+    "grand_total": "390.00"
+  }
+}
+```
+
+## Installation
+
+### Windows no-code installer (recommended for restaurant staff)
+
+1. Download `IbulPrintBridgeSetup.exe`
+2. Run installer with normal Windows setup flow
+3. Finish install (bridge auto-start is configured)
+4. Return to Seller Panel and click "Tekrar Kontrol Et"
+
+Packaging/build files for this flow are under:
+
+- `local_print_bridge/windows/README.md`
+- `local_print_bridge/windows/build_windows_installer.ps1`
+- `local_print_bridge/windows/IbulPrintBridge.spec`
+- `local_print_bridge/windows/installer/IbulPrintBridgeSetup.iss`
+
+### 1. Create a virtualenv
+
+```bash
+cd local_print_bridge
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cd ..
+```
+
+### 2. Configure
 
 ```bash
 cp local_print_bridge/.env.example local_print_bridge/.env
 ```
 
-`.env` içindeki en kritik alan:
+Notes:
 
-- `PRINT_BRIDGE_PRINTER_QUEUE`
+- `PRINT_BRIDGE_PRINTER_QUEUE` is the CUPS queue name on macOS.
+- `PRINT_BRIDGE_PRINTER_QUEUE` is the installed Windows printer name on Windows.
+- `PRINT_BRIDGE_PORT` defaults to `3001` to match the Flutter client.
 
-### 3. Servisi başlat
-
-Bu klasör bilinçli olarak third-party Python paketi kullanmaz. `requirements.txt` vardır ama ilk sürüm için runtime bağımlılığı yoktur.
-
-İstersen sanal ortamla:
-
-```bash
-cd local_print_bridge
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cd ..
-```
-
-Servis `.env` dosyasını otomatik okur; ayrıca shell'e `export` etmen gerekmez:
+### 3. Run
 
 ```bash
 python3 -m local_print_bridge
 ```
 
-Servis varsayılan olarak `127.0.0.1:19001` üzerinde dinler.
+## Windows Notes
 
-## Test
+- Install the USB receipt printer normally in Windows first.
+- The bridge prints raw ESC/POS through the Windows spooler by printer name.
+- `pywin32` is required for actual printing on Windows.
+- Use `GET /printers` to see the printer name that should be selected in the admin UI.
+- Duplicate bridge launches are prevented by lock file + localhost port checks.
+- Packaged runtime state lives under `%LOCALAPPDATA%\IbulPrintBridge`.
+- Bridge server logs and print logs are written under `%LOCALAPPDATA%\IbulPrintBridge\logs`.
 
-Sağlık kontrolü:
+## macOS Notes
 
-```bash
-curl http://127.0.0.1:19001/health
-```
+- CUPS queues are supported out of the box.
+- Direct USB transport via `pyusb` is optional.
+- `POST /setup` still performs one-shot auto-configuration for quick local setup.
 
-Test fişi:
+## Frontend Example
 
-```bash
-curl -X POST http://127.0.0.1:19001/print/test
-```
+```dart
+final service = LocalPrintService();
 
-Gerçek payload ile:
+final printers = await service.printers();
+final selectedPrinterId =
+    (printers?['printers'] as List?)?.cast<Map<String, dynamic>>().first['id']
+        as String;
 
-```bash
-curl -X POST http://127.0.0.1:19001/print/receipt \
-  -H 'Content-Type: application/json' \
-  --data @local_print_bridge/sample_receipt_payload.json
-```
-
-## CORS ve localhost
-
-Servis varsayılan olarak sadece `127.0.0.1` üzerinde çalışır. Bu önemli:
-
-- Aynı makinedeki browser erişebilir
-- Ağdaki başka cihazlar doğrudan erişemez
-- Browser tarafında CORS için sadece izinli origin'ler kabul edilir
-
-`PRINT_BRIDGE_ALLOWED_ORIGINS` içinde varsayılan olarak:
-
-- `https://ibul-ecommerce.web.app`
-- `http://localhost`
-- `http://localhost:3000`
-- `http://127.0.0.1`
-- `http://127.0.0.1:3000`
-
-vardır.
-
-Canlı `https://ibul-ecommerce.web.app` sayfasından `http://127.0.0.1:19001` çağrısı yapılırken bazı browser'lar Private Network Access preflight gönderir. Servis bu ilk sürümde `Access-Control-Allow-Private-Network: true` cevabını da verir.
-
-## Web App entegrasyon planı
-
-İlk hedef sadece adisyon:
-
-1. Web app içinde mevcut `Adisyon` aksiyonunun receipt payload'ını üret.
-2. Browser'dan `POST http://127.0.0.1:19001/print/receipt` çağrısı yap.
-3. Başarılıysa UI'da "Adisyon yazdırıldı" toast göster.
-4. Başarısızsa kullanıcıya net hata ver:
-   - servis kapalı
-   - CORS reddi
-   - queue yok
-   - print job submit hatası
-5. Daha sonra istersen aynı anda Supabase `print_log` kaydı da bırak.
-
-Önerilen client akışı:
-
-```ts
-await fetch("http://127.0.0.1:19001/print/receipt", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(receiptPayload),
+await service.printJob({
+  'printer_id': selectedPrinterId,
+  'document': {
+    'lines': [
+      {
+        'type': 'text',
+        'value': 'ADISYON',
+        'align': 'center',
+        'bold': true,
+        'width': 2,
+        'height': 2,
+      },
+      {'type': 'separator'},
+      {'type': 'text', 'value': 'Masa 12'},
+      {'type': 'text', 'value': '2 x Corba'},
+    ],
+  },
 });
 ```
 
-## Mevcut Flutter web akışına uyarlama
+Recommended app flow:
 
-`ibul_app/lib/screens/seller_panel_page.dart` içinde `_printGarsonAdisyon(...)` şu anda HTML açıp browser print akışına gidiyor. Bu fonksiyonu iki katmana ayırmak daha temiz olur:
+1. Web app calls the bridge.
+2. Wait for `{ "ok": true }`.
+3. Only then mark the order as printed.
 
-1. `buildGarsonReceiptPayload(...)`
-2. `sendReceiptToLocalBridge(...)`
+## Verification
 
-Bu sayede mevcut masa/sipariş toplam hesapları korunur, sadece çıktı hedefi browser yerine localhost bridge olur.
+Run:
 
-Repo içine örnek bir Dart client dosyası eklendi:
-
-- `ibul_app/lib/services/local_print_bridge_service.dart`
-
-Örnek kullanım:
-
-```dart
-final bridge = LocalPrintBridgeService();
-
-await bridge.printReceipt(
-  LocalPrintReceiptPayload(
-    storeName: storeName,
-    branch: branchLabel,
-    phone: phone,
-    tableNo: '$tableNumber',
-    dateTime: DateTime.now(),
-    items: [
-      LocalPrintReceiptItem(
-        name: 'Izgara Kofte',
-        qty: 2,
-        price: 195,
-        total: 390,
-      ),
-    ],
-    subtotal: 390,
-    discount: 0,
-    grandTotal: 390,
-  ),
-);
+```bash
+python3 -m unittest local_print_bridge.tests.test_server \
+  local_print_bridge.tests.test_models \
+  local_print_bridge.tests.test_receipt \
+  local_print_bridge.tests.test_raster
 ```
-
-## Sonraki adımlar
-
-Bu ilk sürüm özellikle tek receipt printer içindir. Sonraki genişletmeler:
-
-- mutfak fişi endpoint'i
-- station/alan bazlı routing
-- retry queue
-- LaunchAgent ile otomatik açılış
-- print log / job id eşleme
-
-## Kaynak mantığı
-
-Bu servis, ESC/POS'u uygulama tarafında raw byte olarak üretip taşıma işini CUPS'a bırakır. Böylece USB discovery/claim/endpoint karmaşası ilk sürümden çıkarılmış olur.

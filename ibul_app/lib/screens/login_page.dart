@@ -208,7 +208,18 @@ class _LoginPageState extends State<LoginPage>
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () => Navigator.maybePop(context),
+                  onTap: () {
+                    final nav = Navigator.of(context);
+                    if (nav.canPop()) {
+                      nav.pop();
+                    } else {
+                      nav.pushReplacement(
+                        buildAppPageRoute<void>(
+                          builder: (_) => const HomeScreen(initialIndex: 4),
+                        ),
+                      );
+                    }
+                  },
                   borderRadius: BorderRadius.circular(10),
                   child: Padding(
                     padding: const EdgeInsets.all(8),

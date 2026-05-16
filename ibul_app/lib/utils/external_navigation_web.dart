@@ -13,4 +13,11 @@ class ExternalNavigation {
     html.window.open(targetUrl, '_blank');
     return true;
   }
+
+  static bool openUrl(String url) {
+    final normalized = url.trim();
+    if (normalized.isEmpty) return false;
+    html.window.open(normalized, '_blank');
+    return true;
+  }
 }

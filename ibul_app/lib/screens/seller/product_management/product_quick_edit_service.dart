@@ -20,7 +20,7 @@ class ProductQuickEditService {
       price: draft.parsedPrice!,
       stock: draft.parsedStock!,
       status: draft.storageStatus,
-      replacementImage: null,
+      replacementImage: draft.selectedImageFile,
     );
   }
 }

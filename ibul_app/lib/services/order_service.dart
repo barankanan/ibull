@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/runtime_config.dart';
+import 'supabase_service.dart';
 
 class OrderService {
   OrderService._();
@@ -2408,7 +2409,7 @@ class OrderService {
       PostgrestFilterBuilder<dynamic> query = _supabase
           .from('products')
           .select('name, brand, price, image_url, main_category')
-          .eq('status', 'Aktif');
+          .inFilter('status', SupabaseService.publicCatalogProductStatuses);
 
       if (categories.isNotEmpty) {
         query = query.inFilter('main_category', categories);

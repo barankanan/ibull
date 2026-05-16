@@ -20,20 +20,20 @@ class WebFooter extends StatelessWidget {
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           padding: EdgeInsets.fromLTRB(
-            isCompact ? 20 : 48,
-            isCompact ? 28 : 48,
-            isCompact ? 20 : 48,
-            24,
+            isCompact ? 20 : 40,
+            isCompact ? 22 : 36,
+            isCompact ? 20 : 40,
+            18,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (isCompact) ...[
                 _buildBrandColumn(),
-                const SizedBox(height: 28),
+                const SizedBox(height: 22),
                 Wrap(
-                  spacing: 24,
-                  runSpacing: 24,
+                  spacing: 20,
+                  runSpacing: 18,
                   children: [
                     SizedBox(
                       width: 180,
@@ -101,9 +101,9 @@ class WebFooter extends StatelessWidget {
                     ),
                   ],
                 ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
               Divider(color: Colors.grey[700], height: 1),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               if (isCompact)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -246,12 +246,12 @@ class WebFooter extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         Text(
           'Türkiye\'nin akıllı e-ticaret platformu.\nYakın lokasyon siparişleri, mağaza teslim alma\nve hızlı kurye operasyonları tek ekosistemde.',
-          style: TextStyle(color: Colors.grey[400], height: 1.6, fontSize: 13),
+          style: TextStyle(color: Colors.grey[400], height: 1.55, fontSize: 13),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
         Row(
           children: [
             _buildSocialIcon(Icons.facebook),

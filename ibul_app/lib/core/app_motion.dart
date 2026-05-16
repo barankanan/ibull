@@ -206,29 +206,24 @@ class AppAnimatedIndexedStack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
+    if (children.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final safeIndex = index.clamp(0, children.length - 1);
+    // IndexedStack only paints the active child. A Stack + AnimatedOpacity
+    // kept every tab in the paint tree, which caused visible overlap on web
+    // (e.g. account guest card under another tab's footer layer).
+    return IndexedStack(
+      index: safeIndex,
+      sizing: StackFit.expand,
       children: List<Widget>.generate(children.length, (childIndex) {
-        final isActive = childIndex == index;
-        return IgnorePointer(
-          ignoring: !isActive,
-          child: AnimatedSlide(
-            offset: isActive ? Offset.zero : const Offset(0, 0.012),
-            duration: AppMotion.normalTransitionDuration,
-            curve: AppMotion.revealCurve,
-            child: AnimatedOpacity(
-              opacity: isActive ? 1 : 0,
-              duration: AppMotion.normalTransitionDuration,
-              curve: AppMotion.fadeInCurve,
-              child: RepaintBoundary(
-                child: KeyedSubtree(
-                  key: ValueKey<int>(childIndex),
-                  child: TickerMode(
-                    enabled: isActive,
-                    child: children[childIndex],
-                  ),
-                ),
-              ),
+        final isActive = childIndex == safeIndex;
+        return RepaintBoundary(
+          child: KeyedSubtree(
+            key: ValueKey<int>(childIndex),
+            child: TickerMode(
+              enabled: isActive,
+              child: children[childIndex],
             ),
           ),
         );

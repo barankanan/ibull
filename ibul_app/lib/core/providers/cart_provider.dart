@@ -1,9 +1,11 @@
 import 'package:flutter/foundation.dart';
 import '../../services/auth_service.dart';
 import '../../models/product_model.dart';
+import '../app_state.dart';
 
 class CartProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
+  final AppState _appState = AppState();
   
   // Sepete eklenen ürünler
   final List<Product> _cart = [];
@@ -35,6 +37,10 @@ class CartProvider extends ChangeNotifier {
     }
     // Firestore'a kaydet
     _authService.updateUserDataField('cart', _cart.map((p) => p.toJson()).toList());
+
+    // Keep legacy/global AppState cart in sync so screens that read AppState.cart
+    // (e.g. CartPage) don't show an empty cart.
+    _appState.addToCart(product);
   }
 
   void updateProductServices(Product product, List<String> services) {
@@ -45,6 +51,7 @@ class CartProvider extends ChangeNotifier {
       
       // Firestore'a kaydet
       _authService.updateUserDataField('cart', _cart.map((p) => p.toJson()).toList());
+      _appState.updateProductServices(product, services);
     }
   }
 
@@ -54,6 +61,7 @@ class CartProvider extends ChangeNotifier {
     
     // Firestore'a kaydet
     _authService.updateUserDataField('cart', _cart.map((p) => p.toJson()).toList());
+    _appState.removeFromCart(product);
   }
 
   void clearCart() {
@@ -63,6 +71,7 @@ class CartProvider extends ChangeNotifier {
     
     // Firestore'a kaydet
     _authService.updateUserDataField('cart', []);
+    _appState.clearCart();
   }
 
   void _updateCartNotifiers() {

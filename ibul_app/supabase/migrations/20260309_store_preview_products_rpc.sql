@@ -8,7 +8,7 @@ returns table(
   name text,
   brand text,
   image_url text,
-  image_urls jsonb,
+  image_urls text[],
   price numeric,
   discount_price numeric,
   description text,
@@ -26,7 +26,7 @@ as $$
       p.name,
       p.brand,
       p.image_url,
-      p.image_urls,
+      p.image_urls::text[] as image_urls,
       p.price,
       p.discount_price,
       p.description,
@@ -40,7 +40,7 @@ as $$
     from public.products p
     left join public.stores s on s.seller_id = p.seller_id
     where p.status = 'Aktif'
-      and p.seller_id = any(coalesce(p_seller_ids, '{}'))
+      and p.seller_id::text = any(coalesce(p_seller_ids, '{}'))
   )
   select
     id,

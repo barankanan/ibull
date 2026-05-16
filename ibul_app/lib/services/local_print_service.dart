@@ -79,6 +79,24 @@ class LocalPrintService {
     );
   }
 
+  /// GET /warmup — full pipeline warm-up (fonts, USB, Pillow, renderers).
+  /// Returns timing breakdown or null on failure.
+  Future<Map<String, dynamic>?> warmup({
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    try {
+      return await _send(
+        section: 'Warmup',
+        branch: 'warmup',
+        method: 'GET',
+        path: '/warmup',
+      );
+    } catch (e) {
+      debugPrint('[LocalPrintService] warmup failed: $e');
+      return null;
+    }
+  }
+
   Future<LocalPrintHealthStatus> checkAvailability({
     Duration timeout = const Duration(milliseconds: 1500),
   }) async {
@@ -150,17 +168,22 @@ class LocalPrintService {
         details: error,
       );
     } on http.ClientException catch (error, stackTrace) {
+      // On Flutter Web, every blocked request (connection refused, CORS,
+      // Private Network Access) surfaces as a generic ClientException with
+      // message "XMLHttpRequest error." — there is no further signal from the
+      // browser.  Use a distinct reason so the UI can show a PNA/CORS hint.
+      final failureReason = kIsWeb ? 'web_cors_blocked' : 'connection_error';
       _log(
         'Health',
         'checkFail routeUrl=$url durationMs=${watch.elapsedMilliseconds} '
             'statusCode=- timeoutMs=${timeout.inMilliseconds} '
-            'failureReason=connection_error',
+            'failureReason=$failureReason webCorsLikely=$kIsWeb',
         error: error,
         stackTrace: stackTrace,
       );
       return LocalPrintHealthStatus(
         isAvailable: false,
-        reason: 'connection_error',
+        reason: failureReason,
         url: url,
         durationMs: watch.elapsedMilliseconds,
         details: error,
@@ -184,17 +207,82 @@ class LocalPrintService {
     }
   }
 
-  Future<void> printTest() async {
-    await _send(
+  Future<Map<String, dynamic>?> printTest({
+    String? targetHost,
+    int? targetPort,
+    String? encoding,
+    int? codePage,
+    String? printerId,
+    String? printerName,
+    Map<String, dynamic>? printer,
+    String renderMode = 'image',
+  }) {
+    final body = _mergePrintOptions(
+      <String, dynamic>{
+        if (printerId != null && printerId.trim().isNotEmpty)
+          'printer_id': printerId.trim(),
+        if (printerName != null && printerName.trim().isNotEmpty)
+          'printer_name': printerName.trim(),
+        if (printer != null && printer.isNotEmpty)
+          'printer': Map<String, dynamic>.from(printer),
+      },
+      targetHost: targetHost,
+      targetPort: targetPort,
+      encoding: encoding,
+      codePage: codePage,
+      renderMode: renderMode,
+    );
+    final embeddedPrinter = printer == null
+        ? null
+        : Map<String, dynamic>.from(printer);
+    debugPrint(
+      '[PRINT_TEST_REQUEST] '
+      'printer_id=${body['printer_id'] ?? '-'} '
+      'printer_name=${body['printer_name'] ?? '-'} '
+      'embedded_printer=${embeddedPrinter == null ? '-' : jsonEncode(embeddedPrinter)} '
+      'backend=${embeddedPrinter?['backend'] ?? body['printer_backend'] ?? '-'} '
+      'queue=${embeddedPrinter?['queue'] ?? embeddedPrinter?['queueName'] ?? '-'} '
+      'vendorId=${embeddedPrinter?['vendorId'] ?? '-'} '
+      'productId=${embeddedPrinter?['productId'] ?? '-'} '
+      'render_mode=${body['render_mode'] ?? '-'} '
+      'codePage=${body['codepage'] ?? '-'}',
+    );
+    return _send(
       section: 'Receipt',
       branch: 'print_test',
       method: 'POST',
       path: '/print/test',
+      body: body.isEmpty ? null : body,
     );
   }
 
-  Future<void> printReceipt(Map<String, dynamic> payload) async {
-    await _send(
+  Future<Map<String, dynamic>?> printTurkishDiagnostic({
+    required String encoding,
+    required List<int> codePages,
+    String? targetHost,
+    int? targetPort,
+    String renderMode = 'image',
+  }) {
+    final body = _mergePrintOptions(
+      <String, dynamic>{'encoding': encoding, 'codepages': codePages},
+      targetHost: targetHost,
+      targetPort: targetPort,
+      encoding: encoding,
+      renderMode: renderMode,
+    );
+    return _send(
+      section: 'Receipt',
+      branch: 'print_turkish_diagnostic',
+      method: 'POST',
+      path: '/print/test/turkish',
+      body: body,
+    );
+  }
+
+  Future<Map<String, dynamic>?> printReceipt(
+    Map<String, dynamic> payload,
+  ) async {
+    return _send(
       section: 'Receipt',
       branch: 'print_receipt',
       method: 'POST',
@@ -203,21 +291,332 @@ class LocalPrintService {
     );
   }
 
-  Future<void> printKitchen(
+  Future<Map<String, dynamic>?> printJob(Map<String, dynamic> payload) async {
+    return _send(
+      section: 'Print',
+      branch: 'print_job',
+      method: 'POST',
+      path: '/print',
+      body: payload,
+    );
+  }
+
+  Future<Map<String, dynamic>?> printRawBase64({
+    required String rawBase64,
+    String? printerId,
+    String? printerName,
+    String? jobName,
+  }) {
+    return printJob(<String, dynamic>{
+      'raw_base64': rawBase64,
+      if (printerId != null && printerId.isNotEmpty) 'printer_id': printerId,
+      if (printerName != null && printerName.isNotEmpty)
+        'printer_name': printerName,
+      if (jobName != null && jobName.isNotEmpty) 'job_name': jobName,
+    });
+  }
+
+  Future<Map<String, dynamic>?> printDocument({
+    required Map<String, dynamic> document,
+    String? printerId,
+    String? printerName,
+    String? jobName,
+  }) {
+    return printJob(<String, dynamic>{
+      'document': document,
+      if (printerId != null && printerId.isNotEmpty) 'printer_id': printerId,
+      if (printerName != null && printerName.isNotEmpty)
+        'printer_name': printerName,
+      if (jobName != null && jobName.isNotEmpty) 'job_name': jobName,
+    });
+  }
+
+  Future<Map<String, dynamic>?> printers() async {
+    try {
+      return await _send(
+        section: 'Printers',
+        branch: 'printers',
+        method: 'GET',
+        path: '/printers',
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  /// Calls GET /discover and returns discovered USB printer info.
+  /// Returns null (does not throw) when the bridge is offline or pyusb
+  /// is not installed.
+  Future<Map<String, dynamic>?> discover() async {
+    try {
+      return await _send(
+        section: 'Discover',
+        branch: 'discover',
+        method: 'GET',
+        path: '/discover',
+      );
+    } on LocalPrintServiceException {
+      return printers();
+    }
+  }
+
+  /// POST /setup — tells the bridge to auto-discover and configure itself.
+  ///
+  /// Returns the parsed response body, or null on failure.
+  Future<Map<String, dynamic>?> setup() async {
+    try {
+      return await _send(
+        section: 'Setup',
+        branch: 'setup',
+        method: 'POST',
+        path: '/setup',
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> setupStatus() async {
+    try {
+      return await _send(
+        section: 'Setup',
+        branch: 'setup_status',
+        method: 'GET',
+        path: '/setup/status',
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> setupPrerequisites() async {
+    try {
+      return await _send(
+        section: 'Setup',
+        branch: 'setup_prerequisites',
+        method: 'GET',
+        path: '/setup/prerequisites',
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> setupInstall() async {
+    try {
+      return await _send(
+        section: 'Setup',
+        branch: 'setup_install',
+        method: 'POST',
+        path: '/setup/install',
+        body: const <String, dynamic>{},
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> setupStart() async {
+    try {
+      return await _send(
+        section: 'Setup',
+        branch: 'setup_start',
+        method: 'POST',
+        path: '/setup/start',
+        body: const <String, dynamic>{},
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> enableAutostart() async {
+    try {
+      return await _send(
+        section: 'Setup',
+        branch: 'enable_autostart',
+        method: 'POST',
+        path: '/setup/enable-autostart',
+        body: const <String, dynamic>{},
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> disableAutostart() async {
+    try {
+      return await _send(
+        section: 'Setup',
+        branch: 'disable_autostart',
+        method: 'POST',
+        path: '/setup/disable-autostart',
+        body: const <String, dynamic>{},
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> driverHelp() async {
+    try {
+      return await _send(
+        section: 'Setup',
+        branch: 'driver_help',
+        method: 'GET',
+        path: '/setup/driver-help',
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  /// POST /configure — pushes a partial settings update to the bridge.
+  ///
+  /// [fields] should contain any subset of the bridge's semantic field names
+  /// (e.g. ``{'transport_mode': 'cups', 'printer_queue': 'Canon_T20'}``).
+  /// Returns true if the bridge accepted and applied the change.
+  Future<bool> configure(Map<String, dynamic> fields) async {
+    try {
+      final result = await _send(
+        section: 'Configure',
+        branch: 'configure',
+        method: 'POST',
+        path: '/configure',
+        body: fields,
+      );
+      return result?['ok'] == true;
+    } on LocalPrintServiceException {
+      return false;
+    }
+  }
+
+  Future<Map<String, dynamic>?> configurePrintStation(
+    Map<String, dynamic> fields,
+  ) async {
+    try {
+      return await configurePrintStationStrict(fields);
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> configurePrintStationStrict(
+    Map<String, dynamic> fields,
+  ) async {
+    return await _send(
+      section: 'Queue',
+      branch: 'configure_print_station',
+      method: 'POST',
+      path: '/configure/print-station',
+      body: fields,
+    );
+  }
+
+  Future<Map<String, dynamic>?> queueStatus() async {
+    try {
+      return await _send(
+        section: 'Queue',
+        branch: 'queue_status',
+        method: 'GET',
+        path: '/queue/status',
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> clearCupsQueue({String? queue}) async {
+    return _send(
+      section: 'Queue',
+      branch: 'queue_clear',
+      method: 'POST',
+      path: '/queue/clear',
+      body: <String, dynamic>{
+        if (queue != null && queue.trim().isNotEmpty) 'queue': queue.trim(),
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> clearQueueAndRefresh({String? queue}) async {
+    final clear = await clearCupsQueue(queue: queue);
+    final status = await queueStatus();
+    final healthInfo = await health();
+    final printerInfo = await printers();
+    return <String, dynamic>{
+      'clear': clear,
+      'queue_status': status,
+      'health': healthInfo,
+      'printers': printerInfo,
+    };
+  }
+
+  Future<Map<String, dynamic>?> releaseUsbPrinters() {
+    return _send(
+      section: 'System',
+      branch: 'release_usb_printers',
+      method: 'POST',
+      path: '/system/release-usb-printers',
+      body: const <String, dynamic>{},
+    );
+  }
+
+  Future<Map<String, dynamic>?> printKitchen(
     Map<String, dynamic> payload, {
     String path = '/print/kitchen',
   }) async {
-    await _send(
+    final result = await _send(
       section: 'Kitchen',
       branch: 'print_kitchen',
       method: 'POST',
       path: path,
       body: payload,
     );
+    if (result != null) {
+      final writeStarted = result['printer_write_started_at'];
+      final writeCompleted = result['printer_write_completed_at'];
+      final transportMs = result['transport_ms'];
+      if (writeStarted != null) {
+        debugPrint(
+          '[PrintPipeline] stage=bridge_write '
+          'printer_write_started_at=$writeStarted '
+          'printer_write_completed_at=$writeCompleted '
+          'transport_ms=$transportMs',
+        );
+      }
+    }
+    return result;
   }
 
   void dispose() {
     _client.close();
+  }
+
+  Map<String, dynamic> _mergePrintOptions(
+    Map<String, dynamic> body, {
+    String? targetHost,
+    int? targetPort,
+    String? encoding,
+    int? codePage,
+    String? renderMode,
+  }) {
+    final merged = <String, dynamic>{...body};
+    if (targetHost != null && targetHost.isNotEmpty) {
+      merged['target_host'] = targetHost;
+    }
+    if (targetPort != null) {
+      merged['target_port'] = targetPort;
+    }
+    if (encoding != null && encoding.trim().isNotEmpty) {
+      merged['encoding'] = encoding.trim();
+    }
+    if (codePage != null) {
+      merged['codepage'] = codePage;
+    }
+    if (renderMode != null && renderMode.trim().isNotEmpty) {
+      merged['render_mode'] = renderMode.trim();
+    }
+    return merged;
   }
 
   Future<Map<String, dynamic>?> _send({
@@ -239,6 +638,19 @@ class LocalPrintService {
     final serviceCount = _serviceCount(body);
     final plateCount = _plateCount(body);
     final tableNo = body?['table_no']?.toString() ?? '-';
+    if (branch == 'print_receipt') {
+      debugPrint(
+        '[RECEIPT_REQUEST_TABLE_LABEL] '
+        'table_no=${body?['table_no'] ?? ''} '
+        'table_number=${body?['table_number'] ?? ''} '
+        'area_table_number=${body?['area_table_number'] ?? ''} '
+        'table_area_name=${body?['table_area_name'] ?? ''} '
+        'area_name=${body?['area_name'] ?? ''} '
+        'display_table_label=${body?['display_table_label'] ?? ''} '
+        'table_display_name=${body?['table_display_name'] ?? ''} '
+        'table_name=${body?['table_name'] ?? ''}',
+      );
+    }
     if (effectiveSection == 'Kitchen') {
       _log(
         'Kitchen',
@@ -317,7 +729,7 @@ class LocalPrintService {
     );
     if (response.statusCode < 200 ||
         response.statusCode >= 300 ||
-        responseOk == false) {
+        responseOk != true) {
       final message = _errorMessage(
         response,
         jsonBody,
@@ -334,6 +746,7 @@ class LocalPrintService {
       throw LocalPrintServiceException(
         message,
         statusCode: response.statusCode,
+        details: jsonBody,
       );
     }
     return jsonBody;
@@ -409,6 +822,8 @@ class LocalPrintService {
         return 'kitchen';
       case 'print_test':
         return 'test';
+      case 'print_job':
+        return 'job';
       default:
         return branch;
     }
@@ -422,6 +837,10 @@ class LocalPrintService {
         return 'Kitchen';
       case 'print_test':
         return 'Test';
+      case 'print_job':
+        return 'Print';
+      case 'printers':
+        return 'Printers';
       default:
         return fallback;
     }

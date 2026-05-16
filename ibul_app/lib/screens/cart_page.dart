@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
+import 'package:provider/provider.dart';
 import 'dart:ui';
 import '../core/constants.dart';
 import '../core/app_state.dart';
+import '../core/providers/cart_provider.dart';
+import '../core/cart_state.dart';
 import '../models/product_model.dart';
 import '../models/product_pricing.dart';
 import 'checkout_page.dart';
@@ -32,6 +35,23 @@ class _CartPageState extends State<CartPage>
   final List<Map<String, dynamic>> _availableCoupons = [];
 
   static const String _softFontFamily = 'Poppins';
+
+  List<Product> _effectiveCartProducts() {
+    // The codebase currently has two cart sources:
+    // - AppState.cart (legacy singleton)
+    // - CartProvider.cart (provider-backed)
+    // Some flows update only one of them; merge so UI never shows "empty" while
+    // there are items.
+    final providerCart = context.watch<CartProvider>().cart;
+    final merged = <String, Product>{};
+    for (final p in _appState.cart) {
+      merged[CartState.productKey(p)] = p;
+    }
+    for (final p in providerCart) {
+      merged[CartState.productKey(p)] = p;
+    }
+    return merged.values.toList(growable: false);
+  }
 
   TextStyle _softTextStyle({
     double size = 14,
@@ -591,13 +611,14 @@ class _CartPageState extends State<CartPage>
   }
 
   List<Map<String, dynamic>> get cartItems {
-    final cartHashes = _appState.cart
+    final effectiveCart = _effectiveCartProducts();
+    final cartHashes = effectiveCart
         .map((product) => product.hashCode)
         .toSet();
     _dynamicSelections.removeWhere((key, value) => !cartHashes.contains(key));
     _dynamicQuantities.removeWhere((key, value) => !cartHashes.contains(key));
 
-    final products = _appState.cart
+    final products = effectiveCart
         .where((p) => !_isFoodProduct(p) && !_isMarketProduct(p))
         .toList();
 
@@ -605,12 +626,12 @@ class _CartPageState extends State<CartPage>
   }
 
   List<Map<String, dynamic>> get marketItems {
-    final products = _appState.cart.where(_isMarketProduct).toList();
+    final products = _effectiveCartProducts().where(_isMarketProduct).toList();
     return _groupProductsByStore(products);
   }
 
   List<Map<String, dynamic>> get foodItems {
-    final products = _appState.cart.where(_isFoodProduct).toList();
+    final products = _effectiveCartProducts().where(_isFoodProduct).toList();
     return _groupProductsByStore(products);
   }
 
@@ -1314,6 +1335,10 @@ class _CartPageState extends State<CartPage>
 
   String _foodOrderItemTitle(Map<String, dynamic> item) {
     final name = item['name']?.toString() ?? '';
+    final selectedSizeName = item['selectedSizeName']?.toString().trim() ?? '';
+    if (selectedSizeName.isNotEmpty) {
+      return '$name - $selectedSizeName';
+    }
     final grams = (item['selectedWeightGrams'] as num?)?.toInt();
     if (grams != null && grams > 0) {
       return '$name - ${ProductPriceCalculator.formatWeight(grams)}';
@@ -1587,6 +1612,8 @@ class _CartPageState extends State<CartPage>
                 final notes = item['notes']?.toString();
                 final priceText = _foodOrderItemPrice(item);
                 final subtitleParts = <String>[
+                  if ((item['selectedSizeName']?.toString().trim() ?? '').isNotEmpty)
+                    item['selectedSizeName'].toString().trim(),
                   if (attrs.isNotEmpty) attrs.join(' • '),
                   if (notes != null && notes.isNotEmpty) notes,
                 ];

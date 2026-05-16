@@ -15,6 +15,10 @@ import '../services/store_service.dart';
 import '../services/supabase_service.dart';
 import '../services/product_list_service.dart';
 import '../services/push_notification_service.dart';
+import '../services/store_follow_service.dart';
+import '../models/store_follow_state.dart';
+import '../widgets/store_notifications_sheet.dart';
+import '../screens/login_page.dart';
 import '../utils/text_normalizer.dart';
 import '../widgets/product_card.dart';
 import '../widgets/filter_sidebar.dart';
@@ -28,9 +32,11 @@ import '../widgets/restaurant_order/product_quick_view_dialog.dart';
 import '../widgets/restaurant_order/weight_selector.dart';
 import '../services/campaign_service.dart';
 import '../core/qr_initial_params.dart';
+import '../services/waiter_order_request_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'chat_page.dart';
 import 'list_detail_page.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/table_labels.dart';
 
 class BusinessDetailPage extends StatefulWidget {
   final Map<String, dynamic> business;
@@ -44,6 +50,10 @@ class BusinessDetailPage extends StatefulWidget {
   /// there is no route animation to wait for.
   final bool fromQr;
 
+  /// Doğrulanmamış masa QR: doğrudan [table_orders] / mutfak yazdırma yok;
+  /// siparişler [WaiterOrderRequestService] ile garson onayına gider.
+  final bool unverifiedQrTableFlow;
+
   const BusinessDetailPage({
     super.key,
     required this.business,
@@ -52,6 +62,7 @@ class BusinessDetailPage extends StatefulWidget {
     this.initialTableNumber,
     this.initialProductQuery,
     this.fromQr = false,
+    this.unverifiedQrTableFlow = false,
   });
 
   @override
@@ -63,8 +74,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   late TabController _tabController;
   int _selectedCategoryIndex = 0;
   bool _showProductReviews = true;
-  bool _isFollowing = false;
-  bool _isNotificationsEnabled = false;
+  StoreFollowState _followState = const StoreFollowState(loading: true);
+  String? _storeId;
+  int _unreadNotificationCount = 0;
+  bool _followActionLoading = false;
   String _searchQuery = '';
   bool _isLoadingProducts = false;
   int _activeSellerReviewTab = 0;
@@ -99,6 +112,10 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   String? _activeQrPopupName;
   bool _activeQrPopupUseRootNavigator = false;
   List<int> _availableTableNumbers = <int>[];
+  Set<int> _occupiedTableNumbers = <int>{};
+  List<Map<String, dynamic>> _storeTables = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _storeTableAreas = const <Map<String, dynamic>>[];
+  String _customerAreaFilterKey = 'all';
   String _activeWebTab = 'Ana Sayfa';
 
   /// Satıcı panelinde yüklenen logo, duyuru banner'ları (Supabase'den)
@@ -383,7 +400,6 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     );
     _appState.addListener(_handleAppStateChanged);
     _tabController.addListener(_handleTabChanged);
-    _isFollowing = _appState.isFollowingStore(widget.business);
     _searchQuery = widget.initialProductQuery?.trim().toLowerCase() ?? '';
 
     // Duyuru banner controller - initState'te viewportFraction belirtmeden başlat
@@ -396,7 +412,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       _allProducts = [];
     }
     _categories = _extractCategories();
-    _loadNotificationPreference();
+    unawaited(_loadStoreFollowState());
     _fetchStoreProducts();
     _loadStoreTables();
     _loadStorePublicInfo();
@@ -463,96 +479,293 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     }
   }
 
-  String get _storeNotificationPreferenceKey {
-    final identifiers = [
-      widget.business['id']?.toString().trim() ?? '',
-      widget.business['seller_id']?.toString().trim() ?? '',
-      widget.business['name']?.toString().trim().toLowerCase() ?? '',
-    ].where((value) => value.isNotEmpty);
-    final rawIdentifier = identifiers.isNotEmpty ? identifiers.first : 'store';
-    final safeIdentifier = rawIdentifier.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
-    return 'business_notification_test_$safeIdentifier';
+  Future<String?> _resolveStoreId() async {
+    if (_storeId != null && _storeId!.isNotEmpty) return _storeId;
+    final resolved = await StoreFollowService.instance.resolveStoreId(
+      sellerId: widget.business['seller_id']?.toString(),
+      businessName: widget.business['name']?.toString(),
+    );
+    _storeId = resolved;
+    return resolved;
   }
 
-  Future<void> _loadNotificationPreference() async {
-    final prefs = await SharedPreferences.getInstance();
-    final enabled = prefs.getBool(_storeNotificationPreferenceKey) ?? false;
+  Future<void> _loadStoreFollowState() async {
+    final storeId = await _resolveStoreId();
+    if (!mounted) return;
+    if (storeId == null || storeId.isEmpty) {
+      setState(() {
+        _followState = const StoreFollowState(
+          loading: false,
+          error: 'Mağaza bilgisi yüklenemedi.',
+        );
+      });
+      return;
+    }
+
+    setState(() => _followState = _followState.copyWith(loading: true));
+    final state = await StoreFollowService.instance.getStoreFollowState(storeId);
+    final unread = _appState.isLoggedIn
+        ? await StoreFollowService.instance.unreadStoreNotificationCount(storeId)
+        : 0;
     if (!mounted) return;
     setState(() {
-      _isNotificationsEnabled = enabled;
+      _followState = state.copyWith(loading: false);
+      _unreadNotificationCount = unread;
     });
   }
 
-  Future<void> _persistNotificationPreference(bool enabled) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_storeNotificationPreferenceKey, enabled);
+  void _showLoginRequiredDialog() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Giriş Yap'),
+        content: const Text('Mağazayı takip etmek için giriş yapmanız gerekiyor.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginPage()),
+              );
+            },
+            child: const Text('Giriş Yap'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _handleNotificationBellTap() async {
-    final storeName =
-        widget.business['name']?.toString().trim().isNotEmpty == true
+    if (!_appState.isLoggedIn) {
+      _showLoginRequiredDialog();
+      return;
+    }
+
+    final storeId = await _resolveStoreId();
+    if (storeId == null || storeId.isEmpty) {
+      _showSnack('Mağaza bilgisi yüklenemedi.');
+      return;
+    }
+
+    if (!_followState.isFollowing) {
+      _showSnack('Bildirimleri açmak için önce mağazayı takip etmelisin.');
+      return;
+    }
+
+    final storeName = widget.business['name']?.toString().trim().isNotEmpty == true
         ? widget.business['name'].toString().trim()
         : 'Mağaza';
-    final productQuery = widget.initialProductQuery?.trim();
-    final body = productQuery != null && productQuery.isNotEmpty
-        ? "'$productQuery' için test bildirimi 3 saniye sonra gelecek. $storeName mağazasını bildirimden açabilirsin."
-        : '$storeName için test bildirimi 3 saniye sonra gelecek.';
 
-    try {
-      if (!_isNotificationsEnabled) {
-        setState(() {
-          _isNotificationsEnabled = true;
-        });
-        await _persistNotificationPreference(true);
-      }
-
-      final notificationShown = await PushNotificationService.instance
-          .showNearbyStoreNotificationAfterDelay(
-            storeName: storeName,
-            body: body,
-            initialStoreProductQuery: productQuery,
-            delaySeconds: 3,
+    if (!_followState.notificationsEnabled) {
+      try {
+        final permissionGranted =
+            await PushNotificationService.instance.ensureNotificationPermission();
+        if (!permissionGranted) {
+          _showSnack(
+            'Bildirim izni şu anda tamamlanamadı. Lütfen daha sonra tekrar deneyin.',
           );
+          return;
+        }
 
-      if (!notificationShown) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Sistem bildirimi kapalı. iPhone Ayarlar > Bildirimler > Ibul App içinden izin ver.',
-            ),
-            duration: Duration(seconds: 3),
-            behavior: SnackBarBehavior.floating,
-          ),
+        final enabled = await StoreFollowService.instance.toggleStoreNotifications(
+          storeId,
+          enabled: true,
         );
-        return;
+        if (!mounted) return;
+        setState(() {
+          _followState = _followState.copyWith(notificationsEnabled: enabled);
+        });
+        _showSnack('Mağaza bildirimleri açıldı.');
+      } catch (error) {
+        _showSnack(PushNotificationService.friendlyErrorMessage(error));
       }
+    }
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Test bildirimi 3 saniye sonra gelecek.'),
-          duration: Duration(seconds: 3),
-          behavior: SnackBarBehavior.floating,
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.72,
+        minChildSize: 0.45,
+        maxChildSize: 0.92,
+        builder: (_, __) => StoreNotificationsSheet(
+          storeId: storeId,
+          storeName: storeName,
+          notificationsEnabled: _followState.notificationsEnabled,
+          business: widget.business,
+          onNotificationsChanged: (enabled) async {
+            if (!mounted) return;
+            setState(() {
+              _followState = _followState.copyWith(
+                notificationsEnabled: enabled,
+              );
+            });
+            final unread = await StoreFollowService.instance
+                .unreadStoreNotificationCount(storeId);
+            if (mounted) {
+              setState(() => _unreadNotificationCount = unread);
+            }
+          },
         ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Bildirim gösterilemedi: $error'),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      ),
+    );
+
+    final unread =
+        await StoreFollowService.instance.unreadStoreNotificationCount(storeId);
+    if (mounted) {
+      setState(() => _unreadNotificationCount = unread);
     }
   }
 
-  void _toggleFollowStore() {
+  Future<void> _toggleFollowStore() async {
+    if (_followActionLoading || _followState.loading) return;
+
+    if (!_appState.isLoggedIn) {
+      _showLoginRequiredDialog();
+      return;
+    }
+
+    final storeId = await _resolveStoreId();
+    if (storeId == null || storeId.isEmpty) {
+      _showSnack('Mağaza bilgisi yüklenemedi.');
+      return;
+    }
+
+    final previousState = _followState;
+    final optimisticFollowing = !previousState.isFollowing;
     setState(() {
-      AppState().toggleFollowStore(widget.business);
-      _isFollowing = !_isFollowing;
+      _followActionLoading = true;
+      _followState = previousState.copyWith(
+        isFollowing: optimisticFollowing,
+        followerCount: optimisticFollowing
+            ? previousState.followerCount + 1
+            : (previousState.followerCount > 0
+                  ? previousState.followerCount - 1
+                  : 0),
+        notificationsEnabled:
+            optimisticFollowing ? previousState.notificationsEnabled : false,
+        clearError: true,
+      );
     });
+
+    try {
+      final nextState = optimisticFollowing
+          ? await StoreFollowService.instance.followStore(storeId)
+          : await StoreFollowService.instance.unfollowStore(storeId);
+
+      if (!mounted) return;
+      setState(() {
+        _followState = nextState.copyWith(loading: false);
+        _followActionLoading = false;
+        _unreadNotificationCount = optimisticFollowing
+            ? _unreadNotificationCount
+            : 0;
+      });
+
+      await _appState.refreshFollowedStoresFromServer();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _followState = previousState.copyWith(loading: false);
+        _followActionLoading = false;
+      });
+      _showSnack(StoreFollowService.userFriendlyError(error));
+    }
+  }
+
+  String get _displayFollowerCount {
+    if (_followState.followerCount > 0 || !_followState.loading) {
+      return _followState.formattedFollowerCount;
+    }
+    final legacy = widget.business['followers']?.toString().trim() ?? '';
+    if (legacy.isNotEmpty && !legacy.contains('9.8B') && !legacy.contains('10B')) {
+      return legacy;
+    }
+    return _followState.formattedFollowerCount;
+  }
+
+  bool get _isFollowing => _followState.isFollowing;
+  bool get _isNotificationsEnabled => _followState.notificationsEnabled;
+
+  Widget _buildStoreNotificationBell({
+    required double size,
+    required double iconSize,
+    required double borderRadius,
+  }) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        InkWell(
+          onTap: _followState.loading ? null : _handleNotificationBellTap,
+          borderRadius: BorderRadius.circular(borderRadius),
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: _isNotificationsEnabled
+                  ? Colors.white
+                  : Colors.white.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(borderRadius),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.55),
+              ),
+            ),
+            child: Icon(
+              _isNotificationsEnabled
+                  ? Icons.notifications_active
+                  : Icons.notifications_none,
+              color: _isNotificationsEnabled
+                  ? Colors.amber.shade700
+                  : Colors.white,
+              size: iconSize,
+            ),
+          ),
+        ),
+        if (_unreadNotificationCount > 0)
+          Positioned(
+            right: -4,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+              child: Text(
+                _unreadNotificationCount > 9 ? '9+' : '$_unreadNotificationCount',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   bool _shouldAbortQrAutoFlow({
@@ -802,7 +1015,11 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       debugPrint(
         '[BDP-Timing] _showFoodOrderDialog called for table $initialTable',
       );
-      _showFoodOrderDialog(context, initialTable);
+      _showFoodOrderDialog(
+        context,
+        initialTable,
+        unverifiedQrTableFlow: widget.unverifiedQrTableFlow,
+      );
       return;
     }
 
@@ -866,10 +1083,35 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
     setState(() => _isLoadingTables = true);
     try {
-      final numbers = await StoreService().getActiveTableNumbers(sellerId!);
+      final service = StoreService();
+      final results = await Future.wait([
+        service.getActiveTableNumbers(sellerId!),
+        service.getOccupiedTableNumbers(sellerId),
+        // Best-effort: areas + tables (for customer area filtering).
+        service.getStoreTables(sellerId: sellerId),
+        service.getTableAreas(sellerId: sellerId),
+      ]);
       if (!mounted) return;
+      final tables = (results.length >= 3 && results[2] is List)
+          ? List<Map<String, dynamic>>.from(results[2] as List)
+          : const <Map<String, dynamic>>[];
+      final areas = (results.length >= 4 && results[3] is List)
+          ? List<Map<String, dynamic>>.from(results[3] as List)
+          : const <Map<String, dynamic>>[];
+      final resolvedAvailable = tables.isNotEmpty
+          ? tables
+                .map(
+                  (t) =>
+                      int.tryParse(t['table_number']?.toString() ?? '') ?? 0,
+                )
+                .where((n) => n > 0)
+                .toList(growable: false)
+          : (results[0] as List<int>);
       setState(() {
-        _availableTableNumbers = numbers;
+        _availableTableNumbers = resolvedAvailable;
+        _occupiedTableNumbers = results[1] as Set<int>;
+        _storeTables = tables;
+        _storeTableAreas = areas;
       });
     } catch (_) {
       // Keep default fallback behavior if table system is not configured yet.
@@ -1531,8 +1773,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
 
     final businessName = widget.business['name'] ?? 'Mağaza';
     final businessRating = widget.business['rating']?.toString() ?? '8.2';
-    final businessFollowers =
-        widget.business['followers']?.toString() ?? '9.8B Takipçi';
+    final businessFollowers = _displayFollowerCount;
 
     return PopScope(
       // canPop=false intercepts the system back gesture; onPopInvoked fires
@@ -1646,41 +1887,19 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                InkWell(
-                                  onTap: _handleNotificationBellTap,
-                                  borderRadius: BorderRadius.circular(14),
-                                  child: Container(
-                                    width: 28,
-                                    height: 28,
-                                    decoration: BoxDecoration(
-                                      color: _isNotificationsEnabled
-                                          ? Colors.white
-                                          : Colors.white.withValues(
-                                              alpha: 0.14,
-                                            ),
-                                      borderRadius: BorderRadius.circular(14),
-                                      border: Border.all(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.55,
-                                        ),
-                                      ),
-                                    ),
-                                    child: Icon(
-                                      _isNotificationsEnabled
-                                          ? Icons.notifications_active
-                                          : Icons.notifications_none,
-                                      color: _isNotificationsEnabled
-                                          ? Colors.amber.shade700
-                                          : Colors.white,
-                                      size: 18,
-                                    ),
-                                  ),
+                                _buildStoreNotificationBell(
+                                  size: 28,
+                                  iconSize: 18,
+                                  borderRadius: 14,
                                 ),
                                 const SizedBox(width: 8),
                                 SizedBox(
                                   height: 28,
                                   child: ElevatedButton(
-                                    onPressed: _toggleFollowStore,
+                                    onPressed: (_followActionLoading ||
+                                            _followState.loading)
+                                        ? null
+                                        : _toggleFollowStore,
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: _isFollowing
                                           ? AppColors.primary
@@ -1858,8 +2077,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   Widget _buildWebLayout({required VoidCallback handleBack}) {
     final businessName = widget.business['name'] ?? 'Mağaza';
     final businessRating = widget.business['rating']?.toString() ?? '8.2';
-    final businessFollowers =
-        widget.business['followers']?.toString() ?? '9.8B Takipçi';
+    final businessFollowers = _displayFollowerCount;
 
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
@@ -1970,37 +2188,17 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              InkWell(
-                                onTap: _handleNotificationBellTap,
-                                borderRadius: BorderRadius.circular(20),
-                                child: Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: _isNotificationsEnabled
-                                        ? Colors.white
-                                        : Colors.white.withValues(alpha: 0.14),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.55,
-                                      ),
-                                    ),
-                                  ),
-                                  child: Icon(
-                                    _isNotificationsEnabled
-                                        ? Icons.notifications_active
-                                        : Icons.notifications_none,
-                                    color: _isNotificationsEnabled
-                                        ? Colors.amber.shade700
-                                        : Colors.white,
-                                    size: 22,
-                                  ),
-                                ),
+                              _buildStoreNotificationBell(
+                                size: 40,
+                                iconSize: 22,
+                                borderRadius: 20,
                               ),
                               const SizedBox(width: 12),
                               ElevatedButton(
-                                onPressed: _toggleFollowStore,
+                                onPressed: (_followActionLoading ||
+                                        _followState.loading)
+                                    ? null
+                                    : _toggleFollowStore,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: _isFollowing
                                       ? AppColors.primary
@@ -4953,6 +5151,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     }
 
     final tableNumbers = _availableTableNumbers;
+    final occupiedNumbers = _occupiedTableNumbers;
     if (!mounted) {
       debugPrint('[BDP/QR] _showTableSelection ABORTED — state not mounted');
       return;
@@ -4962,7 +5161,56 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       context: context,
       useRootNavigator: false,
       builder: (dlgCtx) {
-        return Dialog(
+        return StatefulBuilder(
+          builder: (dlgCtx, setDialogState) {
+            final areaOptions = <({String key, String label})>[
+              (key: 'all', label: 'Tüm Alanlar'),
+            ];
+
+            if (_storeTableAreas.isNotEmpty) {
+              for (final area in _storeTableAreas) {
+                final id = area['id']?.toString().trim() ?? '';
+                final name = area['name']?.toString().trim() ?? '';
+                if (id.isEmpty || name.isEmpty) continue;
+                areaOptions.add((key: 'id:$id', label: name));
+              }
+            } else {
+              final seen = <String>{};
+              for (final t in _storeTables) {
+                final name = (t['area_name']?.toString().trim() ?? '');
+                if (name.isEmpty) continue;
+                final norm = name.toLowerCase();
+                if (seen.add(norm)) {
+                  areaOptions.add((key: 'name:$name', label: name));
+                }
+              }
+            }
+
+            final effectiveFilterKey =
+                areaOptions.any((o) => o.key == _customerAreaFilterKey)
+                    ? _customerAreaFilterKey
+                    : 'all';
+
+            final filteredTables =
+                effectiveFilterKey == 'all' || _storeTables.isEmpty
+                    ? tableNumbers
+                    : tableNumbers.where((n) {
+                        final row = _storeTables.firstWhere(
+                          (t) =>
+                              (int.tryParse(
+                                    t['table_number']?.toString() ?? '',
+                                  ) ??
+                                  0) ==
+                              n,
+                          orElse: () => const <String, dynamic>{},
+                        );
+                        return matchesAreaFilter(
+                          filterKey: effectiveFilterKey,
+                          tableRow: row.isEmpty ? null : row,
+                        );
+                      }).toList(growable: false);
+
+            return Dialog(
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.white,
           shape: RoundedRectangleBorder(
@@ -5003,12 +5251,101 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                   'Oturduğunuz masayı seçin',
                   style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
                 ),
+                if (areaOptions.length > 1) ...[
+                  const SizedBox(height: 14),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Alan Seç',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7F7FC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        isExpanded: true,
+                        value: effectiveFilterKey,
+                        items: areaOptions
+                            .map(
+                              (o) => DropdownMenuItem<String>(
+                                value: o.key,
+                                child: Text(
+                                  o.label,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          final next = (value ?? 'all').trim();
+                          if (next.isEmpty) return;
+                          setDialogState(() => _customerAreaFilterKey = next);
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+                if (occupiedNumbers.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFDC2626),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Dolu masa',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.15),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.4),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Boş masa',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 20),
-                if (tableNumbers.isEmpty)
+                if (filteredTables.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      'Aktif masa bulunamadı.',
+                      'Bu alanda aktif masa bulunamadı.',
                       style: TextStyle(
                         fontSize: 13,
                         color: Colors.grey.shade600,
@@ -5024,46 +5361,122 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                           crossAxisCount: 5,
                           crossAxisSpacing: 10,
                           mainAxisSpacing: 10,
-                          childAspectRatio: 1,
+                          // Mobile: we show icon + (optional) area name + number.
+                          // A perfect square tile overflows vertically, so we
+                          // give each cell a bit more height.
+                          childAspectRatio: 0.86,
                         ),
-                    itemCount: tableNumbers.length,
+                    itemCount: filteredTables.length,
                     itemBuilder: (_, i) {
-                      final tableNum = tableNumbers[i];
+                      final tableNum = filteredTables[i];
+                      final tableRow = _storeTables.isEmpty
+                          ? null
+                          : _storeTables.firstWhere(
+                              (t) =>
+                                  (int.tryParse(
+                                        t['table_number']?.toString() ?? '',
+                                      ) ??
+                                      0) ==
+                                  tableNum,
+                              orElse: () => const <String, dynamic>{},
+                            );
+                      final resolvedRow =
+                          (tableRow == null || tableRow.isEmpty) ? null : tableRow;
+                      final areaName =
+                          (resolvedRow?['area_name']?.toString() ?? '').trim();
+                      final areaTableNo =
+                          int.tryParse(
+                            (resolvedRow?['area_table_number']?.toString() ?? '')
+                                .trim(),
+                          ) ??
+                          0;
+                      final displayNo = areaTableNo > 0 ? areaTableNo : tableNum;
+                      final isOccupied = occupiedNumbers.contains(tableNum);
+                      final bgColor = isOccupied
+                          ? const Color(0xFFFEE2E2)
+                          : AppColors.primary.withValues(alpha: 0.07);
+                      final borderColor = isOccupied
+                          ? const Color(0xFFFCA5A5)
+                          : AppColors.primary.withValues(alpha: 0.25);
+                      final iconColor = isOccupied
+                          ? const Color(0xFFDC2626)
+                          : AppColors.primary;
+                      final textColor = isOccupied
+                          ? const Color(0xFFDC2626)
+                          : AppColors.primary;
                       return GestureDetector(
                         onTap: () {
+                          if (isOccupied) {
+                            ScaffoldMessenger.of(dlgCtx).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Masa $tableNum şu anda dolu. Lütfen boş bir masa seçin.',
+                                ),
+                                backgroundColor: const Color(0xFFDC2626),
+                                behavior: SnackBarBehavior.floating,
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                            return;
+                          }
                           debugPrint(
                             '[BDP/QR] table-selection-dialog action — '
                             'table=$tableNum',
                           );
                           Navigator.pop(dlgCtx);
-                          _showFoodOrderDialog(ctx, tableNum);
+                          // Persist the area filter on the page state too.
+                          if (mounted) {
+                            setState(() => _customerAreaFilterKey = effectiveFilterKey);
+                          }
+                          _showFoodOrderDialog(
+                            ctx,
+                            tableNum,
+                            unverifiedQrTableFlow: widget.unverifiedQrTableFlow,
+                          );
                         },
                         child: Container(
                           decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.07),
+                            color: bgColor,
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: AppColors.primary.withValues(alpha: 0.25),
-                            ),
+                            border: Border.all(color: borderColor),
                           ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.table_restaurant_outlined,
-                                color: AppColors.primary,
-                                size: 20,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '$tableNum',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.primary,
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  isOccupied
+                                      ? Icons.do_not_disturb_alt_outlined
+                                      : Icons.table_restaurant_outlined,
+                                  color: iconColor,
+                                  size: areaName.isNotEmpty ? 16 : 18,
                                 ),
-                              ),
-                            ],
+                                if (areaName.isNotEmpty)
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      areaName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 8,
+                                        fontWeight: FontWeight.w700,
+                                        height: 1.05,
+                                        color: textColor.withValues(alpha: 0.85),
+                                      ),
+                                    ),
+                                  ),
+                                Text(
+                                  '$displayNo',
+                                  style: TextStyle(
+                                    fontSize: areaName.isNotEmpty ? 11 : 12,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.05,
+                                    color: textColor,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -5072,6 +5485,8 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
               ],
             ),
           ),
+        );
+          },
         );
       },
     );
@@ -5086,7 +5501,20 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     );
   }
 
-  void _showFoodOrderDialog(BuildContext ctx, int tableNumber) {
+  Map<String, dynamic>? _storeTableRowByNumber(int tableNumber) {
+    if (tableNumber <= 0 || _storeTables.isEmpty) return null;
+    for (final row in _storeTables) {
+      final n = int.tryParse(row['table_number']?.toString() ?? '') ?? 0;
+      if (n == tableNumber) return row;
+    }
+    return null;
+  }
+
+  void _showFoodOrderDialog(
+    BuildContext ctx,
+    int tableNumber, {
+    bool unverifiedQrTableFlow = false,
+  }) {
     const popupName = 'food-order-dialog';
     debugPrint(
       '[BDP/QR] popup OPEN ATTEMPT — $popupName tableNumber=$tableNumber '
@@ -5115,7 +5543,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         products: _allProducts,
         productsFuture: _productCompleter.future,
         tableNumber: tableNumber,
+        tableRow: _storeTableRowByNumber(tableNumber),
         logoUrl: _storePublicInfo?['logoUrl'] as String?,
+        unverifiedQrTableFlow: unverifiedQrTableFlow,
       ),
     );
     _trackQrPopup(
@@ -5136,14 +5566,18 @@ class _FoodOrderDialog extends StatefulWidget {
   /// The dialog awaits this instead of spawning its own duplicate request.
   final Future<List<Product>> productsFuture;
   final int tableNumber;
+  final Map<String, dynamic>? tableRow;
   final String? logoUrl;
+  final bool unverifiedQrTableFlow;
 
   const _FoodOrderDialog({
     required this.business,
     required this.products,
     required this.productsFuture,
     required this.tableNumber,
+    this.tableRow,
     this.logoUrl,
+    this.unverifiedQrTableFlow = false,
   });
 
   @override
@@ -5152,6 +5586,7 @@ class _FoodOrderDialog extends StatefulWidget {
 
 class _FoodOrderDialogState extends State<_FoodOrderDialog> {
   final StoreService _storeService = StoreService();
+  final WaiterOrderRequestService _waiterRequests = WaiterOrderRequestService();
   final Map<String, Map<String, dynamic>> _cart = {};
   final List<Map<String, dynamic>> _mixedServiceCartItems = [];
   List<Product> _products = <Product>[];
@@ -5281,11 +5716,15 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     Product product, {
     int? selectedWeightGrams,
     double? selectedServiceAmount,
+    String? selectedSizeName,
     List<String> selectedAttrs = const <String>[],
     String notes = '',
   }) {
     final baseKey = _baseProductKey(product);
-    if (!product.usesServiceControlStepper) return baseKey;
+    final normalizedSizeName = selectedSizeName?.trim() ?? '';
+    if (!product.usesServiceControlStepper && normalizedSizeName.isEmpty) {
+      return baseKey;
+    }
     final normalizedAttrs = [...selectedAttrs]..sort();
     final selectionKey = product.usesWeightSelector
         ? (selectedWeightGrams ?? product.resolvedDefaultWeightGrams).toString()
@@ -5296,6 +5735,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       baseKey,
       product.resolvedServiceControlType.storageValue,
       product.resolvedPricingType.storageValue,
+      normalizedSizeName,
       selectionKey,
       normalizedAttrs.join(','),
       notes.trim().toLowerCase(),
@@ -5351,7 +5791,24 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       const <String>[];
 
   String _cartLineSubtitle(Map<String, dynamic> item) {
+    return _cartLineSubtitleWithOptions(item);
+  }
+
+  String _cartLineTitle(Map<String, dynamic> item) {
+    final name = item['name']?.toString().trim() ?? '';
+    final selectedSizeName = item['selectedSizeName']?.toString().trim() ?? '';
+    if (selectedSizeName.isEmpty) {
+      return name;
+    }
+    return '$name — $selectedSizeName';
+  }
+
+  String _cartLineSubtitleWithOptions(
+    Map<String, dynamic> item, {
+    bool includeSize = true,
+  }) {
     final parts = <String>[];
+    final selectedSizeName = item['selectedSizeName']?.toString().trim() ?? '';
     final amountLabel = item['amountLabel']?.toString().trim() ?? '';
     final weightGrams = (item['selectedWeightGrams'] as num?)?.toInt();
     final gramaj = item['gramaj']?.toString().trim() ?? '';
@@ -5359,7 +5816,9 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     final attrs =
         (item['selectedAttrs'] as List?)?.whereType<String>().toList() ??
         const <String>[];
-    if (amountLabel.isNotEmpty) {
+    if (includeSize && selectedSizeName.isNotEmpty) {
+      parts.add(selectedSizeName);
+    } else if (amountLabel.isNotEmpty && amountLabel != selectedSizeName) {
       parts.add(amountLabel);
     } else if (weightGrams != null && weightGrams > 0) {
       parts.add(ProductPriceCalculator.formatWeight(weightGrams));
@@ -5553,9 +6012,10 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
   /// Compact summary row for a normal (non-mixed-service) cart item.
   Widget _buildCartItemSummaryRow(String cartKey, Map<String, dynamic> item) {
     final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-    final name = item['name']?.toString() ?? '';
-    final subtitle = _cartLineSubtitle(item);
-    final lineTotal = (item['calculatedLineTotal'] as num?)?.toDouble() ??
+    final title = _cartLineTitle(item);
+    final subtitle = _cartLineSubtitleWithOptions(item, includeSize: false);
+    final lineTotal =
+        (item['calculatedLineTotal'] as num?)?.toDouble() ??
         ((item['unitPriceSnapshot'] as num?)?.toDouble() ?? 0) * qty;
     return Container(
       width: double.infinity,
@@ -5573,7 +6033,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '$qty× $name',
+                  '$qty× $title',
                   style: const TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w700,
@@ -5610,7 +6070,11 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                 color: Colors.red.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.close_rounded, size: 15, color: Colors.red),
+              child: const Icon(
+                Icons.close_rounded,
+                size: 15,
+                color: Colors.red,
+              ),
             ),
           ),
         ],
@@ -5625,8 +6089,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
 
     final allLabels = <String>[
       ...cartList.map(
-        (e) =>
-            '${e.value['quantity']}× ${e.value['name'] ?? ''}',
+        (e) => '${e.value['quantity']}× ${_cartLineTitle(e.value)}',
       ),
       ...serviceList.map(
         (e) =>
@@ -5693,10 +6156,9 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                       ..._cart.entries.map(
                         (e) => _buildCartItemSummaryRow(e.key, e.value),
                       ),
-                      ..._mixedServiceCartItems
-                          .asMap()
-                          .entries
-                          .map((e) => _buildMixedServiceSummaryCard(e.value, e.key)),
+                      ..._mixedServiceCartItems.asMap().entries.map(
+                        (e) => _buildMixedServiceSummaryCard(e.value, e.key),
+                      ),
                     ],
                   ),
                 ),
@@ -5720,10 +6182,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
               if (remaining > 0)
                 Text(
                   '+$remaining ürün daha',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey.shade500,
-                  ),
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
                 ),
             ],
           ],
@@ -5763,6 +6222,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     required String notes,
     int? selectedWeightGrams,
     double? selectedServiceAmount,
+    String? selectedSizeName,
   }) {
     final effectiveWeight = product.usesWeightSelector
         ? ProductPriceCalculator.clampWeightSelection(
@@ -5784,15 +6244,22 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     final unitPrice = ProductPriceCalculator.resolveServiceControlledUnitPrice(
       serviceControlType: product.resolvedServiceControlType,
       pricingType: product.resolvedPricingType,
+      pricingMode: product.resolvedPricingMode,
+      basePrice: product.basePrice ?? product.portionPrice,
       portionPrice: product.portionPrice,
       pricePerKg: product.effectivePricePerKg,
+      sizeOptions: product.normalizedSizeOptions,
+      selectedSizeName: selectedSizeName,
       fallbackPrice: product.effectivePortionPrice,
       selectedAmount: effectiveServiceAmount,
       selectedWeightGrams: effectiveWeight,
     );
     final lineTotal = unitPrice * quantity;
     final sortedAttrs = [...selectedAttrs]..sort();
-    final amountLabel = product.usesServiceControlStepper
+    final normalizedSizeName = selectedSizeName?.trim() ?? '';
+    final amountLabel = normalizedSizeName.isNotEmpty
+        ? normalizedSizeName
+        : product.usesServiceControlStepper
         ? ProductPriceCalculator.formatServiceAmountLabel(
             type: product.resolvedServiceControlType,
             amount: effectiveServiceAmount,
@@ -5805,6 +6272,10 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       'quantity': quantity,
       'gramaj': amountLabel,
       'amountLabel': amountLabel,
+      'selectedSizeName': normalizedSizeName.isEmpty
+          ? null
+          : normalizedSizeName,
+      'selectedSizePrice': normalizedSizeName.isEmpty ? null : unitPrice,
       'serviceControlType': product.resolvedServiceControlType.storageValue,
       'selectedServiceAmount': effectiveServiceAmount,
       'selectedWeightGrams': effectiveWeight,
@@ -5825,6 +6296,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       selectedWeightGrams: (existing?['selectedWeightGrams'] as num?)?.toInt(),
       selectedServiceAmount: (existing?['selectedServiceAmount'] as num?)
           ?.toDouble(),
+      selectedSizeName: existing?['selectedSizeName']?.toString(),
       selectedAttrs:
           (existing?['selectedAttrs'] as List?)?.cast<String>() ??
           const <String>[],
@@ -5846,6 +6318,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
             ?.toInt(),
         selectedServiceAmount: (existing?['selectedServiceAmount'] as num?)
             ?.toDouble(),
+        selectedSizeName: existing?['selectedSizeName']?.toString(),
       );
     });
   }
@@ -6359,6 +6832,9 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     int selectedWeightGrams =
         (existing?['selectedWeightGrams'] as num?)?.toInt() ??
         product.resolvedDefaultWeightGrams;
+    String? selectedSizeName =
+        existing?['selectedSizeName']?.toString() ??
+        product.defaultSizeOption?.name;
     final notesCtrl = TextEditingController(text: existing?['notes'] ?? '');
     final productAttrs = product.attributes ?? [];
     final selectedAttrs = <String>{
@@ -6377,8 +6853,12 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                 ProductPriceCalculator.resolveServiceControlledUnitPrice(
                   serviceControlType: product.resolvedServiceControlType,
                   pricingType: product.resolvedPricingType,
+                  pricingMode: product.resolvedPricingMode,
+                  basePrice: product.basePrice ?? product.portionPrice,
                   portionPrice: product.portionPrice,
                   pricePerKg: product.effectivePricePerKg,
+                  sizeOptions: product.normalizedSizeOptions,
+                  selectedSizeName: selectedSizeName,
                   fallbackPrice: product.effectivePortionPrice,
                   selectedAmount: product.usesPortionLikeStepper
                       ? selectedServiceAmount
@@ -6440,14 +6920,64 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                                   ),
                                 ),
                                 const SizedBox(height: 6),
-                                Text(
-                                  product.displayPricingText,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.grey.shade600,
-                                  ),
+                                Row(
+                                  children: [
+                                    Text(
+                                      'Secilen fiyat',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      ProductPriceCalculator.formatCurrency(
+                                        resolvedUnitPrice,
+                                      ),
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                  ],
                                 ),
+                                if (product.hasSizeOptions) ...[
+                                  const SizedBox(height: 22),
+                                  const Text(
+                                    'Boyut',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: product.normalizedSizeOptions
+                                        .map((option) {
+                                          final isSelected =
+                                              selectedSizeName
+                                                  ?.trim()
+                                                  .toLowerCase() ==
+                                              option.name.trim().toLowerCase();
+                                          return ChoiceChip(
+                                            label: Text(
+                                              '${option.name} · ${ProductPriceCalculator.formatCurrency(option.price)}',
+                                            ),
+                                            selected: isSelected,
+                                            onSelected: (_) {
+                                              setSheet(() {
+                                                selectedSizeName = option.name;
+                                              });
+                                            },
+                                          );
+                                        })
+                                        .toList(growable: false),
+                                  ),
+                                ],
                                 if (product.usesWeightSelector) ...[
                                   const SizedBox(height: 14),
                                   Wrap(
@@ -6634,6 +7164,31 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                                     },
                                   ),
                                 ],
+                                const SizedBox(height: 18),
+                                const Text(
+                                  'Açıklama / Not (isteğe bağlı)',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                TextField(
+                                  controller: notesCtrl,
+                                  minLines: 2,
+                                  maxLines: 4,
+                                  textInputAction: TextInputAction.newline,
+                                  decoration: InputDecoration(
+                                    hintText: 'Örn: Az tuzlu, yanında ketçap',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 12,
+                                    ),
+                                  ),
+                                ),
                                 if (productAttrs.isNotEmpty) ...[
                                   const SizedBox(height: 22),
                                   const Text(
@@ -6708,31 +7263,6 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                                     }).toList(),
                                   ),
                                 ],
-                                const SizedBox(height: 18),
-                                const Text(
-                                  'Açıklama / Not (isteğe bağlı)',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                TextField(
-                                  controller: notesCtrl,
-                                  minLines: 2,
-                                  maxLines: 4,
-                                  textInputAction: TextInputAction.newline,
-                                  decoration: InputDecoration(
-                                    hintText: 'Örn: Az tuzlu, yanında ketçap',
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 12,
-                                    ),
-                                  ),
-                                ),
                               ],
                             ),
                           ),
@@ -6804,6 +7334,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                                               product.usesPortionLikeStepper
                                               ? selectedServiceAmount
                                               : null,
+                                          selectedSizeName: selectedSizeName,
                                           selectedAttrs: attrs,
                                           notes: trimmedNotes,
                                         );
@@ -6820,6 +7351,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                                               product.usesPortionLikeStepper
                                               ? selectedServiceAmount
                                               : null,
+                                          selectedSizeName: selectedSizeName,
                                         );
                                         Navigator.pop(sheetCtx);
                                         setState(() {
@@ -7037,6 +7569,144 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     });
   }
 
+  Future<bool> _ensureCustomerLoggedIn() async {
+    if (Supabase.instance.client.auth.currentUser != null) return true;
+    if (!mounted) return false;
+    final emailController = TextEditingController();
+    final passwordController = TextEditingController();
+    var signingIn = false;
+    String? errorText;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: const Text('Garsona göndermek için giriş'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Doğrulanmamış QR güvenlik modunda seçimleriniz '
+                      'garson onayından sonra işlenir. Devam için oturum açın.',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'E-posta',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Şifre',
+                      ),
+                    ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: signingIn
+                      ? null
+                      : () => Navigator.pop(dialogCtx, false),
+                  child: const Text('Vazgeç'),
+                ),
+                FilledButton(
+                  onPressed: signingIn
+                      ? null
+                      : () async {
+                          setLocal(() {
+                            signingIn = true;
+                            errorText = null;
+                          });
+                          try {
+                            await Supabase.instance.client.auth
+                                .signInWithPassword(
+                              email: emailController.text.trim(),
+                              password: passwordController.text,
+                            );
+                            if (dialogCtx.mounted) {
+                              Navigator.pop(dialogCtx, true);
+                            }
+                          } on AuthException catch (e) {
+                            setLocal(() {
+                              signingIn = false;
+                              errorText = e.message;
+                            });
+                          } catch (e) {
+                            setLocal(() {
+                              signingIn = false;
+                              errorText = e.toString();
+                            });
+                          }
+                        },
+                  child: signingIn
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Giriş yap'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    emailController.dispose();
+    passwordController.dispose();
+    return ok == true && Supabase.instance.client.auth.currentUser != null;
+  }
+
+  Future<void> _submitWaiterRequestToKitchen({
+    required List<Map<String, dynamic>> items,
+    String? customerNotes,
+  }) async {
+    if (!await _ensureCustomerLoggedIn()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Devam etmek için giriş yapın.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+    await _resolveSellerIdIfNeeded();
+    final sellerId = _resolvedSellerId;
+    if (sellerId == null || sellerId.isEmpty) {
+      throw Exception('Satıcı bulunamadı.');
+    }
+    await _waiterRequests.submitRequest(
+      sellerId: sellerId,
+      tableNumber: widget.tableNumber,
+      items: items,
+      customerNotes: customerNotes,
+      tableRow: widget.tableRow,
+    );
+  }
+
   Future<void> _callWaiter() async {
     if (_isCallingWaiter || _isSending) return;
     setState(() => _isCallingWaiter = true);
@@ -7054,6 +7724,30 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
         }
         return;
       }
+      if (widget.unverifiedQrTableFlow) {
+        await _submitWaiterRequestToKitchen(
+          items: const [
+            {
+              'name': 'Garson Çağrıldı',
+              'quantity': 1,
+              'price': 0.0,
+              'type': 'waiter_call',
+            },
+          ],
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'İstek garsona iletildi (onay bekliyor). Masa ${widget.tableNumber}.',
+              ),
+              backgroundColor: Colors.orange.shade800,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+        return;
+      }
       await _storeService.submitTableOrder(
         sellerId: sellerId,
         tableNumber: widget.tableNumber,
@@ -7066,6 +7760,8 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
           },
         ],
         status: 'call_waiter',
+        tableRow: widget.tableRow,
+        placementSource: 'customer',
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -7120,6 +7816,8 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
             'serviceControlType': v['serviceControlType'],
             'selectedServiceAmount': v['selectedServiceAmount'],
             'selectedWeightGrams': v['selectedWeightGrams'],
+            'selectedSizeName': v['selectedSizeName'],
+            'selectedSizePrice': v['selectedSizePrice'],
             'notes': v['notes'],
             'attributes': v['selectedAttrs'] ?? [],
             'unitPricingType': v['unitPricingType'],
@@ -7132,12 +7830,34 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
         ),
       ];
 
+      if (widget.unverifiedQrTableFlow) {
+        await _submitWaiterRequestToKitchen(items: items);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Seçiminiz garson onayına gönderildi. Masa ${widget.tableNumber}.',
+              ),
+              backgroundColor: Colors.teal.shade800,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+          Navigator.pop(context);
+        }
+        return;
+      }
+
       final inserted = await StoreService().submitTableOrder(
         sellerId: sellerId,
         tableNumber: widget.tableNumber,
         items: items,
+        tableRow: widget.tableRow,
+        placementSource: 'customer',
       );
       debugPrint('[Order] _sendOrder success — orderId=${inserted["id"]}');
+
+      // Mutfak fişi müşteri gönderiminde tetiklenmez; garson panelinde
+      // Garson "Siparişi Gönder" ile OrderPrintJobService.dispatchNewOrderFromTableOrder çalışır.
 
       final orderId =
           inserted['id']?.toString() ??
@@ -7159,22 +7879,17 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
       debugPrint('[Order] addFoodOrder complete — orderId=$orderId');
 
       if (mounted) {
-        // Capture ScaffoldMessenger BEFORE Navigator.pop so we can show the
-        // snackbar even after the dialog's own context is deactivated.
-        // (Using the dialog's context after pop is technically undefined
-        // behaviour and occasionally fails in debug builds.)
-        final messenger = ScaffoldMessenger.of(context);
-        Navigator.pop(context);
-        debugPrint('[Order] dialog popped — returning to BusinessDetailPage');
-        messenger.showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Masa ${widget.tableNumber} siparişiniz gönderildi! Garson kısa sürede gelecek.',
+              'Siparişiniz masaya iletildi. Mutfak fişi garson onayından sonra yazdırılır.',
             ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 4),
+            behavior: SnackBarBehavior.floating,
           ),
         );
+        Navigator.pop(context);
+        debugPrint('[Order] dialog popped — returning to BusinessDetailPage');
         debugPrint('[Order] post-order rebuild complete');
       }
     } catch (e) {
@@ -7251,7 +7966,9 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Masa ${widget.tableNumber}',
+                          widget.unverifiedQrTableFlow
+                              ? 'Menü önizleme — Masa ${widget.tableNumber}'
+                              : 'Masa ${widget.tableNumber}',
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w900,
@@ -7269,6 +7986,32 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
+                        if (widget.unverifiedQrTableFlow) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.22),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.35),
+                              ),
+                            ),
+                            child: const Text(
+                              'QR doğrulanamadı. Doğrudan sipariş kapalı; '
+                              'seçimleriniz garson onayından sonra işleme alınır.',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                                height: 1.25,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -7574,6 +8317,8 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                       label: Text(
                         _isCallingWaiter
                             ? 'Garson çağrılıyor...'
+                            : widget.unverifiedQrTableFlow
+                            ? 'Garson Çağır (onay bekler)'
                             : 'Garson Çağır',
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
@@ -7601,12 +8346,21 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Icon(Icons.send_rounded, size: 19),
+                          : Icon(
+                              widget.unverifiedQrTableFlow
+                                  ? Icons.support_agent_rounded
+                                  : Icons.send_rounded,
+                              size: 19,
+                            ),
                       label: Text(
                         _isSending
                             ? 'Gönderiliyor...'
                             : !hasAnyItems
-                            ? 'Menüden ürün seçin'
+                            ? widget.unverifiedQrTableFlow
+                                  ? 'Ürün seçin veya garson çağırın'
+                                  : 'Menüden ürün seçin'
+                            : widget.unverifiedQrTableFlow
+                            ? 'Garsona gönder (onay bekler) · ₺${_totalPrice().toStringAsFixed(0)}'
                             : _totalPrice() > 0
                             ? 'Masa ${widget.tableNumber} — Sipariş Ver · ₺${_totalPrice().toStringAsFixed(0)}'
                             : 'Masa ${widget.tableNumber} — Sipariş Ver',

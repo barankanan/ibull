@@ -53,7 +53,7 @@ class _KitchenDisplayScreenState extends State<KitchenDisplayScreen> {
         return const Color(0xFFEF4444); // red — urgent
       case 'sent':
       case 'kitchen':
-        return const Color(0xFFF97316); // orange — in queue
+        return const Color(0xFF16A34A); // green — mutfağa iletildi
       case 'preparing':
         return const Color(0xFFF59E0B); // amber — cooking
       case 'ready':

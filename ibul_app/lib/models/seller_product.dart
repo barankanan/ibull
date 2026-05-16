@@ -11,9 +11,14 @@ class SellerProduct {
   final String mainCategory;
   final String subCategory;
   final double price;
+  final String pricingMode;
+  final double? basePrice;
   final String pricingType;
   final double? portionPrice;
   final double? pricePerKg;
+  final List<ProductSizeOption> sizeOptions;
+  final String? selectedSizeName;
+  final double? selectedSizePrice;
   final String? serviceControlType;
   final double? minPortion;
   final double? maxPortion;
@@ -58,9 +63,14 @@ class SellerProduct {
     required this.mainCategory,
     required this.subCategory,
     required this.price,
+    this.pricingMode = 'base_only',
+    this.basePrice,
     this.pricingType = 'portion',
     this.portionPrice,
     this.pricePerKg,
+    this.sizeOptions = const <ProductSizeOption>[],
+    this.selectedSizeName,
+    this.selectedSizePrice,
     this.serviceControlType,
     this.minPortion,
     this.maxPortion,
@@ -100,7 +110,11 @@ class SellerProduct {
   });
 
   String get displayPrice {
-    if (isWeightPriced) {
+    final defaultSize = defaultSizeOption;
+    if (defaultSize != null && effectiveBaseUnitPrice <= 0 && !isWeightPriced) {
+      return ProductPriceCalculator.formatCurrency(defaultSize.price);
+    }
+    if (isWeightPriced && !hasSizeOptions) {
       return ProductPriceCalculator.formatPerKgLabel(pricePerKg);
     }
     if (discountPrice != null && discountPrice! > 0) {
@@ -108,6 +122,14 @@ class SellerProduct {
     }
     return '₺${price.toStringAsFixed(0)}';
   }
+
+  ProductPricingMode get resolvedPricingMode =>
+      ProductPriceCalculator.resolvePricingMode(
+        explicitMode: pricingMode,
+        basePrice: effectiveBaseUnitPrice,
+        pricePerKg: pricePerKg,
+        sizeOptions: sizeOptions,
+      );
 
   ProductPricingType get resolvedPricingType =>
       ProductPricingType.fromValue(pricingType);
@@ -131,14 +153,27 @@ class SellerProduct {
   bool get usesPortionLikeStepper =>
       ProductPriceCalculator.usesPortionLikeStepper(resolvedServiceControlType);
 
-  bool get isWeightPriced => ProductPriceCalculator.supportsWeightPricing(
-    pricingType: resolvedPricingType,
-    pricePerKg: pricePerKg,
-  );
+  bool get hasWeightPricing =>
+      ProductPriceCalculator.sanitizePrice(pricePerKg) > 0;
+
+  bool get hasSizeOptions => normalizedSizeOptions.isNotEmpty;
+
+  List<ProductSizeOption> get normalizedSizeOptions =>
+      ProductPriceCalculator.normalizeSizeOptions(sizeOptions);
+
+  ProductSizeOption? get defaultSizeOption =>
+      ProductPriceCalculator.defaultSizeOption(normalizedSizeOptions);
+
+  bool get isWeightPriced => hasWeightPricing;
 
   double get effectiveBaseUnitPrice {
-    final direct = ProductPriceCalculator.sanitizePrice(portionPrice);
+    final direct = ProductPriceCalculator.sanitizePrice(basePrice);
     if (direct > 0) return direct;
+    final portionDirect = ProductPriceCalculator.sanitizePrice(portionPrice);
+    if (portionDirect > 0) return portionDirect;
+    if (hasSizeOptions && !hasWeightPricing) {
+      return ProductPriceCalculator.sanitizePrice(defaultSizeOption?.price);
+    }
     return ProductPriceCalculator.sanitizePrice(price);
   }
 
@@ -215,9 +250,14 @@ class SellerProduct {
       'mainCategory': mainCategory,
       'subCategory': subCategory,
       'price': price,
+      'pricingMode': pricingMode,
+      'basePrice': basePrice,
       'pricingType': pricingType,
       'portionPrice': portionPrice,
       'pricePerKg': pricePerKg,
+      'sizeOptions': sizeOptions.map((option) => option.toJson()).toList(),
+      'selectedSizeName': selectedSizeName,
+      'selectedSizePrice': selectedSizePrice,
       'serviceControlType': serviceControlType,
       'minPortion': minPortion,
       'maxPortion': maxPortion,
@@ -293,6 +333,27 @@ class SellerProduct {
           map['main_category'] ?? map['mainCategory'] ?? map['category'] ?? '',
       subCategory: map['sub_category'] ?? map['subCategory'] ?? '',
       price: (map['price'] ?? 0).toDouble(),
+        pricingMode:
+          map['pricing_mode']?.toString() ??
+          map['pricingMode']?.toString() ??
+          ProductPriceCalculator.resolvePricingMode(
+          basePrice:
+            (map['base_price'] as num?)?.toDouble() ??
+            (map['basePrice'] as num?)?.toDouble() ??
+            (map['portion_price'] as num?)?.toDouble() ??
+            (map['portionPrice'] as num?)?.toDouble(),
+          pricePerKg:
+            (map['price_per_kg'] as num?)?.toDouble() ??
+            (map['pricePerKg'] as num?)?.toDouble(),
+          sizeOptions: ProductSizeOption.listFromDynamic(
+            map['size_options'] ?? map['sizeOptions'],
+          ),
+          ).storageValue,
+        basePrice:
+          (map['base_price'] as num?)?.toDouble() ??
+          (map['basePrice'] as num?)?.toDouble() ??
+          (map['portion_price'] as num?)?.toDouble() ??
+          (map['portionPrice'] as num?)?.toDouble(),
       pricingType:
           map['pricing_type']?.toString() ??
           map['pricingType']?.toString() ??
@@ -304,6 +365,15 @@ class SellerProduct {
       pricePerKg:
           (map['price_per_kg'] as num?)?.toDouble() ??
           (map['pricePerKg'] as num?)?.toDouble(),
+        sizeOptions: ProductSizeOption.listFromDynamic(
+        map['size_options'] ?? map['sizeOptions'],
+        ),
+        selectedSizeName:
+          map['selected_size_name']?.toString() ??
+          map['selectedSizeName']?.toString(),
+        selectedSizePrice:
+          (map['selected_size_price'] as num?)?.toDouble() ??
+          (map['selectedSizePrice'] as num?)?.toDouble(),
       serviceControlType:
           map['service_control_type']?.toString() ??
           map['serviceControlType']?.toString(),

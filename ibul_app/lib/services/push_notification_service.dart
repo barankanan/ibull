@@ -45,6 +45,29 @@ class PushNotificationService {
     );
   }
 
+  /// Firebase/APNS yapılandırması eksik olsa bile uygulama akışını bozmaz.
+  static String friendlyErrorMessage(Object error) {
+    final raw = error.toString();
+    if (raw.contains('dart-define') ||
+        raw.contains('APNS') ||
+        raw.contains('Bad state') ||
+        raw.contains('Firebase')) {
+      return 'Bildirim izni şu anda tamamlanamadı. Lütfen daha sonra tekrar deneyin.';
+    }
+    return 'Bildirim izni şu anda tamamlanamadı. Lütfen daha sonra tekrar deneyin.';
+  }
+
+  Future<String?> getFcmTokenSafely() async {
+    if (kIsWeb) return null;
+    try {
+      await _ensureFirebaseReady();
+      return await _messagingClient.getToken();
+    } catch (error) {
+      debugPrint('FCM token unavailable: $error');
+      return null;
+    }
+  }
+
   Future<void> initialize({
     required GlobalKey<NavigatorState> navigatorKey,
   }) async {
@@ -285,27 +308,37 @@ class PushNotificationService {
   }) async {
     if (kIsWeb) return false;
 
-    await _ensureFirebaseReady();
-    await _initializeLocalNotifications();
-
-    if (defaultTargetPlatform == TargetPlatform.iOS) {
-      var settings = await _messagingClient.getNotificationSettings();
-      if (_isNotificationAuthorized(settings)) {
-        return true;
-      }
-      if (!promptIfNeeded) {
-        return false;
-      }
-
-      settings = await _messagingClient.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-      return _isNotificationAuthorized(settings);
+    try {
+      await _ensureFirebaseReady();
+      await _initializeLocalNotifications();
+    } catch (error) {
+      debugPrint('Notification init skipped: $error');
+      return false;
     }
 
-    return true;
+    try {
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        var settings = await _messagingClient.getNotificationSettings();
+        if (_isNotificationAuthorized(settings)) {
+          return true;
+        }
+        if (!promptIfNeeded) {
+          return false;
+        }
+
+        settings = await _messagingClient.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+        return _isNotificationAuthorized(settings);
+      }
+
+      return true;
+    } catch (error) {
+      debugPrint('Notification permission failed: $error');
+      return false;
+    }
   }
 
   Future<bool> showNearbyStoreNotification({

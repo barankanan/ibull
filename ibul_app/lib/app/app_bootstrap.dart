@@ -15,6 +15,7 @@ import '../core/providers/cart_provider.dart';
 import '../core/providers/connectivity_provider.dart';
 import '../core/review_state.dart';
 import '../screens/home_screen.dart';
+import '../services/desktop_print_hub.dart';
 
 Future<void> initializeAppSupabase() async {
   final rawUrl = AppRuntimeConfig.rawSupabaseUrl.trim();
@@ -77,6 +78,7 @@ List<SingleChildWidget> buildAppProviders() {
     ChangeNotifierProvider(create: (_) => AppState()),
     ChangeNotifierProvider(create: (_) => CartProvider()),
     ChangeNotifierProvider(create: (_) => ConnectivityProvider()),
+    ChangeNotifierProvider(create: (_) => DesktopPrintHub()),
   ];
 }
 

@@ -14,4 +14,24 @@ class BrowserFileDownload {
     required String title,
     required String htmlBody,
   }) {}
+
+  static void openExternalUrl(String url) {
+    final normalized = url.trim();
+    if (normalized.isEmpty) return;
+    final uri = Uri.tryParse(normalized);
+    if (uri == null || !uri.hasScheme) return;
+    try {
+      if (Platform.isMacOS) {
+        Process.run('open', [normalized]);
+        return;
+      }
+      if (Platform.isWindows) {
+        Process.run('cmd', ['/c', 'start', '', normalized]);
+        return;
+      }
+      if (Platform.isLinux) {
+        Process.run('xdg-open', [normalized]);
+      }
+    } catch (_) {}
+  }
 }

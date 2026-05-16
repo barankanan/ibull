@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'product_pricing.dart';
+
 class DBProduct {
   final String? id;
   final String? sellerId;
@@ -7,9 +9,14 @@ class DBProduct {
   final String brand;
   final String? store; // Mağaza adı
   final String price;
+  final String pricingMode;
+  final double? basePrice;
   final String pricingType;
   final double? portionPrice;
   final double? pricePerKg;
+  final List<ProductSizeOption> sizeOptions;
+  final String? selectedSizeName;
+  final double? selectedSizePrice;
   final String? serviceControlType;
   final double? minPortion;
   final double? maxPortion;
@@ -58,9 +65,14 @@ class DBProduct {
     required this.brand,
     this.store,
     required this.price,
+    this.pricingMode = 'base_only',
+    this.basePrice,
     this.pricingType = 'portion',
     this.portionPrice,
     this.pricePerKg,
+    this.sizeOptions = const <ProductSizeOption>[],
+    this.selectedSizeName,
+    this.selectedSizePrice,
     this.serviceControlType,
     this.minPortion,
     this.maxPortion,
@@ -108,9 +120,14 @@ class DBProduct {
       'brand': brand,
       'store': store,
       'price': price,
+      'pricingMode': pricingMode,
+      'basePrice': basePrice,
       'pricingType': pricingType,
       'portionPrice': portionPrice,
       'pricePerKg': pricePerKg,
+      'sizeOptions': sizeOptions.map((option) => option.toJson()).toList(),
+      'selectedSizeName': selectedSizeName,
+      'selectedSizePrice': selectedSizePrice,
       'serviceControlType': serviceControlType,
       'minPortion': minPortion,
       'maxPortion': maxPortion,
@@ -161,6 +178,27 @@ class DBProduct {
       brand: map['brand'] as String,
       store: map['store'] as String?,
       price: map['price'] as String,
+        pricingMode:
+          map['pricing_mode']?.toString() ??
+          map['pricingMode']?.toString() ??
+          ProductPriceCalculator.resolvePricingMode(
+          basePrice:
+            (map['base_price'] as num?)?.toDouble() ??
+            (map['basePrice'] as num?)?.toDouble() ??
+            (map['portion_price'] as num?)?.toDouble() ??
+            (map['portionPrice'] as num?)?.toDouble(),
+          pricePerKg:
+            (map['price_per_kg'] as num?)?.toDouble() ??
+            (map['pricePerKg'] as num?)?.toDouble(),
+          sizeOptions: ProductSizeOption.listFromDynamic(
+            map['size_options'] ?? map['sizeOptions'],
+          ),
+          ).storageValue,
+        basePrice:
+          (map['base_price'] as num?)?.toDouble() ??
+          (map['basePrice'] as num?)?.toDouble() ??
+          (map['portion_price'] as num?)?.toDouble() ??
+          (map['portionPrice'] as num?)?.toDouble(),
       pricingType:
           map['pricing_type']?.toString() ??
           map['pricingType']?.toString() ??
@@ -171,6 +209,15 @@ class DBProduct {
       pricePerKg:
           (map['price_per_kg'] as num?)?.toDouble() ??
           (map['pricePerKg'] as num?)?.toDouble(),
+        sizeOptions: ProductSizeOption.listFromDynamic(
+        map['size_options'] ?? map['sizeOptions'],
+        ),
+        selectedSizeName:
+          map['selected_size_name']?.toString() ??
+          map['selectedSizeName']?.toString(),
+        selectedSizePrice:
+          (map['selected_size_price'] as num?)?.toDouble() ??
+          (map['selectedSizePrice'] as num?)?.toDouble(),
       serviceControlType:
           map['service_control_type']?.toString() ??
           map['serviceControlType']?.toString(),
@@ -237,9 +284,14 @@ class DBProduct {
     String? brand,
     String? store,
     String? price,
+    String? pricingMode,
+    double? basePrice,
     String? pricingType,
     double? portionPrice,
     double? pricePerKg,
+    List<ProductSizeOption>? sizeOptions,
+    String? selectedSizeName,
+    double? selectedSizePrice,
     String? serviceControlType,
     double? minPortion,
     double? maxPortion,
@@ -284,9 +336,14 @@ class DBProduct {
       brand: brand ?? this.brand,
       store: store ?? this.store,
       price: price ?? this.price,
+      pricingMode: pricingMode ?? this.pricingMode,
+      basePrice: basePrice ?? this.basePrice,
       pricingType: pricingType ?? this.pricingType,
       portionPrice: portionPrice ?? this.portionPrice,
       pricePerKg: pricePerKg ?? this.pricePerKg,
+      sizeOptions: sizeOptions ?? this.sizeOptions,
+      selectedSizeName: selectedSizeName ?? this.selectedSizeName,
+      selectedSizePrice: selectedSizePrice ?? this.selectedSizePrice,
       serviceControlType: serviceControlType ?? this.serviceControlType,
       minPortion: minPortion ?? this.minPortion,
       maxPortion: maxPortion ?? this.maxPortion,

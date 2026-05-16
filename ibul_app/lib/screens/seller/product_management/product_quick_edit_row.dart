@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../utils/pick_image_file.dart';
 import '../../../utils/xfile_image_provider.dart';
 import '../../../widgets/optimized_image.dart';
 import 'product_quick_edit_models.dart';
@@ -37,7 +38,6 @@ class ProductQuickEditRow extends StatefulWidget {
 }
 
 class _ProductQuickEditRowState extends State<ProductQuickEditRow> {
-  final ImagePicker _picker = ImagePicker();
   late final TextEditingController _nameController;
   late final TextEditingController _priceController;
   late final TextEditingController _stockController;
@@ -93,13 +93,13 @@ class _ProductQuickEditRowState extends State<ProductQuickEditRow> {
   Future<void> _pickImage() async {
     if (widget.draft.isSaving) return;
     try {
-      final XFile? image = await _picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1080,
-        maxHeight: 1080,
-        imageQuality: 70,
+      final picked = await pickImageFile();
+      if (picked == null) return;
+      final XFile image = XFile.fromData(
+        picked.bytes,
+        name: picked.name,
+        mimeType: 'image/jpeg',
       );
-      if (image == null) return;
       widget.onChanged(
         widget.draft.copyWith(
           selectedImageFile: image,

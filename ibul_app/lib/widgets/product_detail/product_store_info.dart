@@ -40,7 +40,7 @@ class ProductStoreInfo extends StatelessWidget {
       'name': storeName,
       'logo': 'assets/images/teknosa_logo.png', // Placeholder or use helper
       'rating': '9.0',
-      'followers': '10B+',
+      'followers': '',
       'verified': true,
     };
 

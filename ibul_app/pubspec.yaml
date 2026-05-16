@@ -46,6 +46,7 @@ dependencies:
   path_provider: ^2.1.1
   http: ^1.1.0
   image_picker: ^1.2.1
+  file_picker: ^8.3.2
   image: ^4.7.2
   provider: ^6.1.5+1
   speech_to_text: ^7.3.0
@@ -117,12 +118,12 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icons/ibul_logo_2.png"
+  image_path: "assets/icons/ibul logo app.png"
   remove_alpha_ios: true
   min_sdk_android: 21
   web:
     generate: true
-    image_path: "assets/icons/ibul_logo_2.png"
+    image_path: "assets/icons/ibul logo app.png"
     background_color: "#ffffff"
     theme_color: "#ffffff"
 

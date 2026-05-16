@@ -129,7 +129,7 @@ create table if not exists public.print_jobs (
   station_id uuid references public.stations(id) on delete set null,
   printer_id uuid references public.printers(id) on delete set null,
   job_type text not null check (job_type in ('new_order', 'add_item', 'cancel_item', 'reprint')),
-  status text not null default 'pending' check (status in ('pending', 'printing', 'printed', 'failed')),
+  status text not null default 'pending' check (status in ('pending', 'claimed', 'printing', 'completed', 'failed')),
   payload jsonb not null default '{}'::jsonb,
   retry_count integer not null default 0 check (retry_count >= 0),
   last_error text,
@@ -434,7 +434,18 @@ begin
   end if;
 
   if auth.uid() <> p_restaurant_id then
-    raise exception 'Bu restoran için işlem yetkiniz yok.' using errcode = '42501';
+    -- Allow active waiter/sub-admin accounts for this restaurant.
+    if not exists (
+      select 1
+      from public.store_sub_admins sa
+      join public.users u
+        on lower(trim(u.email)) = lower(trim(sa.email))
+      where sa.store_id = p_restaurant_id
+        and u.id         = auth.uid()
+        and sa.status    = 'active'
+    ) then
+      raise exception 'Bu restoran için işlem yetkiniz yok.' using errcode = '42501';
+    end if;
   end if;
 
   if p_items is null
@@ -521,19 +532,19 @@ begin
   for v_item in
     select value from jsonb_array_elements(p_items)
   loop
-    v_item_product_id := nullif(trim(coalesce(v_item ->> 'product_id', '')), '');
-    v_item_name := coalesce(nullif(trim(coalesce(v_item ->> 'name', '')), ''), 'Ürün');
-    v_item_note := nullif(trim(coalesce(v_item ->> 'notes', '')), '');
+    v_item_product_id := nullif(trim(coalesce(v_item.value ->> 'product_id', '')), '');
+    v_item_name := coalesce(nullif(trim(coalesce(v_item.value ->> 'name', '')), ''), 'Ürün');
+    v_item_note := nullif(trim(coalesce(v_item.value ->> 'notes', '')), '');
 
     v_item_qty := greatest(
-      coalesce(nullif(regexp_replace(coalesce(v_item ->> 'quantity', '1'), '[^0-9]', '', 'g'), '')::integer, 1),
+      coalesce(nullif(regexp_replace(coalesce(v_item.value ->> 'quantity', '1'), '[^0-9]', '', 'g'), '')::integer, 1),
       1
     );
 
-    if (v_item ? 'price') and jsonb_typeof(v_item -> 'price') = 'number' then
-      v_item_unit_price := coalesce((v_item ->> 'price')::numeric, 0);
+    if (v_item.value ? 'price') and jsonb_typeof(v_item.value -> 'price') = 'number' then
+      v_item_unit_price := coalesce((v_item.value ->> 'price')::numeric, 0);
     else
-      v_item_unit_price := public.parse_price_numeric(v_item ->> 'price');
+      v_item_unit_price := public.parse_price_numeric(v_item.value ->> 'price');
     end if;
 
     select
@@ -555,7 +566,7 @@ begin
       v_item_product_id := coalesce(v_item_product_id, v_product.product_id_text);
       v_item_name := coalesce(nullif(v_item_name, 'Ürün'), v_product.name, v_item_name);
       v_item_station_id := coalesce(
-        public.try_uuid(v_item ->> 'station_id'),
+        public.try_uuid(v_item.value ->> 'station_id'),
         v_product.station_id
       );
       v_item_routing_enabled := v_product.routing_enabled;
@@ -563,7 +574,7 @@ begin
         v_item_unit_price := coalesce(v_product.fallback_price, 0);
       end if;
     else
-      v_item_station_id := public.try_uuid(v_item ->> 'station_id');
+      v_item_station_id := public.try_uuid(v_item.value ->> 'station_id');
       v_item_routing_enabled := true;
     end if;
 
@@ -659,6 +670,19 @@ begin
       v_printer_port := null;
       v_printer_device_identifier := null;
       v_printer_paper_width_mm := null;
+      -- Skip the null-station "Genel" print job when the order has at least
+      -- one item assigned to a named station.  Every routed item already goes
+      -- to its own station ticket; a duplicate Genel ticket would only add
+      -- noise.  When NO items have a station (station-free restaurants) the
+      -- check evaluates to false and the single Genel ticket is kept.
+      if exists (
+        select 1
+        from public.order_items oi2
+        where oi2.order_id = v_order_id
+          and oi2.station_id is not null
+      ) then
+        continue;
+      end if;
     end if;
 
     select coalesce(
@@ -668,7 +692,31 @@ begin
           'product_name', oi.product_name,
           'quantity', oi.quantity,
           'item_note', oi.item_note,
-          'unit_price', oi.unit_price
+          'unit_price', oi.unit_price,
+          -- Persist structured display data from the incoming p_items payload
+          -- so that reprints (which have no sourceItems) can still render
+          -- plates, service_children and gramaj correctly.
+          'amount_label', coalesce((
+            select elem ->> 'amount_label'
+            from jsonb_array_elements(p_items) elem
+            where (elem ->> 'product_id') = oi.product_id::text
+               or lower(elem ->> 'name') = lower(oi.product_name)
+            limit 1
+          ), ''),
+          'plates', coalesce((
+            select elem -> 'plates'
+            from jsonb_array_elements(p_items) elem
+            where (elem ->> 'product_id') = oi.product_id::text
+               or lower(elem ->> 'name') = lower(oi.product_name)
+            limit 1
+          ), '[]'::jsonb),
+          'service_children', coalesce((
+            select elem -> 'service_children'
+            from jsonb_array_elements(p_items) elem
+            where (elem ->> 'product_id') = oi.product_id::text
+               or lower(elem ->> 'name') = lower(oi.product_name)
+            limit 1
+          ), '[]'::jsonb)
         )
         order by oi.created_at asc
       ),

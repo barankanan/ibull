@@ -321,6 +321,12 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
           initialTableCount,
         ),
         note: child['note']?.toString() ?? '',
+        selectedAttrs: (child['attributes'] as List?)
+                ?.whereType<String>()
+                .where((s) => s.trim().isNotEmpty)
+                .map((s) => s.trim())
+                .toList() ??
+            const <String>[],
       );
       _localRowSeed += 1;
     }
@@ -527,6 +533,7 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
     int? selectedWeightGrams,
     int? serviceRound,
     String? note,
+    List<String>? selectedAttrs,
   }) {
     final current = _selectionDraftForProduct(product);
     final next = current.copyWith(
@@ -535,6 +542,7 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
       selectedWeightGrams: selectedWeightGrams ?? current.selectedWeightGrams,
       serviceRound: serviceRound ?? current.serviceRound,
       note: note ?? current.note,
+      selectedAttrs: selectedAttrs ?? current.selectedAttrs,
     );
     setState(() {
       // When the user changes the plate selector for an already-added item,
@@ -644,6 +652,331 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
     _updateSelectionDraft(product, serviceRound: serviceRound, note: note);
   }
 
+  Future<void> _openCustomizePopup(
+    SellerProduct product,
+    _SelectedChildDraft draft, {
+    String? selectedLocalRowId,
+  }) async {
+    if (!mounted) return;
+
+    final type = product.resolvedServiceControlType;
+    final isWeight =
+        type == ProductServiceControlType.weightStepper ||
+        product.resolvedPricingType == ProductPricingType.weight;
+
+    var grams = (draft.selectedWeightGrams ?? product.resolvedDefaultWeightGrams);
+    grams = ProductPriceCalculator.clampWeightSelection(
+      grams,
+      minWeightGrams: product.minWeightGrams,
+      weightStepGrams: product.weightStepGrams,
+      maxWeightGrams: product.maxWeightGrams,
+    );
+    var amount = draft.selectedServiceAmount ?? product.resolvedDefaultServiceAmount;
+    amount = ProductPriceCalculator.clampPortionSelection(
+      amount,
+      type: product.resolvedServiceControlType,
+      minPortion: product.minPortion,
+      maxPortion: product.maxPortion,
+      portionStep: product.portionStep,
+    );
+    final selectedAttrs = <String>{...draft.selectedAttrs};
+    final noteController = TextEditingController(text: draft.note);
+
+    double resolveUnitPrice() {
+      return ProductPriceCalculator.resolveServiceControlledUnitPrice(
+        serviceControlType: product.resolvedServiceControlType,
+        pricingType: product.resolvedPricingType,
+        pricingMode: product.resolvedPricingMode,
+        basePrice: product.basePrice,
+        portionPrice: product.portionPrice,
+        pricePerKg: product.pricePerKg,
+        sizeOptions: product.normalizedSizeOptions,
+        selectedSizeName: product.selectedSizeName,
+        selectedSizePrice: product.selectedSizePrice,
+        fallbackPrice: product.price,
+        selectedAmount: amount,
+        selectedWeightGrams: grams,
+      );
+    }
+
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            final unitPrice = resolveUnitPrice();
+            final amountLabel = MixedServiceOrder.productAmountLabelForSelection(
+              product,
+              selectedServiceAmount: amount,
+              selectedWeightGrams: grams,
+            );
+            return SafeArea(
+              top: false,
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  16 + MediaQuery.of(ctx).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            product.name,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      '${ProductPriceCalculator.formatCurrency(unitPrice)}${amountLabel.trim().isEmpty ? '' : ' • $amountLabel'}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (product.usesServiceControlStepper || isWeight) ...[
+                      Text(
+                        isWeight ? 'Kilo Seçimi' : 'Porsiyon Seçimi',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          _StepperButton(
+                            buttonKey: ValueKey<String>(
+                              'mixed-service-popup-minus-${product.id}',
+                            ),
+                            icon: Icons.remove,
+                            onTap: () {
+                              setModalState(() {
+                                if (isWeight) {
+                                  grams = ProductPriceCalculator.clampWeightSelection(
+                                    grams - product.resolvedWeightStepGrams,
+                                    minWeightGrams: product.minWeightGrams,
+                                    weightStepGrams: product.weightStepGrams,
+                                    maxWeightGrams: product.maxWeightGrams,
+                                  );
+                                } else {
+                                  amount = ProductPriceCalculator.clampPortionSelection(
+                                    amount - product.resolvedPortionStepAmount,
+                                    type: product.resolvedServiceControlType,
+                                    minPortion: product.minPortion,
+                                    maxPortion: product.maxPortion,
+                                    portionStep: product.portionStep,
+                                  );
+                                }
+                              });
+                            },
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: const Color(0xFFE2E8F0),
+                                ),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                isWeight
+                                    ? ProductPriceCalculator.formatWeight(grams)
+                                    : ProductPriceCalculator.formatPortionLabel(amount),
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          _StepperButton(
+                            buttonKey: ValueKey<String>(
+                              'mixed-service-popup-plus-${product.id}',
+                            ),
+                            icon: Icons.add,
+                            onTap: () {
+                              setModalState(() {
+                                if (isWeight) {
+                                  grams = ProductPriceCalculator.clampWeightSelection(
+                                    grams + product.resolvedWeightStepGrams,
+                                    minWeightGrams: product.minWeightGrams,
+                                    weightStepGrams: product.weightStepGrams,
+                                    maxWeightGrams: product.maxWeightGrams,
+                                  );
+                                } else {
+                                  amount = ProductPriceCalculator.clampPortionSelection(
+                                    amount + product.resolvedPortionStepAmount,
+                                    type: product.resolvedServiceControlType,
+                                    minPortion: product.minPortion,
+                                    maxPortion: product.maxPortion,
+                                    portionStep: product.portionStep,
+                                  );
+                                }
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (product.attributes.isNotEmpty) ...[
+                      const Text(
+                        'Özellikler',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: product.attributes.map((attr) {
+                          final selected = selectedAttrs.contains(attr);
+                          return ChoiceChip(
+                            label: Text(attr),
+                            selected: selected,
+                            onSelected: (v) {
+                              setModalState(() {
+                                if (v) {
+                                  selectedAttrs.add(attr);
+                                } else {
+                                  selectedAttrs.remove(attr);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(growable: false),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    TextField(
+                      controller: noteController,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        labelText: 'Açıklama / Not (isteğe bağlı)',
+                        hintText: 'Örn: az yağlı, yanında ketçap',
+                        isDense: true,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: () {
+                          Navigator.of(ctx).pop(<String, dynamic>{
+                            'grams': grams,
+                            'amount': amount,
+                            'attrs': selectedAttrs.toList(growable: false),
+                            'note': noteController.text,
+                          });
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          minimumSize: const Size(0, 46),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Onayla',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    noteController.dispose();
+    if (result == null || !mounted) return;
+
+    // Persist selection to draft + any already-selected row.
+    final nextGrams = (result['grams'] as num?)?.toInt();
+    final nextAmount = (result['amount'] as num?)?.toDouble();
+    final nextNote = result['note']?.toString() ?? '';
+    final nextAttrs =
+        (result['attrs'] as List?)?.whereType<String>().toList() ??
+            const <String>[];
+
+    setState(() {
+      _updateSelectionDraft(
+        product,
+        selectedWeightGrams: nextGrams,
+        selectedServiceAmount: nextAmount,
+        note: nextNote,
+        selectedAttrs: nextAttrs,
+      );
+
+      // Update the already-selected row deterministically when possible.
+      final localRowId = (selectedLocalRowId ?? '').trim();
+      if (localRowId.isNotEmpty) {
+        final existing = _selectedItems[localRowId];
+        if (existing != null) {
+          _selectedItems[localRowId] = existing.copyWith(
+            selectedWeightGrams: nextGrams,
+            selectedServiceAmount: nextAmount,
+            note: nextNote,
+            selectedAttrs: nextAttrs,
+          );
+        }
+      } else {
+        // Fallback: attempt to match by draft signature.
+        final pendingDraft = (_tableCount > 0
+                ? _activeDraftForProduct(product)
+                : _selectionDraftForProduct(product))
+            .copyWith(productId: product.id);
+        final matched = _matchingSelectedRowForDraft(product, pendingDraft);
+        if (matched != null) {
+          _selectedItems[matched.localRowId] = matched.copyWith(
+            selectedWeightGrams: nextGrams,
+            selectedServiceAmount: nextAmount,
+            note: nextNote,
+            selectedAttrs: nextAttrs,
+          );
+        }
+      }
+    });
+  }
+
   List<Map<String, dynamic>> _childItemsForSubmit() {
     return _selectedItems.values
         .map((draft) {
@@ -656,6 +989,7 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
             selectedWeightGrams: draft.selectedWeightGrams,
             serviceRound: draft.serviceRound,
             note: draft.note.trim(),
+            attributes: draft.selectedAttrs,
             localRowId: draft.localRowId,
           );
         })
@@ -957,12 +1291,13 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
       'isHighlighted=$hasAnySelection',
     );
     final imageUrl = product.imageUrl?.trim() ?? '';
+    final effectiveDraft = selected ?? draft;
     final selectionSnapshot =
         MixedServiceOrder.childSelectionSnapshotForProduct(
           product,
           quantity: quantity > 0 ? quantity : 1,
-          selectedServiceAmount: draft.selectedServiceAmount,
-          selectedWeightGrams: draft.selectedWeightGrams,
+          selectedServiceAmount: effectiveDraft.selectedServiceAmount,
+          selectedWeightGrams: effectiveDraft.selectedWeightGrams,
         );
     final amountLabel =
         selectionSnapshot['selected_option_label']?.toString() ?? '';
@@ -1029,6 +1364,25 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
                     color: Color(0xFF64748B),
                   ),
                 ),
+                if (effectiveDraft.note.trim().isNotEmpty ||
+                    effectiveDraft.selectedAttrs.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    [
+                      if (effectiveDraft.selectedAttrs.isNotEmpty)
+                        effectiveDraft.selectedAttrs.join(', '),
+                      if (effectiveDraft.note.trim().isNotEmpty)
+                        'Not: ${effectiveDraft.note.trim()}',
+                    ].join(' • '),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF475569),
+                    ),
+                  ),
+                ],
                 if (_tableCount > 0 && quantity > 0) ...[
                   const SizedBox(height: 6),
                   Container(
@@ -1103,13 +1457,11 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
             child: OutlinedButton(
               key: ValueKey<String>('mixed-service-customize-${product.id}'),
               onPressed: () {
-                setState(() {
-                  if (isExpanded) {
-                    _expandedProductIds.remove(product.id);
-                  } else {
-                    _expandedProductIds.add(product.id);
-                  }
-                });
+                _openCustomizePopup(
+                  product,
+                  effectiveDraft,
+                  selectedLocalRowId: selected?.localRowId,
+                );
               },
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1875,6 +2227,7 @@ class _SelectedChildDraft {
     this.selectedWeightGrams,
     this.serviceRound = 1,
     this.note = '',
+    this.selectedAttrs = const <String>[],
   });
 
   final String localRowId;
@@ -1884,6 +2237,7 @@ class _SelectedChildDraft {
   final int? selectedWeightGrams;
   final int serviceRound;
   final String note;
+  final List<String> selectedAttrs;
 
   _SelectedChildDraft copyWith({
     String? localRowId,
@@ -1893,6 +2247,7 @@ class _SelectedChildDraft {
     int? selectedWeightGrams,
     int? serviceRound,
     String? note,
+    List<String>? selectedAttrs,
   }) {
     return _SelectedChildDraft(
       localRowId: localRowId ?? this.localRowId,
@@ -1903,6 +2258,7 @@ class _SelectedChildDraft {
       selectedWeightGrams: selectedWeightGrams ?? this.selectedWeightGrams,
       serviceRound: serviceRound ?? this.serviceRound,
       note: note ?? this.note,
+      selectedAttrs: selectedAttrs ?? this.selectedAttrs,
     );
   }
 }

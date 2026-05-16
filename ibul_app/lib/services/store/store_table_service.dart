@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/runtime_config.dart';
+import '../../utils/table_labels.dart';
 
 class StoreTableService {
   StoreTableService({
@@ -23,16 +24,36 @@ class StoreTableService {
     if (error is! PostgrestException) return false;
     final details = (error.details ?? '').toString().toLowerCase();
     final message = error.message.toLowerCase();
-    return error.code == 'PGRST205' ||
-        message.contains('store_tables') ||
-        details.contains('store_tables') ||
-        message.contains('relation') && message.contains('does not exist');
+    // IMPORTANT: do not treat every "relation does not exist" as store_tables missing.
+    // We need to distinguish missing store_table_areas vs store_tables.
+    if (!((error.code ?? '').toString().trim() == 'PGRST205')) {
+      return false;
+    }
+    return message.contains('store_tables') || details.contains('store_tables');
   }
 
   Exception _storeTablesUnavailableException() {
     return Exception(
       "Masa QR sistemi Supabase'te hazır değil. "
       "'ibul_app/SUPABASE_STORE_TABLE_QR_SYSTEM.sql' scriptini çalıştırın.",
+    );
+  }
+
+  bool _isStoreTableAreasMissingError(Object error) {
+    if (error is! PostgrestException) return false;
+    if (!((error.code ?? '').toString().trim() == 'PGRST205')) return false;
+    final details = (error.details ?? '').toString().toLowerCase();
+    final message = error.message.toLowerCase();
+    return message.contains('store_table_areas') ||
+        details.contains('store_table_areas') ||
+        message.contains('public.store_table_areas') ||
+        details.contains('public.store_table_areas');
+  }
+
+  Exception _storeTableAreasUnavailableException() {
+    return Exception(
+      "Alan bazlı masa sistemi Supabase'te hazır değil. "
+      "'ibul_app/supabase/migrations/20260606_store_table_areas.sql' migration’ını çalıştırın.",
     );
   }
 
@@ -54,6 +75,13 @@ class StoreTableService {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  String _text(dynamic v) => (v ?? '').toString().trim();
+
+  int _parsePositiveInt(dynamic value) {
+    final n = _parseTableNumberValue(value);
+    return n > 0 ? n : 0;
   }
 
   int _firstMissingPositive(Iterable<int> values) {
@@ -147,6 +175,7 @@ class StoreTableService {
   Future<List<Map<String, dynamic>>> getStoreTables({
     String? sellerId,
     bool onlyActive = true,
+    String? areaId,
   }) async {
     final resolvedSellerId = _resolveSellerId(sellerId);
     try {
@@ -156,6 +185,10 @@ class StoreTableService {
           .eq('seller_id', resolvedSellerId);
       if (onlyActive) {
         query = query.eq('is_active', true);
+      }
+      final normalizedAreaId = _text(areaId);
+      if (normalizedAreaId.isNotEmpty) {
+        query = query.eq('area_id', normalizedAreaId);
       }
       final rows = await query.order('table_number', ascending: true);
       return List<Map<String, dynamic>>.from(rows as List);
@@ -167,10 +200,96 @@ class StoreTableService {
     }
   }
 
+  Future<List<Map<String, dynamic>>> getTableAreas({
+    String? sellerId,
+    bool onlyActive = true,
+  }) async {
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    try {
+      var query = _supabase
+          .from('store_table_areas')
+          .select()
+          .eq('seller_id', resolvedSellerId);
+      if (onlyActive) {
+        query = query.eq('is_active', true);
+      }
+      final rows = await query.order('name', ascending: true);
+      return List<Map<String, dynamic>>.from(rows as List);
+    } catch (error) {
+      // Backwards compatible: if areas table doesn't exist yet, behave as if
+      // we have a single implicit "Salon" area.
+      if (_isStoreTableAreasMissingError(error)) {
+        return <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'implicit_salon',
+            'seller_id': resolvedSellerId,
+            'name': 'Salon',
+            'is_active': true,
+          },
+        ];
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> addTableArea({
+    String? sellerId,
+    required String name,
+  }) async {
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw Exception('Alan adı boş olamaz.');
+    }
+    try {
+      final inserted = await _supabase
+          .from('store_table_areas')
+          .insert({
+            'seller_id': resolvedSellerId,
+            'name': normalized,
+            'is_active': true,
+            'created_at': DateTime.now().toIso8601String(),
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .select()
+          .single();
+      return Map<String, dynamic>.from(inserted as Map);
+    } catch (error) {
+      if (_isStoreTableAreasMissingError(error)) {
+        throw _storeTableAreasUnavailableException();
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> ensureDefaultArea({
+    String? sellerId,
+    String defaultName = 'Salon',
+  }) async {
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final areas = await getTableAreas(sellerId: resolvedSellerId, onlyActive: false);
+    final existing = areas.firstWhere(
+      (a) => _text(a['name']).toLowerCase() == defaultName.toLowerCase(),
+      orElse: () => const <String, dynamic>{},
+    );
+    if (existing.isNotEmpty && _text(existing['id']).isNotEmpty) {
+      return Map<String, dynamic>.from(existing);
+    }
+    // If areas table is missing, return implicit.
+    if (areas.isNotEmpty && _text(areas.first['id']) == 'implicit_salon') {
+      return Map<String, dynamic>.from(areas.first);
+    }
+    return addTableArea(sellerId: resolvedSellerId, name: defaultName);
+  }
+
   Future<Map<String, dynamic>> addStoreTable({
     String? sellerId,
     int? tableNumber,
     bool preferMissingNumber = true,
+    String? areaId,
+    String? areaName,
+    int? areaTableNumber,
+    String? tableName,
   }) async {
     final resolvedSellerId = _resolveSellerId(sellerId);
     try {
@@ -197,6 +316,17 @@ class StoreTableService {
         nextTableNumber = nextNewNumber <= 0 ? 1 : nextNewNumber;
       }
 
+      final normalizedAreaId = _text(areaId);
+      final normalizedAreaName = _text(areaName);
+      final resolvedAreaTableNo = _parsePositiveInt(areaTableNumber) > 0
+          ? _parsePositiveInt(areaTableNumber)
+          : nextTableNumber;
+      final resolvedTableName = _text(tableName).isNotEmpty
+          ? _text(tableName)
+          : (normalizedAreaName.isNotEmpty
+                ? '$normalizedAreaName $resolvedAreaTableNo'
+                : 'Masa $nextTableNumber');
+
       final inserted = await _supabase
           .from('store_tables')
           .insert({
@@ -204,6 +334,11 @@ class StoreTableService {
             'table_number': nextTableNumber,
             'qr_token': _generateTableQrToken(),
             'is_active': true,
+            if (normalizedAreaId.isNotEmpty) 'area_id': normalizedAreaId,
+            if (normalizedAreaName.isNotEmpty) 'area_name': normalizedAreaName,
+            'area_table_number': resolvedAreaTableNo,
+            'table_name': resolvedTableName,
+            'display_label': resolvedTableName,
             'created_at': DateTime.now().toIso8601String(),
             'updated_at': DateTime.now().toIso8601String(),
           })
@@ -262,6 +397,34 @@ class StoreTableService {
     }
   }
 
+  /// Returns the set of table numbers that currently have at least one
+  /// non-closed (active) order in [table_orders] for [sellerId].
+  /// Used by the customer-facing table picker to mark occupied tables.
+  Future<Set<int>> getOccupiedTableNumbers(String sellerId) async {
+    final resolved = sellerId.trim();
+    if (resolved.isEmpty) return const <int>{};
+    try {
+      final rows = await _supabase
+          .from('table_orders')
+          .select('table_number, status')
+          .eq('seller_id', resolved)
+          .timeout(tableOrderTimeout);
+      final result = <int>{};
+      for (final row in (rows as List)) {
+        final status = (row['status']?.toString() ?? '').toLowerCase();
+        if (status == 'closed') continue;
+        final tableNum = _parseTableNumberValue(row['table_number']);
+        if (tableNum > 0) result.add(tableNum);
+      }
+      return result;
+    } on PostgrestException catch (error) {
+      if (_isStoreTablesMissingError(error)) return const <int>{};
+      rethrow;
+    } on TimeoutException {
+      return const <int>{};
+    }
+  }
+
   Future<Map<String, dynamic>?> resolveStoreTableQr({
     required String sellerId,
     required int tableNumber,
@@ -307,6 +470,8 @@ class StoreTableService {
     required int tableNumber,
     required List<Map<String, dynamic>> items,
     String status = 'new',
+    Map<String, dynamic>? tableRow,
+    String? placementSource,
   }) async {
     final normalizedStatus = status.trim().isEmpty ? 'new' : status.trim();
     final createdAt = DateTime.now().toIso8601String();
@@ -317,6 +482,16 @@ class StoreTableService {
       'status': normalizedStatus,
       'created_at': createdAt,
     };
+    final src = placementSource?.trim() ?? '';
+    if (src.isNotEmpty) {
+      payload['placement_source'] = src;
+    }
+    payload.addAll(
+      resolvePrintableTablePayloadFields(
+        tableRow: tableRow,
+        tableNumber: tableNumber,
+      ),
+    );
 
     try {
       final inserted = await _supabase
@@ -834,10 +1009,16 @@ class StoreTableService {
       return List<Map<String, dynamic>>.from(rows as List);
     } on PostgrestException catch (error) {
       // table_order_history may not exist on older DBs — return empty list
+      final msg = error.message.toLowerCase();
       if (error.code == '42P01' ||
-          error.message.contains('does not exist') ||
-          error.message.contains('Could not find table')) {
-        debugPrint('[StoreTableService] table_order_history not found. Run migration 20260407.');
+          msg.contains('does not exist') ||
+          msg.contains('could not find table') ||
+          msg.contains('could not find the table') ||
+          msg.contains('schema cache')) {
+        debugPrint(
+          '[StoreTableService] table_order_history not found. '
+          'Run migration 20260407_restaurant_ops_upgrade.sql.',
+        );
         return const <Map<String, dynamic>>[];
       }
       throw _tableOrderException('Geçmiş sipariş listesi', error);

@@ -14,11 +14,13 @@ class SellerPanelGarsonPreview extends StatelessWidget {
     super.key,
     required this.scenario,
     this.enableLocalSubmit = false,
+    this.debugPrintSystemEnabledOverride,
     this.viewportSize = const Size(430, 932),
   });
 
   final SellerPanelGarsonPreviewScenario scenario;
   final bool enableLocalSubmit;
+  final bool? debugPrintSystemEnabledOverride;
   final Size viewportSize;
 
   @override
@@ -47,6 +49,7 @@ class SellerPanelGarsonPreview extends StatelessWidget {
           onOrderSubmitted: (_, _, _) {},
           debugDisableLiveSync: true,
           debugUseLocalSubmit: enableLocalSubmit,
+          debugPrintSystemEnabledOverride: debugPrintSystemEnabledOverride,
           debugInitialTableOrders: data.tableOrders,
           debugSubmitFeedbackMessage: data.submitFeedbackMessage,
           debugSubmitFeedbackIsWarning: false,

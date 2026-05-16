@@ -69,11 +69,7 @@ class GarsonUndoController extends ChangeNotifier {
 ///
 /// Renders nothing when there is no pending action.
 class UndoActionBanner extends StatefulWidget {
-  const UndoActionBanner({
-    super.key,
-    required this.controller,
-    this.onUndo,
-  });
+  const UndoActionBanner({super.key, required this.controller, this.onUndo});
 
   final GarsonUndoController controller;
 
@@ -99,10 +95,7 @@ class _UndoActionBannerState extends State<UndoActionBanner>
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0, 1),
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _animController,
-      curve: Curves.easeOut,
-    ));
+    ).animate(CurvedAnimation(parent: _animController, curve: Curves.easeOut));
     widget.controller.addListener(_onControllerChanged);
     if (widget.controller.hasPendingAction) {
       _animController.forward();
@@ -124,11 +117,6 @@ class _UndoActionBannerState extends State<UndoActionBanner>
       _animController.reverse();
     }
     setState(() {});
-  }
-
-  Future<void> _handleUndo() async {
-    await widget.controller.undo();
-    widget.onUndo?.call();
   }
 
   @override
@@ -200,33 +188,13 @@ class _UndoActionBannerState extends State<UndoActionBanner>
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    'Geri almak için dokun',
+                    'Bildirim otomatik kapanır',
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.6),
                       fontSize: 10,
                     ),
                   ),
                 ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: _handleUndo,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFBBF24),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'Geri Al',
-                  style: TextStyle(
-                    color: Color(0xFF1E293B),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
               ),
             ),
             const SizedBox(width: 4),
@@ -267,16 +235,20 @@ void showDuplicateProductWarning(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       content: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: Color(0xFFFBBF24), size: 18),
+          const Icon(
+            Icons.warning_amber_rounded,
+            color: Color(0xFFFBBF24),
+            size: 18,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               '"$productName" zaten eklendi.',
               style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600),
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
               maxLines: 2,
             ),
           ),

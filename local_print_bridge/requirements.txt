@@ -1,2 +1,17 @@
 # This bridge intentionally uses only Python's standard library.
 # No third-party pip package is required for the first working version.
+
+Pillow>=11.0.0
+
+# -- USB direct transport (macOS / Linux without CUPS Raw) --
+# Uncomment (or run) when using PRINT_BRIDGE_TRANSPORT=auto|usb:
+#
+#   brew install libusb         (macOS only)
+#   pip install pyusb
+#
+pyusb>=1.0.2
+
+# -- Windows spooler RAW transport --
+# Required on Windows to send raw ESC/POS bytes through the native
+# print spooler by printer name.
+pywin32>=306; platform_system == "Windows"

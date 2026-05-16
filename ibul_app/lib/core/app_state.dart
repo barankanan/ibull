@@ -11,6 +11,7 @@ import 'review_state.dart';
 import '../services/auth_service.dart';
 import '../services/product_list_service.dart';
 import '../services/push_notification_service.dart';
+import '../services/store_follow_service.dart';
 import '../services/supabase_service.dart';
 import '../models/product_model.dart';
 import '../models/product_list_model.dart';
@@ -1445,21 +1446,72 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Mağaza takip işlemleri
+  // Mağaza takip işlemleri (Supabase store_followers)
   bool isFollowingStore(Map<String, dynamic> store) {
-    return _followedStores.any((s) => s['id'] == store['id']);
+    final sellerId = (store['seller_id'] ?? '').toString().trim();
+    final storeId = (store['id'] ?? '').toString().trim();
+    return _followedStores.any((followed) {
+      final followedSellerId = (followed['seller_id'] ?? '').toString().trim();
+      final followedId = (followed['id'] ?? '').toString().trim();
+      if (sellerId.isNotEmpty &&
+          (followedSellerId == sellerId || followedId == sellerId)) {
+        return true;
+      }
+      if (storeId.isNotEmpty &&
+          (followedId == storeId || followedSellerId == storeId)) {
+        return true;
+      }
+      return false;
+    });
   }
 
-  void toggleFollowStore(Map<String, dynamic> store) {
-    if (isFollowingStore(store)) {
-      _followedStores.removeWhere((s) => s['id'] == store['id']);
-    } else {
-      _followedStores.add(store);
+  Future<void> refreshFollowedStoresFromServer() async {
+    if (!isLoggedIn) return;
+    try {
+      final rows = await StoreFollowService.instance.fetchFollowedStores();
+      _followedStores
+        ..clear()
+        ..addAll(rows);
+      followedStoresNotifier.value = List<Map<String, dynamic>>.from(
+        _followedStores,
+      );
+      notifyListeners();
+      await _persistUserCollection('followedStores', _followedStores);
+    } catch (error) {
+      debugPrint('AppState.refreshFollowedStoresFromServer: $error');
     }
-    followedStoresNotifier.value = List.from(_followedStores);
-    notifyListeners();
+  }
 
-    unawaited(_persistUserCollection('followedStores', _followedStores));
+  Future<void> toggleFollowStore(Map<String, dynamic> store) async {
+    if (!isLoggedIn) return;
+
+    final storeId = await StoreFollowService.instance.resolveStoreId(
+      sellerId: store['seller_id']?.toString(),
+      businessName: store['name']?.toString() ?? store['business_name']?.toString(),
+    );
+    if (storeId == null || storeId.isEmpty) return;
+
+    try {
+      if (isFollowingStore(store)) {
+        await StoreFollowService.instance.unfollowStore(storeId);
+        _followedStores.removeWhere((followed) {
+          final followedSellerId =
+              (followed['seller_id'] ?? '').toString().trim();
+          return followedSellerId == storeId ||
+              (followed['id'] ?? '').toString().trim() == storeId;
+        });
+      } else {
+        await StoreFollowService.instance.followStore(storeId);
+        await refreshFollowedStoresFromServer();
+        return;
+      }
+
+      followedStoresNotifier.value = List.from(_followedStores);
+      notifyListeners();
+      await _persistUserCollection('followedStores', _followedStores);
+    } catch (error) {
+      debugPrint('AppState.toggleFollowStore: $error');
+    }
   }
 
   List<Map<String, dynamic>> getProductReviewsFor({

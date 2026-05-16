@@ -15,13 +15,41 @@ import '../../services/media/media_picker_service.dart';
 import '../../services/media/product_media_repository.dart';
 import '../../services/media/product_media_types.dart';
 import '../../services/store_service.dart';
+import '../../utils/pick_image_file.dart';
 import '../../utils/preparation_time_formatter.dart';
 import '../../utils/xfile_image_provider.dart';
 import '../../widgets/dynamic_category_attribute_form.dart';
-import '../../widgets/seller/pricing_type_selector.dart';
 import '../../widgets/seller/service_control_selector.dart';
 import '../../widgets/seller/service_stepper_fields.dart';
 import '../../widgets/seller/weight_pricing_fields.dart';
+
+class _EditableProductSizeOption {
+  _EditableProductSizeOption({
+    required this.id,
+    String name = '',
+    String price = '',
+    this.isDefault = false,
+    int? sortOrder,
+  }) : nameController = TextEditingController(text: name),
+       priceController = TextEditingController(text: price),
+       sortOrder = sortOrder ?? 0,
+       sortController = TextEditingController(
+         text: (sortOrder ?? 0).toString(),
+       );
+
+  final String id;
+  final TextEditingController nameController;
+  final TextEditingController priceController;
+  final TextEditingController sortController;
+  bool isDefault;
+  int sortOrder;
+
+  void dispose() {
+    nameController.dispose();
+    priceController.dispose();
+    sortController.dispose();
+  }
+}
 
 /// Satıcı Ürün Ekleme/Düzenleme Sayfası
 /// Gelişmiş özellikler ve adım adım form yapısı
@@ -68,6 +96,8 @@ class _AddProductPageState extends State<AddProductPage> {
   final TextEditingController _subCategoryController = TextEditingController();
   List<String> _productAttributes = [];
   List<Map<String, String>> _nonFoodAttributeRows = [];
+  final List<_EditableProductSizeOption> _sizeOptionRows =
+      <_EditableProductSizeOption>[];
   String _selectedVatRate = '%18';
   String _selectedShippingOption = 'Ücretsiz Kargo';
   String? _selectedServiceType;
@@ -103,7 +133,6 @@ class _AddProductPageState extends State<AddProductPage> {
 
   /// Düzenleme modunda ürünün önceki durumu (Aktif ise kayıt sonrası 'Düzenlendi' yapılır).
   String _initialProductStatus = 'Taslak';
-  final ImagePicker _picker = ImagePicker();
   final StoreService _storeService = StoreService();
   final CategoryAttributeService _categoryAttributeService =
       CategoryAttributeService.instance;
@@ -138,6 +167,7 @@ class _AddProductPageState extends State<AddProductPage> {
   bool get _isWeightPricingActive =>
       _isFoodCategory &&
       (_selectedServiceControlType == ProductServiceControlType.weightStepper ||
+          _pricePerKgValue > 0 ||
           (_selectedServiceControlType == ProductServiceControlType.none &&
               _selectedPricingType == ProductPricingType.weight));
 
@@ -151,12 +181,23 @@ class _AddProductPageState extends State<AddProductPage> {
       ? ProductPricingType.portion
       : _selectedServiceControlType == ProductServiceControlType.weightStepper
       ? ProductPricingType.weight
+      : _portionPriceValue <= 0 &&
+            _pricePerKgValue > 0 &&
+            !_hasSizePricingConfigured
+      ? ProductPricingType.weight
       : _selectedServiceControlType ==
                 ProductServiceControlType.portionStepper ||
             _selectedServiceControlType ==
                 ProductServiceControlType.skewerStepper
       ? ProductPricingType.portion
       : _selectedPricingType;
+
+  ProductPricingMode get _pricingModeForSave =>
+      ProductPriceCalculator.resolvePricingMode(
+        basePrice: _portionPriceValue > 0 ? _portionPriceValue : null,
+        pricePerKg: _pricePerKgValue > 0 ? _pricePerKgValue : null,
+        sizeOptions: _parsedSizeOptions(),
+      );
 
   TextEditingController get _activePriceController =>
       _pricingTypeForSave == ProductPricingType.weight
@@ -167,7 +208,16 @@ class _AddProductPageState extends State<AddProductPage> {
 
   double get _pricePerKgValue => _parseCurrency(_pricePerKgController.text);
 
-  double get _activePriceValue => _parseCurrency(_activePriceController.text);
+  bool get _hasSizePricingConfigured => _parsedSizeOptions().isNotEmpty;
+
+  double get _activePriceValue {
+    if (_portionPriceValue > 0) return _portionPriceValue;
+    final defaultSize = ProductPriceCalculator.defaultSizeOption(
+      _parsedSizeOptions(),
+    );
+    if (defaultSize != null) return defaultSize.price;
+    return _pricePerKgValue;
+  }
 
   static const List<String> _foodAttributeSuggestions = [
     'Acısız',
@@ -178,6 +228,18 @@ class _AddProductPageState extends State<AddProductPage> {
     'Az Tuzlu',
     'Bol Peynirli',
     'Ekstra Sos',
+  ];
+
+  static const List<String> _quickSizePresetLabels = [
+    'Küçük',
+    'Orta',
+    'Büyük',
+    'Duble',
+    'XL',
+    '250 gr',
+    '500 gr',
+    'Tek',
+    'Çift',
   ];
 
   static const List<String> _serviceTypeOptions = [
@@ -481,6 +543,96 @@ class _AddProductPageState extends State<AddProductPage> {
     return options.map(ProductPriceCalculator.formatWeight).join(' / ');
   }
 
+  List<ProductSizeOption> _parsedSizeOptions() {
+    final options = <ProductSizeOption>[];
+    for (var index = 0; index < _sizeOptionRows.length; index++) {
+      final row = _sizeOptionRows[index];
+      final name = row.nameController.text.trim();
+      final price = _parseCurrency(row.priceController.text);
+      if (name.isEmpty || price <= 0) continue;
+      options.add(
+        ProductSizeOption(
+          id: row.id,
+          name: name,
+          price: price,
+          isDefault: row.isDefault,
+          sortOrder: row.sortOrder > 0 ? row.sortOrder : index,
+        ),
+      );
+    }
+    return ProductPriceCalculator.normalizeSizeOptions(options);
+  }
+
+  void _addSizeOptionRow({ProductSizeOption? option}) {
+    final nextIndex = _sizeOptionRows.length;
+    final row = _EditableProductSizeOption(
+      id:
+          option?.id ??
+          'size_${DateTime.now().microsecondsSinceEpoch}_$nextIndex',
+      name: option?.name ?? '',
+      price: option != null && option.price > 0
+          ? option.price.toStringAsFixed(0)
+          : '',
+      isDefault: option?.isDefault ?? _sizeOptionRows.isEmpty,
+      sortOrder: option?.sortOrder ?? nextIndex,
+    );
+    _sizeOptionRows.add(row);
+  }
+
+  void _loadSizeOptions(Iterable<ProductSizeOption> options) {
+    for (final row in _sizeOptionRows) {
+      row.dispose();
+    }
+    _sizeOptionRows.clear();
+    final normalized = ProductPriceCalculator.normalizeSizeOptions(
+      options.toList(growable: false),
+    );
+    if (normalized.isEmpty) return;
+    for (final option in normalized) {
+      _addSizeOptionRow(option: option);
+    }
+  }
+
+  ProductSizeOption? get _defaultSizeOptionForSave =>
+      ProductPriceCalculator.defaultSizeOption(_parsedSizeOptions());
+
+  bool _hasSizeOptionNamed(String name) {
+    final normalized = name.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    for (final row in _sizeOptionRows) {
+      if (row.nameController.text.trim().toLowerCase() == normalized) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _addNamedSizeOption(String name) {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty || _hasSizeOptionNamed(trimmedName)) return;
+
+    for (final row in _sizeOptionRows) {
+      if (row.nameController.text.trim().isEmpty) {
+        row.nameController.text = trimmedName;
+        if (row.sortController.text.trim().isEmpty) {
+          row.sortOrder = _sizeOptionRows.indexOf(row);
+          row.sortController.text = row.sortOrder.toString();
+        }
+        return;
+      }
+    }
+
+    _addSizeOptionRow();
+    final newRow = _sizeOptionRows.last;
+    newRow.nameController.text = trimmedName;
+  }
+
+  void _setDefaultSizeRow(String id) {
+    for (final row in _sizeOptionRows) {
+      row.isDefault = row.id == id;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -531,6 +683,7 @@ class _AddProductPageState extends State<AddProductPage> {
         _pricePerKgController.text = kgPriceSeed > 0
             ? kgPriceSeed.toStringAsFixed(0)
             : '';
+        _loadSizeOptions(product.sizeOptions);
         _discountPriceController.text = product.discountPrice != null
             ? product.discountPrice!.toStringAsFixed(0)
             : '';
@@ -829,6 +982,9 @@ class _AddProductPageState extends State<AddProductPage> {
     _stockController.dispose();
     _skuController.dispose();
     _preparationTimeController.dispose();
+    for (final row in _sizeOptionRows) {
+      row.dispose();
+    }
     _subCategoryController.dispose();
     _attributeFormProvider.dispose();
     // _additionalInfoController.dispose(); // Removed
@@ -2240,9 +2396,14 @@ class _AddProductPageState extends State<AddProductPage> {
           mainCategory: _selectedMainCategory ?? '',
           subCategory: _selectedSubCategory ?? '',
           price: _activePriceValue,
+          pricingMode: _pricingModeForSave.storageValue,
+          basePrice: _portionPriceValue > 0 ? _portionPriceValue : null,
           pricingType: _pricingTypeForSave.storageValue,
           portionPrice: _portionPriceValue > 0 ? _portionPriceValue : null,
           pricePerKg: _pricePerKgValue > 0 ? _pricePerKgValue : null,
+          sizeOptions: _parsedSizeOptions(),
+          selectedSizeName: _defaultSizeOptionForSave?.name,
+          selectedSizePrice: _defaultSizeOptionForSave?.price,
           serviceControlType:
               _selectedServiceControlType == ProductServiceControlType.none
               ? null
@@ -2338,188 +2499,390 @@ class _AddProductPageState extends State<AddProductPage> {
   // Adım 2: Fiyat & Stok
   Widget _buildPricingStep() {
     final isFood = _isFoodCategory;
+    final parsedSizeOptions = _parsedSizeOptions();
+    final sizePreview = parsedSizeOptions.isEmpty
+        ? 'Boyut eklenmedi'
+        : parsedSizeOptions
+              .map(
+                (option) =>
+                    '${option.name}: ${ProductPriceCalculator.formatCurrency(option.price)}',
+              )
+              .join(' / ');
+    final defaultSize = _defaultSizeOptionForSave;
+    final pricingModeLabel = switch (_pricingModeForSave) {
+      ProductPricingMode.baseOnly => 'Sadece porsiyon fiyatı',
+      ProductPricingMode.weightOnly => 'Sadece kiloluk fiyat',
+      ProductPricingMode.sizeOnly => 'Sadece boyut fiyatları',
+      ProductPricingMode.hybrid => 'Hibrit fiyatlandırma',
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          isFood ? 'Fiyatlandırma ve Porsiyon' : 'Fiyatlandırma ve Stok',
+          isFood ? 'Fiyatlandirma ve Stok' : 'Fiyatlandirma ve Stok',
           style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         Text(
           isFood
-              ? 'Yemeğin fiyatlandirma tipini, fiyatini ve stok bilgisini girin'
+              ? 'Porsiyon, kilo ve boyut fiyatlarini tek panelden yonetin.'
               : 'Fiyat, stok ve vergi bilgilerini girin',
           style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
         ),
-        const SizedBox(height: 32),
-        if (isFood) ...[
-          PricingTypeSelector(
-            value: _pricingTypeForSave,
-            onChanged: (value) {
-              setState(() {
-                _selectedPricingType = value;
-                if (value == ProductPricingType.weight) {
-                  _selectedServiceControlType =
-                      ProductServiceControlType.weightStepper;
-                  _syncWeightDefaultsIfNeeded(force: false);
-                } else {
-                  if (_selectedServiceControlType ==
-                          ProductServiceControlType.weightStepper ||
-                      _selectedServiceControlType ==
-                          ProductServiceControlType.none) {
-                    _selectedServiceControlType =
-                        ProductServiceControlType.portionStepper;
-                  }
-                  _syncServiceControlDefaultsIfNeeded(
-                    type: _selectedServiceControlType,
-                    force: false,
-                  );
-                }
-              });
-            },
-          ),
-          const SizedBox(height: 20),
-          if (_pricingTypeForSave == ProductPricingType.portion) ...[
-            ServiceControlSelector(
-              value: _selectedServiceControlType,
-              title: 'Porsiyon Yapısı',
-              options: const <ProductServiceControlType>[
-                ProductServiceControlType.none,
-                ProductServiceControlType.portionStepper,
-                ProductServiceControlType.skewerStepper,
-              ],
-              onChanged: (value) {
-                setState(() {
-                  _selectedServiceControlType = value;
-                  if (value == ProductServiceControlType.none) return;
-                  _syncServiceControlDefaultsIfNeeded(
-                    type: value,
-                    force: false,
-                  );
-                });
-              },
+        const SizedBox(height: 20),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFFFFBEB), Color(0xFFFFFFFF), Color(0xFFF8FAFC)],
             ),
-            const SizedBox(height: 20),
-          ],
-        ],
-
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: _buildTextField(
-                controller: _activePriceController,
-                label: _isWeightPricingActive
-                    ? '1 Kilogram Fiyati'
-                    : _selectedServiceControlType ==
-                          ProductServiceControlType.portionStepper
-                    ? '1 Porsiyon Fiyati'
-                    : _selectedServiceControlType ==
-                          ProductServiceControlType.skewerStepper
-                    ? 'Tek Sis Fiyati'
-                    : 'Satis Fiyati',
-                hint: '0.00',
-                prefix: '₺',
-                required: true,
-                keyboardType: TextInputType.number,
-                onChanged: (value) => setState(() {}),
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  ThousandsSeparatorInputFormatter(),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFFDE68A)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Tek panel fiyat özeti',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                pricingModeLabel,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF475569),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _buildPricingStatusTile(
+                    icon: Icons.room_service_outlined,
+                    label: 'Porsiyon',
+                    value: _portionPriceValue > 0
+                        ? ProductPriceCalculator.formatCurrency(
+                            _portionPriceValue,
+                          )
+                        : 'Kapalı',
+                    accentColor: const Color(0xFFEA580C),
+                    active: _portionPriceValue > 0,
+                  ),
+                  _buildPricingStatusTile(
+                    icon: Icons.scale_outlined,
+                    label: 'Kiloluk',
+                    value: _pricePerKgValue > 0
+                        ? ProductPriceCalculator.formatPerKgLabel(
+                            _pricePerKgValue,
+                          )
+                        : 'Kapalı',
+                    accentColor: const Color(0xFF0F766E),
+                    active: _pricePerKgValue > 0,
+                  ),
+                  _buildPricingStatusTile(
+                    icon: Icons.straighten_rounded,
+                    label: 'Boyutlar',
+                    value: parsedSizeOptions.isEmpty
+                        ? 'Eklenmedi'
+                        : '${parsedSizeOptions.length} seçenek',
+                    accentColor: const Color(0xFF2563EB),
+                    active: parsedSizeOptions.isNotEmpty,
+                  ),
                 ],
               ),
-            ),
-            if (!_isWeightPricingActive &&
-                _selectedServiceControlType ==
-                    ProductServiceControlType.none) ...[
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildTextField(
-                  controller: _discountPriceController,
-                  label: 'Indirimli Fiyat',
-                  hint: 'Opsiyonel',
-                  prefix: '₺',
-                  keyboardType: TextInputType.number,
-                  onChanged: (value) => setState(() {}),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    ThousandsSeparatorInputFormatter(),
+              if (defaultSize != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Varsayılan boyut: ${defaultSize.name} · ${ProductPriceCalculator.formatCurrency(defaultSize.price)}',
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildPricingGroupCard(
+                title: 'Porsiyon fiyati',
+                subtitle:
+                    'Standart satis fiyati. Dilerseniz tek basina kullanin.',
+                child: Column(
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _buildTextField(
+                            controller: _portionPriceController,
+                            label: 'Porsiyon Fiyati',
+                            hint: '0',
+                            prefix: '₺',
+                            keyboardType: TextInputType.number,
+                            onChanged: (value) => setState(() {}),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              ThousandsSeparatorInputFormatter(),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: _buildTextField(
+                            controller: _discountPriceController,
+                            label: 'Indirimli Fiyat',
+                            hint: 'Opsiyonel',
+                            prefix: '₺',
+                            keyboardType: TextInputType.number,
+                            onChanged: (value) => setState(() {}),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              ThousandsSeparatorInputFormatter(),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: _buildDropdownField(
+                            label: 'KDV Orani',
+                            value: _selectedVatRate,
+                            items: ['%1', '%8', '%18', '%20'],
+                            onChanged: (value) {
+                              setState(() {
+                                _selectedVatRate = value!;
+                              });
+                            },
+                            required: true,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_portionPriceValue > 0 &&
+                        _discountPriceController.text.isNotEmpty)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            'Indirim orani: ${_calculateDiscountRate()}%',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.green,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
+              const SizedBox(height: 18),
+              _buildPricingGroupCard(
+                title: 'Kiloluk fiyat',
+                subtitle:
+                    'Kasap, tava, balik veya agirlikla satilan urunler icin.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildTextField(
+                      controller: _pricePerKgController,
+                      label: '1 Kilogram Fiyati',
+                      hint: '0',
+                      prefix: '₺',
+                      keyboardType: TextInputType.number,
+                      onChanged: (value) => setState(() {}),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        ThousandsSeparatorInputFormatter(),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    WeightPricingFields(
+                      minWeightController: _minWeightController,
+                      weightStepController: _weightStepController,
+                      defaultWeightController: _defaultWeightController,
+                      maxWeightController: _maxWeightController,
+                      onChanged: () => setState(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Onizleme: ${_pricePerKgValue > 0 ? ProductPriceCalculator.formatPerKgLabel(_pricePerKgValue) : 'Henüz fiyat girilmedi'} · ${ProductPriceCalculator.buildWeightRangeLabel(minWeightGrams: _parsedMinWeight(), defaultWeightGrams: _parsedDefaultWeight())}\nSecenekler: ${_weightOptionsPreview()}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              _buildPricingGroupCard(
+                title: 'Boyut bazli fiyatlar',
+                subtitle:
+                    'Kucuk, Orta, Buyuk, Duble, 250 gr, XL gibi ozel boyutlar ekleyin.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _quickSizePresetLabels
+                          .map((label) {
+                            final alreadyAdded = _hasSizeOptionNamed(label);
+                            return FilterChip(
+                              label: Text(label),
+                              selected: alreadyAdded,
+                              onSelected: (_) {
+                                setState(() {
+                                  _addNamedSizeOption(label);
+                                });
+                              },
+                              selectedColor: const Color(
+                                0xFFDBEAFE,
+                              ).withValues(alpha: 0.9),
+                              checkmarkColor: const Color(0xFF1D4ED8),
+                              side: BorderSide(
+                                color: alreadyAdded
+                                    ? const Color(0xFF93C5FD)
+                                    : const Color(0xFFE2E8F0),
+                              ),
+                            );
+                          })
+                          .toList(growable: false),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_sizeOptionRows.isEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Text(
+                          'Boyut eklenmedi. Sadece porsiyon veya kiloluk fiyat ile devam edebilirsiniz.',
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    if (_sizeOptionRows.isNotEmpty)
+                      ..._sizeOptionRows.map(
+                        (row) => Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _buildSizeOptionRow(row),
+                        ),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _addSizeOptionRow();
+                        });
+                      },
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('+ Boyut Ekle'),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Onizleme: $sizePreview',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isFood) ...[
+                const SizedBox(height: 18),
+                _buildPricingGroupCard(
+                  title: 'Opsiyonel servis adimi',
+                  subtitle:
+                      'Yarim porsiyon, sis adimi veya kilo stepper gerekiyorsa acin.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ServiceControlSelector(
+                        value: _selectedServiceControlType,
+                        title: 'Servis sekli',
+                        options: const <ProductServiceControlType>[
+                          ProductServiceControlType.none,
+                          ProductServiceControlType.portionStepper,
+                          ProductServiceControlType.skewerStepper,
+                          ProductServiceControlType.weightStepper,
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _selectedServiceControlType = value;
+                            if (value ==
+                                ProductServiceControlType.weightStepper) {
+                              _selectedPricingType = ProductPricingType.weight;
+                              _syncWeightDefaultsIfNeeded(force: false);
+                            } else if (ProductPriceCalculator.usesPortionLikeStepper(
+                              value,
+                            )) {
+                              _selectedPricingType = ProductPricingType.portion;
+                              _syncServiceControlDefaultsIfNeeded(
+                                type: value,
+                                force: false,
+                              );
+                            }
+                          });
+                        },
+                      ),
+                      if (_usesPortionLikeServiceControl) ...[
+                        const SizedBox(height: 14),
+                        ServiceStepperFields(
+                          serviceControlType: _selectedServiceControlType,
+                          minController: _minPortionController,
+                          maxController: _maxPortionController,
+                          stepController: _portionStepController,
+                          onChanged: () => setState(() {}),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Onizleme: ${ProductPriceCalculator.formatCurrency(_portionPriceValue)} · ${ProductPriceCalculator.buildServiceControlSummary(type: _selectedServiceControlType, minPortion: _parsedMinPortion(), maxPortion: _parsedMaxPortion(), portionStep: _parsedPortionStep())}\nSecenekler: ${_portionOptionsPreview()}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ],
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildDropdownField(
-                label: 'KDV Oranı',
-                value: _selectedVatRate,
-                items: ['%1', '%8', '%18', '%20'],
-                onChanged: (value) {
-                  setState(() {
-                    _selectedVatRate = value!;
-                  });
-                },
-                required: true,
-              ),
-            ),
-          ],
+          ),
         ),
-
-        if (!_isWeightPricingActive &&
-            _selectedServiceControlType == ProductServiceControlType.none &&
-            _discountPriceController.text.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              'Indirim Orani: ${_calculateDiscountRate()}%',
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.green,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-
-        if (_usesPortionLikeServiceControl) ...[
-          const SizedBox(height: 20),
-          ServiceStepperFields(
-            serviceControlType: _selectedServiceControlType,
-            minController: _minPortionController,
-            maxController: _maxPortionController,
-            stepController: _portionStepController,
-            onChanged: () => setState(() {}),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Onizleme: ${ProductPriceCalculator.formatCurrency(_portionPriceValue)} · ${ProductPriceCalculator.buildServiceControlSummary(type: _selectedServiceControlType, minPortion: _parsedMinPortion(), maxPortion: _parsedMaxPortion(), portionStep: _parsedPortionStep())}\nSecenekler: ${_portionOptionsPreview()}',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade700,
-            ),
-          ),
-        ],
-
-        if (_isWeightPricingActive) ...[
-          const SizedBox(height: 20),
-          WeightPricingFields(
-            minWeightController: _minWeightController,
-            weightStepController: _weightStepController,
-            defaultWeightController: _defaultWeightController,
-            maxWeightController: _maxWeightController,
-            onChanged: () => setState(() {}),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Onizleme: ${ProductPriceCalculator.formatPerKgLabel(_pricePerKgValue)} · ${ProductPriceCalculator.buildWeightRangeLabel(minWeightGrams: _parsedMinWeight(), defaultWeightGrams: _parsedDefaultWeight())}\nSecenekler: ${_weightOptionsPreview()}',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade700,
-            ),
-          ),
-        ],
 
         const SizedBox(height: 24),
 
@@ -2563,6 +2926,214 @@ class _AddProductPageState extends State<AddProductPage> {
         const SizedBox(height: 32),
         _buildNavigationButtons(),
       ],
+    );
+  }
+
+  Widget _buildPricingGroupCard({
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFA),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPricingStatusTile({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color accentColor,
+    required bool active,
+  }) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 150, maxWidth: 220),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: active
+            ? accentColor.withValues(alpha: 0.08)
+            : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: active
+              ? accentColor.withValues(alpha: 0.24)
+              : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: active ? 0.16 : 0.10),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: accentColor, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSizeOptionRow(_EditableProductSizeOption row) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: _buildTextField(
+                  controller: row.nameController,
+                  label: 'Boyut Adi',
+                  hint: 'Kucuk / Orta / Buyuk / 500 gr',
+                  onChanged: (value) => setState(() {}),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: _buildTextField(
+                  controller: row.priceController,
+                  label: 'Fiyat',
+                  hint: '0',
+                  prefix: '₺',
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) => setState(() {}),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    ThousandsSeparatorInputFormatter(),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTextField(
+                  controller: row.sortController,
+                  label: 'Sira',
+                  hint: '0',
+                  keyboardType: TextInputType.number,
+                  onChanged: (value) {
+                    setState(() {
+                      row.sortOrder = int.tryParse(value) ?? row.sortOrder;
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _setDefaultSizeRow(row.id);
+                  });
+                },
+                borderRadius: BorderRadius.circular(999),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 2,
+                    vertical: 4,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        row.isDefault
+                            ? Icons.radio_button_checked_rounded
+                            : Icons.radio_button_off_rounded,
+                        size: 20,
+                        color: row.isDefault
+                            ? AppColors.primary
+                            : const Color(0xFF94A3B8),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Varsayilan',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    final wasDefault = row.isDefault;
+                    row.dispose();
+                    _sizeOptionRows.removeWhere((entry) => entry.id == row.id);
+                    if (wasDefault && _sizeOptionRows.isNotEmpty) {
+                      _sizeOptionRows.first.isDefault = true;
+                    }
+                  });
+                },
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Sil'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -5083,14 +5654,31 @@ class _AddProductPageState extends State<AddProductPage> {
     return '0';
   }
 
+  Future<XFile?> _pickSingleImageFile() async {
+    final picked = await pickImageFile();
+    if (picked == null) return null;
+    return XFile.fromData(
+      picked.bytes,
+      name: picked.name,
+      mimeType: 'image/jpeg',
+    );
+  }
+
+  List<XFile> _toXFiles(List<PickedImageFile> pickedFiles) {
+    return pickedFiles
+        .map(
+          (picked) => XFile.fromData(
+            picked.bytes,
+            name: picked.name,
+            mimeType: 'image/jpeg',
+          ),
+        )
+        .toList(growable: false);
+  }
+
   Future<void> _pickImage(int index) async {
     try {
-      final XFile? image = await _picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 800,
-        maxHeight: 800,
-        imageQuality: 65,
-      );
+      final XFile? image = await _pickSingleImageFile();
       if (image != null) {
         setState(() {
           _productImages[index] = image;
@@ -5198,16 +5786,13 @@ class _AddProductPageState extends State<AddProductPage> {
 
   Future<void> _pickVariantImage(int variantIndex) async {
     try {
-      final XFile? image = await _picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1080,
-        maxHeight: 1080,
-        imageQuality: 70,
-      );
+      final XFile? image = await _pickSingleImageFile();
       if (image != null) {
         setState(() {
           if (variantIndex < _variants.length) {
-            _variants[variantIndex].imagePath = image.path;
+            _variants[variantIndex].imagePath = image.path.isNotEmpty
+                ? image.path
+                : image.name;
             _variants[variantIndex].imageFile = image;
             _variants[variantIndex].imageUrl = null;
           }
@@ -5220,10 +5805,8 @@ class _AddProductPageState extends State<AddProductPage> {
 
   Future<void> _pickMultipleImages() async {
     try {
-      final List<XFile> images = await _picker.pickMultiImage(
-        maxWidth: 1080,
-        maxHeight: 1080,
-        imageQuality: 70,
+      final List<XFile> images = _toXFiles(
+        await pickImageFiles(allowMultiple: true),
       );
       if (!mounted) return;
       if (images.isNotEmpty) {
@@ -5386,7 +5969,9 @@ class _AddProductPageState extends State<AddProductPage> {
         return false;
       }
     }
-    if (_pricingTypeForSave == ProductPricingType.weight) {
+    if (_pricePerKgValue > 0 ||
+        _selectedServiceControlType ==
+            ProductServiceControlType.weightStepper) {
       final errors = ProductPriceCalculator.validateWeightConfiguration(
         minWeightGrams: _parsedMinWeight(),
         defaultWeightGrams: _parsedDefaultWeight(),
@@ -5404,20 +5989,21 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   bool _validatePricingStep({required bool showErrors}) {
-    final effectivePricingType = _pricingTypeForSave;
-    final priceController = effectivePricingType == ProductPricingType.weight
-        ? _pricePerKgController
-        : _portionPriceController;
-    final priceValue = effectivePricingType == ProductPricingType.weight
-        ? _pricePerKgValue
-        : _portionPriceValue;
+    final sizeOptions = _parsedSizeOptions();
+    final sizeErrors = ProductPriceCalculator.validateSizeOptions(sizeOptions);
+    if (sizeErrors.isNotEmpty) {
+      if (showErrors) {
+        _showError(sizeErrors.first);
+      }
+      return false;
+    }
 
-    if (priceController.text.trim().isEmpty || priceValue <= 0) {
+    if (_portionPriceValue <= 0 &&
+        _pricePerKgValue <= 0 &&
+        sizeOptions.isEmpty) {
       if (showErrors) {
         _showError(
-          effectivePricingType == ProductPricingType.weight
-              ? 'Geçerli bir kilogram fiyatı giriniz'
-              : 'Geçerli bir satış fiyatı giriniz',
+          'En az bir fiyat kaynagi giriniz: porsiyon, kilo veya boyut.',
         );
       }
       return false;
@@ -5475,9 +6061,14 @@ class _AddProductPageState extends State<AddProductPage> {
       mainCategory: mainCategory,
       subCategory: subCategory,
       price: _activePriceValue,
+      pricingMode: _pricingModeForSave.storageValue,
+      basePrice: _portionPriceValue > 0 ? _portionPriceValue : null,
       pricingType: _pricingTypeForSave.storageValue,
       portionPrice: _portionPriceValue > 0 ? _portionPriceValue : null,
       pricePerKg: _pricePerKgValue > 0 ? _pricePerKgValue : null,
+      sizeOptions: _parsedSizeOptions(),
+      selectedSizeName: _defaultSizeOptionForSave?.name,
+      selectedSizePrice: _defaultSizeOptionForSave?.price,
       serviceControlType:
           _selectedServiceControlType == ProductServiceControlType.none
           ? null
@@ -5707,7 +6298,7 @@ class _AddProductPageState extends State<AddProductPage> {
     );
 
     // Ürün verilerini oluştur
-    // Yeni ürünlerde status 'Aktif' gönderilir; StoreService.addProduct bunu 'pending_approval' yapar
+    // Yeni ürünlerde status 'Aktif' gönderilir; StoreService.addProduct vitrin için 'Aktif' yazar.
     // Böylece Admin panelindeki onay listesine düşer.
     final String targetStatus = 'Aktif';
     final String productId =
@@ -5846,9 +6437,14 @@ class _AddProductPageState extends State<AddProductPage> {
       mainCategory: _selectedMainCategory ?? '',
       subCategory: _selectedSubCategory ?? '',
       price: _activePriceValue,
+      pricingMode: _pricingModeForSave.storageValue,
+      basePrice: _portionPriceValue > 0 ? _portionPriceValue : null,
       pricingType: _pricingTypeForSave.storageValue,
       portionPrice: _portionPriceValue > 0 ? _portionPriceValue : null,
       pricePerKg: _pricePerKgValue > 0 ? _pricePerKgValue : null,
+      sizeOptions: _parsedSizeOptions(),
+      selectedSizeName: _defaultSizeOptionForSave?.name,
+      selectedSizePrice: _defaultSizeOptionForSave?.price,
       serviceControlType:
           _selectedServiceControlType == ProductServiceControlType.none
           ? null

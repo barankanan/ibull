@@ -1,5 +1,7 @@
 import json
 import logging
+import platform
+import subprocess
 import threading
 import time
 import traceback
@@ -15,7 +17,13 @@ logger = logging.getLogger("ibul_local_print")
 
 ALLOWED_ORIGIN = "https://ibul-ecommerce.web.app"
 SERVICE_NAME = "ibul-python-print"
-SERVICE_ROUTES = ["/health", "/print/test", "/print/receipt", "/print/kitchen"]
+SERVICE_ROUTES = [
+    "/health",
+    "/print/test",
+    "/print/receipt",
+    "/print/kitchen",
+    "/system/release-usb-printers",
+]
 VENDOR_ID = 0x0416
 PRODUCT_ID = 0x5011
 USB_INTERFACE = 0
@@ -288,9 +296,12 @@ def _format_receipt_item_lines(item, width=RECEIPT_WIDTH):
         item.get("name"),
         fallback="Urun",
     )
-    qty = _format_receipt_quantity(item.get("qty", 1))
-    unit_price = _format_receipt_number(item.get("price", 0))
-    line_total = _format_receipt_amount(item.get("total", 0))
+    # Accept both receipt format ("qty") and kitchen format ("quantity").
+    qty = _format_receipt_quantity(item.get("qty", item.get("quantity", 1)))
+    # Accept both receipt format ("price") and kitchen format ("unit_price").
+    unit_price = _format_receipt_number(item.get("price", item.get("unit_price", 0)))
+    # Accept both receipt format ("total") and kitchen format ("line_total").
+    line_total = _format_receipt_amount(item.get("total", item.get("line_total", 0)))
     name_lines = _wrap_receipt_text(name, width)
     detail_line = _receipt_pair(f"{qty} x {unit_price}", line_total, width)
     _log_server(
@@ -639,6 +650,51 @@ def health():
     return jsonify(_service_index())
 
 
+@app.route("/system/release-usb-printers", methods=["POST", "OPTIONS"])
+def release_usb_printers():
+    if request.method == "OPTIONS":
+        return _preflight_response()
+    if platform.system().lower() != "darwin":
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "USB printer release is only supported on macOS.",
+                }
+            ),
+            400,
+        )
+    try:
+        result = subprocess.run(
+            ["killall", "-USR1", "cupsd"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    if result.returncode != 0:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": (result.stderr or result.stdout or "killall -USR1 cupsd failed").strip(),
+                    "exit_code": result.returncode,
+                }
+            ),
+            500,
+        )
+    time.sleep(0.5)
+    return jsonify(
+        {
+            "ok": True,
+            "released": True,
+            "command": "killall -USR1 cupsd",
+            "wait_ms": 500,
+        }
+    )
+
+
 @app.route("/print/test", methods=["GET", "POST", "OPTIONS"])
 def print_test():
     if request.method == "OPTIONS":
@@ -917,6 +973,17 @@ def print_kitchen():
             plateCount=plate_count,
             payloadSummary=_summarize_payload(data),
         )
+        if not kitchen_items:
+            _log_server(
+                "WARN_EMPTY_ITEMS",
+                route="/print/kitchen",
+                tableNo=table_no,
+                area=area_name,
+                payloadKeys=sorted(data.keys()),
+                action="printing_header_only_no_items",
+            )
+            # Print a visible placeholder on the ticket so the operator is alerted
+            kitchen_items = [{"name": "*** URUN BULUNAMADI / EMPTY ITEMS PAYLOAD ***", "quantity": 1}]
         with _printer_lock_context("/print/kitchen"):
             p = None
             try:

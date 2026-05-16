@@ -1,0 +1,10 @@
+{
+  "name": "ibul-root-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "stage:windows-installer": "node scripts/stage_windows_installer_for_hosting.mjs",
+    "check:windows-installer": "node scripts/check_windows_installer_hosting.mjs"
+  }
+}
+

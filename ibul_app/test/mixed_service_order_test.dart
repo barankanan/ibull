@@ -94,8 +94,8 @@ void main() {
       expect(MixedServiceOrder.itemLineTotal(item), 200);
     });
 
-    test('builds kitchen note with child breakdown', () {
-      final note = MixedServiceOrder.buildKitchenNote({
+    test('builds kitchen note with plain note only (no plate structure)', () {
+      final item = {
         'item_type': 'mixed_service',
         'notes': 'Yanında lavaş',
         'child_items': [
@@ -108,11 +108,60 @@ void main() {
             'service_round': 3,
           },
         ],
-      });
-
+      };
+      // buildKitchenNote only emits the plain user note + attributes.
+      // Plate/child structure is handled by buildKitchenPlates.
+      final note = MixedServiceOrder.buildKitchenNote(item);
       expect(note, contains('Yanında lavaş'));
-      expect(note, contains('Tabak 3'));
-      expect(note, contains(' - Kuşbaşı Şiş x1'));
+      expect(note, isNot(contains('Tabak')));
+      expect(note, isNot(contains('Kuşbaşı')));
+    });
+
+    test('buildKitchenPlates produces structured plate data', () {
+      final item = MixedServiceOrder.normalizeOrderItem({
+        'item_type': 'mixed_service',
+        'item_name': 'Karışık Servis',
+        'service_round_count': 3,
+        'child_items': [
+          {
+            'product_id': 'p1',
+            'product_name': 'Kuşbaşı Şiş',
+            'quantity': 1,
+            'unit_price': 95,
+            'line_total': 95,
+            'service_round': 3,
+          },
+        ],
+      });
+      final plates = MixedServiceOrder.buildKitchenPlates(item);
+      expect(plates, hasLength(1));
+      expect(plates.first['label'], 'Tabak 3');
+      final children = plates.first['items'] as List;
+      expect(children, hasLength(1));
+      expect(children.first['name'], 'Kuşbaşı Şiş');
+    });
+
+    test('buildKitchenServiceChildren produces flat child data when no plate grouping', () {
+      final item = MixedServiceOrder.normalizeOrderItem({
+        'item_type': 'mixed_service',
+        'item_name': 'Servis',
+        'service_round_count': 0,
+        'child_items': [
+          {
+            'product_id': 'p1',
+            'product_name': 'Adana',
+            'quantity': 2,
+            'unit_price': 120,
+            'line_total': 240,
+            'service_round': 1,
+          },
+        ],
+      });
+      expect(MixedServiceOrder.buildKitchenPlates(item), isEmpty);
+      final children = MixedServiceOrder.buildKitchenServiceChildren(item);
+      expect(children, hasLength(1));
+      expect(children.first['name'], 'Adana');
+      expect(children.first['quantity'], 2);
     });
 
     test('keeps standard mode child lines without plate headers', () {
@@ -616,10 +665,14 @@ void main() {
         MixedServiceOrder.childItemDisplayLines(item),
         contains('Tavuk Bonfile • 1.5 Porsiyon'),
       );
-      expect(
-        MixedServiceOrder.buildKitchenNote(item),
-        contains(' - Tavuk Bonfile • 1.5 Porsiyon'),
-      );
+      // buildKitchenNote no longer encodes child structure—it only holds the
+      // plain user note.  Child details are in buildKitchenServiceChildren.
+      expect(MixedServiceOrder.buildKitchenNote(item), isEmpty);
+      final kitchenChildren =
+          MixedServiceOrder.buildKitchenServiceChildren(item);
+      expect(kitchenChildren, hasLength(1));
+      expect(kitchenChildren.first['name'], 'Tavuk Bonfile');
+      expect(kitchenChildren.first['amount_label'], '1.5 Porsiyon');
     });
 
     test('calculates kilogram child item totals with selected weight', () {

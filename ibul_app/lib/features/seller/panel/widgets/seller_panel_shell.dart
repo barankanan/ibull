@@ -23,11 +23,13 @@ class SellerPanelShell extends StatelessWidget {
     required this.topBar,
     required this.sidebar,
     required this.content,
+    this.contentBanner,
   });
 
   final Widget topBar;
   final Widget sidebar;
   final Widget content;
+  final Widget? contentBanner;
 
   static const double sidebarWidth = 224;
 
@@ -49,7 +51,15 @@ class SellerPanelShell extends StatelessWidget {
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.all(18),
-                        child: content,
+                        child: Column(
+                          children: [
+                            if (contentBanner != null) ...[
+                              contentBanner!,
+                              const SizedBox(height: 12),
+                            ],
+                            Expanded(child: content),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -70,12 +80,16 @@ class SellerPanelTopBar extends StatelessWidget {
     required this.storeLabel,
     required this.sellerIdLabel,
     this.onNotificationsTap,
+    this.onToggleSidebar,
+    this.sidebarCollapsed = false,
   });
 
   final String title;
   final String storeLabel;
   final String sellerIdLabel;
   final VoidCallback? onNotificationsTap;
+  final VoidCallback? onToggleSidebar;
+  final bool sidebarCollapsed;
 
   @override
   Widget build(BuildContext context) {
@@ -149,6 +163,16 @@ class SellerPanelTopBar extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           IconButton(
+            onPressed: onToggleSidebar,
+            tooltip: sidebarCollapsed
+                ? 'Kenar çubuğunu genişlet'
+                : 'Kenar çubuğunu daralt',
+            icon: Icon(
+              sidebarCollapsed ? Icons.menu_rounded : Icons.menu_open_rounded,
+              size: 18,
+            ),
+          ),
+          IconButton(
             onPressed: onNotificationsTap,
             icon: const Icon(Icons.notifications_outlined, size: 18),
           ),
@@ -163,42 +187,70 @@ class SellerPanelSidebar extends StatelessWidget {
     super.key,
     required this.items,
     required this.onLogoutTap,
+    this.collapsed = false,
   });
 
   final List<SellerPanelMenuEntry> items;
   final VoidCallback onLogoutTap;
+  final bool collapsed;
+
+  static const double _collapsedWidth = 56;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
+    final targetWidth = collapsed
+        ? _collapsedWidth
+        : SellerPanelShell.sidebarWidth;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInOut,
+      width: targetWidth,
       color: const Color(0xFF111827),
-      child: SizedBox(
-        width: SellerPanelShell.sidebarWidth,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SellerPanelBrandHeader(),
-            const SizedBox(height: 8),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                children: items
-                    .map((item) => SellerPanelSidebarItem(item: item))
-                    .toList(growable: false),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-              child: SellerPanelSidebarItem(
-                item: SellerPanelMenuEntry(
-                  icon: Icons.logout,
-                  label: 'Çıkış Yap',
-                  isActive: false,
-                  onTap: onLogoutTap,
+      child: OverflowBox(
+        alignment: Alignment.topLeft,
+        minWidth: 0,
+        maxWidth: SellerPanelShell.sidebarWidth,
+        child: SizedBox(
+          width: targetWidth,
+          child: Material(
+            color: Colors.transparent,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SellerPanelBrandHeader(collapsed: collapsed),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: collapsed ? 4 : 6,
+                    ),
+                    children: items
+                        .map(
+                          (item) => SellerPanelSidebarItem(
+                            item: item,
+                            collapsed: collapsed,
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
                 ),
-              ),
+                Padding(
+                  padding: collapsed
+                      ? const EdgeInsets.fromLTRB(4, 6, 4, 10)
+                      : const EdgeInsets.fromLTRB(10, 6, 10, 10),
+                  child: SellerPanelSidebarItem(
+                    collapsed: collapsed,
+                    item: SellerPanelMenuEntry(
+                      icon: Icons.logout,
+                      label: 'Çıkış Yap',
+                      isActive: false,
+                      onTap: onLogoutTap,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -206,13 +258,19 @@ class SellerPanelSidebar extends StatelessWidget {
 }
 
 class SellerPanelSidebarItem extends StatelessWidget {
-  const SellerPanelSidebarItem({super.key, required this.item});
+  const SellerPanelSidebarItem({
+    super.key,
+    required this.item,
+    this.collapsed = false,
+  });
 
   final SellerPanelMenuEntry item;
+  final bool collapsed;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final iconColor = item.isActive ? AppColors.primary : Colors.white70;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1.5),
       child: Material(
@@ -221,30 +279,110 @@ class SellerPanelSidebarItem extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(7),
           onTap: item.onTap,
-          child: Container(
+          child: SizedBox(
             height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              children: [
-                Icon(
-                  item.icon,
-                  size: 17,
-                  color: item.isActive ? AppColors.primary : Colors.white70,
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    item.label,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: item.isActive ? AppColors.primary : Colors.white70,
-                      fontWeight: item.isActive
-                          ? FontWeight.w700
-                          : FontWeight.w500,
+            child: collapsed
+                ? Tooltip(
+                    message: item.label,
+                    preferBelow: false,
+                    child: Center(
+                      child: Icon(item.icon, size: 17, color: iconColor),
+                    ),
+                  )
+                : Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Row(
+                      children: [
+                        Icon(item.icon, size: 17, color: iconColor),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            item.label,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: iconColor,
+                              fontWeight: item.isActive
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tablet shell (800–1199 px).
+/// Content occupies full width; sidebar is an overlay left [Drawer].
+/// Toggle button in the top-bar opens/closes the drawer.
+class SellerPanelTabletShell extends StatelessWidget {
+  const SellerPanelTabletShell({
+    super.key,
+    required this.title,
+    required this.storeLabel,
+    required this.sellerIdLabel,
+    required this.drawerItems,
+    required this.onLogoutTap,
+    required this.content,
+    this.contentBanner,
+    this.onNotificationsTap,
+  });
+
+  final String title;
+  final String storeLabel;
+  final String sellerIdLabel;
+  final List<SellerPanelMenuEntry> drawerItems;
+  final VoidCallback onLogoutTap;
+  final Widget content;
+  final Widget? contentBanner;
+  final VoidCallback? onNotificationsTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final panelTheme = buildSellerPanelTheme(Theme.of(context));
+    return Theme(
+      data: panelTheme,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF9FAFB),
+        drawer: SellerPanelMobileDrawer(
+          items: drawerItems,
+          onLogoutTap: onLogoutTap,
+        ),
+        body: SafeArea(
+          child: Column(
+            children: [
+              // Builder gives a context that is a descendant of the Scaffold,
+              // which is required by Scaffold.of() to open the drawer.
+              Builder(
+                builder: (ctx) => SellerPanelTopBar(
+                  title: title,
+                  storeLabel: storeLabel,
+                  sellerIdLabel: sellerIdLabel,
+                  // Always show the "closed" icon since drawer is hidden by default.
+                  sidebarCollapsed: true,
+                  onToggleSidebar: () => Scaffold.of(ctx).openDrawer(),
+                  onNotificationsTap: onNotificationsTap,
                 ),
-              ],
-            ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    children: [
+                      if (contentBanner != null) ...[
+                        contentBanner!,
+                        const SizedBox(height: 12),
+                      ],
+                      Expanded(child: content),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -260,6 +398,7 @@ class SellerPanelMobileShell extends StatelessWidget {
     required this.drawer,
     required this.content,
     required this.onRefresh,
+    this.contentBanner,
   });
 
   final String title;
@@ -267,6 +406,7 @@ class SellerPanelMobileShell extends StatelessWidget {
   final Widget drawer;
   final Widget content;
   final VoidCallback onRefresh;
+  final Widget? contentBanner;
 
   @override
   Widget build(BuildContext context) {
@@ -319,7 +459,15 @@ class SellerPanelMobileShell extends StatelessWidget {
           top: false,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: content,
+            child: Column(
+              children: [
+                if (contentBanner != null) ...[
+                  contentBanner!,
+                  const SizedBox(height: 10),
+                ],
+                Expanded(child: content),
+              ],
+            ),
           ),
         ),
       ),
@@ -378,30 +526,37 @@ class SellerPanelMobileDrawer extends StatelessWidget {
 }
 
 class _SellerPanelBrandHeader extends StatelessWidget {
-  const _SellerPanelBrandHeader({this.padding = const EdgeInsets.all(18)});
+  const _SellerPanelBrandHeader({
+    this.padding = const EdgeInsets.all(18),
+    this.collapsed = false,
+  });
 
   final EdgeInsetsGeometry padding;
+  final bool collapsed;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final iconBox = Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: const Icon(Icons.store_outlined, color: Colors.white, size: 15),
+    );
+    if (collapsed) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: Center(child: iconBox),
+      );
+    }
     return Padding(
       padding: padding,
       child: Row(
         children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: AppColors.primary,
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: const Icon(
-              Icons.store_outlined,
-              color: Colors.white,
-              size: 15,
-            ),
-          ),
+          iconBox,
           const SizedBox(width: 7),
           Text(
             'Satıcı Paneli',
