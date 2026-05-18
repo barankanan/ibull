@@ -1,9 +1,9 @@
-$ErrorActionPreference = "Stop"
-Set-StrictMode -Version Latest
-
 param(
     [string]$AppVersion = "1.0.0"
 )
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bridgeRoot = Split-Path -Parent $scriptRoot
@@ -46,7 +46,6 @@ try {
         --clean `
         --distpath $distBridgeDir `
         --workpath $workDir `
-        --specpath $workDir `
         $specFile
 
     Write-Host "[4/6] Copying runtime defaults..."
