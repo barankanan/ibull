@@ -35,6 +35,7 @@ Name: "desktopicon"; Description: "Masaustu kisayolu olustur"; GroupDescription:
 
 [Files]
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "wait_for_bridge_health.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Ibul Print Bridge"; Filename: "{app}\{#ExeName}"
@@ -46,3 +47,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\{#ExeName}"; Description: "Yazici servisini simdi baslat"; Flags: nowait postinstall skipifsilent
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\wait_for_bridge_health.ps1"" -TimeoutSeconds 45"; StatusMsg: "Yazici servisi hazirlaniyor..."; Flags: waituntilterminated skipifsilent
+
+[UninstallRun]
+Filename: "taskkill.exe"; Parameters: "/IM {#ExeName} /F"; Flags: runhidden skipifdoesntexist

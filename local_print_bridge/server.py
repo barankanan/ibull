@@ -26,6 +26,7 @@ from .log_store import PrintLogStore
 from .models import KitchenPayload, PayloadError, ReceiptPayload
 from .network_transport import NetworkTcpTransport
 from .printers import PrinterRecord, dedupe_printers, discover_windows_printers
+from .pillow_probe import probe_pillow
 from .print_station import (
     PrintStationConsumer,
     build_print_station_queue_status,
@@ -33,9 +34,12 @@ from .print_station import (
 )
 from .queue_manager import PrintQueueManager
 from .raster import (
+    BundledFontMissingError,
     KitchenBitmapRenderer,
     RasterEscPosEncoder,
     ReceiptBitmapRenderer,
+    bundled_mono_font_status,
+    resolve_bundled_mono_font_path,
     warm_font_cache,
 )
 from .receipt import ReceiptRenderer
@@ -86,12 +90,13 @@ def _build_info() -> dict[str, object]:
         _receipt = None
         _raster = None
         _kitchen = None
-    build_time = datetime.now().astimezone().isoformat()
     info: dict[str, object] = {
         "bridge_version": "dev",
-        "build_time": build_time,
+        "build_time": _PROCESS_STARTED_AT,
         "git_commit": _git_commit_short() or "",
         "app_mode": _app_mode(),
+        "python_executable": sys.executable,
+        "python_version": platform.python_version(),
         "server_path": str(Path(__file__).resolve()),
         "receipt_path": str(Path(getattr(_receipt, "__file__", "") or "")),
         "raster_path": str(Path(getattr(_raster, "__file__", "") or "")),
@@ -100,7 +105,50 @@ def _build_info() -> dict[str, object]:
     return info
 
 
+_PROCESS_STARTED_AT = datetime.now().astimezone().isoformat()
 _BUILD_INFO = _build_info()
+
+
+def _runtime_diagnostics() -> dict[str, object]:
+    pillow = probe_pillow(reload=True)
+    return {
+        **pillow,
+        "build": dict(_BUILD_INFO),
+    }
+
+
+def _error_response(exc: Exception, **extra: object) -> dict[str, object]:
+    error_code = extra.pop("errorCode", None)
+    if error_code is None and hasattr(exc, "error_code"):
+        error_code = getattr(exc, "error_code", None)
+    payload: dict[str, object] = {
+        "ok": False,
+        "error": str(exc),
+        **_runtime_diagnostics(),
+    }
+    if error_code:
+        payload["error_code"] = error_code
+        payload["errorCode"] = error_code
+    payload.update(extra)
+    return payload
+
+
+def _request_turkish_guarantee_mode(body: dict[str, object] | None) -> bool:
+    raw = body or {}
+    mode = str(raw.get("turkish_print_mode") or "").strip().lower()
+    if mode in {"turkish_guarantee", "guarantee"}:
+        return True
+    return raw.get("turkish_guarantee_mode") is True
+
+
+def _request_turkish_print_mode_label(body: dict[str, object] | None) -> str:
+    raw = body or {}
+    explicit = str(raw.get("turkish_print_mode") or "").strip()
+    if explicit:
+        return explicit
+    if raw.get("turkish_guarantee_mode") is True:
+        return "turkish_guarantee"
+    return "text"
 
 
 def _guess_paper_width(name: str) -> int:
@@ -265,12 +313,15 @@ class _SmartTransport:
         for printer in discovered:
             if not isinstance(printer, dict):
                 continue
-            if printer_id and str(printer.get("id") or "") == printer_id:
-                return dict(printer)
+            if printer_id:
+                current_id = str(printer.get("id") or "").strip()
+                if current_id.lower() == str(printer_id).strip().lower():
+                    return dict(printer)
             if printer_name:
-                name = str(printer.get("name") or printer.get("displayName") or "")
-                queue = str(printer.get("queue") or printer.get("queueName") or "")
-                if printer_name in {name, queue}:
+                needle = str(printer_name).strip().lower()
+                name = str(printer.get("name") or printer.get("displayName") or "").strip().lower()
+                queue = str(printer.get("queue") or printer.get("queueName") or "").strip().lower()
+                if needle in {name, queue} or needle == f"windows:{queue}":
                     return dict(printer)
         return None
 
@@ -480,6 +531,22 @@ def _macos_launch_agent_plist(python_executable: str, bridge_root: Path) -> str:
   <string>{stderr_log}</string>
 </dict>
 </plist>'''
+
+
+def _windows_registry_autostart_enabled() -> bool | None:
+    if platform.system().lower() != "windows":
+        return None
+    try:
+        import winreg  # noqa: PLC0415
+
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+        ) as key:
+            winreg.QueryValueEx(key, "IbulLocalPrintBridge")
+        return True
+    except OSError:
+        return False
 
 
 def _autostart_state(platform_name: str) -> dict[str, object]:
@@ -1029,6 +1096,9 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         if request_path == "/setup/driver-help":
             self._handle_setup_driver_help()
             return
+        if request_path == "/spool/snapshot":
+            self._handle_spool_snapshot()
+            return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found."})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -1044,6 +1114,9 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             return
         if request_path == "/print/test/turkish":
             self._handle_print_turkish_test()
+            return
+        if request_path == "/print/test/turkish-encoding":
+            self._handle_print_turkish_encoding_calibration()
             return
         if request_path == "/print":
             self._handle_print()
@@ -1117,14 +1190,79 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         LOGGER.info("%s - %s", self.address_string(), format % args)
 
+    def _handle_spool_snapshot(self) -> None:
+        from urllib.parse import parse_qs, urlparse
+
+        from .windows_transport import peek_windows_spool_jobs
+
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        printer_name = str(
+            (params.get("printer_name") or params.get("queue") or [""])[0]
+        ).strip()
+        if not printer_name:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "errorCode": "printer_name_required",
+                    "error": "printer_name query parameter is required.",
+                },
+            )
+            return
+        if platform.system().lower() != "windows":
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "ok": False,
+                    "printer_name": printer_name,
+                    "reason": "windows_only",
+                },
+            )
+            return
+        snapshot = peek_windows_spool_jobs(printer_name)
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": snapshot.get("ok") is True,
+                "printer_name": printer_name,
+                **snapshot,
+            },
+        )
+
     def _handle_health(self) -> None:
         queue_summary = self.queue_manager.summary()
+        pillow = probe_pillow(reload=True)
+        platform_name = platform.system().lower()
+        setup_platform = (
+            "macos"
+            if platform_name == "darwin"
+            else "windows"
+            if platform_name == "windows"
+            else platform_name
+        )
+        autostart = _autostart_state(setup_platform)
+        autostart_enabled = autostart.get("enabled") is True
+        if setup_platform == "windows":
+            registry_autostart = _windows_registry_autostart_enabled()
+            if registry_autostart is True:
+                autostart_enabled = True
         self._send_json(
             HTTPStatus.OK,
             {
                 "ok": True,
                 "service": "ibul-local-print-bridge",
                 "build": _BUILD_INFO,
+                "bridge_version": str(_BUILD_INFO.get("bridge_version") or "dev"),
+                "pillow_available": pillow.get("pillow_available") is True,
+                "pillow_version": pillow.get("pillow_version"),
+                "pillow_module": pillow.get("pillow_module"),
+                "pillow_import_error": pillow.get("import_error"),
+                "python_executable": pillow.get("python_executable") or sys.executable,
+                "python_version": pillow.get("python_version") or platform.python_version(),
+                "default_queue": self.settings.printer_queue,
+                "service_mode": _app_mode(),
+                "autostart_enabled": autostart_enabled,
                 "transport_mode": self.settings.transport_mode,
                 "printer_queue": self.settings.printer_queue,
                 "paper_width_mm": self.settings.paper_width_mm,
@@ -1132,6 +1270,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "encoding": self.settings.encoding,
                 "codepage": self.settings.codepage,
                 "render_mode": self.settings.render_mode,
+                "bundled_font": bundled_mono_font_status(),
                 "raster_chunk_height": self.settings.raster_chunk_height,
                 "network_host": self.settings.network_host or None,
                 "network_port": self.settings.network_port,
@@ -1204,8 +1343,10 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         product_id = str(body.get("productId") or body.get("product_id") or "").strip() or "-"
         render_mode = str(body.get("render_mode") or "").strip() or "-"
         codepage = str(body.get("codepage") or "").strip() or "-"
+        document_type = str(body.get("document_type") or "test").strip() or "test"
+        spool_mode = str(body.get("spool_mode") or "RAW").strip() or "RAW"
         LOGGER.info(
-            "flutter-request-payload: printer_id=%s printer_name=%s embedded_printer=%s backend=%s queue=%s vendorId=%s productId=%s render_mode=%s codePage=%s",
+            "flutter-request-payload: printer_id=%s printer_name=%s embedded_printer=%s backend=%s queue=%s vendorId=%s productId=%s render_mode=%s codePage=%s document_type=%s spool_mode=%s",
             printer_id,
             printer_name,
             json.dumps(embedded_printer, ensure_ascii=False, sort_keys=True)
@@ -1217,6 +1358,8 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             product_id,
             render_mode,
             codepage,
+            document_type,
+            spool_mode,
         )
         selected_backend = str(selected_printer.get("backend") or "").strip().lower() if selected_printer else ""
         selected_queue = str(
@@ -1409,8 +1552,13 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        raw_body = self._maybe_read_json_body() or {}
+        raw_body = dict(self._maybe_read_json_body() or {})
         test_mode = str(raw_body.get("test_mode") or raw_body.get("mode") or "escpos_short").strip().lower()
+        if test_mode in {"escpos_short", "escpos_text", "escpos", "raw", "text"}:
+            raw_body["render_mode"] = "text"
+            raw_body.setdefault("test_mode", "escpos_short")
+        elif test_mode in {"bitmap", "image", "turkish"}:
+            raw_body["render_mode"] = "image"
         payload = build_short_safe_test_payload() if test_mode == "escpos_short" else build_test_payload()
         target_host, target_port = self._extract_target(raw_body)
         selected_printer = self._resolve_selected_printer(raw_body)
@@ -1440,6 +1588,12 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._test_guard_last_sent_at[guard_key] = now
+        selected_backend = ""
+        if selected_printer:
+            selected_backend = str(selected_printer.get("backend") or "").strip().lower()
+        fast_test = test_mode in {"escpos_short", "escpos_text", "escpos", "raw", "text"} and (
+            selected_backend == "windows-spool" or selected_backend == ""
+        )
         self._submit_receipt(
             payload,
             job_name="ibul-test-receipt" if test_mode != "bitmap" else "ibul-test-bitmap",
@@ -1447,7 +1601,139 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             target_host=target_host,
             target_port=target_port,
             selected_printer=selected_printer,
-            require_physical_confirmation=True,
+            require_physical_confirmation=not fast_test,
+        )
+
+    def _handle_print_turkish_encoding_calibration(self) -> None:
+        if not self.settings.print_system_enabled:
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "ok": False,
+                    "error": "Baskı sistemi şu anda kapalı.",
+                    "errorCode": "print_system_disabled",
+                    "print_system_enabled": False,
+                },
+            )
+            return
+        raw_body = dict(self._maybe_read_json_body() or {})
+        raw_body["render_mode"] = "text"
+        raw_body.setdefault("test_mode", "turkish_encoding")
+        encoding = str(raw_body.get("encoding") or "cp857").strip()
+        codepage_raw = raw_body.get("code_page", raw_body.get("codepage"))
+        try:
+            codepage = int(codepage_raw) if codepage_raw is not None else 13
+        except (TypeError, ValueError):
+            codepage = 13
+        label = str(raw_body.get("label") or f"{encoding} / ESC t {codepage}").strip()
+        sample_lines = raw_body.get("sample_lines")
+        if isinstance(sample_lines, list) and sample_lines:
+            lines_tuple = tuple(str(line) for line in sample_lines if str(line).strip())
+        else:
+            from .receipt import TURKISH_TEST_LINES
+
+            lines_tuple = TURKISH_TEST_LINES
+        candidates_raw = raw_body.get("candidates")
+        combined = raw_body.get("combined") is True or str(
+            raw_body.get("calibration_mode") or ""
+        ).strip().lower() in {"combined", "sheet", "all"}
+        target_host, target_port = self._extract_target(raw_body)
+        selected_printer = self._resolve_selected_printer(raw_body)
+        self._log_print_test_request(
+            raw_body=raw_body,
+            selected_printer=selected_printer,
+        )
+        profile, effective_settings = self._resolve_request_profile(
+            {
+                **raw_body,
+                "encoding": encoding,
+                "codepage": codepage,
+                "printer_encoding": encoding,
+                "printer_code_page": codepage,
+            },
+            job_name="ibul-turkish-encoding-calibration",
+        )
+        from .receipt import (
+            render_turkish_encoding_calibration_ticket,
+            render_turkish_encoding_combined_calibration_ticket,
+        )
+
+        calibration_mode = "single"
+        candidate_count = 1
+        if combined or (
+            isinstance(candidates_raw, list) and len(candidates_raw) > 0
+        ):
+            candidates: list[dict[str, object]] = []
+            if isinstance(candidates_raw, list):
+                for entry in candidates_raw:
+                    if isinstance(entry, dict):
+                        candidates.append(dict(entry))
+            if not candidates:
+                candidates = [
+                    {
+                        "index": index + 1,
+                        "encoding": encoding,
+                        "code_page": codepage,
+                        "line": f"[{index + 1}] {encoding} / ESC t {codepage}: {lines_tuple[0]}",
+                    }
+                ]
+            test_line = str(raw_body.get("test_line") or lines_tuple[0]).strip()
+            raw_bytes, unsupported_chars = render_turkish_encoding_combined_calibration_ticket(
+                effective_settings,
+                candidates=candidates,
+                test_line=test_line,
+            )
+            text_length = sum(len(str(c.get("line") or "")) for c in candidates)
+            label = "combined_turkish_encoding"
+            calibration_mode = "combined"
+            candidate_count = len(candidates)
+        else:
+            raw_bytes, unsupported_chars = render_turkish_encoding_calibration_ticket(
+                effective_settings,
+                encoding=profile.encoding,
+                codepage=profile.codepage or codepage,
+                label=label,
+                sample_lines=lines_tuple,
+            )
+            text_length = len("".join(lines_tuple))
+        _, printer_name_log, _ = self._printer_identity(
+            selected_printer=selected_printer,
+            settings=effective_settings,
+            target_host=target_host,
+            target_port=target_port,
+        )
+        if unsupported_chars:
+            LOGGER.warning(
+                "turkish_encoding_unsupported: printer_name=%s encoding=%s codepage=%s "
+                "unsupported_chars=%s bytes_sent=%d",
+                printer_name_log,
+                profile.encoding,
+                profile.codepage,
+                "".join(unsupported_chars),
+                len(raw_bytes),
+            )
+        self._submit_bytes(
+            raw_bytes,
+            job_name="ibul-turkish-encoding-calibration",
+            profile=profile,
+            settings=effective_settings,
+            raw_request=raw_body,
+            target_host=target_host,
+            target_port=target_port,
+            selected_printer=selected_printer,
+            document_type="test",
+            require_physical_confirmation=False,
+            extra_response={
+                "render_mode": "text",
+                "encoding": profile.encoding,
+                "codepage": profile.codepage,
+                "codepage_command": f"ESC t {profile.codepage or codepage}",
+                "text_length": text_length,
+                "calibration_label": label,
+                "calibration_mode": calibration_mode,
+                "candidate_count": candidate_count,
+                "unsupported_chars": unsupported_chars,
+            },
         )
 
     def _handle_print_turkish_test(self) -> None:
@@ -2128,19 +2414,37 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             if render_mode == "image":
                 image = self.kitchen_bitmap_renderer.render(payload)
                 rasterized = self.raster_encoder.encode(image)
-                render_ms = int((_time.monotonic() - t_render_start) * 1000)
+                raster_render_ms = int((_time.monotonic() - t_render_start) * 1000)
                 LOGGER.info(
                     "kitchen-raster: job=%s printer=%s width_px=%d height_px=%d "
-                    "chunk_count=%d render_ms=%d items=%d area=%s",
+                    "chunk_count=%d raster_render_ms=%d items=%d area=%s guarantee=%s",
                     job_name,
                     effective_settings.printer_queue or "<usb-direct>",
                     rasterized.width_px,
                     rasterized.height_px,
                     rasterized.chunk_count,
-                    render_ms,
+                    raster_render_ms,
                     item_count,
                     payload.area_name or "-",
+                    effective_settings.turkish_guarantee_mode,
                 )
+                extra: dict[str, object] = {
+                    "render_mode": "image",
+                    "raster_render_ms": raster_render_ms,
+                    "render_ms": raster_render_ms,
+                    "width_px": rasterized.width_px,
+                    "height_px": rasterized.height_px,
+                    "chunk_count": rasterized.chunk_count,
+                    "item_count": item_count,
+                    "turkish_print_mode": _request_turkish_print_mode_label(raw_payload),
+                }
+                if effective_settings.turkish_guarantee_mode:
+                    try:
+                        extra["bundled_font_path"] = resolve_bundled_mono_font_path(
+                            bold=False
+                        )
+                    except BundledFontMissingError:
+                        extra["bundled_font_path"] = "missing"
                 self._submit_bytes(
                     rasterized.data,
                     job_name=job_name,
@@ -2151,22 +2455,24 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     target_port=target_port,
                     selected_printer=selected_printer,
                     extra_response={
-                        "render_mode": "image",
-                        "render_ms": render_ms,
-                        "width_px": rasterized.width_px,
-                        "height_px": rasterized.height_px,
-                        "chunk_count": rasterized.chunk_count,
-                        "item_count": item_count,
+                        **extra,
                         "total_request_ms": int((_time.monotonic() - t_start) * 1000),
                     },
                 )
                 return
             raw_bytes = KitchenRenderer(effective_settings).render(payload)
+        except BundledFontMissingError as exc:
+            LOGGER.error("kitchen-raster bundled font missing: %s", exc)
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                _error_response(exc, errorCode="bundled_font_missing"),
+            )
+            return
         except Exception as exc:  # pragma: no cover - defensive guard
             LOGGER.exception("Kitchen render failed: %s", exc)
             self._send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
-                {"ok": False, "error": f"Kitchen render failed: {exc}"},
+                _error_response(exc, errorCode="kitchen_render_failed"),
             )
             return
         render_ms = int((_time.monotonic() - t_render_start) * 1000)
@@ -2258,47 +2564,83 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         document_type: str = "receipt",
         require_physical_confirmation: bool = False,
     ) -> None:
+        import time as _time
+
+        render_mode = self._resolve_render_mode(raw_request)
         try:
             profile, effective_settings = self._resolve_request_profile(
                 raw_request,
                 job_name=job_name,
             )
-            render_mode = self._resolve_render_mode(raw_request)
+            render_mode = effective_settings.render_mode
             if render_mode == "image":
+                t_render = _time.monotonic()
                 image = ReceiptBitmapRenderer(effective_settings).render(payload)
                 rasterized = RasterEscPosEncoder(effective_settings).encode(image)
+                raster_render_ms = int((_time.monotonic() - t_render) * 1000)
                 LOGGER.info(
-                    "receipt-raster: job=%s printer=%s width_px=%d height_px=%d chunk_count=%d",
+                    "receipt-raster: job=%s printer=%s width_px=%d height_px=%d "
+                    "chunk_count=%d raster_render_ms=%d guarantee=%s",
                     job_name,
                     effective_settings.printer_queue or "<usb-direct>",
                     rasterized.width_px,
                     rasterized.height_px,
                     rasterized.chunk_count,
+                    raster_render_ms,
+                    effective_settings.turkish_guarantee_mode,
                 )
+                extra: dict[str, object] = {
+                    "render_mode": "image",
+                    "width_px": rasterized.width_px,
+                    "height_px": rasterized.height_px,
+                    "chunk_count": rasterized.chunk_count,
+                    "raster_render_ms": raster_render_ms,
+                    "turkish_print_mode": _request_turkish_print_mode_label(raw_request),
+                }
+                if effective_settings.turkish_guarantee_mode:
+                    try:
+                        extra["bundled_font_path"] = resolve_bundled_mono_font_path(
+                            bold=False
+                        )
+                    except BundledFontMissingError:
+                        extra["bundled_font_path"] = "missing"
                 self._submit_bytes(
                     rasterized.data,
                     job_name=job_name,
                     profile=profile,
                     settings=effective_settings,
+                    raw_request=raw_request,
                     target_host=target_host,
                     target_port=target_port,
                     selected_printer=selected_printer,
                     document_type=document_type,
                     require_physical_confirmation=require_physical_confirmation,
-                    extra_response={
-                        "render_mode": "image",
-                        "width_px": rasterized.width_px,
-                        "height_px": rasterized.height_px,
-                        "chunk_count": rasterized.chunk_count,
-                    },
+                    extra_response=extra,
                 )
                 return
             raw_bytes = ReceiptRenderer(effective_settings).render(payload)
+        except BundledFontMissingError as exc:
+            LOGGER.error("receipt-raster bundled font missing: %s", exc)
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                _error_response(
+                    exc,
+                    errorCode="bundled_font_missing",
+                    render_mode="image",
+                    document_type=document_type,
+                ),
+            )
+            return
         except Exception as exc:  # pragma: no cover - defensive guard
             LOGGER.exception("Unexpected receipt rendering failure")
             self._send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
-                {"ok": False, "error": f"Unexpected print failure: {exc}"},
+                _error_response(
+                    exc,
+                    errorCode="render_failed",
+                    render_mode=render_mode,
+                    document_type=document_type,
+                ),
             )
             return
         self._submit_bytes(
@@ -2616,15 +2958,64 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             settings.printer_queue or "-",
             elapsed_ms,
         )
+        render_mode_log = str(
+            (extra_response or {}).get("render_mode")
+            or (raw_request or {}).get("render_mode")
+            or document_type
+        )
+        spool_mode_log = str((raw_request or {}).get("spool_mode") or "-")
+        text_length_log = (extra_response or {}).get("text_length")
+        if text_length_log is None:
+            text_length_log = (raw_request or {}).get("text_length")
+        unsupported_chars_log = (extra_response or {}).get("unsupported_chars")
+        if unsupported_chars_log:
+            LOGGER.warning(
+                "bridge-physical-result-encoding: printer_name=%s encoding=%s codepage=%s "
+                "unsupported_chars=%s bytes_sent=%d",
+                printer_name,
+                profile.encoding,
+                profile.codepage if profile.codepage is not None else "-",
+                "".join(unsupported_chars_log)
+                if isinstance(unsupported_chars_log, list)
+                else str(unsupported_chars_log),
+                result.bytes_sent,
+            )
+        flow_type_log = str((raw_request or {}).get("flow_type") or "-")
+        printer_id_log = str(
+            (raw_request or {}).get("printer_id")
+            or (selected_printer or {}).get("id")
+            or "-"
+        )
+        endpoint_log = str((raw_request or {}).get("endpoint") or document_type)
+        esc_t_log = profile.codepage if profile.codepage is not None else "-"
+        esc_r_log = profile.esc_r if profile.esc_r is not None else "-"
         LOGGER.info(
-            "bridge-physical-result: selected_backend=%s selected_queue=%s actual_backend=%s bytes_sent=%d exit_code=%s queue_status=%s raw_output=%s physical_confirmation=%s",
+            "bridge-physical-result: flow_type=%s printer_id=%s printer_name=%s endpoint=%s "
+            "render_mode=%s spool_mode=%s encoding=%s codepage=%s esc_t_value=%s esc_r_value=%s "
+            "codepage_command=ESC t %s bytes_sent=%d text_length=%s unsupported_chars=%s "
+            "selected_backend=%s selected_queue=%s actual_backend=%s "
+            "exit_code=%s queue_status=%s physical_confirmation=%s",
+            flow_type_log,
+            printer_id_log,
+            printer_name,
+            endpoint_log,
+            render_mode_log,
+            spool_mode_log,
+            profile.encoding,
+            esc_t_log,
+            esc_t_log,
+            esc_r_log,
+            esc_t_log,
+            result.bytes_sent,
+            text_length_log if text_length_log is not None else "-",
+            "".join(unsupported_chars_log)
+            if isinstance(unsupported_chars_log, list)
+            else (unsupported_chars_log or "-"),
             selected_backend or "-",
             selected_queue or "-",
             actual_backend or "-",
-            result.bytes_sent,
             lp_exit_code if lp_exit_code is not None else "-",
             queue_result.final_status,
-            result.raw_output or "-",
             "true" if physical_confirmation else "false",
         )
         response: dict[str, object] = {
@@ -2677,8 +3068,45 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "name": printer_name,
                 "backend": transport_type,
             }
+        if result_metadata:
+            response["printer_name"] = (
+                result_metadata.get("printer_name") or selected_queue or printer_name
+            )
+            response["spool_mode"] = result_metadata.get("spool_mode") or "RAW"
+            if result_metadata.get("spool_jobs_after_print") is not None:
+                response["spool_jobs_after_print"] = result_metadata.get("spool_jobs_after_print")
+            if result_metadata.get("spool_latest_job_id") is not None:
+                response["spool_latest_job_id"] = result_metadata.get("spool_latest_job_id")
+            if result_metadata.get("spool_active_job_ids") is not None:
+                response["spool_active_job_ids"] = result_metadata.get("spool_active_job_ids")
+            if result_metadata.get("spool_snapshot") is not None:
+                response["spool_snapshot"] = result_metadata.get("spool_snapshot")
         if extra_response:
             response.update(extra_response)
+        raster_render_ms = (extra_response or {}).get("raster_render_ms")
+        if isinstance(raster_render_ms, (int, float)):
+            spool_write_ms = elapsed_ms
+            response["spool_write_ms"] = spool_write_ms
+            response["total_dispatch_ms"] = int(raster_render_ms) + spool_write_ms
+        elif extra_response and extra_response.get("render_ms") is not None:
+            response["total_dispatch_ms"] = int(extra_response.get("render_ms", 0)) + elapsed_ms
+        response["turkish_print_mode"] = _request_turkish_print_mode_label(raw_request)
+        if settings.turkish_guarantee_mode:
+            try:
+                response["bundled_font_path"] = resolve_bundled_mono_font_path(bold=False)
+            except BundledFontMissingError:
+                response["bundled_font_path"] = "missing"
+        LOGGER.info(
+            "bridge-dispatch-timing: job=%s render_mode=%s turkish_print_mode=%s "
+            "raster_render_ms=%s spool_write_ms=%s total_dispatch_ms=%s bundled_font_path=%s",
+            job_name,
+            response.get("render_mode", "-"),
+            response.get("turkish_print_mode", "-"),
+            response.get("raster_render_ms", "-"),
+            response.get("spool_write_ms", elapsed_ms),
+            response.get("total_dispatch_ms", elapsed_ms),
+            response.get("bundled_font_path", "-"),
+        )
         self._send_json(HTTPStatus.OK, response)
 
     def _resolve_request_profile(
@@ -2709,22 +3137,48 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 requested.get("code_page", requested.get("codepage")),
             ),
         )
+        req_esc_r = requested.get(
+            "esc_r_value",
+            requested.get("printer_esc_r", requested.get("esc_r")),
+        )
+        profile_verified = requested.get("encoding_profile_verified")
+        profile_missing = requested.get("encoding_profile_missing")
 
         # Determine payload_source for logging
         if req_encoding is not None or req_codepage is not None:
             payload_source = "request"
         else:
             payload_source = "env"
+            LOGGER.warning(
+                "encoding_profile_missing: job=%s printer_encoding/codepage absent in payload",
+                job_name,
+            )
+
+        if profile_missing is True or (
+            profile_verified is False and req_encoding is None and req_codepage is None
+        ):
+            LOGGER.warning(
+                "encoding_profile_missing: job=%s verified=%s payload_source=%s",
+                job_name,
+                profile_verified,
+                payload_source,
+            )
 
         profile = resolve_escpos_profile(
             req_encoding,
             req_codepage,
+            req_esc_r,
             default_profile=base_profile,
         )
+        render_mode = self._resolve_render_mode(requested)
+        guarantee_mode = _request_turkish_guarantee_mode(requested)
         effective_settings = replace(
             self.settings,
             encoding=profile.encoding,
             codepage=profile.codepage,
+            esc_r=profile.esc_r,
+            render_mode=render_mode,
+            turkish_guarantee_mode=guarantee_mode,
         )
         self._log_print_profile(job_name=job_name, profile=profile, payload_source=payload_source)
         return profile, effective_settings
@@ -2844,11 +3298,23 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         return None
 
     def _resolve_render_mode(self, body: dict[str, object] | None) -> str:
-        raw = (body or {}).get("render_mode")
+        raw_body = body or {}
+        if _request_turkish_guarantee_mode(raw_body):
+            return "image"
+        test_mode = str(raw_body.get("test_mode") or raw_body.get("mode") or "").strip().lower()
+        if test_mode in {"escpos_short", "escpos_text", "escpos", "raw", "text"}:
+            return "text"
+        if test_mode in {"bitmap", "image", "turkish", "turkish_guarantee"}:
+            return "image"
+        raw = raw_body.get("render_mode")
         if raw is not None:
             normalized = str(raw).strip().lower()
-            if normalized in {"image", "text"}:
-                return normalized
+            if normalized in {"image", "raster_text", "raster"}:
+                return "image"
+            if normalized == "text":
+                return "text"
+            if normalized in {"escpos_short", "escpos_text", "escpos", "raw"}:
+                return "text"
         return self.settings.render_mode
 
     def _maybe_read_json_body(self) -> dict[str, object]:

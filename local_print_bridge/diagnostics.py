@@ -5,18 +5,23 @@ import shutil
 from typing import Any
 
 from .config import BridgeSettings
+from .pillow_probe import probe_pillow
 from .printers import discover_windows_printers
 from .usb_transport import _import_usb
 from .windows_transport import _import_win32print
 
 
 def _check_pillow() -> dict[str, object]:
-    try:
-        import PIL  # noqa: F401, PLC0415
-
-        return {"ok": True, "detail": "Pillow available"}
-    except ImportError:
-        return {"ok": False, "detail": "Pillow missing"}
+    status = probe_pillow(reload=True)
+    if status.get("pillow_available") is True:
+        version = status.get("pillow_version")
+        detail = f"Pillow available ({version})" if version else "Pillow available"
+        return {"ok": True, "detail": detail, **status}
+    return {
+        "ok": False,
+        "detail": f"Pillow missing: {status.get('import_error') or 'import failed'}",
+        **status,
+    }
 
 
 def _check_pyusb() -> dict[str, object]:

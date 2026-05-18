@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -448,7 +448,40 @@ class BridgeManager {
     return (r.stdout as String).trim();
   }
 
+  /// Packaged Windows installer locations (Inno Setup default).
+  @visibleForTesting
+  static List<String> windowsInstalledBridgeExeCandidates() {
+    if (kIsWeb || !Platform.isWindows) {
+      return const <String>[];
+    }
+    final programFiles =
+        Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
+    final programFilesX86 = Platform.environment['ProgramFiles(x86)'] ??
+        r'C:\Program Files (x86)';
+    return <String>[
+      '$programFiles\\IbulPrintBridge\\IbulPrintBridge.exe',
+      '$programFilesX86\\IbulPrintBridge\\IbulPrintBridge.exe',
+    ];
+  }
+
   static Future<_BridgeResolveResult> _resolveBridgeTarget() async {
+    if (Platform.isWindows) {
+      for (final candidate in windowsInstalledBridgeExeCandidates()) {
+        if (File(candidate).existsSync()) {
+          return _BridgeResolveResult(
+            installed: true,
+            reason: 'windows_installer_exe',
+            target: _BridgeStartTarget(
+              kind: 'packaged_exe',
+              executable: candidate,
+              arguments: const <String>[],
+              workingDirectory: File(candidate).parent.path,
+            ),
+          );
+        }
+      }
+    }
+
     final parent = await _findBridgeParentDir();
     if (parent == null) {
       return const _BridgeResolveResult(

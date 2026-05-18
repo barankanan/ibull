@@ -1,4 +1,4 @@
-git status --shortasdasimport 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 class HealthScoreBadge extends StatelessWidget {
   const HealthScoreBadge({

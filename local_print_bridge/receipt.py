@@ -11,8 +11,9 @@ from .models import ReceiptItem, ReceiptPayload
 ESC = b"\x1b"
 GS = b"\x1d"
 TURKISH_TEST_LINES = (
-    "ÇĞİÖŞÜ çğıöşü Iİ ıi",
-    "İğne, Şiş, Çorba, Kuzu Şiş, Karışık, Adisyon",
+    "Türkçe Test: ığüşöç İĞÜŞÖÇ",
+    "Ürün: Çiğ Köfte, Tavuk Şiş, Kıyma Dürüm",
+    "Not: az pişmiş, soğansız, acısız",
 )
 
 LOGGER = logging.getLogger("local_print_bridge")
@@ -22,44 +23,64 @@ LOGGER = logging.getLogger("local_print_bridge")
 _TURKISH_CODEC_FALLBACKS = ("cp857", "cp1254", "iso8859_9", "cp437")
 
 
-def encode_text(text: str, encoding: str) -> tuple[bytes, str]:
-    """Encode *text* using *encoding* with a controlled Turkish fallback chain.
-
-    Returns ``(encoded_bytes, selected_codec)``.  If *encoding* itself works
-    the selected_codec will equal *encoding*.  Falls back through
-    ``_TURKISH_CODEC_FALLBACKS`` on ``UnicodeEncodeError`` or ``LookupError``.
-    The final resort is ``cp437`` with ``errors='replace'`` so a byte string
-    is always returned — never raw UTF-8.
-    """
-    codecs_to_try = [encoding]
-    for fb in _TURKISH_CODEC_FALLBACKS:
-        if fb != encoding:
-            codecs_to_try.append(fb)
-
-    for codec in codecs_to_try:
+def encode_text_report(text: str, encoding: str) -> tuple[bytes, str, list[str], list[str]]:
+    """Strict-first encode; logs unmappable characters, never emits raw UTF-8."""
+    issues: list[str] = []
+    unsupported_chars: list[str] = []
+    try:
+        return text.encode(encoding, errors="strict"), encoding, issues, unsupported_chars
+    except UnicodeEncodeError as exc:
+        unsupported_chars.extend(list(text[exc.start : exc.end]))
+        start = max(exc.start - 8, 0)
+        end = min(exc.end + 8, len(text))
+        snippet = text[start:end]
+        issues.append(
+            f"unmappable@{exc.start}:{exc.end} codec={encoding} snippet={snippet!r}"
+        )
+        LOGGER.warning(
+            "encode_text_report: strict encode failed encoding=%s %s unsupported_chars=%r",
+            encoding,
+            issues[-1],
+            "".join(unsupported_chars),
+        )
+    for codec in _TURKISH_CODEC_FALLBACKS:
+        if codec == encoding:
+            continue
         try:
             encoded = text.encode(codec, errors="strict")
-            if codec != encoding:
-                LOGGER.warning(
-                    "encode_text: fallback used encoding=%s failed_encoding=%s "
-                    "selected_codec=%s text_preview=%.40r",
-                    encoding,
-                    encoding,
-                    codec,
-                    text,
-                )
-            return encoded, codec
+            issues.append(f"fallback_codec={codec}")
+            LOGGER.warning(
+                "encode_text_report: using fallback codec=%s instead of %s issues=%s unsupported_chars=%r",
+                codec,
+                encoding,
+                issues,
+                "".join(unsupported_chars),
+            )
+            return encoded, codec, issues, unsupported_chars
         except (UnicodeEncodeError, LookupError):
             continue
-
-    # Absolute last resort — replace unmappable chars with '?'
+    issues.append("replace_fallback=cp437")
     LOGGER.error(
-        "encode_text: all codecs failed, using cp437 with replace "
-        "encoding=%s text_preview=%.40r",
+        "encode_text_report: all codecs failed encoding=%s text_preview=%.60r issues=%s unsupported_chars=%r",
         encoding,
         text,
+        issues,
+        "".join(unsupported_chars),
     )
-    return text.encode("cp437", errors="replace"), "cp437(replace)"
+    return text.encode("cp437", errors="replace"), "cp437(replace)", issues, unsupported_chars
+
+
+def encode_text(text: str, encoding: str) -> tuple[bytes, str]:
+    """Encode *text* using *encoding*; see ``encode_text_report`` for logging."""
+    encoded, codec, issues, _unsupported = encode_text_report(text, encoding)
+    if issues and codec != encoding:
+        LOGGER.warning(
+            "encode_text: encoding=%s selected_codec=%s issues=%s",
+            encoding,
+            codec,
+            " | ".join(issues),
+        )
+    return encoded, codec
 
 
 def _init_printer() -> bytes:
@@ -91,11 +112,18 @@ def _cut(mode: str) -> bytes:
 
 
 def _set_codepage(table: int) -> bytes:
-    return ESC + b"t" + bytes([table])
+    return ESC + b"t" + bytes([table & 0xFF])
+
+
+def _set_charset(charset: int) -> bytes:
+    return ESC + b"R" + bytes([charset & 0xFF])
 
 
 def _begin_document(settings: BridgeSettings) -> bytes:
     chunks = [_init_printer()]
+    esc_r = getattr(settings, "esc_r", None)
+    if esc_r is not None:
+        chunks.append(_set_charset(int(esc_r)))
     if settings.codepage is not None:
         chunks.append(_set_codepage(settings.codepage))
     return b"".join(chunks)
@@ -242,7 +270,20 @@ class ReceiptRenderer:
         return [self._encode(line) + b"\n" for line in text.splitlines()]
 
     def _encode(self, text: str) -> bytes:
-        encoded, _ = encode_text(text, self.settings.encoding)
+        encoded, codec, issues, unsupported_chars = encode_text_report(
+            text, self.settings.encoding
+        )
+        if issues or unsupported_chars:
+            LOGGER.warning(
+                "print_encoding_unsupported: printer_name=%s encoding=%s codepage=%s "
+                "unsupported_chars=%r issues=%s line=%.80r",
+                self.settings.printer_queue or "-",
+                self.settings.encoding,
+                self.settings.codepage,
+                "".join(unsupported_chars),
+                " | ".join(issues),
+                text,
+            )
         return encoded
 
     def _wrap(self, text: str, width: int | None = None) -> list[str]:
@@ -329,6 +370,166 @@ class ReceiptRenderer:
         return format(value.normalize(), "f").rstrip("0").rstrip(".")
 
 
+def render_turkish_encoding_calibration_ticket(
+    base_settings: BridgeSettings,
+    *,
+    encoding: str,
+    codepage: int,
+    label: str,
+    sample_lines: tuple[str, ...] = TURKISH_TEST_LINES,
+) -> tuple[bytes, list[str]]:
+    """Single ESC/POS text ticket for one encoding/codepage candidate."""
+    section_settings = BridgeSettings(
+        host=base_settings.host,
+        port=base_settings.port,
+        printer_queue=base_settings.printer_queue,
+        paper_width_mm=base_settings.paper_width_mm,
+        chars_per_line=base_settings.chars_per_line,
+        encoding=encoding,
+        codepage=codepage,
+        render_mode="text",
+        raster_chunk_height=base_settings.raster_chunk_height,
+        allowed_origins=base_settings.allowed_origins,
+        healthcheck_queue=base_settings.healthcheck_queue,
+        cut_mode=base_settings.cut_mode,
+        transport_mode=base_settings.transport_mode,
+        usb_vendor_id=base_settings.usb_vendor_id,
+        usb_product_id=base_settings.usb_product_id,
+        network_host=base_settings.network_host,
+        network_port=base_settings.network_port,
+    )
+    renderer = TurkishCodepageDiagnosticRenderer(section_settings)
+    unsupported_chars: list[str] = []
+    for line in sample_lines:
+        _, _, _, line_unsupported = encode_text_report(line, encoding)
+        unsupported_chars.extend(line_unsupported)
+    unique_unsupported = list(dict.fromkeys(unsupported_chars))
+    chunks: list[bytes] = [_begin_document(section_settings)]
+    chunks.extend(
+        [
+            _set_alignment("center"),
+            _set_bold(True),
+            _set_text_size(1, 1),
+        ]
+    )
+    chunks.extend(renderer._lines(label, section_settings))
+    chunks.extend(renderer._lines(f"Encoding: {encoding}", section_settings))
+    chunks.extend(renderer._lines(f"Codepage ESC t {codepage}", section_settings))
+    chunks.extend(renderer._lines("-" * renderer.width, section_settings))
+    chunks.append(_set_alignment("left"))
+    for line in sample_lines:
+        chunks.extend(renderer._wrapped_lines(line, section_settings))
+    chunks.extend(renderer._lines("-" * renderer.width, section_settings))
+    chunks.extend([_feed(3), _cut(section_settings.cut_mode)])
+    return b"".join(chunks), unique_unsupported
+
+
+def render_turkish_encoding_combined_calibration_ticket(
+    base_settings: BridgeSettings,
+    *,
+    candidates: list[dict[str, object]],
+    test_line: str | None = None,
+) -> tuple[bytes, list[str]]:
+    """Print every encoding/codepage option on one receipt (numbered lines)."""
+    primary_line = (test_line or TURKISH_TEST_LINES[0]).strip()
+    unsupported_chars: list[str] = []
+    chunks: list[bytes] = [_init_printer(), _set_alignment("center"), _set_bold(True)]
+    header_renderer = TurkishCodepageDiagnosticRenderer(
+        BridgeSettings(
+            host=base_settings.host,
+            port=base_settings.port,
+            printer_queue=base_settings.printer_queue,
+            paper_width_mm=base_settings.paper_width_mm,
+            chars_per_line=base_settings.chars_per_line,
+            encoding="cp857",
+            codepage=13,
+            render_mode="text",
+            raster_chunk_height=base_settings.raster_chunk_height,
+            allowed_origins=base_settings.allowed_origins,
+            healthcheck_queue=base_settings.healthcheck_queue,
+            cut_mode=base_settings.cut_mode,
+            transport_mode=base_settings.transport_mode,
+            usb_vendor_id=base_settings.usb_vendor_id,
+            usb_product_id=base_settings.usb_product_id,
+            network_host=base_settings.network_host,
+            network_port=base_settings.network_port,
+        )
+    )
+    chunks.extend(header_renderer._lines("TURKCE KARAKTER TESTI", header_renderer.settings))
+    chunks.extend(header_renderer._lines("Tum secenekler tek fiste", header_renderer.settings))
+    chunks.extend(header_renderer._lines("-" * header_renderer.width, header_renderer.settings))
+    chunks.append(_set_alignment("left"))
+    chunks.append(_set_bold(False))
+
+    for index, candidate in enumerate(candidates, start=1):
+        encoding = str(candidate.get("encoding") or "cp857").strip()
+        codepage_raw = candidate.get("code_page", candidate.get("codepage"))
+        try:
+            codepage = int(codepage_raw) if codepage_raw is not None else 13
+        except (TypeError, ValueError):
+            codepage = 13
+        esc_r_raw = candidate.get("esc_r_value", candidate.get("esc_r"))
+        esc_r: int | None
+        try:
+            esc_r = int(esc_r_raw) if esc_r_raw is not None else None
+        except (TypeError, ValueError):
+            esc_r = None
+        raw_lines = candidate.get("lines")
+        if isinstance(raw_lines, list) and raw_lines:
+            block_lines = [str(line).strip() for line in raw_lines if str(line).strip()]
+        else:
+            esc_r_suffix = f" / ESC R {esc_r}" if esc_r is not None else ""
+            block_lines = [
+                str(
+                    candidate.get("line")
+                    or f"[{index}] {encoding} / ESC t {codepage}{esc_r_suffix}"
+                ).strip(),
+                primary_line,
+                TURKISH_TEST_LINES[1] if len(TURKISH_TEST_LINES) > 1 else "",
+                TURKISH_TEST_LINES[2] if len(TURKISH_TEST_LINES) > 2 else "",
+            ]
+            block_lines = [line for line in block_lines if line]
+        section_settings = BridgeSettings(
+            host=base_settings.host,
+            port=base_settings.port,
+            printer_queue=base_settings.printer_queue,
+            paper_width_mm=base_settings.paper_width_mm,
+            chars_per_line=base_settings.chars_per_line,
+            encoding=encoding,
+            codepage=codepage,
+            esc_r=esc_r,
+            render_mode="text",
+            raster_chunk_height=base_settings.raster_chunk_height,
+            allowed_origins=base_settings.allowed_origins,
+            healthcheck_queue=base_settings.healthcheck_queue,
+            cut_mode=base_settings.cut_mode,
+            transport_mode=base_settings.transport_mode,
+            usb_vendor_id=base_settings.usb_vendor_id,
+            usb_product_id=base_settings.usb_product_id,
+            network_host=base_settings.network_host,
+            network_port=base_settings.network_port,
+        )
+        chunks.append(_init_printer())
+        if esc_r is not None:
+            chunks.append(_set_charset(esc_r))
+        chunks.append(_set_codepage(codepage))
+        chunks.append(_set_alignment("left"))
+        for line in block_lines:
+            for wrapped in textwrap.wrap(
+                line,
+                width=section_settings.chars_per_line,
+                break_long_words=True,
+                break_on_hyphens=False,
+            ):
+                encoded, _, _, line_unsupported = encode_text_report(wrapped, encoding)
+                unsupported_chars.extend(line_unsupported)
+                chunks.append(encoded + b"\n")
+        chunks.append(b"\n")
+
+    chunks.extend([_feed(4), _cut(base_settings.cut_mode)])
+    return b"".join(chunks), list(dict.fromkeys(unsupported_chars))
+
+
 class TurkishCodepageDiagnosticRenderer:
     def __init__(self, settings: BridgeSettings) -> None:
         self.settings = settings
@@ -397,8 +598,18 @@ class TurkishCodepageDiagnosticRenderer:
             return [b"\n"]
         result = []
         for line in text.splitlines():
-            encoded, codec = encode_text(line, settings.encoding)
-            if codec != settings.encoding:
+            encoded, codec, issues, unsupported_chars = encode_text_report(
+                line, settings.encoding
+            )
+            if issues or unsupported_chars:
+                LOGGER.warning(
+                    "diagnostic_encode: encoding=%s codepage=%s unsupported_chars=%r issues=%s",
+                    settings.encoding,
+                    settings.codepage,
+                    "".join(unsupported_chars),
+                    " | ".join(issues),
+                )
+            elif codec != settings.encoding:
                 LOGGER.warning(
                     "diagnostic_encode: fallback codec=%s for encoding=%s codepage=%s",
                     codec,

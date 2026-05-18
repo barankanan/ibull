@@ -26,7 +26,11 @@ hiddenimports = sorted(
     )
 )
 
-datas = pillow_datas + usb_datas + [(str(bridge_root / ".env.example"), ".")]
+_font_datas = [
+    (str(path), "local_print_bridge/fonts")
+    for path in (bridge_root / "fonts").glob("*.ttf")
+]
+datas = pillow_datas + usb_datas + [(str(bridge_root / ".env.example"), ".")] + _font_datas
 binaries = pillow_binaries + usb_binaries
 
 a = Analysis(

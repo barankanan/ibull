@@ -16,6 +16,34 @@ void main() {
     expect(status['message'], contains('6 yazıcı'));
   });
 
+  test('status key is ready when bridge reachable with live printers even if health unhealthy', () {
+    final key = bridgeOperatorSetupStatusKey(
+      bridgeReachable: true,
+      bridgeHealthy: false,
+      livePrinterCount: 6,
+    );
+    expect(key, 'ready');
+
+    final status = buildBridgeOperatorSetupStatus(
+      bridgeReachable: true,
+      bridgeHealthy: false,
+      livePrinterCount: 6,
+    );
+    expect(status['ok'], isTrue);
+    expect(status['status'], 'ready');
+  });
+
+  test('operator message guides no-printer Windows setup when bridge up', () {
+    final message = bridgeOperatorSetupMessage(
+      bridgeReachable: true,
+      bridgeHealthy: true,
+      livePrinterCount: 0,
+    );
+    expect(message, contains('Yazıcı bulunamadı'));
+    expect(message, contains('sürücüsünü'));
+    expect(message, contains('sınama sayfası'));
+  });
+
   test('buildBridgeOperatorSetupStatus marks bridge_not_running when unreachable', () {
     final status = buildBridgeOperatorSetupStatus(
       bridgeReachable: false,

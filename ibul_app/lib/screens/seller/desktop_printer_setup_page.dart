@@ -1,18 +1,25 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kDebugMode, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/desktop_print_ports.dart';
+import '../../services/local_print_service.dart';
 import '../../models/desktop_printer_setup_models.dart';
+import '../../models/windows_printer_classification.dart';
 import '../../models/printer_model.dart';
 import '../../models/printer_profile.dart';
 import '../../services/desktop_print_orchestrator.dart';
+import '../../services/bridge_manager.dart';
 import '../../services/desktop_print_hub.dart';
 import '../../services/print_station_service.dart';
 import '../../services/printer_repository.dart';
 import '../../widgets/bridge_error_dialog.dart';
+import '../../widgets/turkish_encoding_calibration_dialog.dart';
 import 'printer_system_setup_wizard.dart';
 import 'printer_wizard.dart';
 
@@ -232,6 +239,8 @@ class _PrintersTabState extends State<_PrintersTab> {
   Map<String, dynamic>? _setupStatus;
   Map<String, dynamic>? _setupPrerequisites;
   Map<String, dynamic>? _discoverResult;
+  bool _bridgeServiceBusy = false;
+  String? _bridgeServiceMessage;
 
   @override
   void initState() {
@@ -298,7 +307,7 @@ class _PrintersTabState extends State<_PrintersTab> {
         _bridgeHealthy = snapshot.bridgeHealthy;
         _bridgeHealth = snapshot.bridgeHealth ?? const <String, dynamic>{};
         _printSystemQueueStatus = snapshot.queueStatus;
-        _setupStatus = snapshot.setupStatus;
+        _setupStatus = snapshot.buildOperatorSetupStatus();
         _setupPrerequisites = snapshot.prerequisites;
         _discoverResult = snapshot.discoveryWarning == null
             ? null
@@ -349,6 +358,64 @@ class _PrintersTabState extends State<_PrintersTab> {
     }
   }
 
+  Future<void> _startBridgeService() async {
+    setState(() {
+      _bridgeServiceBusy = true;
+      _bridgeServiceMessage = 'Yazıcı servisi başlatılıyor...';
+      _printCenterError = null;
+    });
+    try {
+      final result = await BridgeManager.ensureReady(
+        onProgress: (message) {
+          if (!mounted) return;
+          setState(() => _bridgeServiceMessage = message);
+        },
+      );
+      await _loadPrintCenterState();
+      if (!mounted) return;
+      setState(() {
+        _bridgeServiceMessage = _bridgeReachable
+            ? 'Yazıcı servisi hazır.'
+            : result.message;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _bridgeServiceBusy = false);
+      }
+    }
+  }
+
+  Future<void> _repairBridgeService() async {
+    setState(() {
+      _bridgeServiceBusy = true;
+      _bridgeServiceMessage = 'Yazıcı servisi onarılıyor...';
+      _printCenterError = null;
+    });
+    try {
+      final result = await BridgeManager.ensureReady(
+        onProgress: (message) {
+          if (!mounted) return;
+          setState(() => _bridgeServiceMessage = message);
+        },
+      );
+      if (!result.ok || !_bridgeReachable) {
+        await LocalPrintService().setupStart();
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+      await _loadPrintCenterState();
+      if (!mounted) return;
+      setState(() {
+        _bridgeServiceMessage = _bridgeReachable
+            ? 'Yazıcı servisi hazır.'
+            : 'Servis onarılamadı. Kurulum uygulamasını yeniden çalıştırın.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _bridgeServiceBusy = false);
+      }
+    }
+  }
+
   Future<void> _openGuidedSetup() async {
     await showPrinterSystemSetupWizard(
       context,
@@ -358,19 +425,11 @@ class _PrintersTabState extends State<_PrintersTab> {
     await _loadPrintCenterState();
   }
 
-  String _setupStatusKey() {
-    final remote = (_setupStatus?['status']?.toString() ?? '').trim().toLowerCase();
-    if (remote.isNotEmpty) {
-      if (_bridgeReachable && _bridgeHealthy && remote == 'bridge_not_running') {
-        return 'ready';
-      }
-      return remote;
-    }
-    return bridgeOperatorSetupStatusKey(
-      bridgeReachable: _bridgeReachable,
-      bridgeHealthy: _bridgeHealthy,
-    );
-  }
+  String _setupStatusKey() => bridgeOperatorSetupStatusKey(
+    bridgeReachable: _bridgeReachable,
+    bridgeHealthy: _bridgeHealthy,
+    livePrinterCount: _bridgePrinters.where((p) => p['isLive'] == true).length,
+  );
 
   String _setupActionRequired() {
     return (_setupStatus?['actionRequired']?.toString() ?? '')
@@ -381,7 +440,8 @@ class _PrintersTabState extends State<_PrintersTab> {
   bool get _hasDetectedPrinters =>
       _bridgePrinters.any((printer) => printer['isLive'] == true);
 
-  bool get _canSelectPrinterRoles => _bridgeHealthy && _hasDetectedPrinters;
+  bool get _canSelectPrinterRoles =>
+      _bridgeReachable && _hasDetectedPrinters;
 
   Future<void> _togglePrintSystemEnabled(bool enabled) async {
     if (_savingPrintSystemEnabled) {
@@ -849,7 +909,9 @@ class _PrintersTabState extends State<_PrintersTab> {
 
   String _bridgeSummaryLabel() {
     if (!_bridgeReachable) return 'Bridge kapalı';
-    return _bridgeHealthy ? 'Bridge hazır' : 'Bridge çalışıyor ama hatalı';
+    return _bridgeHealthy || _hasDetectedPrinters
+        ? 'Bridge hazır'
+        : 'Bridge çalışıyor ama hatalı';
   }
 
   String _bridgeSummaryMessage() {
@@ -857,7 +919,7 @@ class _PrintersTabState extends State<_PrintersTab> {
       return 'Yerel yazıcı servisine ulaşılamıyor. Önce bridge kurulumunu tamamlayın veya servisi başlatın.';
     }
     final details = _bridgeHealth?['printer']?['details']?.toString().trim();
-    if (_bridgeHealthy) {
+    if (_bridgeHealthy || _hasDetectedPrinters) {
       return 'Yazıcı servisi yanıt veriyor. Sıradaki adım yerel yazıcıları taramak.';
     }
     if (details != null && details.isNotEmpty) {
@@ -911,6 +973,9 @@ class _PrintersTabState extends State<_PrintersTab> {
     }
     if (!_hasDetectedPrinters &&
         (status == 'setup_required' || action == 'detect_printer')) {
+      if (defaultTargetPlatform == TargetPlatform.windows) {
+        return 'Yazıcı bulunamadı. Lütfen Windows\'ta yazıcı sürücüsünü kurun ve sınama sayfası basın.';
+      }
       return 'Bridge açık ama yazıcı bulunamadı. Yazıcının açık olduğundan, USB kablosunun takılı olduğundan ve macOS Yazıcılar bölümünde göründüğünden emin olun.';
     }
     if (!_hasDetectedPrinters && !_bridgeHealthy) {
@@ -940,6 +1005,7 @@ class _PrintersTabState extends State<_PrintersTab> {
         kitchenPrinterId: kitchenPrinterId,
         session: Supabase.instance.client.auth.currentSession,
         markThisDeviceAsPrintStation: true,
+        requireSuccessfulRoleTests: true,
       );
       if (!result.ok) {
         throw Exception(result.message);
@@ -992,10 +1058,15 @@ class _PrintersTabState extends State<_PrintersTab> {
       _printCenterError = null;
     });
     try {
+      final explicit = _explicitLivePrinterForSelection(printerId);
       final result = await _printOrchestrator.printTestReceipt(
         restaurantId: widget.restaurantId,
         role: kitchen ? PrinterSetupRole.mutfak : PrinterSetupRole.adisyon,
-        printerId: printerId,
+        printerId: explicit?.id ?? printerId,
+        explicitLivePrinter: explicit,
+        testSource: 'wizard_test',
+        flowName: 'print_center_test',
+        source: 'desktop_printer_setup_page',
       );
       if (!result.ok) {
         final structured = BridgeStructuredError.tryParse(result.raw);
@@ -1018,7 +1089,14 @@ class _PrintersTabState extends State<_PrintersTab> {
           });
           return;
         }
-        throw Exception(result.message);
+        final bridgeBody = result.raw == null || result.raw!.isEmpty
+            ? ''
+            : const JsonEncoder.withIndent('  ').convert(result.raw);
+        throw Exception(
+          bridgeBody.isNotEmpty
+              ? '${result.message}\n\nBridge yanıtı:\n$bridgeBody'
+              : result.message,
+        );
       }
       if (!mounted) return;
       final warning = _isWarningResult(result);
@@ -1257,6 +1335,61 @@ class _PrintersTabState extends State<_PrintersTab> {
     }
   }
 
+  Future<void> _openTurkishEncodingCalibration() async {
+    final selectionId = (_selectedReceiptPrinterId ?? _selectedKitchenPrinterId)
+        ?.trim();
+    if (selectionId == null || selectionId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Önce adisyon veya mutfak yazıcısı seçin.'),
+        ),
+      );
+      return;
+    }
+    final printer = _explicitLivePrinterForSelection(selectionId);
+    if (printer == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Seçili yazıcı canlı taramada bulunamadı.'),
+        ),
+      );
+      return;
+    }
+    await TurkishEncodingCalibrationDialog.show(
+      context,
+      restaurantId: widget.restaurantId,
+      printOrchestrator: _printOrchestrator,
+      printer: printer,
+    );
+  }
+
+  UnifiedPrinterModel? _explicitLivePrinterForSelection(String selectionId) {
+    final needle = selectionId.trim();
+    if (needle.isEmpty) return null;
+    for (final map in _bridgePrinters) {
+      final bridgeId = map['id']?.toString() ?? '';
+      final selection =
+          map['selectionId']?.toString() ?? map['printerRecordId']?.toString();
+      if (bridgeId != needle && selection != needle) continue;
+      return UnifiedPrinterModel.fromBridgeMap(
+        <String, dynamic>{
+          ...map,
+          'id': bridgeId,
+          'name': map['queue']?.toString() ?? map['name']?.toString(),
+          'queue': map['queue']?.toString() ?? map['name']?.toString(),
+          'backend': map['backend']?.toString() ?? 'windows-spool',
+          'source': 'usb_scan',
+          'statusLevel': map['statusLevel']?.toString() ?? 'ready',
+          'ready': map['statusLevel']?.toString() == 'ready',
+        },
+        os: DesktopPrinterOs.windows,
+      );
+    }
+    return null;
+  }
+
   Map<String, dynamic> _printerToLegacyMap(UnifiedPrinterModel printer) {
     return <String, dynamic>{
       'id': printer.id,
@@ -1281,11 +1414,16 @@ class _PrintersTabState extends State<_PrintersTab> {
       'backend': printer.backend.value,
       'vendorId': printer.vendorId,
       'productId': printer.productId,
+      'operatorTier': printer.raw['operatorTier']?.toString() ?? 'normal',
+      'isPosCandidate': printer.raw['isPosCandidate'] == true,
+      'isRecommended': printer.raw['isPosCandidate'] == true,
+      'printVerified': printer.lastTestStatus == 'ok',
+      'selectionWarning': WindowsPrinterClassification.selectionWarningFor(
+        printer,
+      ),
       'statusLevel': printer.isStaleSavedMapping
           ? 'error'
-          : printer.canPrint
-          ? 'ready'
-          : (printer.isAvailable ? 'warning' : 'error'),
+          : (printer.statusLevel ?? (printer.canPrint ? 'ready' : 'warning')),
       'statusMessage': printer.isStaleSavedMapping
           ? 'Eski/kayıp — canlı taramada yok'
           : printer.statusMessage,
@@ -1373,6 +1511,7 @@ class _PrintersTabState extends State<_PrintersTab> {
                   canSelectPrinterRoles: _canSelectPrinterRoles,
                   bridgeReachable: _bridgeReachable,
                   bridgeHealthy: _bridgeHealthy,
+                  bridgeHealth: _bridgeHealth,
                   hasDetectedPrinters: _hasDetectedPrinters,
                   workingTestPrinter: _workingTestPrinter,
                   setupChecks:
@@ -1395,9 +1534,14 @@ class _PrintersTabState extends State<_PrintersTab> {
                   },
                   onSendReceiptTest: () => _sendTestReceipt(kitchen: false),
                   onSendKitchenTest: () => _sendTestReceipt(kitchen: true),
+                  onOpenTurkishEncodingTest: _openTurkishEncodingCalibration,
                   onSendGenericTest: _sendGenericTest,
                   onUseWorkingTestPrinter: _useWorkingTestPrinter,
                   onSavePrintCenter: _savePrintCenter,
+                  bridgeServiceBusy: _bridgeServiceBusy,
+                  bridgeServiceMessage: _bridgeServiceMessage,
+                  onStartBridgeService: _startBridgeService,
+                  onRepairBridgeService: _repairBridgeService,
                 );
               }
               if (index == 2) {
@@ -1630,6 +1774,7 @@ class _DesktopPrintCenterCard extends StatelessWidget {
     required this.canSelectPrinterRoles,
     required this.bridgeReachable,
     required this.bridgeHealthy,
+    this.bridgeHealth,
     required this.hasDetectedPrinters,
     required this.workingTestPrinter,
     required this.setupChecks,
@@ -1643,9 +1788,14 @@ class _DesktopPrintCenterCard extends StatelessWidget {
     required this.onKitchenPrinterChanged,
     required this.onSendReceiptTest,
     required this.onSendKitchenTest,
+    required this.onOpenTurkishEncodingTest,
     required this.onSendGenericTest,
     required this.onUseWorkingTestPrinter,
     required this.onSavePrintCenter,
+    required this.bridgeServiceBusy,
+    this.bridgeServiceMessage,
+    required this.onStartBridgeService,
+    required this.onRepairBridgeService,
   });
 
   final bool loading;
@@ -1662,6 +1812,7 @@ class _DesktopPrintCenterCard extends StatelessWidget {
   final bool canSelectPrinterRoles;
   final bool bridgeReachable;
   final bool bridgeHealthy;
+  final Map<String, dynamic>? bridgeHealth;
   final bool hasDetectedPrinters;
   final Map<String, dynamic>? workingTestPrinter;
   final List<Map<String, dynamic>> setupChecks;
@@ -1675,9 +1826,14 @@ class _DesktopPrintCenterCard extends StatelessWidget {
   final ValueChanged<String?> onKitchenPrinterChanged;
   final Future<void> Function() onSendReceiptTest;
   final Future<void> Function() onSendKitchenTest;
+  final Future<void> Function() onOpenTurkishEncodingTest;
   final Future<void> Function() onSendGenericTest;
   final Future<void> Function() onUseWorkingTestPrinter;
   final Future<void> Function() onSavePrintCenter;
+  final bool bridgeServiceBusy;
+  final String? bridgeServiceMessage;
+  final Future<void> Function() onStartBridgeService;
+  final Future<void> Function() onRepairBridgeService;
 
   @override
   Widget build(BuildContext context) {
@@ -1753,6 +1909,64 @@ class _DesktopPrintCenterCard extends StatelessWidget {
             subtitle: bridgeSummaryMessage,
             done: bridgeHealthy,
           ),
+          if (kDebugMode && formatBridgeProcessIdentity(bridgeHealth).isNotEmpty) ...[
+            const SizedBox(height: 6),
+            SelectableText(
+              formatBridgeProcessIdentity(bridgeHealth),
+              style: const TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: Color(0xFF6B7280),
+                height: 1.35,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: bridgeServiceBusy ? null : onStartBridgeService,
+                icon: bridgeServiceBusy
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.play_circle_outline_rounded, size: 16),
+                label: Text(
+                  bridgeServiceBusy ? 'Başlatılıyor...' : 'Servisi Başlat',
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: bridgeServiceBusy ? null : onRepairBridgeService,
+                icon: const Icon(Icons.build_circle_outlined, size: 16),
+                label: const Text('Servisi Onar'),
+              ),
+              OutlinedButton.icon(
+                onPressed: (bridgeServiceBusy || !bridgeReachable || loading)
+                    ? null
+                    : onRefreshPrinters,
+                icon: loading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Yazıcıları Yeniden Tara'),
+              ),
+            ],
+          ),
+          if (bridgeServiceMessage != null &&
+              bridgeServiceMessage!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              bridgeServiceMessage!,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF374151)),
+            ),
+          ],
           for (final check in setupChecks)
             _GuidedStepTile(
               stepNumber: '•',
@@ -1804,7 +2018,7 @@ class _DesktopPrintCenterCard extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.search_rounded),
-                label: const Text('Yazıcıları Tara'),
+                label: const Text('Yazıcıları Yeniden Tara'),
               ),
               OutlinedButton.icon(
                 onPressed: testingGeneric ? null : onSendGenericTest,
@@ -2004,6 +2218,13 @@ class _DesktopPrintCenterCard extends StatelessWidget {
                       )
                     : const Icon(Icons.restaurant_menu_outlined),
                 label: const Text('Mutfak Testi Gönder'),
+              ),
+              OutlinedButton.icon(
+                onPressed: !canSelectPrinterRoles
+                    ? null
+                    : onOpenTurkishEncodingTest,
+                icon: const Icon(Icons.translate_outlined),
+                label: const Text('Türkçe Karakter Testi'),
               ),
               FilledButton.icon(
                 onPressed: !canSelectPrinterRoles || saving
@@ -3015,7 +3236,7 @@ class _GuideTab extends StatelessWidget {
           title: 'Sorun Giderme',
           color: Color(0xFFEF4444),
           steps: [
-            'Yazıcı servisi kapalıysa "Yazıcı Servisini Başlat" butonunu kullanın.',
+            'Yazıcı servisi kapalıysa "Servisi Başlat" veya "Servisi Onar" butonunu kullanın.',
             'Test başarısızsa yazıcının işletim sisteminde kurulu ve hazır olduğunu doğrulayın.',
             'Windows için yazıcı adını yeniden tara; macOS için CUPS kuyruğunu kontrol edin.',
             'Print Station offline ise işler kuyrukta bekler ve cihaz geri dönünce otomatik basılır.',
@@ -3160,7 +3381,7 @@ class _BridgeStatusCard extends StatelessWidget {
         const Color(0xFFFECACA),
         const Color(0xFFEF4444),
         'Yazıcı Köprüsü Kapalı',
-        'Yerel yazdırma servisi ulaşılamıyor. "Yazıcı Servisini Başlat" butonuna basın.',
+        'Yerel yazdırma servisi ulaşılamıyor. "Servisi Başlat" veya "Servisi Onar" butonuna basın.',
       ),
       BridgeStatus.error => (
         const Color(0xFFFFF7ED),
@@ -3432,7 +3653,7 @@ class _QuickActionsRowState extends State<_QuickActionsRow> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.play_circle_outline_rounded, size: 16),
-            label: const Text('Yazıcı Servisini Başlat'),
+            label: const Text('Servisi Başlat'),
           ),
         ),
         const SizedBox(width: 8),

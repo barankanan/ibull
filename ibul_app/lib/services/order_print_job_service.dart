@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show debugPrint, debugPrintStack;
+import 'package:flutter/foundation.dart'
+    show debugPrint, debugPrintStack, defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/mixed_service_order.dart';
@@ -726,6 +728,22 @@ class OrderPrintJobService {
           resolvedPrinter,
           PrintPayload.fromQueuedJob(resolvedPayload),
           restaurantId: restaurantId,
+          flowName: 'kitchen_order',
+          flowType: _textValue(
+            job['job_type'] ?? resolvedPayload['job_type'],
+            fallback: 'kitchen_order',
+          ),
+          source: 'order_print_job_service',
+          printJobId: printJobId,
+        );
+        _logKitchen(
+          'Dispatch',
+          'orderId=${_logValue(job['order_id'])} tableNo=$tableNo area=$area '
+              'printerId=${resolvedPrinter.id} durationMs=${watch.elapsedMilliseconds} '
+              'encoding=${resolvedPayload['encoding'] ?? '-'} '
+              'esc_t=${resolvedPayload['esc_t_value'] ?? resolvedPayload['codepage'] ?? '-'} '
+              'esc_r=${resolvedPayload['esc_r_value'] ?? '-'} '
+              'profileMissing=${resolvedPayload['encoding_profile_missing'] == true}',
         );
         if (!physicalResult.ok) {
           final failureMessage =
@@ -913,10 +931,19 @@ class OrderPrintJobService {
     }
   }
 
-  // Print jobs are now always consumed by the centralized Print Station bridge.
-  // The Seller Panel should only enqueue jobs; it must not assume the current
-  // browser device can reach a locally-attached printer.
-  bool get _canDirectDispatch => false;
+  /// Desktop/web on Windows/macOS/Linux can reach the local bridge directly.
+  bool get _canDirectDispatch {
+    if (kIsWeb) {
+      return defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux;
+    }
+    try {
+      return Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Returns `true` when [error] is a network/transport-level failure (not an
   /// HTTP-application or payload error). Jobs that fail with a connection error
@@ -1280,7 +1307,7 @@ class OrderPrintJobService {
             payload['codepage'],
         fallback: 13,
       ),
-      'render_mode': 'image',
+      'render_mode': 'text',
       'items': items,
     };
   }

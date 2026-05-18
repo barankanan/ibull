@@ -25,6 +25,12 @@ _ENCODING_ALIASES = {
     "cp1254": "cp1254",
     "windows-1254": "cp1254",
     "windows1254": "cp1254",
+    "cp850": "cp850",
+    "cp-850": "cp850",
+    "ibm850": "cp850",
+    "cp852": "cp852",
+    "cp-852": "cp852",
+    "ibm852": "cp852",
     "iso-8859-9": "iso8859_9",
     "iso8859-9": "iso8859_9",
     "iso88599": "iso8859_9",
@@ -35,13 +41,19 @@ _ENCODING_ALIASES = {
 _RAW_UNSAFE_ENCODINGS = {"utf8", "utf-8"}
 _DEFAULT_CODEPAGE_BY_ENCODING = {
     "cp857": _DEFAULT_SAFE_CODEPAGE,
+    "cp1254": 21,
+    "cp850": 2,
+    "cp852": 18,
+    "iso8859_9": 17,
     "cp437": 0,
 }
 
 # ESC/POS codepage numbers known to map to Turkish-capable character sets on
 # most thermal printers.  Values outside this set are accepted but trigger a
 # warning log so misconfigured printers surface quickly.
-_TURKISH_CODEPAGE_WHITELIST: frozenset[int] = frozenset({0, 2, 13, 17, 19, 21, 23, 31, 33})
+_TURKISH_CODEPAGE_WHITELIST: frozenset[int] = frozenset(
+    {0, 2, 13, 16, 17, 18, 19, 21, 23, 29, 31, 33, 45, 61}
+)
 
 
 def _load_env_file() -> None:
@@ -148,8 +160,10 @@ def _canonical_encoding(raw: Any) -> str | None:
 class EscPosProfile:
     encoding: str
     codepage: int | None
+    esc_r: int | None = None
     requested_encoding: str | None = None
     requested_codepage: int | None = None
+    requested_esc_r: int | None = None
     warnings: tuple[str, ...] = ()
 
     @property
@@ -160,8 +174,11 @@ class EscPosProfile:
         return {
             "encoding": self.encoding,
             "codepage": self.codepage,
+            "esc_r": self.esc_r,
+            "esc_r_value": self.esc_r,
             "requested_encoding": self.requested_encoding,
             "requested_codepage": self.requested_codepage,
+            "requested_esc_r": self.requested_esc_r,
             "warnings": list(self.warnings),
             "fallback_applied": self.fallback_applied,
         }
@@ -170,6 +187,7 @@ class EscPosProfile:
 def resolve_escpos_profile(
     requested_encoding: Any,
     requested_codepage: Any,
+    requested_esc_r: Any = None,
     *,
     default_profile: EscPosProfile | None = None,
 ) -> EscPosProfile:
@@ -181,6 +199,7 @@ def resolve_escpos_profile(
         None if requested_encoding is None else str(requested_encoding).strip() or None
     )
     requested_codepage_int = _parse_int(requested_codepage)
+    requested_esc_r_int = _parse_int(requested_esc_r)
     warnings: list[str] = []
 
     effective_encoding = base.encoding
@@ -223,11 +242,17 @@ def resolve_escpos_profile(
             effective_encoding = base.encoding
             effective_codepage = base.codepage
 
+    effective_esc_r = base.esc_r
+    if requested_esc_r_int is not None:
+        effective_esc_r = requested_esc_r_int
+
     return EscPosProfile(
         encoding=effective_encoding,
         codepage=effective_codepage,
+        esc_r=effective_esc_r,
         requested_encoding=requested_encoding_text,
         requested_codepage=requested_codepage_int,
+        requested_esc_r=requested_esc_r_int,
         warnings=tuple(warnings),
     )
 
@@ -248,12 +273,15 @@ class BridgeSettings:
     cut_mode: str
     # USB direct transport
     transport_mode: str        # "auto" | "usb" | "cups" | "network"
-    usb_vendor_id: int | None  # hex, e.g. 0x0483
-    usb_product_id: int | None # hex, e.g. 0x5743
     # Network TCP transport
     network_host: str          # remote printer IP (used when transport_mode=network)
     network_port: int          # remote printer port (default 9100)
-    print_system_enabled: bool
+    esc_r: int | None = None
+    usb_vendor_id: int | None = None  # hex, e.g. 0x0483
+    usb_product_id: int | None = None  # hex, e.g. 0x5743
+    print_system_enabled: bool = True
+    # Per-request: Turkish Guarantee Mode uses bundled mono fonts only (raster).
+    turkish_guarantee_mode: bool = False
 
     @classmethod
     def from_env(cls) -> "BridgeSettings":

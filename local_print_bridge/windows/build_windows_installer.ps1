@@ -63,10 +63,24 @@ try {
 
     & $innoCompiler "/DAppVersion=$AppVersion" $innoScript
 
-    Write-Host "[6/6] Done."
+    $installerExe = Join-Path $distInstallerDir "IbulPrintBridgeSetup.exe"
+    if (!(Test-Path $installerExe)) {
+        throw "Installer build failed: $installerExe"
+    }
+
+    Write-Host "[6/7] Staging installer for Firebase hosting..."
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptRoot)
+    $downloadsDir = Join-Path $repoRoot "build\web\downloads"
+    if (!(Test-Path $downloadsDir)) {
+        New-Item -ItemType Directory -Path $downloadsDir -Force | Out-Null
+    }
+    Copy-Item $installerExe (Join-Path $downloadsDir "IbulPrintBridgeSetup.exe") -Force
+
+    Write-Host "[7/7] Done."
     Write-Host "Bridge EXE:      $distBridgeDir\IbulPrintBridge.exe"
-    Write-Host "Installer EXE:   $distInstallerDir\IbulPrintBridgeSetup.exe"
-    Write-Host "Next step: upload the installer to your external release host."
+    Write-Host "Installer EXE:   $installerExe"
+    Write-Host "Hosted copy:     $downloadsDir\IbulPrintBridgeSetup.exe"
+    Write-Host "Verify hosting:  npm run check:windows-installer (from repo root)"
 } finally {
     Pop-Location
 }

@@ -23,6 +23,7 @@ import 'printer_guide_dialog.dart';
 import 'printer_system_setup_wizard.dart';
 import 'printer_test_dialog.dart';
 import 'printer_wizard.dart';
+import '../../widgets/turkish_encoding_calibration_dialog.dart';
 
 bool _queueRuntimePrintSystemDisabled(Map<String, dynamic>? queueStatus) {
   final queue = queueStatus?['queue'];
@@ -101,6 +102,7 @@ class _KitchenPrintManagementPageState
   bool _savingRoleMappings = false;
   bool _runningHardReset = false;
   bool _testingPrintStation = false;
+  bool _turkishEncodingVerified = false;
   bool _savingPrintSystemEnabled = false;
   bool _isThisDevicePrintStation = false;
   String _lastBridgePrinterRefreshKey = '';
@@ -232,7 +234,7 @@ class _KitchenPrintManagementPageState
         _remotePrintStationConfig = remoteConfig;
         _localQueueStatus = queueStatus;
         _localBridgeHealth = snapshot.bridgeHealth ?? const <String, dynamic>{};
-        _localSetupStatus = snapshot.setupStatus;
+        _localSetupStatus = snapshot.buildOperatorSetupStatus();
         _localSetupPrerequisites = snapshot.prerequisites;
         _localRoleConfig = snapshot.localConfig;
         _localDiscoverResult = snapshot.discoveryWarning == null
@@ -282,6 +284,7 @@ class _KitchenPrintManagementPageState
         _triggerPrintersRefresh(reason: 'bridgeScanUpdated');
         _triggerAssignmentsRefresh(reason: 'bridgeScanUpdated');
       }
+      await _refreshTurkishEncodingStatus();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -311,6 +314,66 @@ class _KitchenPrintManagementPageState
     return printerId;
   }
 
+  UnifiedPrinterModel? _unifiedPrinterForEncodingTest() {
+    final selectionId = (_selectedReceiptPrinterId ?? _selectedKitchenPrinterId)
+        ?.trim();
+    if (selectionId == null || selectionId.isEmpty) return null;
+    final os = _printOrchestrator.detectOs();
+    for (final printer in _bridgePrinters) {
+      if (printer['isLive'] != true) continue;
+      final bridgeId = printer['id']?.toString().trim() ?? '';
+      final recordId =
+          printer['printerRecordId']?.toString().trim() ??
+          printer['printer_record_id']?.toString().trim() ??
+          '';
+      if (bridgeId == selectionId || recordId == selectionId) {
+        return UnifiedPrinterModel.fromBridgeMap(
+          Map<String, dynamic>.from(printer),
+          os: os,
+        );
+      }
+    }
+    return null;
+  }
+
+  Future<void> _refreshTurkishEncodingStatus() async {
+    final printer = _unifiedPrinterForEncodingTest();
+    if (!mounted) return;
+    if (printer == null) {
+      setState(() => _turkishEncodingVerified = false);
+      return;
+    }
+    final verified = await _printOrchestrator.isTurkishEncodingVerified(
+      restaurantId: widget.restaurantId,
+      printerId: printer.id,
+    );
+    if (!mounted) return;
+    setState(() => _turkishEncodingVerified = verified);
+  }
+
+  Future<void> _openTurkishEncodingCalibration() async {
+    if (_guardPrintSystemDisabled()) return;
+    final printer = _unifiedPrinterForEncodingTest();
+    if (printer == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Önce adisyon veya mutfak yazıcısı seçin.'),
+        ),
+      );
+      return;
+    }
+    final saved = await TurkishEncodingCalibrationDialog.show(
+      context,
+      restaurantId: widget.restaurantId,
+      printOrchestrator: _printOrchestrator,
+      printer: printer,
+    );
+    if (saved == true) {
+      await _refreshTurkishEncodingStatus();
+    }
+  }
+
   String _stationPlatformTitle(String value) {
     switch (_printStationService.normalizeStationPlatform(value)) {
       case 'windows':
@@ -325,21 +388,11 @@ class _KitchenPrintManagementPageState
   bool get _isRemotePrintStationOnline =>
       _printStationService.isStationOnline(_remotePrintStationConfig);
 
-  String _localSetupStatusKey() {
-    final remote = (_localSetupStatus?['status']?.toString() ?? '')
-        .trim()
-        .toLowerCase();
-    if (remote.isNotEmpty) {
-      if (_bridgeReachable && _bridgeHealthy && remote == 'bridge_not_running') {
-        return 'ready';
-      }
-      return remote;
-    }
-    return bridgeOperatorSetupStatusKey(
-      bridgeReachable: _bridgeReachable,
-      bridgeHealthy: _bridgeHealthy,
-    );
-  }
+  String _localSetupStatusKey() => bridgeOperatorSetupStatusKey(
+    bridgeReachable: _bridgeReachable,
+    bridgeHealthy: _bridgeHealthy,
+    livePrinterCount: _bridgePrinters.length,
+  );
 
   String _localSetupActionRequired() {
     return (_localSetupStatus?['actionRequired']?.toString() ?? '')
@@ -348,11 +401,7 @@ class _KitchenPrintManagementPageState
   }
 
   bool get _isLocalPrintRuntimeOnline =>
-      _printStationService.isLocalBridgeOperational(
-        queueStatus: _localQueueStatus,
-        bridgeHealth: _localBridgeHealth,
-        bridgeReachable: _bridgeReachable,
-      );
+      _bridgeReachable && (_bridgeHealthy || _hasDetectedPrinters);
 
   bool get _isPrintStationOnline =>
       _isRemotePrintStationOnline || _isLocalPrintRuntimeOnline;
@@ -421,7 +470,7 @@ class _KitchenPrintManagementPageState
 
   String _bridgeSummaryLabel() {
     if (!_bridgeReachable) return 'Bridge kapalı';
-    return (_bridgeHealthy || _isLocalPrintRuntimeOnline)
+    return _bridgeHealthy || _hasDetectedPrinters
         ? 'Bridge hazır'
         : 'Bridge çalışıyor ama hatalı';
   }
@@ -430,10 +479,26 @@ class _KitchenPrintManagementPageState
     if (!_bridgeReachable) {
       return 'Yerel yazıcı servisine ulaşılamıyor. Önce bridge kurulumunu tamamlayın veya servisi başlatın.';
     }
+    final printStation = _localBridgeHealth?['print_station'];
+    if (printStation is Map) {
+      final stationStatus =
+          printStation['status']?.toString().trim().toLowerCase() ?? '';
+      final adisyonName = printStation['adisyonPrinterName']?.toString().trim();
+      final kitchenName = printStation['kitchenPrinterName']?.toString().trim();
+      if (stationStatus == 'waiting_config' ||
+          ((adisyonName == null || adisyonName.isEmpty) &&
+              (_selectedReceiptPrinterId?.trim().isEmpty ?? true)) ||
+          ((kitchenName == null || kitchenName.isEmpty) &&
+              (_selectedKitchenPrinterId?.trim().isEmpty ?? true))) {
+        return 'Rol ataması eksik. Eşleştirme sekmesinden adisyon ve mutfak '
+            'yazıcılarını kaydedin. Manuel test fişleri seçili yazıcıyla '
+            'doğrudan basılabilir.';
+      }
+    }
     final details = _localBridgeHealth?['printer']?['details']
         ?.toString()
         .trim();
-    if (_bridgeHealthy || _isLocalPrintRuntimeOnline) {
+    if (_bridgeHealthy || _hasDetectedPrinters) {
       return 'Yazıcı servisi yanıt veriyor. Sıradaki adım yerel yazıcıları taramak.';
     }
     if (details != null && details.isNotEmpty) {
@@ -776,6 +841,7 @@ class _KitchenPrintManagementPageState
         payload,
         restaurantId: widget.restaurantId,
         flowName: 'role_test',
+        flowType: clickedButton,
         source: 'kitchen_print_management_page',
       );
       if (!result.ok) {
@@ -796,13 +862,16 @@ class _KitchenPrintManagementPageState
           );
           return;
         }
-        final raw = result.raw;
-        final rawJson = raw == null ? '-' : jsonEncode(raw);
+        final dispatch = result.raw?['dispatch'];
+        final dispatchJson = dispatch is Map
+            ? jsonEncode(dispatch)
+            : (result.raw == null ? '-' : jsonEncode(result.raw));
         final msg =
             '${result.status}: ${result.message}'
+            '\nflow_type=$clickedButton'
             '\nbackend=${printer.backend.value} queue=${printer.queueName}'
             '\nbridge_printer_id=${printer.id} printer_record_id=${printer.printerRecordId ?? "-"}'
-            '\nresponse=$rawJson';
+            '\ndispatch=$dispatchJson';
         throw Exception(msg);
       }
       if (!mounted) return;
@@ -2181,11 +2250,73 @@ class _KitchenPrintManagementPageState
               ],
               const SizedBox(height: 12),
               _buildSelectedPrinterSummaryCard(),
+              if ((_selectedReceiptPrinterId != null ||
+                      _selectedKitchenPrinterId != null) &&
+                  !_turkishEncodingVerified) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFDE68A)),
+                  ),
+                  child: Text(
+                    'Türkçe karakter doğrulaması yapılmadı. '
+                    'Ürün adları bozuk basılabilir; Türkçe Karakter Testi ile doğru codepage seçin.',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFF92400E),
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ],
+              if (_selectedReceiptPrinterId != null ||
+                  _selectedKitchenPrinterId != null) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(
+                      _turkishEncodingVerified
+                          ? Icons.verified_outlined
+                          : Icons.warning_amber_outlined,
+                      size: 16,
+                      color: _turkishEncodingVerified
+                          ? const Color(0xFF15803D)
+                          : const Color(0xFFB45309),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _turkishEncodingVerified
+                          ? 'Türkçe karakter doğrulandı'
+                          : 'Türkçe karakter doğrulanmadı',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _turkishEncodingVerified
+                            ? const Color(0xFF15803D)
+                            : const Color(0xFFB45309),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 12),
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
                 children: [
+                  OutlinedButton.icon(
+                    onPressed:
+                        _selectedReceiptPrinterId == null &&
+                                _selectedKitchenPrinterId == null
+                            ? null
+                            : _openTurkishEncodingCalibration,
+                    icon: const Icon(Icons.translate_outlined),
+                    label: const Text('Türkçe Karakter Testi'),
+                  ),
                   OutlinedButton.icon(
                     onPressed:
                         _selectedReceiptPrinterId == null ||
@@ -3601,6 +3732,13 @@ class _KitchenPrintManagementPageState
                 if (_guardPrintSystemDisabled()) {
                   return;
                 }
+                final testPrinterId =
+                    _selectedReceiptPrinterId ?? _selectedKitchenPrinterId;
+                final testPrinterLabel = testPrinterId == null
+                    ? null
+                    : _printerNameById(testPrinterId).trim().isEmpty
+                    ? null
+                    : _printerNameById(testPrinterId);
                 final saved = await showDialog<bool>(
                   context: context,
                   builder: (_) =>
@@ -3608,6 +3746,8 @@ class _KitchenPrintManagementPageState
                         restaurantId: widget.restaurantId,
                         printOrchestrator: _printOrchestrator,
                         printerRepository: _printerRepository,
+                        initialPrinterId: testPrinterId,
+                        initialPrinterLabel: testPrinterLabel,
                       ),
                 );
                 if (saved == true) {

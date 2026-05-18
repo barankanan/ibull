@@ -8546,6 +8546,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return payload;
   }
 
+  bool _hasConfiguredAdisyonPrinter(Map<String, dynamic>? stationConfig) {
+    if (stationConfig == null) return false;
+    final roleMappings = stationConfig['role_mappings'];
+    if (roleMappings is Map) {
+      final adisyon = roleMappings['adisyon'];
+      if (adisyon is Map) {
+        final bridgeId =
+            adisyon['id']?.toString().trim() ??
+            adisyon['bridgePrinterId']?.toString().trim() ??
+            '';
+        if (bridgeId.isNotEmpty) return true;
+      }
+    }
+    final printerId =
+        stationConfig['adisyon_printer_id']?.toString().trim() ?? '';
+    return printerId.isNotEmpty;
+  }
+
   Map<String, dynamic> _enrichQueuedReceiptPayloadWithPrinterRouting(
     Map<String, dynamic> payload, {
     required Map<String, dynamic>? stationConfig,
@@ -8798,6 +8816,62 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         basePayload,
         stationConfig: stationConfig ?? const <String, dynamic>{},
       );
+
+      if (_supportsDirectLocalPrintBridge) {
+        final bridgeReachable = await _printOrchestrator.isLocalBridgeReachable(
+          useCache: true,
+        );
+        if (bridgeReachable) {
+          final receiptPrinter = await _printOrchestrator.resolvePrinterForDispatch(
+            restaurantId: sellerId,
+            role: PrinterSetupRole.adisyon,
+            flowName: 'waiter_receipt',
+            documentType: 'receipt',
+          );
+          if (receiptPrinter == null) {
+            _showPrinterWorkflowSnackBar(
+              'Adisyon yazıcısı seçilmemiş.',
+              warning: true,
+            );
+            return;
+          }
+          final directResult = await _printOrchestrator.printPhysicalToPrinter(
+            receiptPrinter,
+            PrintPayload(documentType: 'receipt', body: payload),
+            restaurantId: sellerId,
+            flowName: 'waiter_receipt',
+            flowType: 'waiter_receipt',
+            source: 'seller_panel_garson',
+            tableId: tableNumber.toString(),
+          );
+          if (!mounted) return;
+          if (directResult.ok) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Adisyon fiziksel olarak yazdırıldı.'),
+                backgroundColor: Color(0xFF10B981),
+              ),
+            );
+            return;
+          }
+          final dispatch = directResult.raw?['dispatch'];
+          final detail = dispatch is Map ? jsonEncode(dispatch) : directResult.message;
+          _showPrinterWorkflowSnackBar(
+            'Adisyon yazdırılamadı. $detail',
+            warning: true,
+          );
+          return;
+        }
+      }
+
+      if (!_hasConfiguredAdisyonPrinter(stationConfig)) {
+        _showPrinterWorkflowSnackBar(
+          'Adisyon yazıcısı seçilmemiş.',
+          warning: true,
+        );
+        return;
+      }
+
       final currentUser = Supabase.instance.client.auth.currentUser;
       final queueResponse = await _printStationService.enqueueReceiptPrintJob(
         restaurantId: sellerId,

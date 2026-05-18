@@ -6,7 +6,6 @@ import 'package:ibul_app/screens/seller/printer_system_setup_wizard.dart';
 import 'package:ibul_app/services/desktop_print_orchestrator.dart';
 import 'package:ibul_app/services/desktop_print_ports.dart';
 import 'package:ibul_app/services/local_print_service.dart';
-import 'package:ibul_app/services/printer_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
@@ -42,6 +41,44 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets('Sistem Kur header uses bridge reachability not setup/status alone', (
+    tester,
+  ) async {
+    await pumpWizard(
+      tester,
+      orchestrator: _FakeOrchestrator._(
+        snapshot: PrinterSetupSnapshot(
+          os: DesktopPrinterOs.windows,
+          bridgeReachable: true,
+          bridgeHealthy: true,
+          printers: const <UnifiedPrinterModel>[
+            UnifiedPrinterModel(
+              id: 'windows:POS-80',
+              displayName: 'POS-80',
+              queueName: 'POS-80',
+              backend: DesktopPrinterBackend.windowsSpool,
+              os: DesktopPrinterOs.windows,
+              isAvailable: true,
+              canPrint: true,
+              raw: <String, dynamic>{'source': 'usb_scan'},
+            ),
+          ],
+          steps: const <PrinterSetupStepStatus>[],
+          setupStatus: const <String, dynamic>{
+            'status': 'bridge_not_running',
+            'message': 'legacy wrong',
+          },
+          prerequisites: const <String, dynamic>{
+            'checks': <Map<String, dynamic>>[],
+          },
+        ),
+      ),
+      service: _FakeLocalPrintService(),
+    );
+    expect(find.text('Hazır'), findsWidgets);
+    expect(find.text('Bridge Çalışmıyor'), findsNothing);
+  });
 
   testWidgets('Bridge reachable shows Hazir even if legacy setup status was offline', (
     tester,
@@ -327,11 +364,6 @@ class _FakePrinterRepository implements PrinterRepositoryPort {
   }
 
   @override
-  Stream<List<PrinterModel>> watchPrinters(String restaurantId) {
-    return const Stream<List<PrinterModel>>.empty();
-  }
-
-  @override
   Future<PrinterModel> upsertPrinter({
     required String restaurantId,
     String? printerId,
@@ -566,6 +598,7 @@ class _FakeOrchestrator extends DesktopPrintOrchestrator {
     required String restaurantId,
     PrinterSetupRole? role,
     String? printerId,
+    UnifiedPrinterModel? explicitLivePrinter,
     String testSource = 'role_test',
     String flowName = 'role_test',
     String source = 'orchestrator',
