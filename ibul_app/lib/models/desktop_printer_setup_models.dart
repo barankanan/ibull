@@ -533,6 +533,7 @@ class PrinterSetupSnapshot {
     bridgeReachable: bridgeReachable,
     bridgeHealthy: bridgeHealthy,
     livePrinterCount: livePrinterCount,
+    bridgeHealth: bridgeHealth,
   );
 
   String get operatorSetupMessage => bridgeOperatorSetupMessage(
@@ -599,12 +600,28 @@ String formatBridgeProcessIdentity(Map<String, dynamic>? health) {
 
 String _bridgeIdentityRead(Object? value) => value?.toString().trim() ?? '';
 
+bool bridgeQueueSelectionPending(Map<String, dynamic>? bridgeHealth) {
+  if (bridgeHealth == null) return false;
+  final queue = bridgeHealth['printer_queue']?.toString() ??
+      bridgeHealth['default_queue']?.toString() ??
+      '';
+  if (queue.trim().isNotEmpty) return false;
+  final printer = bridgeHealth['printer'];
+  if (printer is Map && printer['queue_pending'] == true) return true;
+  if (printer is Map && printer['ok'] == false) return true;
+  return queue.trim().isEmpty && bridgeHealth['ok'] == true;
+}
+
 String bridgeOperatorSetupStatusKey({
   required bool bridgeReachable,
   required bool bridgeHealthy,
   int livePrinterCount = 0,
+  Map<String, dynamic>? bridgeHealth,
 }) {
   if (!bridgeReachable) return 'bridge_not_running';
+  if (livePrinterCount > 0 && bridgeQueueSelectionPending(bridgeHealth)) {
+    return 'printer_selection_pending';
+  }
   if (bridgeHealthy || livePrinterCount > 0) return 'ready';
   return 'running_unhealthy';
 }
@@ -626,19 +643,22 @@ String bridgeOperatorSetupMessage({
   Map<String, dynamic>? bridgeHealth,
 }) {
   if (!bridgeReachable) {
-    return 'Yazıcı servisine ulaşılamadı. "Servisi Başlat" veya "Servisi Onar" ile yazıcı köprüsünü açın.';
+    return 'Yazıcı servisine ulaşılamadı. "Yazıcı servisini başlat" veya "Yazıcı servisini onar" ile bağlantıyı açın.';
   }
   if (livePrinterCount == 0) {
     return 'Yazıcı bulunamadı. Lütfen Windows\'ta yazıcı sürücüsünü kurun ve sınama sayfası basın.';
+  }
+  if (!bridgeHealthy && bridgeQueueSelectionPending(bridgeHealth)) {
+    return 'Yazıcı servisi çalışıyor, yazıcı seçimi bekleniyor.';
   }
   if (bridgeHealthy) {
     return 'Yazıcı servisi hazır. $livePrinterCount yazıcı bulundu.';
   }
   final details = bridgeHealth?['printer']?['details']?.toString().trim();
   if (details != null && details.isNotEmpty) {
-    return 'Bridge yanıt veriyor ancak yazıcı doğrulaması tamamlanamadı: $details';
+    return 'Yazıcı servisi yanıt veriyor ancak yazıcı doğrulaması tamamlanamadı: $details';
   }
-  return 'Bridge yanıt veriyor ancak yazıcı doğrulaması tamamlanamadı.';
+  return 'Yazıcı servisi yanıt veriyor ancak yazıcı doğrulaması tamamlanamadı.';
 }
 
 Map<String, dynamic> buildBridgeOperatorSetupStatus({
@@ -651,6 +671,7 @@ Map<String, dynamic> buildBridgeOperatorSetupStatus({
     bridgeReachable: bridgeReachable,
     bridgeHealthy: bridgeHealthy,
     livePrinterCount: livePrinterCount,
+    bridgeHealth: bridgeHealth,
   );
   final operatorOk = bridgeReachable && (bridgeHealthy || livePrinterCount > 0);
   return <String, dynamic>{
@@ -666,6 +687,7 @@ Map<String, dynamic> buildBridgeOperatorSetupStatus({
     'errorCode': statusKey == 'ready' ? null : statusKey,
     'actionRequired': switch (statusKey) {
       'bridge_not_running' => 'start_bridge',
+      'printer_selection_pending' => 'select_printer',
       'running_unhealthy' => 'detect_printer',
       _ => 'detect_printer',
     },
@@ -674,7 +696,7 @@ Map<String, dynamic> buildBridgeOperatorSetupStatus({
     'livePrinterCount': livePrinterCount,
     'checks': <Map<String, dynamic>>[
       <String, dynamic>{
-        'label': 'Bridge çalışıyor',
+        'label': 'Yazıcı servisi çalışıyor',
         'ok': bridgeReachable,
         'status': bridgeReachable ? 'ready' : 'bridge_not_running',
         'message': bridgeReachable
@@ -682,7 +704,7 @@ Map<String, dynamic> buildBridgeOperatorSetupStatus({
             : 'Yazıcı servisi kapalı veya yanıt vermiyor.',
       },
       <String, dynamic>{
-        'label': 'Bridge sağlıklı',
+        'label': 'Yazıcı bağlantısı',
         'ok': bridgeHealthy,
         'status': bridgeHealthy ? 'ready' : 'running_unhealthy',
         'message': bridgeHealthy

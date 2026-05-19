@@ -4200,7 +4200,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   AppRuntimeConfig.sellerDesktopWindowsDownloadUrl,
                 ),
                 icon: const Icon(Icons.desktop_windows_outlined),
-                label: const Text('Windows Uygulamasını İndir'),
+                label: const Text('Ibul Satıcı Windows\'u İndir'),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF92400E),
                   foregroundColor: Colors.white,

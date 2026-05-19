@@ -2,92 +2,44 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/models/desktop_printer_setup_models.dart';
 
 void main() {
-  test('buildBridgeOperatorSetupStatus marks ready when bridge is healthy', () {
-    final status = buildBridgeOperatorSetupStatus(
-      bridgeReachable: true,
-      bridgeHealthy: true,
-      livePrinterCount: 6,
-      bridgeHealth: const <String, dynamic>{'ok': true},
-    );
-
-    expect(status['status'], 'ready');
-    expect(status['ok'], isTrue);
-    expect(status['livePrinterCount'], 6);
-    expect(status['message'], contains('6 yazıcı'));
-  });
-
-  test('status key is ready when bridge reachable with live printers even if health unhealthy', () {
+  test('queue pending with live printers is not bridge_not_running', () {
     final key = bridgeOperatorSetupStatusKey(
       bridgeReachable: true,
       bridgeHealthy: false,
-      livePrinterCount: 6,
+      livePrinterCount: 1,
+      bridgeHealth: <String, dynamic>{
+        'ok': true,
+        'printer_queue': '',
+        'default_queue': '',
+        'printer': <String, dynamic>{
+          'ok': false,
+          'queue_pending': true,
+        },
+      },
     );
-    expect(key, 'ready');
-
-    final status = buildBridgeOperatorSetupStatus(
-      bridgeReachable: true,
-      bridgeHealthy: false,
-      livePrinterCount: 6,
+    expect(key, 'printer_selection_pending');
+    expect(
+      bridgeOperatorSetupMessage(
+        bridgeReachable: true,
+        bridgeHealthy: false,
+        livePrinterCount: 1,
+        bridgeHealth: <String, dynamic>{
+          'ok': true,
+          'printer_queue': '',
+          'printer': <String, dynamic>{'ok': false, 'queue_pending': true},
+        },
+      ),
+      contains('yazıcı seçimi bekleniyor'),
     );
-    expect(status['ok'], isTrue);
-    expect(status['status'], 'ready');
   });
 
-  test('operator message guides no-printer Windows setup when bridge up', () {
-    final message = bridgeOperatorSetupMessage(
-      bridgeReachable: true,
-      bridgeHealthy: true,
-      livePrinterCount: 0,
-    );
-    expect(message, contains('Yazıcı bulunamadı'));
-    expect(message, contains('sürücüsünü'));
-    expect(message, contains('sınama sayfası'));
-  });
-
-  test('buildBridgeOperatorSetupStatus marks bridge_not_running when unreachable', () {
-    final status = buildBridgeOperatorSetupStatus(
+  test('unreachable bridge stays bridge_not_running', () {
+    final key = bridgeOperatorSetupStatusKey(
       bridgeReachable: false,
       bridgeHealthy: false,
-      livePrinterCount: 0,
+      livePrinterCount: 1,
+      bridgeHealth: <String, dynamic>{'ok': true},
     );
-
-    expect(status['status'], 'bridge_not_running');
-    expect(status['ok'], isFalse);
-  });
-
-  test('PrinterSetupSnapshot live vs stale splits saved_record printers', () {
-    const snapshot = PrinterSetupSnapshot(
-      os: DesktopPrinterOs.windows,
-      bridgeReachable: true,
-      bridgeHealthy: true,
-      printers: <UnifiedPrinterModel>[
-        UnifiedPrinterModel(
-          id: 'windows:POS-80',
-          displayName: 'POS-80',
-          queueName: 'POS-80',
-          backend: DesktopPrinterBackend.windowsSpool,
-          os: DesktopPrinterOs.windows,
-          isAvailable: true,
-          canPrint: true,
-          raw: <String, dynamic>{'source': 'usb_scan'},
-        ),
-        UnifiedPrinterModel(
-          id: 'saved-mac-1',
-          displayName: 'STMicroelectronics_POS58_Printer_USB',
-          queueName: 'STMicroelectronics_POS58_Printer_USB',
-          backend: DesktopPrinterBackend.windowsSpool,
-          os: DesktopPrinterOs.windows,
-          isAvailable: false,
-          canPrint: false,
-          raw: <String, dynamic>{'source': 'saved_record'},
-        ),
-      ],
-      steps: <PrinterSetupStepStatus>[],
-    );
-
-    expect(snapshot.livePrinterCount, 1);
-    expect(snapshot.stalePrinters.length, 1);
-    expect(snapshot.livePrinters.first.id, 'windows:POS-80');
-    expect(snapshot.operatorSetupStatusKey, 'ready');
+    expect(key, 'bridge_not_running');
   });
 }

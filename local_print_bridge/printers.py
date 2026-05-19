@@ -169,12 +169,18 @@ try {
   pnp = $pnp
 } | ConvertTo-Json -Compress -Depth 4
 """
+    creationflags = 0
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        creationflags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+
     try:
         result = subprocess.run(
             [
                 "powershell",
                 "-NoProfile",
                 "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
@@ -184,6 +190,7 @@ try {
             text=True,
             timeout=8,
             check=False,
+            creationflags=creationflags,
         )
     except (OSError, subprocess.SubprocessError):
         return []

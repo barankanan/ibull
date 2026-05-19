@@ -2,12 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-INSTALLER_LOCAL="$ROOT_DIR/local_print_bridge/windows/dist/installer/IbulPrintBridgeSetup.exe"
-URL="${IBUL_WINDOWS_INSTALLER_DOWNLOAD_URL:-https://github.com/barankanan/ibull/releases/latest/download/IbulPrintBridgeSetup.exe}"
+INSTALLER_LOCAL="$ROOT_DIR/build/windows/installer/IbulSellerSetup.exe"
+URL="${IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL:-${IBUL_WINDOWS_INSTALLER_DOWNLOAD_URL:-https://ibul-ecommerce.web.app/downloads/IbulSellerSetup.exe}}"
 
 echo "[1/4] Checking local installer artifact..."
 if [[ ! -f "$INSTALLER_LOCAL" ]]; then
-  echo "FAIL: Missing installer artifact at $INSTALLER_LOCAL"
+  echo "FAIL: Missing unified installer artifact at $INSTALLER_LOCAL"
+  echo "Run: pwsh scripts/build_seller_desktop_windows.ps1"
   exit 1
 fi
 
@@ -19,7 +20,7 @@ if [[ "$size_bytes" -lt 1000000 ]]; then
 fi
 
 if [[ "$URL" == *"/downloads/IbulPrintBridgeSetup.exe" ]]; then
-  echo "FAIL: Installer URL still points at the retired Firebase Hosting path: $URL"
+  echo "FAIL: Installer URL still points at the retired bridge-only Firebase path: $URL"
   exit 1
 fi
 
@@ -80,4 +81,4 @@ if printf '%s' "$downloaded_type" | grep -qi "html"; then
   exit 1
 fi
 
-echo "[4/4] PASS: Windows installer external download gate checks passed"
+echo "[4/4] PASS: IbulSellerSetup.exe external download gate checks passed"

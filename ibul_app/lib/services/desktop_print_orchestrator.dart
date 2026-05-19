@@ -3494,11 +3494,38 @@ class DesktopPrintOrchestrator {
     return sorted;
   }
 
-  bool _isBridgeHealthy(Map<String, dynamic>? health) {
+  bool _isBridgeHealthy(
+    Map<String, dynamic>? health, {
+    List<UnifiedPrinterModel> printers = const <UnifiedPrinterModel>[],
+  }) {
     if (health == null || health.isEmpty) return false;
+    final queue = health['printer_queue']?.toString() ??
+        health['default_queue']?.toString() ??
+        '';
+    if (queue.trim().isEmpty && _isBridgeQueuePending(health)) {
+      return false;
+    }
     if (health['ok'] == false) return false;
     final printer = health['printer'];
+    if (printer is Map && printer['queue_pending'] == true) {
+      return false;
+    }
+    if (queue.trim().isNotEmpty && !_containsExplicitFalse(printer)) {
+      return true;
+    }
     return !_containsExplicitFalse(printer);
+  }
+
+  bool _isBridgeQueuePending(Map<String, dynamic>? health) {
+    if (health == null) return true;
+    final queue = health['printer_queue']?.toString() ??
+        health['default_queue']?.toString() ??
+        '';
+    if (queue.trim().isNotEmpty) return false;
+    final printer = health['printer'];
+    if (printer is Map && printer['queue_pending'] == true) return true;
+    if (printer is Map && printer['ok'] == false) return true;
+    return queue.trim().isEmpty;
   }
 
   bool _isBridgeOperational({
@@ -3515,7 +3542,10 @@ class DesktopPrintOrchestrator {
     if (_isLocalQueueReady(queueStatus)) {
       return true;
     }
-    if (_isBridgeHealthy(health)) {
+    if (_isBridgeHealthy(health, printers: printers)) {
+      return true;
+    }
+    if (printers.any(isSelectableLivePrinter) && _isBridgeQueuePending(health)) {
       return true;
     }
     return health?['ok'] == true &&

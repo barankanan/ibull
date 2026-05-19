@@ -26,6 +26,7 @@ from .log_store import PrintLogStore
 from .models import KitchenPayload, PayloadError, ReceiptPayload
 from .network_transport import NetworkTcpTransport
 from .printers import PrinterRecord, dedupe_printers, discover_windows_printers
+from .queue_autoselect import pick_auto_windows_printer_queue
 from .pillow_probe import probe_pillow
 from .print_station import (
     PrintStationConsumer,
@@ -183,6 +184,55 @@ def _parse_port(value: object) -> int | None:
     except ValueError:
         return None
     return parsed if parsed > 0 else None
+
+
+def _ensure_windows_queue_selected() -> bool:
+    """Persist a single ready POS queue when PRINT_BRIDGE_PRINTER_QUEUE is unset."""
+    settings = PrintBridgeHandler.settings
+    if platform.system().lower() != "windows":
+        return False
+    if settings.printer_queue.strip():
+        return False
+    queue = pick_auto_windows_printer_queue(discover_windows_printers())
+    if not queue:
+        return False
+    paper_width = _guess_paper_width(queue)
+    write_env_file(
+        {
+            "PRINT_BRIDGE_TRANSPORT": "cups",
+            "PRINT_BRIDGE_PRINTER_QUEUE": queue,
+            "PRINT_BRIDGE_PAPER_WIDTH_MM": str(paper_width),
+            "PRINT_BRIDGE_CHARS_PER_LINE": "32" if paper_width <= 58 else "48",
+        }
+    )
+    new_settings = BridgeSettings.from_env()
+    _reload_handlers(new_settings)
+    LOGGER.info("Auto-selected Windows printer queue: %s", queue)
+    return True
+
+
+def _printer_health_payload() -> dict[str, object]:
+    if _ensure_windows_queue_selected():
+        payload = dict(PrintBridgeHandler.transport.health())
+    else:
+        payload = dict(PrintBridgeHandler.transport.health())
+    settings = PrintBridgeHandler.settings
+    if payload.get("ok") is True:
+        return payload
+    if settings.printer_queue.strip():
+        return payload
+    printers = discover_windows_printers()
+    suggested = pick_auto_windows_printer_queue(printers)
+    if suggested:
+        payload.update(
+            {
+                "ok": False,
+                "queue_pending": True,
+                "suggested_queue": suggested,
+                "reason": "Yazıcı seçimi bekleniyor.",
+            }
+        )
+    return payload
 
 
 def _reload_handlers(settings: BridgeSettings) -> None:
@@ -1275,7 +1325,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "network_host": self.settings.network_host or None,
                 "network_port": self.settings.network_port,
                 "allowed_origins": list(self.settings.allowed_origins),
-                "printer": self.transport.health(),
+                "printer": _printer_health_payload(),
                 "queue": queue_summary,
                 "print_station": self._queue_status_payload(),
                 "log_count": self.log_store.count(),
@@ -1469,6 +1519,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
 
     def _handle_printers(self) -> None:
         try:
+            _ensure_windows_queue_selected()
             result = self.transport.discover()
             printers = result.get("printers", [])
             self._send_json(
@@ -3450,6 +3501,8 @@ def serve() -> None:
     _configure_logging()
     settings = BridgeSettings.from_env()
     PrintBridgeHandler.settings = settings
+    _ensure_windows_queue_selected()
+    settings = PrintBridgeHandler.settings
     PrintBridgeHandler.renderer = ReceiptRenderer(settings)
     PrintBridgeHandler.kitchen_renderer = KitchenRenderer(settings)
     PrintBridgeHandler.document_renderer = EscPosDocumentRenderer(settings)

@@ -16,6 +16,7 @@
 // • Missing config shows a clear error screen before any network call
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -312,7 +313,9 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
       setState(() {
         _bootstrapped = true;
         if (!bridge.ok) {
-          _bootError = bridge.message;
+          _bootError = kDebugMode
+              ? bridge.message
+              : 'Yazıcı bağlantısı kurulamadı. Yazıcı ayarlarından servisi başlatın veya onarın.';
         }
       });
     } catch (error, stackTrace) {
@@ -321,7 +324,9 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
       if (!mounted) return;
       setState(() {
         _bootstrapped = true;
-        _bootError = error.toString();
+        _bootError = kDebugMode
+            ? error.toString()
+            : 'Yazıcı servisi hazırlanırken bir sorun oluştu.';
       });
     }
   }

@@ -428,6 +428,7 @@ class _PrintersTabState extends State<_PrintersTab> {
   String _setupStatusKey() => bridgeOperatorSetupStatusKey(
     bridgeReachable: _bridgeReachable,
     bridgeHealthy: _bridgeHealthy,
+    bridgeHealth: _bridgeHealth,
     livePrinterCount: _bridgePrinters.where((p) => p['isLive'] == true).length,
   );
 
@@ -875,7 +876,9 @@ class _PrintersTabState extends State<_PrintersTab> {
       case 'setup_required':
         return 'Kurulum Gerekli';
       case 'bridge_not_running':
-        return 'Bridge Çalışmıyor';
+        return 'Yazıcı Servisi Çalışmıyor';
+      case 'printer_selection_pending':
+        return 'Yazıcı Seçimi Bekleniyor';
       case 'driver_missing':
         return 'Sürücü Eksik';
       case 'printer_offline':
@@ -908,25 +911,25 @@ class _PrintersTabState extends State<_PrintersTab> {
   }
 
   String _bridgeSummaryLabel() {
-    if (!_bridgeReachable) return 'Bridge kapalı';
+    if (!_bridgeReachable) return 'Yazıcı servisi kapalı';
     return _bridgeHealthy || _hasDetectedPrinters
-        ? 'Bridge hazır'
-        : 'Bridge çalışıyor ama hatalı';
+        ? 'Yazıcı servisi hazır'
+        : 'Yazıcı servisi çalışıyor ama hatalı';
   }
 
   String _bridgeSummaryMessage() {
     if (!_bridgeReachable) {
-      return 'Yerel yazıcı servisine ulaşılamıyor. Önce bridge kurulumunu tamamlayın veya servisi başlatın.';
+      return 'Yerel yazıcı servisine ulaşılamıyor. Yazıcı servisini başlatın veya onarın.';
     }
     final details = _bridgeHealth?['printer']?['details']?.toString().trim();
     if (_bridgeHealthy || _hasDetectedPrinters) {
       return 'Yazıcı servisi yanıt veriyor. Sıradaki adım yerel yazıcıları taramak.';
     }
     if (details != null && details.isNotEmpty) {
-      return 'Bridge yanıt veriyor ama yazıcı doğrulaması başarısız: $details';
+      return 'Yazıcı servisi yanıt veriyor ama yazıcı doğrulaması başarısız: $details';
     }
     return _setupStatus?['message']?.toString() ??
-        'Bridge yanıt veriyor ancak yazıcı doğrulaması tamamlanamadı.';
+        'Yazıcı servisi yanıt veriyor ancak yazıcı doğrulaması tamamlanamadı.';
   }
 
   String? _printerDiscoveryGuidance() {
@@ -954,7 +957,7 @@ class _PrintersTabState extends State<_PrintersTab> {
         const <Map<String, dynamic>>[];
 
     if (!_bridgeReachable) {
-      return 'Tarama başlamadan önce bridge çalışmalı. "Adım adım kurulum" ile servisi açın.';
+      return 'Tarama başlamadan önce yazıcı servisi çalışmalı. "Adım adım kurulum" ile servisi açın.';
     }
     if (!_bridgeHealthy &&
         transportMode == 'cups' &&
@@ -1905,7 +1908,7 @@ class _DesktopPrintCenterCard extends StatelessWidget {
           const SizedBox(height: 14),
           _GuidedStepTile(
             stepNumber: '1',
-            title: 'Bridge ve sistem kontrolü',
+            title: 'Yazıcı servisi ve sistem kontrolü',
             subtitle: bridgeSummaryMessage,
             done: bridgeHealthy,
           ),
@@ -1936,13 +1939,15 @@ class _DesktopPrintCenterCard extends StatelessWidget {
                       )
                     : const Icon(Icons.play_circle_outline_rounded, size: 16),
                 label: Text(
-                  bridgeServiceBusy ? 'Başlatılıyor...' : 'Servisi Başlat',
+                  bridgeServiceBusy
+                      ? 'Başlatılıyor...'
+                      : 'Yazıcı servisini başlat',
                 ),
               ),
               OutlinedButton.icon(
                 onPressed: bridgeServiceBusy ? null : onRepairBridgeService,
                 icon: const Icon(Icons.build_circle_outlined, size: 16),
-                label: const Text('Servisi Onar'),
+                label: const Text('Yazıcı servisini onar'),
               ),
               OutlinedButton.icon(
                 onPressed: (bridgeServiceBusy || !bridgeReachable || loading)

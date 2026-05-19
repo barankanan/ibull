@@ -392,6 +392,7 @@ class _KitchenPrintManagementPageState
     bridgeReachable: _bridgeReachable,
     bridgeHealthy: _bridgeHealthy,
     livePrinterCount: _bridgePrinters.length,
+    bridgeHealth: _localBridgeHealth,
   );
 
   String _localSetupActionRequired() {

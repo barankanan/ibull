@@ -39,6 +39,7 @@ class PrinterSystemSetupWizard extends StatefulWidget {
     this.localPrintServiceFactory,
     this.detectedPlatformOverride,
     this.windowsBridgeUiModeOverride,
+    this.showWindowsInstallerDownloadOverride,
   });
 
   final String restaurantId;
@@ -49,6 +50,9 @@ class PrinterSystemSetupWizard extends StatefulWidget {
 
   /// Test/release override: `dev` shows manual bridge commands, `packaged` shows installer.
   final String? windowsBridgeUiModeOverride;
+
+  /// Test-only: force web-style unified installer download CTA on Windows.
+  final bool? showWindowsInstallerDownloadOverride;
 
   @override
   State<PrinterSystemSetupWizard> createState() =>
@@ -128,8 +132,12 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     }
   }
 
-  bool get _showPackagedWindowsInstaller =>
-      _selectedPlatform == 'windows' && !_windowsDevBridgeMode;
+  bool get _showPackagedWindowsInstaller {
+    final showDownload = widget.showWindowsInstallerDownloadOverride ?? kIsWeb;
+    return showDownload &&
+        _selectedPlatform == 'windows' &&
+        !_windowsDevBridgeMode;
+  }
 
   @override
   void initState() {
@@ -945,7 +953,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       'actionRequired': 'start_bridge',
       'checks': <Map<String, dynamic>>[
         <String, dynamic>{
-          'label': 'Bridge çalışıyor',
+          'label': 'Yazıcı servisi çalışıyor',
           'ok': false,
           'status': 'bridge_not_running',
           'message': 'Yazıcı servisi kapalı veya yanıt vermiyor.',
@@ -959,7 +967,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       'ok': false,
       'step': 'prerequisites',
       'status': 'bridge_not_running',
-      'message': 'Bridge kapalı olduğu için gereksinimler doğrulanamadı.',
+      'message': 'Yazıcı servisi kapalı olduğu için gereksinimler doğrulanamadı.',
       'errorCode': 'bridge_not_running',
       'platform': _selectedPlatform,
       'actionRequired': 'start_bridge',
@@ -1029,7 +1037,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       case 'setup_required':
         return 'Kurulum Gerekli';
       case 'bridge_not_running':
-        return 'Bridge Çalışmıyor';
+        return 'Yazıcı Servisi Çalışmıyor';
+      case 'printer_selection_pending':
+        return 'Yazıcı Seçimi Bekleniyor';
       case 'driver_missing':
         return 'Sürücü Eksik';
       case 'printer_offline':
@@ -1150,6 +1160,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     bridgeReachable: _bridgeReachable,
     bridgeHealthy: _bridgeHealthy,
     livePrinterCount: _livePrinterCount,
+    bridgeHealth: _bridgeHealth,
   );
 
   String? _coerceLiveSelectionId({
@@ -1196,7 +1207,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
             ? 'Yazıcı servisi hazır.'
             : (startResult.message.isNotEmpty
                   ? startResult.message
-                  : 'Servis başlatılamadı. Windows kurulum uygulamasını çalıştırın.');
+                  : (kIsWeb
+                        ? 'Yazıcı servisi başlatılamadı. Ibul Satıcı Windows kurulumunu çalıştırın.'
+                        : 'Yazıcı servisini başlatın veya onarın.'));
       });
     } catch (error) {
       if (!mounted) return;
@@ -1236,7 +1249,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       setState(() {
         _bridgeStartMessage = _bridgeReachable
             ? 'Yazıcı servisi hazır.'
-            : 'Servis onarılamadı. Windows kurulum uygulamasını yeniden çalıştırın.';
+            : (kIsWeb
+                  ? 'Yazıcı servisi onarılamadı. Ibul Satıcı Windows kurulumunu yeniden çalıştırın.'
+                  : 'Yazıcı servisini onarın veya uygulamayı yeniden başlatın.');
       });
     } catch (error) {
       if (!mounted) return;
@@ -1271,12 +1286,14 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.play_circle_outline),
-              label: Text(_bridgeStartBusy ? 'Başlatılıyor...' : 'Servisi Başlat'),
+              label: Text(
+                _bridgeStartBusy ? 'Başlatılıyor...' : 'Yazıcı servisini başlat',
+              ),
             ),
             OutlinedButton.icon(
               onPressed: _bridgeStartBusy ? null : _repairBridgeService,
               icon: const Icon(Icons.build_circle_outlined),
-              label: const Text('Servisi Onar'),
+              label: const Text('Yazıcı servisini onar'),
             ),
             OutlinedButton.icon(
               onPressed: (_bridgeStartBusy || !_bridgeReachable || _detectingPrinters)
@@ -1488,7 +1505,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
                       content: _buildSystemCheckStep(),
                     ),
                     Step(
-                      title: const Text('Bridge Kurulumu'),
+                      title: const Text('Yazıcı Kurulumu'),
                       isActive: _currentStep >= 2,
                       content: _buildInstallStep(),
                     ),
@@ -1702,7 +1719,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
         ),
         const SizedBox(height: 14),
         _StatusRow(
-          title: 'Bridge (/health)',
+          title: kDebugMode ? 'Bridge (/health)' : 'Yazıcı servisi',
           value: _bridgeReachable ? 'Erişilebilir' : 'Kapalı',
           color: _bridgeReachable
               ? const Color(0xFF15803D)
@@ -1716,7 +1733,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
               ? const Color(0xFF15803D)
               : const Color(0xFFB45309),
         ),
-        if (formatBridgeProcessIdentity(_bridgeHealth).isNotEmpty) ...[
+        if (kDebugMode &&
+            formatBridgeProcessIdentity(_bridgeHealth).isNotEmpty) ...[
           const SizedBox(height: 8),
           SelectableText(
             formatBridgeProcessIdentity(_bridgeHealth),
@@ -1749,7 +1767,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
           FilledButton.icon(
             onPressed: _downloadWindowsInstaller,
             icon: const Icon(Icons.download_rounded),
-            label: const Text('Windows Yazıcı Kurulum Uygulamasını İndir'),
+            label: const Text('Ibul Satıcı Windows\'u İndir'),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
@@ -1788,7 +1806,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
           const Padding(
             padding: EdgeInsets.only(top: 8),
             child: Text(
-              'Bridge cevap veriyor. Yazıcı taramaya devam edebilirsiniz; sonraki adım hangi parçanın eksik olduğunu gösterecek.',
+              'Yazıcı servisi yanıt veriyor. Yazıcı taramaya devam edebilirsiniz; sonraki adım hangi parçanın eksik olduğunu gösterecek.',
               style: TextStyle(fontSize: 12, color: Color(0xFF0F766E)),
             ),
           ),

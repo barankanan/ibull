@@ -9,20 +9,13 @@ const repoRoot = path.resolve(path.dirname(scriptPath), '..');
 
 const sourcePath =
   process.env.IBUL_WINDOWS_INSTALLER_SOURCE ||
-  path.join(
-    repoRoot,
-    'local_print_bridge',
-    'windows',
-    'dist',
-    'installer',
-    'IbulPrintBridgeSetup.exe',
-  );
+  path.join(repoRoot, 'build', 'windows', 'installer', 'IbulSellerSetup.exe');
 
 const publicDir =
   process.env.IBUL_HOSTING_PUBLIC_DIR || path.join(repoRoot, 'build', 'web');
 
 const downloadsDir = path.join(publicDir, 'downloads');
-const destPath = path.join(downloadsDir, 'IbulPrintBridgeSetup.exe');
+const destPath = path.join(downloadsDir, 'IbulSellerSetup.exe');
 
 function sha256(filePath) {
   const hash = crypto.createHash('sha256');
@@ -33,8 +26,9 @@ function sha256(filePath) {
 
 console.log(`Source installer: ${sourcePath}`);
 if (!fs.existsSync(sourcePath)) {
-  console.error('FAIL: Windows installer artifact is missing.');
+  console.error('FAIL: Unified Windows installer artifact is missing.');
   console.error('Expected:', sourcePath);
+  console.error('Run: pwsh scripts/build_seller_desktop_windows.ps1');
   process.exit(1);
 }
 
@@ -58,5 +52,4 @@ if (destStats.size !== srcStats.size) {
 
 console.log(`Staged installer: ${destPath}`);
 console.log(`SHA256: ${sha256(destPath)}`);
-console.log('PASS: Installer staged for Firebase Hosting.');
-
+console.log('PASS: IbulSellerSetup.exe staged for Firebase Hosting.');

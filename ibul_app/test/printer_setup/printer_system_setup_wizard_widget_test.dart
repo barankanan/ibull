@@ -258,15 +258,16 @@ void main() {
           localPrintServiceFactory: () => _FakeLocalPrintService(),
           detectedPlatformOverride: 'windows',
           windowsBridgeUiModeOverride: 'packaged',
+          showWindowsInstallerDownloadOverride: true,
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    await goToStep(tester, 'Bridge Kurulumu');
+    await goToStep(tester, 'Yazıcı Kurulumu');
 
     expect(
-      find.text('Windows Yazıcı Kurulum Uygulamasını İndir'),
+      find.text("Ibul Satıcı Windows'u İndir"),
       findsOneWidget,
     );
   });
@@ -286,11 +287,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await goToStep(tester, 'Bridge Kurulumu');
+    await goToStep(tester, 'Yazıcı Kurulumu');
 
     expect(find.text('Bridge başlatma komutunu kopyala'), findsOneWidget);
     expect(
-      find.text('Windows Yazıcı Kurulum Uygulamasını İndir'),
+      find.text("Ibul Satıcı Windows'u İndir"),
       findsNothing,
     );
   });
@@ -618,6 +619,7 @@ class _FakeOrchestrator extends DesktopPrintOrchestrator {
     Session? session,
     bool markThisDeviceAsPrintStation = false,
     String? stationPlatform,
+    bool requireSuccessfulRoleTests = false,
     String flowName = 'role_mapping_save',
     String source = 'orchestrator',
     String? storeId,

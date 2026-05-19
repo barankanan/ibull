@@ -8,15 +8,15 @@ const String _kIbulGoogleClientId = String.fromEnvironment(
 const String _kIbulGoogleServerClientId = String.fromEnvironment(
   'IBUL_GOOGLE_SERVER_CLIENT_ID',
 );
-const String _kIbulWindowsInstallerDownloadUrl = String.fromEnvironment(
-  'IBUL_WINDOWS_INSTALLER_DOWNLOAD_URL',
-  defaultValue:
-      'https://ibul-ecommerce.web.app/downloads/IbulPrintBridgeSetup.exe',
+/// `full_installer` (web download, bundled print service) or `microsoft_store`.
+const String _kIbulDistributionChannel = String.fromEnvironment(
+  'IBUL_DISTRIBUTION_CHANNEL',
+  defaultValue: 'full_installer',
 );
 const String _kIbulSellerDesktopWindowsDownloadUrl = String.fromEnvironment(
   'IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL',
   defaultValue:
-      'https://github.com/barankanan/ibull/releases/latest/download/IbulSellerDesktopSetup.exe',
+      'https://ibul-ecommerce.web.app/downloads/IbulSellerSetup.exe',
 );
 const String _kIbulSellerDesktopMacosDownloadUrl = String.fromEnvironment(
   'IBUL_SELLER_DESKTOP_MACOS_DOWNLOAD_URL',
@@ -46,20 +46,26 @@ class AppRuntimeConfig {
 
   static String? get optionalGoogleClientId => _normalize(_kIbulGoogleClientId);
 
-  static String get windowsInstallerDownloadUrl => _requireHttpUrl(
-    'IBUL_WINDOWS_INSTALLER_DOWNLOAD_URL',
-    _kIbulWindowsInstallerDownloadUrl,
-  );
-
+  /// Web / GitHub download for the unified Windows seller installer.
   static String get sellerDesktopWindowsDownloadUrl => _requireHttpUrl(
     'IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL',
     _kIbulSellerDesktopWindowsDownloadUrl,
   );
 
+  /// Legacy name — same unified installer as [sellerDesktopWindowsDownloadUrl].
+  static String get windowsInstallerDownloadUrl =>
+      sellerDesktopWindowsDownloadUrl;
+
   static String get sellerDesktopMacosDownloadUrl => _requireHttpUrl(
     'IBUL_SELLER_DESKTOP_MACOS_DOWNLOAD_URL',
     _kIbulSellerDesktopMacosDownloadUrl,
   );
+
+  /// Store builds may restrict background print service; full installer is preferred.
+  static bool get isMicrosoftStoreDistribution =>
+      _normalize(_kIbulDistributionChannel) == 'microsoft_store';
+
+  static bool get isFullInstallerDistribution => !isMicrosoftStoreDistribution;
 
   static String _requireEnv(String name, String value) {
     final normalized = _normalize(value);
