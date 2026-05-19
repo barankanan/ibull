@@ -22,26 +22,82 @@ const bridgeIssPath = path.join(
   'IbulPrintBridgeSetup.iss',
 );
 
+const BRIDGE_EXE_IN_ISS =
+  /\\(?:IbulPrintBridge\.exe|\{#(?:BridgeExeName|ExeName)\})/i;
+
+function parseIssSection(content, sectionName) {
+  const marker = `[${sectionName}]`;
+  const start = content.indexOf(marker);
+  if (start < 0) {
+    return '';
+  }
+  const after = content.slice(start + marker.length);
+  const next = after.search(/\r?\n\[/);
+  return next < 0 ? after : after.slice(0, next);
+}
+
+function parseIssRunLines(runSection) {
+  return runSection
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith(';'));
+}
+
+function isDirectBridgeRunLine(line) {
+  if (!/^Filename:/i.test(line)) {
+    return false;
+  }
+  if (/powershell\.exe/i.test(line)) {
+    return false;
+  }
+  return BRIDGE_EXE_IN_ISS.test(line);
+}
+
 function assertInstallerIssHiddenLaunch(issPath, label) {
   if (!fs.existsSync(issPath)) {
     throw new Error(`${label} ISS is missing: ${issPath}`);
   }
   const content = fs.readFileSync(issPath, 'utf8');
-  const runSection = content.split('[Run]')[1]?.split(/\[/)[0] ?? '';
-  if (!runSection.includes('IbulPrintBridge.exe')) {
-    throw new Error(`${label} ISS must start IbulPrintBridge.exe directly in [Run].`);
-  }
-  if (!/powershell\.exe[\s\S]*runhidden/i.test(runSection)) {
+  const runLines = parseIssRunLines(parseIssSection(content, 'Run'));
+  const bridgeRunLines = runLines.filter(isDirectBridgeRunLine);
+
+  if (bridgeRunLines.length === 0) {
     throw new Error(
-      `${label} ISS must run installer health PowerShell with Flags: runhidden.`,
+      `${label} ISS must start IbulPrintBridge.exe directly in [Run] (Filename with IbulPrintBridge.exe or {{#BridgeExeName}}/{{#ExeName}}).`,
     );
   }
-  if (!/WindowStyle Hidden/i.test(runSection)) {
+
+  const primaryBridgeRun = bridgeRunLines[0];
+  if (!/runhidden/i.test(primaryBridgeRun)) {
+    throw new Error(`${label} ISS primary bridge [Run] entry must use Flags: runhidden.`);
+  }
+
+  const powershellRunLines = runLines.filter((line) => /powershell\.exe/i.test(line));
+  for (const line of powershellRunLines) {
+    if (!/runhidden/i.test(line)) {
+      throw new Error(
+        `${label} ISS installer health PowerShell [Run] entry must use Flags: runhidden.`,
+      );
+    }
+    if (!/WindowStyle\s+Hidden/i.test(line)) {
+      throw new Error(
+        `${label} ISS installer health PowerShell must pass -WindowStyle Hidden.`,
+      );
+    }
+    if (/\-BridgeExe\b/i.test(line)) {
+      throw new Error(
+        `${label} ISS health wait script must not pass -BridgeExe (wait-only; bridge is started by EXE [Run]).`,
+      );
+    }
+  }
+
+  if (bridgeRunLines.length > 1) {
     throw new Error(
-      `${label} ISS must pass -WindowStyle Hidden to installer health PowerShell.`,
+      `${label} ISS must not start IbulPrintBridge.exe more than once in [Run] (${bridgeRunLines.length} entries).`,
     );
   }
-  const registrySection = content.split('[Registry]')[1]?.split(/\[/)[0] ?? '';
+
+  const registrySection = parseIssSection(content, 'Registry');
   if (/powershell\.exe|\.ps1/i.test(registrySection)) {
     throw new Error(
       `${label} ISS HKCU Run must point to IbulPrintBridge.exe, not PowerShell.`,

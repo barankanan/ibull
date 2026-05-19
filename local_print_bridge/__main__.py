@@ -121,6 +121,31 @@ def _exit_quietly() -> None:
     os._exit(0)
 
 
+_WINDOWS_MUTEX_HANDLE: int | None = None
+
+
+def _acquire_windows_single_instance() -> bool:
+    """Return True when this process owns the global single-instance mutex."""
+    global _WINDOWS_MUTEX_HANDLE
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        ERROR_ALREADY_EXISTS = 183
+        handle = kernel32.CreateMutexW(None, True, "Local\\IbulPrintBridge.SingleInstance")
+        if not handle:
+            return False
+        if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(handle)
+            return False
+        _WINDOWS_MUTEX_HANDLE = handle
+        return True
+    except Exception:
+        return True
+
+
 def _serve_with_retries() -> None:
     retry_delays = (0.0, 1.0, 2.0, 5.0)
     for attempt, delay in enumerate(retry_delays, start=1):
@@ -152,6 +177,10 @@ def _serve_with_retries() -> None:
 def main() -> None:
     settings = BridgeSettings.from_env()
     if _bridge_port_open(settings.host, settings.port):
+        _exit_quietly()
+    if not _acquire_windows_single_instance():
+        if _bridge_port_open(settings.host, settings.port):
+            _exit_quietly()
         _exit_quietly()
 
     lock_path = _lock_path()

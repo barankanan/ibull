@@ -229,6 +229,16 @@ class BridgeManager {
       );
     }
 
+    if (Platform.isWindows) {
+      final warmed = await _waitForWindowsBridgeReady(
+        onProgress: onProgress,
+        maxWait: const Duration(seconds: 18),
+      );
+      if (warmed != null) {
+        return warmed;
+      }
+    }
+
     if (await isBridgePortListening()) {
       onProgress?.call('Hazırlanıyor...');
       final deadline = DateTime.now().add(_startMaxWait);
@@ -273,6 +283,16 @@ class BridgeManager {
           'reason': install.reason,
         },
       );
+    }
+
+    if (Platform.isWindows) {
+      final warmed = await _waitForWindowsBridgeReady(
+        onProgress: onProgress,
+        maxWait: const Duration(seconds: 8),
+      );
+      if (warmed != null) {
+        return warmed;
+      }
     }
 
     onProgress?.call('Başlatılıyor...');
@@ -440,6 +460,51 @@ class BridgeManager {
 
   // ── Internals ────────────────────────────────────────────────────────────────
 
+  /// Waits for an installer- or login-started bridge to become healthy.
+  static Future<BridgeStartResult?> _waitForWindowsBridgeReady({
+    BridgeProgressCallback? onProgress,
+    required Duration maxWait,
+  }) async {
+    if (kIsWeb || !Platform.isWindows) return null;
+
+    final deadline = DateTime.now().add(maxWait);
+    var reportedWaiting = false;
+    while (DateTime.now().isBefore(deadline)) {
+      if (await isAlive(timeout: const Duration(milliseconds: 700))) {
+        return BridgeStartResult.started(
+          message: 'Yazıcı servisi zaten çalışıyor.',
+          details: const <String, dynamic>{
+            'alreadyRunning': true,
+            'reusedExistingProcess': true,
+          },
+        );
+      }
+
+      final processUp = await isWindowsBridgeProcessRunning();
+      final portOpen = await isBridgePortListening();
+      if (processUp || portOpen) {
+        if (!reportedWaiting) {
+          onProgress?.call('Hazırlanıyor...');
+          reportedWaiting = true;
+        }
+        await Future<void>.delayed(_startPollInterval);
+        continue;
+      }
+      break;
+    }
+
+    if (await isAlive(timeout: const Duration(milliseconds: 700))) {
+      return BridgeStartResult.started(
+        message: 'Yazıcı servisi zaten çalışıyor.',
+        details: const <String, dynamic>{
+          'alreadyRunning': true,
+          'reusedExistingProcess': true,
+        },
+      );
+    }
+    return null;
+  }
+
   /// True when a new bridge OS process should be spawned.
   @visibleForTesting
   static Future<bool> shouldStartBridgeProcess() async {
@@ -475,6 +540,11 @@ class BridgeManager {
   }
 
   static Future<bool> _startBridge({required _BridgeStartTarget target}) async {
+    if (await isAlive()) return true;
+    if (await isBridgePortListening()) return true;
+    if (Platform.isWindows && await isWindowsBridgeProcessRunning()) {
+      return true;
+    }
     try {
       await Process.start(
         target.executable,

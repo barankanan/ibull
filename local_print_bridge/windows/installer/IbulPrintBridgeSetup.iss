@@ -47,8 +47,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\{#ExeName}"; WorkingDir: "{app}"; StatusMsg: "Yazici servisi baslatiliyor..."; Flags: runhidden nowait skipifsilent
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\wait_for_bridge_health.ps1"" -TimeoutSeconds 45 -BridgeExe ""{app}\{#ExeName}"""; StatusMsg: "Yazici servisi hazirlaniyor..."; Flags: waituntilterminated runhidden skipifsilent
-Filename: "{app}\{#ExeName}"; Description: "Yazici servisini simdi baslat"; Flags: nowait postinstall skipifsilent
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\wait_for_bridge_health.ps1"" -TimeoutSeconds 45"; StatusMsg: "Yazici servisi hazirlaniyor..."; Flags: waituntilterminated runhidden skipifsilent
 
 [UninstallRun]
 Filename: "taskkill.exe"; Parameters: "/IM {#ExeName} /F"; Flags: runhidden skipifdoesntexist

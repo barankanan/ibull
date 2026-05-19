@@ -53,7 +53,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\bridge\{#BridgeExeName}"; WorkingDir: "{app}\bridge"; StatusMsg: "Yazici servisi baslatiliyor..."; Flags: runhidden nowait skipifsilent
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\bridge\wait_for_bridge_health.ps1"" -TimeoutSeconds 45 -BridgeExe ""{app}\bridge\{#BridgeExeName}"""; StatusMsg: "Yazici servisi hazirlaniyor..."; Flags: waituntilterminated runhidden skipifsilent
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\bridge\wait_for_bridge_health.ps1"" -TimeoutSeconds 45"; StatusMsg: "Yazici servisi hazirlaniyor..."; Flags: waituntilterminated runhidden skipifsilent
 Filename: "{app}\{#SellerExeName}"; Description: "Ibul Satıcı uygulamasini simdi baslat"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
