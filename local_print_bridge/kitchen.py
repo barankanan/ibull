@@ -23,7 +23,7 @@ from .receipt import (
     _set_alignment,
     _set_bold,
     _set_text_size,
-    encode_text,
+    encode_text_report,
 )
 
 LOGGER = logging.getLogger("local_print_bridge")
@@ -190,7 +190,24 @@ class KitchenRenderer:
         return [self._encode(line) + b"\n" for line in text.splitlines()]
 
     def _encode(self, text: str) -> bytes:
-        encoded, _ = encode_text(text, self.settings.encoding)
+        encoded, _, issues, unsupported_chars = encode_text_report(
+            text, self.settings.encoding
+        )
+        if unsupported_chars:
+            LOGGER.warning(
+                "kitchen_encode_unsupported: encoding=%s codepage=%s unsupported_chars=%r",
+                self.settings.encoding,
+                self.settings.codepage,
+                "".join(unsupported_chars),
+            )
+        if issues:
+            LOGGER.warning(
+                "kitchen_line_encode: encoding=%s codepage=%s issues=%s line=%.80r",
+                self.settings.encoding,
+                self.settings.codepage,
+                " | ".join(issues),
+                text,
+            )
         return encoded
 
     def _separator(self) -> str:

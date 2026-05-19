@@ -436,6 +436,7 @@ class _FakeDesktopPrintOrchestrator extends DesktopPrintOrchestrator {
     required String restaurantId,
     PrinterSetupRole? role,
     String? printerId,
+    UnifiedPrinterModel? explicitLivePrinter,
     String testSource = 'role_test',
     String flowName = 'role_test',
     String source = 'orchestrator',

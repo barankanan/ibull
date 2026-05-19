@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,7 +116,9 @@ typedef BridgeProgressCallback = void Function(String message);
 ///   - Trigger POST /setup (one-shot auto-discover + configure)
 class BridgeManager {
   static const String _baseUrl = 'http://127.0.0.1:3001';
+  static const int _bridgePort = 3001;
   static const Duration _healthTimeout = Duration(milliseconds: 900);
+  static const Duration _portProbeTimeout = Duration(milliseconds: 600);
   static const Duration _startPollInterval = Duration(milliseconds: 400);
   static const Duration _startMaxWait = Duration(milliseconds: 5000);
 
@@ -124,6 +126,20 @@ class BridgeManager {
   static Future<BridgeStartResult>? _inFlightStart;
 
   // ── Health ──────────────────────────────────────────────────────────────────
+
+  /// Suggested manual start command for Windows/macOS dev (flutter run -d windows).
+  static Future<String> devStartCommandHint() async {
+    final parent = await _findBridgeParentDir();
+    if (parent == null) {
+      return Platform.isWindows
+          ? 'py -3 -m local_print_bridge'
+          : 'python3 -m local_print_bridge';
+    }
+    final module = Platform.isWindows
+        ? 'py -3 -m local_print_bridge'
+        : 'python3 -m local_print_bridge';
+    return 'cd "$parent"\n$module';
+  }
 
   /// Returns true if the bridge is reachable right now.
   static Future<bool> isAlive({Duration? timeout}) async {
@@ -133,6 +149,23 @@ class BridgeManager {
           .get(Uri.parse('$_baseUrl/health'))
           .timeout(timeout ?? _healthTimeout);
       return resp.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// True when something is already listening on the bridge TCP port.
+  @visibleForTesting
+  static Future<bool> isBridgePortListening({Duration? timeout}) async {
+    if (kIsWeb) return false;
+    try {
+      final socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        _bridgePort,
+        timeout: timeout ?? _portProbeTimeout,
+      );
+      await socket.close();
+      return true;
     } catch (_) {
       return false;
     }
@@ -196,6 +229,51 @@ class BridgeManager {
       );
     }
 
+    if (Platform.isWindows) {
+      final warmed = await _waitForWindowsBridgeReady(
+        onProgress: onProgress,
+        maxWait: const Duration(seconds: 18),
+      );
+      if (warmed != null) {
+        return warmed;
+      }
+    }
+
+    if (await isBridgePortListening()) {
+      onProgress?.call('Hazırlanıyor...');
+      final deadline = DateTime.now().add(_startMaxWait);
+      while (DateTime.now().isBefore(deadline)) {
+        if (await isAlive(timeout: const Duration(milliseconds: 700))) {
+          return BridgeStartResult.started(
+            message: 'Yazıcı servisi hazır.',
+            details: const <String, dynamic>{
+              'alreadyRunning': true,
+              'waitedForHealth': true,
+            },
+          );
+        }
+        await Future<void>.delayed(_startPollInterval);
+      }
+    }
+
+    if (!await shouldStartBridgeProcess()) {
+      if (await isAlive()) {
+        return BridgeStartResult.started(
+          message: 'Yazıcı servisi zaten çalışıyor.',
+          details: const <String, dynamic>{'alreadyRunning': true},
+        );
+      }
+      return BridgeStartResult.failed(
+        message:
+            'Yazıcı servisi süreci çalışıyor ancak henüz yanıt vermiyor. Birkaç saniye bekleyip tekrar deneyin.',
+        details: const <String, dynamic>{
+          'installed': true,
+          'processRunning': true,
+          'healthTimedOut': true,
+        },
+      );
+    }
+
     final install = await _resolveBridgeTarget();
     if (!install.installed || install.target == null) {
       return BridgeStartResult.failed(
@@ -205,6 +283,16 @@ class BridgeManager {
           'reason': install.reason,
         },
       );
+    }
+
+    if (Platform.isWindows) {
+      final warmed = await _waitForWindowsBridgeReady(
+        onProgress: onProgress,
+        maxWait: const Duration(seconds: 8),
+      );
+      if (warmed != null) {
+        return warmed;
+      }
     }
 
     onProgress?.call('Başlatılıyor...');
@@ -372,13 +460,98 @@ class BridgeManager {
 
   // ── Internals ────────────────────────────────────────────────────────────────
 
+  /// Waits for an installer- or login-started bridge to become healthy.
+  static Future<BridgeStartResult?> _waitForWindowsBridgeReady({
+    BridgeProgressCallback? onProgress,
+    required Duration maxWait,
+  }) async {
+    if (kIsWeb || !Platform.isWindows) return null;
+
+    final deadline = DateTime.now().add(maxWait);
+    var reportedWaiting = false;
+    while (DateTime.now().isBefore(deadline)) {
+      if (await isAlive(timeout: const Duration(milliseconds: 700))) {
+        return BridgeStartResult.started(
+          message: 'Yazıcı servisi zaten çalışıyor.',
+          details: const <String, dynamic>{
+            'alreadyRunning': true,
+            'reusedExistingProcess': true,
+          },
+        );
+      }
+
+      final processUp = await isWindowsBridgeProcessRunning();
+      final portOpen = await isBridgePortListening();
+      if (processUp || portOpen) {
+        if (!reportedWaiting) {
+          onProgress?.call('Hazırlanıyor...');
+          reportedWaiting = true;
+        }
+        await Future<void>.delayed(_startPollInterval);
+        continue;
+      }
+      break;
+    }
+
+    if (await isAlive(timeout: const Duration(milliseconds: 700))) {
+      return BridgeStartResult.started(
+        message: 'Yazıcı servisi zaten çalışıyor.',
+        details: const <String, dynamic>{
+          'alreadyRunning': true,
+          'reusedExistingProcess': true,
+        },
+      );
+    }
+    return null;
+  }
+
+  /// True when a new bridge OS process should be spawned.
+  @visibleForTesting
+  static Future<bool> shouldStartBridgeProcess() async {
+    if (kIsWeb) return false;
+    if (await isAlive()) return false;
+    if (await isBridgePortListening()) return false;
+    if (Platform.isWindows && await isWindowsBridgeProcessRunning()) {
+      final deadline = DateTime.now().add(const Duration(seconds: 12));
+      while (DateTime.now().isBefore(deadline)) {
+        if (await isAlive()) return false;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+      if (await isAlive()) return false;
+      if (await isWindowsBridgeProcessRunning()) return false;
+    }
+    return true;
+  }
+
+  @visibleForTesting
+  static Future<bool> isWindowsBridgeProcessRunning() async {
+    if (kIsWeb || !Platform.isWindows) return false;
+    try {
+      final result = await Process.run(
+        'tasklist',
+        const ['/FI', 'IMAGENAME eq IbulPrintBridge.exe', '/FO', 'CSV', '/NH'],
+        runInShell: false,
+      );
+      final output = '${result.stdout}'.trim().toLowerCase();
+      return output.contains('ibulprintbridge.exe');
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<bool> _startBridge({required _BridgeStartTarget target}) async {
+    if (await isAlive()) return true;
+    if (await isBridgePortListening()) return true;
+    if (Platform.isWindows && await isWindowsBridgeProcessRunning()) {
+      return true;
+    }
     try {
       await Process.start(
         target.executable,
         target.arguments,
         workingDirectory: target.workingDirectory,
         mode: ProcessStartMode.detached,
+        runInShell: false,
       );
       return true;
     } catch (e) {
@@ -434,7 +607,50 @@ class BridgeManager {
     return (r.stdout as String).trim();
   }
 
+  /// Packaged Windows installer locations (unified + legacy Inno defaults).
+  @visibleForTesting
+  static List<String> windowsInstalledBridgeExeCandidates() {
+    if (kIsWeb || !Platform.isWindows) {
+      return const <String>[];
+    }
+    final programFiles =
+        Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
+    final programFilesX86 = Platform.environment['ProgramFiles(x86)'] ??
+        r'C:\Program Files (x86)';
+    final candidates = <String>[];
+    try {
+      final sellerExeDir = File(Platform.resolvedExecutable).parent.path;
+      candidates.add('$sellerExeDir\\bridge\\IbulPrintBridge.exe');
+    } catch (_) {}
+    candidates.addAll(<String>[
+      '$programFiles\\IbulSeller\\bridge\\IbulPrintBridge.exe',
+      '$programFilesX86\\IbulSeller\\bridge\\IbulPrintBridge.exe',
+      '$programFiles\\IbulSellerDesktop\\bridge\\IbulPrintBridge.exe',
+      '$programFilesX86\\IbulSellerDesktop\\bridge\\IbulPrintBridge.exe',
+      '$programFiles\\IbulPrintBridge\\IbulPrintBridge.exe',
+      '$programFilesX86\\IbulPrintBridge\\IbulPrintBridge.exe',
+    ]);
+    return candidates;
+  }
+
   static Future<_BridgeResolveResult> _resolveBridgeTarget() async {
+    if (Platform.isWindows) {
+      for (final candidate in windowsInstalledBridgeExeCandidates()) {
+        if (File(candidate).existsSync()) {
+          return _BridgeResolveResult(
+            installed: true,
+            reason: 'windows_installer_exe',
+            target: _BridgeStartTarget(
+              kind: 'packaged_exe',
+              executable: candidate,
+              arguments: const <String>[],
+              workingDirectory: File(candidate).parent.path,
+            ),
+          );
+        }
+      }
+    }
+
     final parent = await _findBridgeParentDir();
     if (parent == null) {
       return const _BridgeResolveResult(
@@ -463,6 +679,13 @@ class BridgeManager {
           ),
         );
       }
+    }
+
+    if (Platform.isWindows) {
+      return const _BridgeResolveResult(
+        installed: false,
+        reason: 'windows_packaged_exe_not_found',
+      );
     }
 
     final python = await _findPython();

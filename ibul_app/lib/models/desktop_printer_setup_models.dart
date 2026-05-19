@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'windows_printer_classification.dart';
+
 enum DesktopPrinterBackend {
   usbDirect('usb-direct'),
   cups('cups'),
@@ -97,6 +99,12 @@ class UnifiedPrinterModel {
   final Map<String, dynamic> raw;
 
   bool get prefersUsbDirect => backend == DesktopPrinterBackend.usbDirect;
+
+  /// True when the printer came from a live bridge scan (/printers or /discover).
+  bool get isLiveDiscovery => raw['source']?.toString() != 'saved_record';
+
+  /// Saved DB mapping with no matching live bridge printer on this machine.
+  bool get isStaleSavedMapping => !isLiveDiscovery;
 
   UnifiedPrinterModel copyWith({
     String? lastTestStatus,
@@ -199,15 +207,36 @@ class UnifiedPrinterModel {
         : (normalizedRaw['name']?.toString().trim().isNotEmpty ?? false)
         ? normalizedRaw['name']!.toString().trim()
         : normalizedRaw['id']?.toString() ?? 'printer';
-    final statusLevel = normalizedRaw['statusLevel']
-        ?.toString()
-        .trim()
-        .toLowerCase();
+    var statusLevel =
+        normalizedRaw['statusLevel']?.toString().trim().toLowerCase() ?? 'ready';
+    var statusMessage = normalizedRaw['statusMessage']?.toString();
     final ready = normalizedRaw['ready'] != false;
-    final isAvailable = statusLevel != 'error' && ready;
-    final canPrint = os == DesktopPrinterOs.windows
+    var isAvailable = statusLevel != 'error' && ready;
+    var canPrint = os == DesktopPrinterOs.windows
         ? statusLevel == 'ready' && ready
         : ready && statusLevel != 'error';
+
+    if (os == DesktopPrinterOs.windows) {
+      final profile = WindowsPrinterClassification.profileFor(
+        name: queueName,
+        driverName: normalizedRaw['driverName']?.toString(),
+        portName: normalizedRaw['portName']?.toString(),
+        bridgeStatusLevel: statusLevel,
+        bridgeStatusMessage: statusMessage,
+        bridgeOperatorTier: normalizedRaw['operatorTier']?.toString(),
+        bridgeWarningCode: normalizedRaw['warningCode']?.toString(),
+      );
+      normalizedRaw.addAll(profile.toRawFields());
+      statusLevel = profile.statusLevel;
+      statusMessage = profile.statusMessage;
+      isAvailable = statusLevel != 'error';
+      canPrint =
+          profile.operatorTier == 'pos_candidate' && statusLevel == 'ready';
+      if (profile.operatorTier == 'not_recommended') {
+        canPrint = false;
+      }
+    }
+
     return UnifiedPrinterModel(
       id: normalizedRaw['id']?.toString() ?? '$backend:$queueName',
       displayName: normalizedRaw['name']?.toString() ?? queueName,
@@ -228,7 +257,7 @@ class UnifiedPrinterModel {
           normalizedRaw['printerRecordId']?.toString() ??
           normalizedRaw['printer_record_id']?.toString(),
       statusLevel: statusLevel,
-      statusMessage: normalizedRaw['statusMessage']?.toString(),
+      statusMessage: statusMessage,
       raw: normalizedRaw,
     );
   }
@@ -490,6 +519,208 @@ class PrinterSetupSnapshot {
   String? get selectedKitchenPrinterRecordId =>
       localConfig?.kitchenSelection?.printer.printerRecordId ??
       localConfig?.kitchenSelection?.printer.id;
+
+  List<UnifiedPrinterModel> get livePrinters =>
+      printers.where((printer) => printer.isLiveDiscovery).toList(growable: false);
+
+  List<UnifiedPrinterModel> get stalePrinters =>
+      printers.where((printer) => printer.isStaleSavedMapping).toList(growable: false);
+
+  int get livePrinterCount => livePrinters.length;
+
+  /// Operator-facing setup status derived from /health + /printers (same as Yazıcı Merkezi).
+  String get operatorSetupStatusKey => bridgeOperatorSetupStatusKey(
+    bridgeReachable: bridgeReachable,
+    bridgeHealthy: bridgeHealthy,
+    livePrinterCount: livePrinterCount,
+    bridgeHealth: bridgeHealth,
+  );
+
+  String get operatorSetupMessage => bridgeOperatorSetupMessage(
+    bridgeReachable: bridgeReachable,
+    bridgeHealthy: bridgeHealthy,
+    livePrinterCount: livePrinterCount,
+    bridgeHealth: bridgeHealth,
+  );
+
+  Map<String, dynamic> buildOperatorSetupStatus() {
+    return buildBridgeOperatorSetupStatus(
+      bridgeReachable: bridgeReachable,
+      bridgeHealthy: bridgeHealthy,
+      livePrinterCount: livePrinterCount,
+      bridgeHealth: bridgeHealth,
+    );
+  }
+}
+
+/// Result of probing /health and /printers — single source for all printer UIs.
+class BridgeRuntimeSnapshot {
+  const BridgeRuntimeSnapshot({
+    required this.reachable,
+    required this.healthy,
+    this.health,
+    this.printersPayload,
+    this.livePrinters = const <UnifiedPrinterModel>[],
+    this.probeError,
+  });
+
+  final bool reachable;
+  final bool healthy;
+  final Map<String, dynamic>? health;
+  final Map<String, dynamic>? printersPayload;
+  final List<UnifiedPrinterModel> livePrinters;
+  final String? probeError;
+
+  int get livePrinterCount => livePrinters.length;
+}
+
+/// Bridge process identity from GET /health — helps spot stale bridge instances.
+String formatBridgeProcessIdentity(Map<String, dynamic>? health) {
+  if (health == null || health.isEmpty) return '';
+  final build = health['build'];
+  final buildMap = build is Map
+      ? Map<String, dynamic>.from(build)
+      : const <String, dynamic>{};
+  final parts = <String>[
+    if (_bridgeIdentityRead(buildMap['build_time']).isNotEmpty)
+      'build_time=${_bridgeIdentityRead(buildMap['build_time'])}',
+    if (_bridgeIdentityRead(buildMap['git_commit']).isNotEmpty)
+      'commit=${_bridgeIdentityRead(buildMap['git_commit'])}',
+    if (_bridgeIdentityRead(
+      health['python_executable'] ?? buildMap['python_executable'],
+    ).isNotEmpty)
+      'python=${_bridgeIdentityRead(health['python_executable'] ?? buildMap['python_executable'])}',
+    if (health['pillow_available'] != null)
+      'pillow=${health['pillow_available'] == true}',
+    if (_bridgeIdentityRead(health['pillow_import_error']).isNotEmpty)
+      'pillow_error=${_bridgeIdentityRead(health['pillow_import_error'])}',
+  ];
+  return parts.join(' · ');
+}
+
+String _bridgeIdentityRead(Object? value) => value?.toString().trim() ?? '';
+
+bool bridgeQueueSelectionPending(Map<String, dynamic>? bridgeHealth) {
+  if (bridgeHealth == null) return false;
+  final queue = bridgeHealth['printer_queue']?.toString() ??
+      bridgeHealth['default_queue']?.toString() ??
+      '';
+  if (queue.trim().isNotEmpty) return false;
+  final printer = bridgeHealth['printer'];
+  if (printer is Map && printer['queue_pending'] == true) return true;
+  if (printer is Map && printer['ok'] == false) return true;
+  return queue.trim().isEmpty && bridgeHealth['ok'] == true;
+}
+
+String bridgeOperatorSetupStatusKey({
+  required bool bridgeReachable,
+  required bool bridgeHealthy,
+  int livePrinterCount = 0,
+  Map<String, dynamic>? bridgeHealth,
+}) {
+  if (!bridgeReachable) return 'bridge_not_running';
+  if (livePrinterCount > 0 && bridgeQueueSelectionPending(bridgeHealth)) {
+    return 'printer_selection_pending';
+  }
+  if (bridgeHealthy || livePrinterCount > 0) return 'ready';
+  return 'running_unhealthy';
+}
+
+/// True when a printer is eligible for role assignment or test print.
+bool isSelectableLivePrinter(UnifiedPrinterModel printer) {
+  if (!printer.isLiveDiscovery || !printer.isAvailable) return false;
+  if (printer.os == DesktopPrinterOs.windows &&
+      WindowsPrinterClassification.isNotRecommended(printer)) {
+    return false;
+  }
+  return printer.canPrint;
+}
+
+String bridgeOperatorSetupMessage({
+  required bool bridgeReachable,
+  required bool bridgeHealthy,
+  required int livePrinterCount,
+  Map<String, dynamic>? bridgeHealth,
+}) {
+  if (!bridgeReachable) {
+    return 'Yazıcı servisine ulaşılamadı. "Yazıcı servisini başlat" veya "Yazıcı servisini onar" ile bağlantıyı açın.';
+  }
+  if (livePrinterCount == 0) {
+    return 'Yazıcı bulunamadı. Lütfen Windows\'ta yazıcı sürücüsünü kurun ve sınama sayfası basın.';
+  }
+  if (!bridgeHealthy && bridgeQueueSelectionPending(bridgeHealth)) {
+    return 'Yazıcı servisi çalışıyor, yazıcı seçimi bekleniyor.';
+  }
+  if (bridgeHealthy) {
+    return 'Yazıcı servisi hazır. $livePrinterCount yazıcı bulundu.';
+  }
+  final details = bridgeHealth?['printer']?['details']?.toString().trim();
+  if (details != null && details.isNotEmpty) {
+    return 'Yazıcı servisi yanıt veriyor ancak yazıcı doğrulaması tamamlanamadı: $details';
+  }
+  return 'Yazıcı servisi yanıt veriyor ancak yazıcı doğrulaması tamamlanamadı.';
+}
+
+Map<String, dynamic> buildBridgeOperatorSetupStatus({
+  required bool bridgeReachable,
+  required bool bridgeHealthy,
+  required int livePrinterCount,
+  Map<String, dynamic>? bridgeHealth,
+}) {
+  final statusKey = bridgeOperatorSetupStatusKey(
+    bridgeReachable: bridgeReachable,
+    bridgeHealthy: bridgeHealthy,
+    livePrinterCount: livePrinterCount,
+    bridgeHealth: bridgeHealth,
+  );
+  final operatorOk = bridgeReachable && (bridgeHealthy || livePrinterCount > 0);
+  return <String, dynamic>{
+    'ok': operatorOk,
+    'step': 'system_check',
+    'status': statusKey,
+    'message': bridgeOperatorSetupMessage(
+      bridgeReachable: bridgeReachable,
+      bridgeHealthy: bridgeHealthy,
+      livePrinterCount: livePrinterCount,
+      bridgeHealth: bridgeHealth,
+    ),
+    'errorCode': statusKey == 'ready' ? null : statusKey,
+    'actionRequired': switch (statusKey) {
+      'bridge_not_running' => 'start_bridge',
+      'printer_selection_pending' => 'select_printer',
+      'running_unhealthy' => 'detect_printer',
+      _ => 'detect_printer',
+    },
+    'bridgeReachable': bridgeReachable,
+    'bridgeHealthy': bridgeHealthy,
+    'livePrinterCount': livePrinterCount,
+    'checks': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'label': 'Yazıcı servisi çalışıyor',
+        'ok': bridgeReachable,
+        'status': bridgeReachable ? 'ready' : 'bridge_not_running',
+        'message': bridgeReachable
+            ? 'Yazıcı servisi açık (GET /health).'
+            : 'Yazıcı servisi kapalı veya yanıt vermiyor.',
+      },
+      <String, dynamic>{
+        'label': 'Yazıcı bağlantısı',
+        'ok': bridgeHealthy,
+        'status': bridgeHealthy ? 'ready' : 'running_unhealthy',
+        'message': bridgeHealthy
+            ? 'Sağlık kontrolü başarılı.'
+            : 'Bridge yanıt veriyor ancak yazıcı hazır değil.',
+      },
+      <String, dynamic>{
+        'label': 'Yazıcı listesi (/printers)',
+        'ok': livePrinterCount > 0,
+        'status': livePrinterCount > 0 ? 'ready' : 'setup_required',
+        'message': livePrinterCount > 0
+            ? '$livePrinterCount yazıcı bulundu.'
+            : 'Yazıcı bulunamadı. Lütfen Windows\'ta yazıcı sürücüsünü kurun ve sınama sayfası basın.',
+      },
+    ],
+  };
 }
 
 class PrinterActionResult {

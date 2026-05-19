@@ -58,6 +58,8 @@ enum PrinterCharset {
   cp857, // Turkish
   cp1254, // Windows Turkish
   iso88599, // ISO-8859-9 / Latin-5 Turkish
+  cp850, // Western European (legacy POS)
+  cp852, // Central European (legacy POS)
   cp437; // IBM PC (US ASCII extended)
 
   String get label {
@@ -70,6 +72,10 @@ enum PrinterCharset {
         return 'CP1254 (Win Türkçe)';
       case iso88599:
         return 'ISO-8859-9 (Latin-5)';
+      case cp850:
+        return 'CP850';
+      case cp852:
+        return 'CP852';
       case cp437:
         return 'CP437 (IBM ASCII)';
     }
@@ -85,6 +91,10 @@ enum PrinterCharset {
         return 'cp1254';
       case iso88599:
         return 'iso-8859-9';
+      case cp850:
+        return 'cp850';
+      case cp852:
+        return 'cp852';
       case cp437:
         return 'cp437';
     }
@@ -103,6 +113,10 @@ enum PrinterCharset {
         return iso88599;
       case 'cp437':
         return cp437;
+      case 'cp850':
+        return cp850;
+      case 'cp852':
+        return cp852;
       default:
         return utf8;
     }
@@ -176,6 +190,27 @@ class PrinterEncodingSelection {
       return const PrinterEncodingSelection(
         charset: PrinterCharset.cp437,
         codePage: 0,
+      );
+    }
+
+    if (charset == PrinterCharset.cp1254) {
+      return const PrinterEncodingSelection(
+        charset: PrinterCharset.cp1254,
+        codePage: 21,
+      );
+    }
+
+    if (charset == PrinterCharset.iso88599) {
+      return const PrinterEncodingSelection(
+        charset: PrinterCharset.iso88599,
+        codePage: 17,
+      );
+    }
+
+    if (charset == PrinterCharset.cp850) {
+      return const PrinterEncodingSelection(
+        charset: PrinterCharset.cp850,
+        codePage: 2,
       );
     }
 

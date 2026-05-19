@@ -35,6 +35,7 @@ Name: "desktopicon"; Description: "Masaustu kisayolu olustur"; GroupDescription:
 
 [Files]
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "wait_for_bridge_health.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Ibul Print Bridge"; Filename: "{app}\{#ExeName}"
@@ -45,4 +46,39 @@ Name: "{autodesktop}\Ibul Print Bridge"; Filename: "{app}\{#ExeName}"; Tasks: de
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "IbulLocalPrintBridge"; ValueData: """{app}\{#ExeName}"""; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\{#ExeName}"; Description: "Yazici servisini simdi baslat"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#ExeName}"; WorkingDir: "{app}"; StatusMsg: "Yazici servisi baslatiliyor..."; Flags: runhidden nowait skipifsilent
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\wait_for_bridge_health.ps1"" -TimeoutSeconds 45"; StatusMsg: "Yazici servisi hazirlaniyor..."; Flags: waituntilterminated runhidden skipifsilent
+
+[UninstallRun]
+Filename: "taskkill.exe"; Parameters: "/IM {#ExeName} /F"; Flags: runhidden skipifdoesntexist
+
+[Code]
+procedure RepairAutostartRegistry();
+var
+  Value: string;
+  BridgePath: string;
+begin
+  BridgePath := ExpandConstant('"{app}\{#ExeName}"');
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
+    'IbulLocalPrintBridge', Value) then
+  begin
+    if (Pos('powershell.exe', LowerCase(Value)) > 0) or
+       (Pos('.ps1', LowerCase(Value)) > 0) or
+       (Value <> BridgePath) then
+    begin
+      RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
+        'IbulLocalPrintBridge', BridgePath);
+    end;
+  end
+  else
+  begin
+    RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
+      'IbulLocalPrintBridge', BridgePath);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    RepairAutostartRegistry();
+end;

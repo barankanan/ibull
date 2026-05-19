@@ -6,7 +6,13 @@ import unittest
 from local_print_bridge.config import BridgeSettings
 from local_print_bridge.models import KitchenPayload, ReceiptPayload
 from local_print_bridge.kitchen import KitchenRenderer
-from local_print_bridge.raster import KitchenBitmapRenderer, ReceiptBitmapRenderer, RasterEscPosEncoder
+from local_print_bridge.raster import (
+    BundledFontMissingError,
+    KitchenBitmapRenderer,
+    ReceiptBitmapRenderer,
+    RasterEscPosEncoder,
+    resolve_bundled_mono_font_path,
+)
 from local_print_bridge.receipt import ReceiptRenderer, resolve_receipt_table_label_lines
 from local_print_bridge.server import build_test_payload
 
@@ -40,6 +46,62 @@ class RasterPrintTests(unittest.TestCase):
         self.assertIn("ÇĞİÖŞÜ", combined)
         self.assertIn("Karışık", combined)
         self.assertIn("Şiş", combined)
+
+    def test_bundled_mono_font_exists(self) -> None:
+        path = resolve_bundled_mono_font_path(bold=False)
+        self.assertTrue(path.endswith("DejaVuSansMono.ttf"))
+
+    def test_guarantee_mode_renders_turkish_product_names(self) -> None:
+        guarantee_settings = BridgeSettings(
+            host="127.0.0.1",
+            port=3001,
+            printer_queue="Thermal58",
+            paper_width_mm=58,
+            chars_per_line=32,
+            encoding="cp857",
+            codepage=13,
+            render_mode="image",
+            raster_chunk_height=128,
+            allowed_origins=("https://ibul-ecommerce.web.app",),
+            healthcheck_queue=False,
+            print_system_enabled=True,
+            cut_mode="partial",
+            transport_mode="auto",
+            usb_vendor_id=None,
+            usb_product_id=None,
+            network_host="",
+            network_port=9100,
+            turkish_guarantee_mode=True,
+        )
+        payload = ReceiptPayload.from_dict(
+            {
+                "store_name": "IBUL",
+                "table_no": "1",
+                "display_table_label": "Test",
+                "items": [
+                    {
+                        "name": "Çiğ Köfte",
+                        "qty": 1,
+                        "price": "100",
+                        "total": "100",
+                        "note": "az pişmiş, soğansız",
+                    },
+                    {"name": "Ciğer Şiş", "qty": 1, "price": "100", "total": "100"},
+                    {"name": "Kuşbaşı", "qty": 1, "price": "100", "total": "100"},
+                    {"name": "Kıyma Dürüm", "qty": 1, "price": "100", "total": "100"},
+                ],
+                "currency": "TRY",
+                "grand_total": "400",
+            }
+        )
+        try:
+            image = ReceiptBitmapRenderer(guarantee_settings).render(payload)
+            rasterized = RasterEscPosEncoder(guarantee_settings).encode(image)
+        except (RuntimeError, BundledFontMissingError) as exc:
+            self.skipTest(str(exc))
+            return
+        self.assertGreater(rasterized.height_px, 0)
+        self.assertGreater(len(rasterized.data), 100)
 
     def test_raster_encoder_emits_image_command_sequence(self) -> None:
         try:

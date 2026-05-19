@@ -5,9 +5,9 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 
-project_root = Path.cwd().resolve().parents[1]
-bridge_root = project_root / "local_print_bridge"
-script_root = bridge_root / "windows"
+script_root = Path(SPECPATH).resolve()
+bridge_root = script_root.parent
+project_root = bridge_root.parent
 
 pillow_datas, pillow_binaries, pillow_hiddenimports = collect_all("PIL")
 usb_datas, usb_binaries, usb_hiddenimports = collect_all("usb")
@@ -18,6 +18,11 @@ hiddenimports = sorted(
         + pillow_hiddenimports
         + usb_hiddenimports
         + [
+            "local_print_bridge.server",
+            "local_print_bridge.config",
+            "local_print_bridge.receipt",
+            "local_print_bridge.kitchen",
+            "local_print_bridge.raster",
             "pythoncom",
             "pywintypes",
             "win32print",
@@ -26,7 +31,11 @@ hiddenimports = sorted(
     )
 )
 
-datas = pillow_datas + usb_datas + [(str(bridge_root / ".env.example"), ".")]
+_font_datas = [
+    (str(path), "local_print_bridge/fonts")
+    for path in (bridge_root / "fonts").glob("*.ttf")
+]
+datas = pillow_datas + usb_datas + [(str(bridge_root / ".env.example"), ".")] + _font_datas
 binaries = pillow_binaries + usb_binaries
 
 a = Analysis(

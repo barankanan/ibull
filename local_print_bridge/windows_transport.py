@@ -7,6 +7,45 @@ from .printers import discover_windows_printers
 from .transport import PrintResult, TransportError
 
 
+def peek_windows_spool_jobs(printer_name: str) -> dict[str, object]:
+    """Return a lightweight snapshot of jobs visible in the Windows spooler."""
+    win32print = _import_win32print()
+    if win32print is None or not printer_name.strip():
+        return {
+            "ok": False,
+            "printer_name": printer_name,
+            "job_count": 0,
+            "active_job_ids": [],
+            "reason": "pywin32_unavailable",
+        }
+    handle = None
+    try:
+        handle = win32print.OpenPrinter(printer_name)
+        jobs = win32print.EnumJobs(handle, 0, -1, 1)
+        job_ids = [int(job.get("JobId", 0)) for job in jobs if isinstance(job, dict)]
+        return {
+            "ok": True,
+            "printer_name": printer_name,
+            "job_count": len(job_ids),
+            "active_job_ids": job_ids,
+            "latest_job_id": job_ids[-1] if job_ids else None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "printer_name": printer_name,
+            "job_count": 0,
+            "active_job_ids": [],
+            "reason": str(exc),
+        }
+    finally:
+        if handle is not None:
+            try:
+                win32print.ClosePrinter(handle)
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def _import_win32print():
     try:
         import win32print  # type: ignore[import-not-found]  # noqa: PLC0415
@@ -99,6 +138,7 @@ class WindowsSpoolTransport:
                 except Exception:  # noqa: BLE001
                     pass
 
+        spool_snapshot = peek_windows_spool_jobs(self.printer_name)
         return PrintResult(
             job_id=str(doc_id) if doc_id is not None else None,
             raw_output=f"Windows spool RAW -> {self.printer_name}",
@@ -106,6 +146,13 @@ class WindowsSpoolTransport:
             metadata={
                 "actual_backend": "windows-spool",
                 "selected_queue": self.printer_name,
+                "printer_name": self.printer_name,
+                "spool_mode": "RAW",
+                "document_type": "test",
+                "spool_jobs_after_print": spool_snapshot.get("job_count"),
+                "spool_latest_job_id": spool_snapshot.get("latest_job_id"),
+                "spool_active_job_ids": spool_snapshot.get("active_job_ids") or [],
+                "spool_snapshot": spool_snapshot,
             },
         )
 

@@ -143,6 +143,10 @@ class PrintBridgeServerTests(unittest.TestCase):
         self.assertEqual(body["service"], "ibul-local-print-bridge")
         self.assertEqual(body["printer_queue"], "Thermal58")
         self.assertEqual(body["render_mode"], "image")
+        self.assertIn("pillow_available", body)
+        self.assertIn("python_executable", body)
+        self.assertIsInstance(body.get("build"), dict)
+        self.assertIn("python_executable", body["build"])
 
     def test_receipt_endpoint_accepts_flat_payload_and_submits_job(self) -> None:
         payload = json.dumps(
@@ -191,7 +195,12 @@ class PrintBridgeServerTests(unittest.TestCase):
             "Content-Type": "application/json",
             "Origin": "https://ibul-ecommerce.web.app",
         }
-        payload = json.dumps({"test_mode": "escpos_short"})
+        payload = json.dumps(
+            {
+                "test_mode": "escpos_short",
+                "render_mode": "image",
+            }
+        )
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         connection.request("POST", "/print/test", body=payload, headers=headers)
         response = connection.getresponse()
@@ -200,6 +209,28 @@ class PrintBridgeServerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertTrue(body["ok"])
+        self.assertEqual(body.get("render_mode"), "text")
+
+    def test_resolve_render_mode_maps_escpos_short_to_text(self) -> None:
+        handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
+        resolved = handler._resolve_render_mode(
+            {"test_mode": "escpos_short", "render_mode": "image"}
+        )
+        self.assertEqual(resolved, "text")
+
+    def test_resolve_render_mode_turkish_guarantee_forces_image(self) -> None:
+        handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
+        resolved = handler._resolve_render_mode(
+            {
+                "turkish_print_mode": "turkish_guarantee",
+                "render_mode": "text",
+            }
+        )
+        self.assertEqual(resolved, "image")
+        resolved_flag = handler._resolve_render_mode(
+            {"turkish_guarantee_mode": True, "render_mode": "text"}
+        )
+        self.assertEqual(resolved_flag, "image")
 
     def test_print_endpoint_rejects_when_print_system_disabled(self) -> None:
         PrintBridgeHandler.settings = BridgeSettings(
@@ -490,6 +521,75 @@ class PrintBridgeServerTests(unittest.TestCase):
         self.assertEqual(response.status, 204)
         self.assertEqual(response_headers["Access-Control-Allow-Origin"], "https://ibul-ecommerce.web.app")
         self.assertEqual(response_headers["Access-Control-Allow-Private-Network"], "true")
+
+    def test_health_includes_operator_fields(self) -> None:
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("GET", "/health")
+        response = connection.getresponse()
+        body = json.loads(response.read())
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(body["ok"])
+        self.assertIn("bridge_version", body)
+        self.assertIn("service_mode", body)
+        self.assertIn("autostart_enabled", body)
+        self.assertIn("default_queue", body)
+        self.assertEqual(body["default_queue"], body["printer_queue"])
+
+    def test_health_includes_bundled_font_status(self) -> None:
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("GET", "/health")
+        response = connection.getresponse()
+        body = json.loads(response.read())
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        bundled = body.get("bundled_font")
+        self.assertIsInstance(bundled, dict)
+        self.assertIn("regular", bundled)
+        self.assertIn("bold", bundled)
+        self.assertTrue(bundled.get("regular_exists") is True)
+        self.assertTrue(bundled.get("bold_exists") is True)
+
+    def test_resolve_render_mode_maps_escpos_text_to_text(self) -> None:
+        handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
+        resolved = handler._resolve_render_mode(
+            {"test_mode": "escpos_text", "render_mode": "image"}
+        )
+        self.assertEqual(resolved, "text")
+
+    def test_spool_snapshot_requires_printer_name(self) -> None:
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("GET", "/spool/snapshot")
+        response = connection.getresponse()
+        body = json.loads(response.read())
+        connection.close()
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(body["errorCode"], "printer_name_required")
+
+    def test_spool_snapshot_returns_windows_job_snapshot(self) -> None:
+        with mock.patch(
+            "local_print_bridge.windows_transport.peek_windows_spool_jobs",
+            return_value={
+                "ok": True,
+                "printer_name": "POS-58",
+                "job_count": 1,
+                "active_job_ids": [7],
+                "latest_job_id": 7,
+            },
+        ):
+            connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            connection.request("GET", "/spool/snapshot?printer_name=POS-58")
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["printer_name"], "POS-58")
+        self.assertEqual(body["latest_job_id"], 7)
 
 
 if __name__ == "__main__":

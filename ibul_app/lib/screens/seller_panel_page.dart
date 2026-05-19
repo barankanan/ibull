@@ -74,6 +74,7 @@ import '../widgets/waiter/swipeable_product_card.dart';
 import '../utils/browser_file_download.dart';
 import '../utils/pick_image_file.dart';
 import '../utils/table_labels.dart';
+import '../utils/garson_table_order_state.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_overview_widgets.dart';
@@ -118,6 +119,7 @@ class _KitchenDispatchFeedback {
     this.notice,
     this.queuedOnly = false,
     this.progressed = false,
+    this.physicallyDispatched = false,
     this.orderId,
     this.printJobIds = const <String>[],
   });
@@ -126,12 +128,16 @@ class _KitchenDispatchFeedback {
   final String? notice;
   final bool queuedOnly;
   final bool progressed;
+  /// Local bridge already printed; skip polling / "sonuç kontrol ediliyor".
+  final bool physicallyDispatched;
   final String? orderId;
   final List<String> printJobIds;
 
   bool get hasError => error != null && error!.trim().isNotEmpty;
   bool get hasNotice => notice != null && notice!.trim().isNotEmpty;
   bool get hasTrackedJobs => printJobIds.isNotEmpty;
+  bool get shouldTrackPrintCompletion =>
+      hasTrackedJobs && !physicallyDispatched;
 
   static const none = _KitchenDispatchFeedback();
 }
@@ -4200,7 +4206,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   AppRuntimeConfig.sellerDesktopWindowsDownloadUrl,
                 ),
                 icon: const Icon(Icons.desktop_windows_outlined),
-                label: const Text('Windows Uygulamasını İndir'),
+                label: const Text('Ibul Satıcı Windows\'u İndir'),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF92400E),
                   foregroundColor: Colors.white,
@@ -7205,12 +7211,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     .add(order);
               }
               for (final entry in ordersByTable.entries) {
-                entry.value.sort(
-                  (a, b) => _garsonOrderCreatedAt(b['created_at']?.toString())
-                      .compareTo(
-                        _garsonOrderCreatedAt(a['created_at']?.toString()),
-                      ),
-                );
+                entry.value.sort((a, b) {
+                  final left =
+                      garsonOrderActivityAt(a) ??
+                      _garsonOrderCreatedAt(a['created_at']?.toString());
+                  final right =
+                      garsonOrderActivityAt(b) ??
+                      _garsonOrderCreatedAt(b['created_at']?.toString());
+                  return right.compareTo(left);
+                });
               }
               final selectedOrderByTable = <int, Map<String, dynamic>>{};
               for (final entry in ordersByTable.entries) {
@@ -7451,14 +7460,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return parsed?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
   }
 
-  String _garsonOrderTimeAgoLabel(String? createdAt) {
-    final dt = DateTime.tryParse(createdAt ?? '')?.toLocal();
-    if (dt == null) return '-';
-    final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1) return 'Az önce';
-    if (diff.inMinutes < 60) return '${diff.inMinutes} dk';
-    return '${diff.inHours} sa';
-  }
+  String _garsonOrderTimeAgoLabel(Map<String, dynamic> order) =>
+      garsonOrderTimeAgoLabel(order);
 
   bool _isGarsonWaitingStatus(String? status) {
     final normalized = (status ?? '').toLowerCase();
@@ -8546,6 +8549,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return payload;
   }
 
+  bool _hasConfiguredAdisyonPrinter(Map<String, dynamic>? stationConfig) {
+    if (stationConfig == null) return false;
+    final roleMappings = stationConfig['role_mappings'];
+    if (roleMappings is Map) {
+      final adisyon = roleMappings['adisyon'];
+      if (adisyon is Map) {
+        final bridgeId =
+            adisyon['id']?.toString().trim() ??
+            adisyon['bridgePrinterId']?.toString().trim() ??
+            '';
+        if (bridgeId.isNotEmpty) return true;
+      }
+    }
+    final printerId =
+        stationConfig['adisyon_printer_id']?.toString().trim() ?? '';
+    return printerId.isNotEmpty;
+  }
+
   Map<String, dynamic> _enrichQueuedReceiptPayloadWithPrinterRouting(
     Map<String, dynamic> payload, {
     required Map<String, dynamic>? stationConfig,
@@ -8760,10 +8781,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
     var storeId = '';
     try {
-      final liveTableOrders = await _storeService.getTableOrdersByTable(
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-      );
+      final bridgeReachableFuture = _supportsDirectLocalPrintBridge
+          ? _printOrchestrator.isLocalBridgeReachable(useCache: true)
+          : Future<bool>.value(false);
+      final liveData = await Future.wait<dynamic>([
+        _storeService.getTableOrdersByTable(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+        ),
+        _loadGarsonReceiptStoreContext(sellerId),
+        bridgeReachableFuture,
+      ]);
+      final liveTableOrders =
+          List<Map<String, dynamic>>.from(liveData[0] as List);
+      final storeContext = Map<String, String>.from(liveData[1] as Map);
+      final bridgeReachable = liveData[2] as bool;
       final tableOrders = liveTableOrders.isNotEmpty
           ? liveTableOrders
           : (orders ?? const <Map<String, dynamic>>[]);
@@ -8774,14 +8806,67 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
         return;
       }
-      late final Map<String, String> storeContext;
-      storeContext = await _loadGarsonReceiptStoreContext(sellerId);
       storeId = storeContext['store_id'] ?? '';
       final basePayload = _buildGarsonReceiptPayload(
         tableNumber: tableNumber,
         tableOrders: tableOrders,
         storeContext: storeContext,
       );
+
+      if (_supportsDirectLocalPrintBridge && bridgeReachable) {
+        final receiptPrinter = await _printOrchestrator.resolvePrinterForDispatch(
+          restaurantId: sellerId,
+          role: PrinterSetupRole.adisyon,
+          flowName: 'waiter_receipt',
+          documentType: 'receipt',
+        );
+        if (receiptPrinter == null) {
+          _showPrinterWorkflowSnackBar(
+            'Adisyon yazıcısı seçilmemiş.',
+            warning: true,
+          );
+          return;
+        }
+        final payload = _enrichQueuedReceiptPayloadWithPrinterRouting(
+          basePayload,
+          stationConfig: const <String, dynamic>{},
+        )
+          ..['printer_id'] = receiptPrinter.id
+          ..['printer_name'] = receiptPrinter.displayName;
+        final printWatch = Stopwatch()..start();
+        final directResult = await _printOrchestrator.printPhysicalToPrinter(
+          receiptPrinter,
+          PrintPayload(documentType: 'receipt', body: payload),
+          restaurantId: sellerId,
+          flowName: 'waiter_receipt',
+          flowType: 'waiter_receipt',
+          source: 'seller_panel_garson',
+          tableId: tableNumber.toString(),
+        );
+        debugPrint(
+          '[GarsonPerf] adisyon_bridge_response_ms=${printWatch.elapsedMilliseconds} '
+          'table=$tableNumber ok=${directResult.ok}',
+        );
+        if (!mounted) return;
+        if (directResult.ok) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Adisyon fiziksel olarak yazdırıldı.'),
+              backgroundColor: Color(0xFF10B981),
+            ),
+          );
+          return;
+        }
+        final dispatch = directResult.raw?['dispatch'];
+        final detail =
+            dispatch is Map ? jsonEncode(dispatch) : directResult.message;
+        _showPrinterWorkflowSnackBar(
+          'Adisyon yazdırılamadı. $detail',
+          warning: true,
+        );
+        return;
+      }
+
       final stationConfig = await _printStationService.fetchStationConfig(
         sellerId,
       );
@@ -8798,6 +8883,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         basePayload,
         stationConfig: stationConfig ?? const <String, dynamic>{},
       );
+
+      if (!_hasConfiguredAdisyonPrinter(stationConfig)) {
+        _showPrinterWorkflowSnackBar(
+          'Adisyon yazıcısı seçilmemiş.',
+          warning: true,
+        );
+        return;
+      }
+
       final currentUser = Supabase.instance.client.auth.currentUser;
       final queueResponse = await _printStationService.enqueueReceiptPrintJob(
         restaurantId: sellerId,
@@ -9414,7 +9508,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         .take(3)
         .toList(growable: false);
     final timeLabel = effectiveOrder != null
-        ? _garsonOrderTimeAgoLabel(effectiveOrder['created_at']?.toString())
+        ? _garsonOrderTimeAgoLabel(effectiveOrder)
         : 'Sipariş gir';
     final timeText = hasOrder
         ? (timeLabel == 'Az önce'
@@ -20014,8 +20108,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       cardItems.addAll(_garsonExtractItems(tableOrder));
     }
     final tableTotal = _garsonOrdersTotal(tableOrders);
-    final subtitle = hasOrder
-        ? '${_garsonOrderTimeAgoLabel(order?['created_at']?.toString())} önce • $orderCount sipariş'
+    final subtitle = hasOrder && order != null
+        ? '${_garsonOrderTimeAgoLabel(order)} önce • $orderCount sipariş'
         : 'Sipariş yok';
     final tableRow = _storeTableRowByNumber(tableNumber);
     final tableTitle =
@@ -28643,7 +28737,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       _showDispatchFeedbackSnackBar(message, warning: true);
       return;
     }
-    if (feedback.progressed) {
+    if (feedback.progressed && !feedback.physicallyDispatched) {
       final prefix = (_lastSubmitActionLabel ?? '').trim();
       _setSubmitFeedback(
         '${prefix.isEmpty ? '' : '$prefix '}Mutfak fişi yazdırma akışına girdi. Sonuç kontrol ediliyor.',
@@ -28833,7 +28927,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     }
     if (result.dispatchedJobCount > 0) {
       return _KitchenDispatchFeedback(
-        progressed: true,
+        physicallyDispatched: true,
         orderId: result.orderId,
         printJobIds: result.printJobIds,
       );
@@ -29000,7 +29094,13 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     final list = allOrders
         .where((order) => _tableNumberFromOrder(order) == widget.tableNumber)
         .toList(growable: false);
-    list.sort((a, b) => _createdAt(b).compareTo(_createdAt(a)));
+    list.sort((a, b) {
+      final left =
+          garsonOrderActivityAt(a) ?? _createdAt(a);
+      final right =
+          garsonOrderActivityAt(b) ?? _createdAt(b);
+      return right.compareTo(left);
+    });
     return list;
   }
 
@@ -29058,22 +29158,10 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     Iterable<Map<String, dynamic>> primary,
     Iterable<Map<String, dynamic>> secondary,
   ) {
-    final merged = <Map<String, dynamic>>[];
-    final seen = <String>{};
-
-    void append(Iterable<Map<String, dynamic>> source) {
-      for (final order in source) {
-        final normalized = _normalizeTableOrder(order);
-        final identity = _tableOrderIdentity(normalized);
-        if (!seen.add(identity)) continue;
-        merged.add(normalized);
-      }
-    }
-
-    append(primary);
-    append(secondary);
-    merged.sort((a, b) => _createdAt(b).compareTo(_createdAt(a)));
-    return merged;
+    return mergeGarsonTableOrders(
+      <Map<String, dynamic>>[...primary, ...secondary],
+      fallbackTableNumber: widget.tableNumber,
+    ).map(_normalizeTableOrder).toList(growable: false);
   }
 
   List<Map<String, dynamic>> _displayTableOrders(
@@ -29104,6 +29192,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   }
 
   Future<void> _refreshTableOrdersAfterSubmit() async {
+    final reconcileWatch = Stopwatch()..start();
     try {
       _tableOrdersFallbackFuture = null;
       final snapshot = await _storeService.getTableOrdersSnapshot(
@@ -29114,18 +29203,27 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       final normalizedSnapshot = snapshot
           .map(_normalizeTableOrder)
           .toList(growable: false);
-      final serverIdentities = normalizedSnapshot
-          .map(_tableOrderIdentity)
-          .toSet();
-      setState(() {
-        _hydratedTableOrders = normalizedSnapshot;
-        _optimisticTableOrders = _optimisticTableOrders
+      final reconciled = reconcileGarsonTableOrdersAfterSnapshot(
+        serverSnapshot: normalizedSnapshot,
+        optimisticOrders: _optimisticTableOrders
             .map(_normalizeTableOrder)
-            .where(
-              (order) => !serverIdentities.contains(_tableOrderIdentity(order)),
-            )
+            .toList(growable: false),
+        fallbackTableNumber: widget.tableNumber,
+      );
+      setState(() {
+        _hydratedTableOrders = reconciled.hydrated
+            .map(_normalizeTableOrder)
+            .toList(growable: false);
+        _optimisticTableOrders = reconciled.optimisticRemaining
+            .map(_normalizeTableOrder)
             .toList(growable: false);
       });
+      debugPrint(
+        '[GarsonPerf] ui_reconcile_ms=${reconcileWatch.elapsedMilliseconds} '
+        'table=${widget.tableNumber} '
+        'server=${normalizedSnapshot.length} '
+        'optimistic=${reconciled.optimisticRemaining.length}',
+      );
     } catch (error) {
       debugPrint(
         '[GarsonTableFlow] table=${widget.tableNumber} submit_refresh_failed '
@@ -30955,6 +31053,13 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   ) async {
     if (!_canSubmitDraft()) return;
     setState(() => _isSubmitting = true);
+    final pipelineWatch = Stopwatch()..start();
+    final isUpdate =
+        _editingOrderId != null && _editingOrderId!.trim().isNotEmpty;
+    debugPrint(
+      '[GarsonPerf] garson_update_tap_at=${DateTime.now().toIso8601String()} '
+      'table=${widget.tableNumber} isUpdate=$isUpdate',
+    );
     try {
       _tableOrdersFallbackFuture = null;
       final items = _draftItems
@@ -31138,16 +31243,46 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           );
         }
       } else if (editingId != null && editingId.isNotEmpty) {
-        final updatedOrder = await _storeService.updateTableOrder(
-          editingId,
-          items: items,
-          status: nextStatus,
-          revision: nextRevision,
-          lastEditSummary: lastEditSummary,
-          lastEditNote: editPolicyMessage,
-        );
-        submittedOrder =
-            updatedOrder ??
+        Future<Map<String, dynamic>?> updateFuture() async {
+          final dbWatch = Stopwatch()..start();
+          final updated = await _storeService.updateTableOrder(
+            editingId,
+            items: items,
+            status: nextStatus,
+            revision: nextRevision,
+            lastEditSummary: lastEditSummary,
+            lastEditNote: editPolicyMessage,
+          );
+          debugPrint(
+            '[GarsonPerf] db_update_ms=${dbWatch.elapsedMilliseconds} '
+            'table=${widget.tableNumber}',
+          );
+          return updated;
+        }
+
+        Future<_KitchenDispatchFeedback> printFuture() async {
+          final printWatch = Stopwatch()..start();
+          final feedback = await _dispatchUpdatedOrderPrintJobs(
+            previousStatus: originalStatus,
+            changeSummary: changeSummary,
+            nextItems: items,
+          );
+          debugPrint(
+            '[GarsonPerf] print_dispatch_ms=${printWatch.elapsedMilliseconds} '
+            'physicallyDispatched=${feedback.physicallyDispatched} '
+            'table=${widget.tableNumber}',
+          );
+          return feedback;
+        }
+
+        final updateAndPrint = await Future.wait<dynamic>([
+          updateFuture(),
+          printFuture(),
+        ]);
+        final updatedOrder = updateAndPrint[0] as Map<String, dynamic>?;
+        parallelDispatchFeedback =
+            updateAndPrint[1] as _KitchenDispatchFeedback;
+        final baseSubmitted = updatedOrder ??
             <String, dynamic>{
               'id': editingId,
               'seller_id': widget.sellerId,
@@ -31162,6 +31297,12 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
               'last_edit_summary': lastEditSummary,
               'last_edit_note': editPolicyMessage ?? '',
             };
+        submittedOrder = applyGarsonSubmittedOrderItems(
+          submittedOrder: baseSubmitted,
+          items: items,
+          revision: nextRevision,
+          updatedAt: updatedAt,
+        );
       } else {
         // Fire table_orders insert AND print_jobs RPC in parallel.
         // They write to different tables – no dependency between them.
@@ -31187,20 +31328,29 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         );
         submittedOrder = results[0] as Map<String, dynamic>;
         parallelDispatchFeedback = results[1] as _KitchenDispatchFeedback;
+        debugPrint(
+          '[GarsonPerf] db_update_ms=${orderSaveWatch.elapsedMilliseconds} '
+          'print_dispatch_ms=${orderSaveWatch.elapsedMilliseconds} '
+          'table=${widget.tableNumber}',
+        );
       }
       final dispatchFeedback = widget.debugUseLocalSubmit
           ? (parallelDispatchFeedback ?? _KitchenDispatchFeedback.none)
-          : editingId != null && editingId.isNotEmpty
-          ? await _dispatchUpdatedOrderPrintJobs(
-              previousStatus: originalStatus,
-              changeSummary: changeSummary,
-              nextItems: items,
-            )
           : parallelDispatchFeedback ?? _KitchenDispatchFeedback.none;
+      final payloadWatch = Stopwatch()..start();
       final optimisticOrders = _buildOptimisticTableOrders(
         existingTableOrders: existingTableOrders,
         submittedOrder: submittedOrder,
         editingOrderId: editingId,
+      );
+      debugPrint(
+        '[GarsonPerf] payload_build_ms=${payloadWatch.elapsedMilliseconds} '
+        'ui_reconcile_ms=0 table=${widget.tableNumber}',
+      );
+      debugPrint(
+        '[GarsonPerf] total_submit_to_print_ms=${pipelineWatch.elapsedMilliseconds} '
+        'bridge_response_ms=${dispatchFeedback.physicallyDispatched ? pipelineWatch.elapsedMilliseconds : '-'} '
+        'table=${widget.tableNumber}',
       );
       if (!mounted) return;
       final actionLabel = (editingId != null && editingId.isNotEmpty)
@@ -31224,7 +31374,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         autoHideAfter: const Duration(seconds: 3),
       );
       _applyKitchenDispatchFeedback(dispatchFeedback);
-      if (!dispatchFeedback.hasError && dispatchFeedback.hasTrackedJobs) {
+      if (!dispatchFeedback.hasError &&
+          dispatchFeedback.shouldTrackPrintCompletion) {
         _startPrintCompletionTracking(dispatchFeedback);
       }
       _notifyDraftChanged();
@@ -33725,7 +33876,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     final status = normalizedOrder['status']?.toString() ?? 'new';
     final statusKey = _normalizedOrderStatusKey(status);
     final policy = _orderEditPolicy(status);
-    final createdAt = _createdAt(normalizedOrder);
+    final activityAt =
+        garsonOrderActivityAt(normalizedOrder) ?? _createdAt(normalizedOrder);
     final items = _extractItems(normalizedOrder['items']);
     final isEditingThis = _editingOrderId == orderId;
     final revision = _orderRevision(normalizedOrder);
@@ -33786,7 +33938,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           Row(
             children: [
               Text(
-                _timeAgo(createdAt),
+                _timeAgo(activityAt),
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
               ),
               if (revision > 1) ...[

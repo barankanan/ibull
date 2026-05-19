@@ -131,8 +131,12 @@ class PrintStationService implements PrintStationServicePort {
     Map<String, dynamic>? queueStatus,
     Map<String, dynamic>? bridgeHealth,
     bool bridgeReachable = false,
+    int livePrinterCount = 0,
   }) {
     if (isLocalStationReady(queueStatus)) {
+      return true;
+    }
+    if (bridgeReachable && livePrinterCount > 0) {
       return true;
     }
     if (isBridgeHealthy(bridgeHealth)) {

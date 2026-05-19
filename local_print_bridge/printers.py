@@ -7,6 +7,8 @@ import re
 import subprocess
 from typing import Any
 
+from .windows_printer_profile import classify_windows_printer
+
 
 _VID_PID_RE = re.compile(r"(?:VID|vid)[_:\-]?([0-9a-fA-F]{4}).*?(?:PID|pid)[_:\-]?([0-9a-fA-F]{4})")
 
@@ -109,10 +111,18 @@ class PrinterRecord:
             data["warningCode"] = self.warning_code
         if self.driver_name:
             data["driverName"] = self.driver_name
+            data["driver_name"] = self.driver_name
         if self.port_name:
             data["portName"] = self.port_name
+            data["port_name"] = self.port_name
         if self.metadata:
             data["metadata"] = self.metadata
+        if self.metadata and self.metadata.get("operatorTier"):
+            data["operatorTier"] = self.metadata.get("operatorTier")
+            data["isPosCandidate"] = self.metadata.get("isPosCandidate")
+            data["recommended"] = self.metadata.get("recommended")
+            if self.metadata.get("selectionWarning"):
+                data["selectionWarning"] = self.metadata.get("selectionWarning")
         return data
 
 
@@ -159,12 +169,18 @@ try {
   pnp = $pnp
 } | ConvertTo-Json -Compress -Depth 4
 """
+    creationflags = 0
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        creationflags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+
     try:
         result = subprocess.run(
             [
                 "powershell",
                 "-NoProfile",
                 "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
@@ -174,6 +190,7 @@ try {
             text=True,
             timeout=8,
             check=False,
+            creationflags=creationflags,
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -255,6 +272,24 @@ try {
             status_level = "warning"
             warning_code = "spooler_warning"
             status_message = "Spooler yazıcı için uyarı bildiriyor. Test baskısı önerilir."
+
+        profile = classify_windows_printer(
+            name=name,
+            driver_name=driver_name,
+            port_name=port_name,
+            base_status_level=status_level,
+            base_status_message=status_message,
+        )
+        status_level = profile.status_level
+        status_message = profile.status_message
+        warning_code = profile.warning_code or warning_code
+        metadata = {
+            "printerStatus": printer_status_raw or None,
+            "extendedPrinterStatus": extended_status_raw or None,
+            "detectedErrorState": detected_error_state_raw or None,
+            "availability": availability_raw or None,
+            **profile.as_metadata(),
+        }
         printers.append(
             PrinterRecord(
                 id=f"windows:{name}",
@@ -277,12 +312,7 @@ try {
                 warning_code=warning_code,
                 driver_name=driver_name or None,
                 port_name=port_name or None,
-                metadata={
-                    "printerStatus": printer_status_raw or None,
-                    "extendedPrinterStatus": extended_status_raw or None,
-                    "detectedErrorState": detected_error_state_raw or None,
-                    "availability": availability_raw or None,
-                },
+                metadata=metadata,
             ).as_dict()
         )
 

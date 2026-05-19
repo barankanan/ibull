@@ -16,6 +16,7 @@
 // • Missing config shows a clear error screen before any network call
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -32,6 +33,7 @@ import 'package:ibul_app/screens/seller_panel_page.dart';
 import 'package:ibul_app/services/auth_service.dart';
 import 'package:ibul_app/services/bridge_manager.dart';
 import 'package:ibul_app/services/desktop_print_hub.dart';
+import 'package:ibul_app/utils/desktop_printer_status_policy.dart';
 import 'package:ibul_app/widgets/desktop_print_status_bar.dart';
 
 final GlobalKey<NavigatorState> sellerNavigatorKey =
@@ -286,6 +288,27 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
   bool _bootstrapped = false;
   String? _bootError;
 
+  bool _isBridgeReady(DesktopPrintHub hub) =>
+      isDesktopPrinterBridgeReady(hub.bridgeStatus);
+
+  void _syncBootErrorWithHub(DesktopPrintHub hub) {
+    if (_isBridgeReady(hub)) {
+      if (_bootError != null) {
+        setState(() => _bootError = null);
+      }
+      return;
+    }
+    if (!_bootstrapped || _bootError != null) return;
+    setState(() {
+      _bootError = switch (hub.bridgeStatus) {
+        BridgeStatus.offline =>
+          'Yazıcı bağlantısı kurulamadı. Yazıcı ayarlarından servisi başlatın veya onarın.',
+        BridgeStatus.error => 'Yazıcı servisinde hata oluştu.',
+        _ => 'Yazıcı servisi hazırlanıyor...',
+      };
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -311,17 +334,26 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
       if (!mounted) return;
       setState(() {
         _bootstrapped = true;
-        if (!bridge.ok) {
-          _bootError = bridge.message;
+        if (!bridge.ok && !_isBridgeReady(hub)) {
+          _bootError = kDebugMode
+              ? bridge.message
+              : 'Yazıcı bağlantısı kurulamadı. Yazıcı ayarlarından servisi başlatın veya onarın.';
+        } else {
+          _bootError = null;
         }
       });
     } catch (error, stackTrace) {
       debugPrint('[DesktopSeller] bootstrap failed: $error');
       debugPrintStack(stackTrace: stackTrace);
       if (!mounted) return;
+      final hub = Provider.of<DesktopPrintHub>(context, listen: false);
       setState(() {
         _bootstrapped = true;
-        _bootError = error.toString();
+        _bootError = _isBridgeReady(hub)
+            ? null
+            : (kDebugMode
+                  ? error.toString()
+                  : 'Yazıcı servisi hazırlanırken bir sorun oluştu.');
       });
     }
   }
@@ -335,52 +367,67 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
   @override
   Widget build(BuildContext context) {
     final panel = SellerPanelPage(entryRole: widget.entryRole);
-    if (_bootError == null) return panel;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        panel,
-        Positioned(
-          top: 12,
-          right: 12,
-          child: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 340),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFFBEB),
+    return Consumer<DesktopPrintHub>(
+      builder: (context, hub, _) {
+        if (_bootstrapped) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _syncBootErrorWithHub(hub);
+          });
+        }
+        final showBootBanner = shouldShowDesktopPrinterBootBanner(
+          bridgeStatus: hub.bridgeStatus,
+          bootstrapped: _bootstrapped,
+          bootError: _bootError,
+        );
+        if (!showBootBanner) return panel;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            panel,
+            Positioned(
+              top: 12,
+              right: 12,
+              child: Material(
+                elevation: 4,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFFDE68A)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(
-                    Icons.print_disabled_outlined,
-                    size: 18,
-                    color: Color(0xFFD97706),
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 340),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFDE68A)),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _bootstrapped
-                          ? 'Yazıcı servisi hazır değil: $_bootError'
-                          : 'Yazıcı servisi hazırlanıyor...',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF92400E),
-                        height: 1.4,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.print_disabled_outlined,
+                        size: 18,
+                        color: Color(0xFFD97706),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _bootstrapped
+                              ? 'Yazıcı servisi hazır değil: ${_bootError ?? hub.bridgeStatus.name}'
+                              : 'Yazıcı servisi hazırlanıyor...',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF92400E),
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 }

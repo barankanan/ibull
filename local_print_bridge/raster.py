@@ -8,17 +8,39 @@ from typing import Iterable
 
 from .config import BridgeSettings
 from .models import KitchenItem, KitchenPayload, ReceiptItem, ReceiptPayload, _parse_datetime
+from .pillow_probe import probe_pillow
 from .receipt import _cut, _feed, _init_printer, resolve_receipt_table_label_lines
 
-try:
-    from PIL import Image, ImageDraw, ImageFont
-except ImportError as exc:  # pragma: no cover - exercised only when Pillow is missing
-    Image = None  # type: ignore[assignment]
-    ImageDraw = None  # type: ignore[assignment]
-    ImageFont = None  # type: ignore[assignment]
-    _PIL_IMPORT_ERROR = exc
-else:
-    _PIL_IMPORT_ERROR = None
+Image = None  # type: ignore[assignment]
+ImageDraw = None  # type: ignore[assignment]
+ImageFont = None  # type: ignore[assignment]
+_PIL_IMPORT_ERROR: BaseException | None = None
+_PIL_LOADED = False
+
+
+def _load_pil(*, force: bool = False) -> None:
+    global Image, ImageDraw, ImageFont, _PIL_IMPORT_ERROR, _PIL_LOADED
+    if _PIL_LOADED and not force and _PIL_IMPORT_ERROR is None:
+        return
+    try:
+        from PIL import Image as _Image
+        from PIL import ImageDraw as _ImageDraw
+        from PIL import ImageFont as _ImageFont
+
+        Image = _Image
+        ImageDraw = _ImageDraw
+        ImageFont = _ImageFont
+        _PIL_IMPORT_ERROR = None
+        _PIL_LOADED = True
+    except ImportError as exc:
+        Image = None
+        ImageDraw = None
+        ImageFont = None
+        _PIL_IMPORT_ERROR = exc
+        _PIL_LOADED = True
+
+
+_load_pil()
 
 LOGGER = logging.getLogger("local_print_bridge")
 
@@ -29,7 +51,28 @@ GS = b"\x1d"
 # Pillow 1-bit: white=1, black=0.  ESC/POS: black=1, white=0.
 _XOR_TABLE = bytes(b ^ 0xFF for b in range(256))
 
+def _bundled_font_candidates(filename: str) -> tuple[str, ...]:
+    import sys
+
+    paths: list[str] = []
+    bridge_fonts = Path(__file__).resolve().parent / "fonts" / filename
+    paths.append(str(bridge_fonts))
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        for rel in (("fonts", filename), ("local_print_bridge", "fonts", filename)):
+            candidate = Path(meipass).joinpath(*rel)
+            paths.append(str(candidate))
+    return tuple(paths)
+
+
+_BUNDLED_MONO_REGULAR = "DejaVuSansMono.ttf"
+_BUNDLED_MONO_BOLD = "DejaVuSansMono-Bold.ttf"
+
 _FONT_CANDIDATES_REGULAR = (
+    *_bundled_font_candidates("DejaVuSans.ttf"),
+    *_bundled_font_candidates(_BUNDLED_MONO_REGULAR),
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -37,21 +80,36 @@ _FONT_CANDIDATES_REGULAR = (
     "/Library/Fonts/Arial.ttf",
 )
 _FONT_CANDIDATES_BOLD = (
+    *_bundled_font_candidates("DejaVuSans-Bold.ttf"),
+    *_bundled_font_candidates(_BUNDLED_MONO_BOLD),
+    "C:/Windows/Fonts/arialbd.ttf",
+    "C:/Windows/Fonts/segoeuib.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/System/Library/Fonts/Supplemental/Helvetica Bold.ttc",
     "/Library/Fonts/Arial Bold.ttf",
 )
+_GUARANTEE_FONT_CANDIDATES_REGULAR = _bundled_font_candidates(_BUNDLED_MONO_REGULAR)
+_GUARANTEE_FONT_CANDIDATES_BOLD = _bundled_font_candidates(_BUNDLED_MONO_BOLD)
 
 
 def _require_pillow() -> None:
-    if _PIL_IMPORT_ERROR is not None:
-        raise RuntimeError(
-            "Bitmap baski icin Pillow gerekir. "
-            "local_print_bridge/requirements.txt icine Pillow eklendi; "
-            "pip install -r local_print_bridge/requirements.txt calistirin."
-        ) from _PIL_IMPORT_ERROR
+    _load_pil(force=True)
+    status = probe_pillow()
+    if status.get("pillow_available") is True and Image is not None:
+        return
+    detail = status.get("import_error") or (
+        str(_PIL_IMPORT_ERROR) if _PIL_IMPORT_ERROR is not None else "Pillow import failed"
+    )
+    raise RuntimeError(
+        "Bitmap baski icin Pillow gerekir. "
+        "local_print_bridge/requirements.txt icine Pillow eklendi; "
+        "pip install -r local_print_bridge/requirements.txt calistirin. "
+        f"python={status.get('python_executable')} "
+        f"pillow_available={status.get('pillow_available')} "
+        f"import_error={detail}"
+    ) from (_PIL_IMPORT_ERROR or ImportError(str(detail)))
 
 
 def _paper_width_px(mm: int) -> int:
@@ -63,7 +121,9 @@ def _paper_width_px(mm: int) -> int:
 
 
 # ── Font cache: avoid repeated disk I/O + FreeType init per print ─────────
-_font_cache: dict[tuple[int, bool], "ImageFont.FreeTypeFont"] = {}
+_font_cache: dict[tuple[int, bool, bool], "ImageFont.FreeTypeFont"] = {}
+_bundled_mono_font_path: str | None = None
+_bundled_mono_bold_font_path: str | None = None
 
 # All font sizes used by KitchenBitmapRenderer (bold + non-bold).
 _KITCHEN_FONT_SPECS: list[tuple[int, bool]] = [
@@ -77,12 +137,84 @@ _KITCHEN_FONT_SPECS: list[tuple[int, bool]] = [
 ]
 
 
-def _load_font(size: int, *, bold: bool) -> "ImageFont.FreeTypeFont":
+class BundledFontMissingError(RuntimeError):
+    """Raised when Turkish Guarantee Mode cannot find bundled mono fonts."""
+
+    error_code = "bundled_font_missing"
+
+
+def resolve_bundled_mono_font_path(*, bold: bool = False) -> str:
+    """Return cached path to bundled DejaVu Sans Mono (guarantee mode only)."""
+    global _bundled_mono_font_path, _bundled_mono_bold_font_path
+    cached = _bundled_mono_bold_font_path if bold else _bundled_mono_font_path
+    if cached is not None and Path(cached).exists():
+        return cached
+    filename = _BUNDLED_MONO_BOLD if bold else _BUNDLED_MONO_REGULAR
+    for raw_path in _bundled_font_candidates(filename):
+        path = Path(raw_path)
+        if path.exists():
+            resolved = str(path)
+            if bold:
+                _bundled_mono_bold_font_path = resolved
+            else:
+                _bundled_mono_font_path = resolved
+            return resolved
+    raise BundledFontMissingError(
+        "bundled_font_missing: "
+        f"local_print_bridge/fonts/{filename} bulunamadi. "
+        "Bridge kurulumunda Turkce Garanti Modu fontlari eksik."
+    )
+
+
+def bundled_mono_font_status() -> dict[str, object]:
+    """Diagnostics for /health and warmup."""
+    status: dict[str, object] = {
+        "regular": None,
+        "bold": None,
+        "regular_exists": False,
+        "bold_exists": False,
+    }
+    try:
+        regular = resolve_bundled_mono_font_path(bold=False)
+        status["regular"] = regular
+        status["regular_exists"] = True
+    except BundledFontMissingError:
+        pass
+    try:
+        bold = resolve_bundled_mono_font_path(bold=True)
+        status["bold"] = bold
+        status["bold_exists"] = True
+    except BundledFontMissingError:
+        pass
+    return status
+
+
+def _settings_guarantee_mode(settings: BridgeSettings | None) -> bool:
+    return bool(getattr(settings, "turkish_guarantee_mode", False))
+
+
+def _load_font(
+    size: int,
+    *,
+    bold: bool,
+    settings: BridgeSettings | None = None,
+) -> "ImageFont.FreeTypeFont":
     _require_pillow()
-    key = (size, bold)
+    guarantee = _settings_guarantee_mode(settings)
+    key = (size, bold, guarantee)
     cached = _font_cache.get(key)
     if cached is not None:
         return cached
+    if guarantee:
+        font_path = resolve_bundled_mono_font_path(bold=bold)
+        try:
+            font = ImageFont.truetype(font_path, size=size)
+            _font_cache[key] = font
+            return font
+        except OSError as exc:
+            raise BundledFontMissingError(
+                f"bundled_font_missing: {font_path} yuklenemedi ({exc})"
+            ) from exc
     candidates = _FONT_CANDIDATES_BOLD if bold else _FONT_CANDIDATES_REGULAR
     for raw_path in candidates:
         path = Path(raw_path)
@@ -106,19 +238,43 @@ def _load_font(size: int, *, bold: bool) -> "ImageFont.FreeTypeFont":
         ) from exc
 
 
-def warm_font_cache() -> int:
-    """Pre-load all kitchen ticket fonts into cache.
+def warm_font_cache(*, guarantee: bool = True) -> int:
+    """Pre-load ticket fonts into cache (guarantee mono fonts by default).
 
     Call at bridge startup to eliminate cold-start font loading latency.
     Returns the number of fonts loaded.
     """
     _require_pillow()
     loaded = 0
+    if guarantee:
+        try:
+            resolve_bundled_mono_font_path(bold=False)
+            resolve_bundled_mono_font_path(bold=True)
+        except BundledFontMissingError as exc:
+            LOGGER.warning("Guarantee font warm-up skipped: %s", exc)
     for size, bold in _KITCHEN_FONT_SPECS:
-        key = (size, bold)
-        if key not in _font_cache:
+        cache_key = (size, bold, guarantee)
+        if cache_key not in _font_cache:
             try:
-                _load_font(size, bold=bold)
+                stub_settings = BridgeSettings(
+                    host="127.0.0.1",
+                    port=3001,
+                    printer_queue="",
+                    paper_width_mm=58,
+                    chars_per_line=32,
+                    encoding="cp857",
+                    codepage=13,
+                    render_mode="image",
+                    raster_chunk_height=256,
+                    allowed_origins=(),
+                    healthcheck_queue=False,
+                    cut_mode="partial",
+                    transport_mode="auto",
+                    network_host="",
+                    network_port=9100,
+                    turkish_guarantee_mode=guarantee,
+                )
+                _load_font(size, bold=bold, settings=stub_settings)
                 loaded += 1
             except RuntimeError:
                 pass
@@ -154,7 +310,7 @@ class _BitmapRendererBase:
         self.content_width = self.width_px - (self.margin_x * 2)
 
     def _font(self, size: int, *, bold: bool = False) -> "ImageFont.FreeTypeFont":
-        return _load_font(size, bold=bold)
+        return _load_font(size, bold=bold, settings=self.settings)
 
     def _wrap_text(
         self,

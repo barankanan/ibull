@@ -2345,7 +2345,9 @@ class _FakeLocalPrintService extends LocalPrintService {
     String? printerId,
     String? printerName,
     Map<String, dynamic>? printer,
-    String renderMode = 'image',
+    String renderMode = 'text',
+    String testMode = 'escpos_short',
+    Duration? timeout,
   }) async {
     printTestCallCount += 1;
     lastPrintTestPrinterId = printerId;

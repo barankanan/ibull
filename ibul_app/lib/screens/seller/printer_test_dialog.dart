@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../../models/desktop_printer_setup_models.dart';
 import '../../models/printer_model.dart';
+import '../../models/windows_printer_classification.dart';
 import '../../services/bridge_lifecycle_service.dart';
 import '../../services/desktop_print_orchestrator.dart';
 import '../../services/local_print_service.dart';
@@ -17,17 +22,36 @@ class PrinterTestDialog extends StatefulWidget {
     this.restaurantId,
     this.printOrchestrator,
     this.printerRepository,
+    this.initialPrinterId,
+    this.initialPrinterLabel,
   });
 
   final String? restaurantId;
   final DesktopPrintOrchestrator? printOrchestrator;
   final PrinterRepository? printerRepository;
+  /// DB / eşleştirme sekmesinde seçili yazıcı (varsa test bu hedefe gider).
+  final String? initialPrinterId;
+  final String? initialPrinterLabel;
 
   @override
   State<PrinterTestDialog> createState() => _PrinterTestDialogState();
 }
 
 enum _Phase { checkingHealth, idle, discoveringUsb, running, success, error }
+
+String _bridgeOfflineOperatorMessage() {
+  if (!kIsWeb && Platform.isWindows) {
+    return 'Yazıcı servisi çalışmıyor.\n'
+        'Ibul Print Bridge kurulum uygulamasını yükleyin veya yazıcı ayarlarında '
+        '"Servisi Başlat" / "Servisi Onar" düğmelerini kullanın.';
+  }
+  if (kDebugMode) {
+    return 'Yazıcı servisi çalışmıyor.\n'
+        'İlk kurulum için terminalde bir kez çalıştırın:\n'
+        'bash scripts/install_print_bridge_service.sh';
+  }
+  return 'Yazıcı servisi çalışmıyor. Yazıcı ayarlarından servisi başlatın veya onarın.';
+}
 
 class _PrinterTestDialogState extends State<PrinterTestDialog> {
   bool get _isFlutterTest =>
@@ -50,10 +74,23 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
   bool _savedPrinterRecord = false;
   List<Map<String, dynamic>> _usbDevices = const [];
   bool _usbExpanded = false;
+  String? _targetPrinterId;
+  String _targetPrinterLabel = 'Bridge varsayılanı';
+  String _targetPrinterQueue = '';
+  String _targetPrinterBackend = '';
+  String _testResultStatus = '';
+  Map<String, dynamic>? _lastBridgeResponse;
+  String? _technicalDetail;
 
   @override
   void initState() {
     super.initState();
+    _targetPrinterId = widget.initialPrinterId?.trim().isNotEmpty == true
+        ? widget.initialPrinterId!.trim()
+        : null;
+    if (widget.initialPrinterLabel?.trim().isNotEmpty == true) {
+      _targetPrinterLabel = widget.initialPrinterLabel!.trim();
+    }
     if (_isFlutterTest) {
       _bridgeOk = true;
       _phase = _Phase.idle;
@@ -94,6 +131,78 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
         }
       });
     }
+    if (_bridgeOk) {
+      await _loadTargetPrinter();
+    }
+  }
+
+  Future<void> _loadTargetPrinter() async {
+    final restaurantId = widget.restaurantId?.trim() ?? '';
+    if (restaurantId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _targetPrinterLabel = widget.initialPrinterLabel?.trim().isNotEmpty == true
+            ? widget.initialPrinterLabel!.trim()
+            : 'Bridge varsayılanı';
+        _targetPrinterQueue = '';
+        _targetPrinterBackend = '';
+      });
+      return;
+    }
+    try {
+      final snapshot = await _printOrchestrator.loadSetupSnapshot(
+        restaurantId: restaurantId,
+        flowName: 'printer_test_dialog_hydrate',
+        source: 'printer_test_dialog',
+      );
+      UnifiedPrinterModel? target;
+      final requestedId = _targetPrinterId ?? widget.initialPrinterId?.trim() ?? '';
+      if (requestedId.isNotEmpty) {
+        for (final printer in snapshot.printers) {
+          if (printer.id == requestedId ||
+              printer.printerRecordId == requestedId) {
+            target = printer;
+            break;
+          }
+        }
+      }
+      target ??= snapshot.workingPrinter;
+      if (target == null) {
+        for (final printer in snapshot.printers) {
+          if (printer.canPrint && printer.isAvailable) {
+            target = printer;
+            break;
+          }
+        }
+      }
+      target ??= snapshot.printers.isNotEmpty ? snapshot.printers.first : null;
+      if (!mounted) return;
+      setState(() {
+        if (target != null) {
+          _targetPrinterId = target.id;
+          _targetPrinterLabel = target.displayName.trim().isNotEmpty
+              ? target.displayName.trim()
+              : (widget.initialPrinterLabel?.trim().isNotEmpty == true
+                    ? widget.initialPrinterLabel!.trim()
+                    : target.queueName);
+          _targetPrinterQueue = target.queueName;
+          _targetPrinterBackend = target.backend.value;
+        } else {
+          _targetPrinterLabel = widget.initialPrinterLabel?.trim().isNotEmpty == true
+              ? widget.initialPrinterLabel!.trim()
+              : 'Bridge varsayılanı (otomatik seçim)';
+          _targetPrinterQueue = '';
+          _targetPrinterBackend = '';
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _targetPrinterLabel = widget.initialPrinterLabel?.trim().isNotEmpty == true
+            ? widget.initialPrinterLabel!.trim()
+            : 'Bridge varsayılanı';
+      });
+    }
   }
 
   Future<void> _discoverUsb() async {
@@ -131,13 +240,34 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
       _successMessage = 'Test fişi gönderildi';
       _successWarning = false;
       _savedPrinterRecord = false;
+      _testResultStatus = '';
+      _lastBridgeResponse = null;
+      _technicalDetail = null;
     });
     try {
       final restaurantId = widget.restaurantId?.trim() ?? '';
       if (restaurantId.isNotEmpty) {
+        final printerId = _targetPrinterId?.trim() ?? '';
+        final printerName = _targetPrinterQueue.trim().isNotEmpty
+            ? _targetPrinterQueue.trim()
+            : (_targetPrinterLabel.trim().isNotEmpty &&
+                    _targetPrinterLabel != 'Bridge varsayılanı' &&
+                    !_targetPrinterLabel.contains('otomatik')
+                ? _targetPrinterLabel.trim()
+                : '');
         final result = await _printOrchestrator.printBridgeTest(
           restaurantId: restaurantId,
+          printerId: printerId.isNotEmpty ? printerId : null,
+          printerName: printerName.isNotEmpty ? printerName : null,
         );
+        if (!mounted) return;
+        setState(() {
+          _lastBridgeResponse = result.raw == null
+              ? null
+              : Map<String, dynamic>.from(result.raw!);
+          _testResultStatus = result.status;
+          _technicalDetail = result.technicalMessage;
+        });
         if (!result.ok) {
           final structured = BridgeStructuredError.tryParse(result.raw);
           if (structured != null &&
@@ -157,11 +287,14 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
             );
             setState(() {
               _phase = _Phase.error;
-              _errorMsg = result.message;
+              _errorMsg = _formatFailureMessage(
+                result.message,
+                result.raw,
+              );
             });
             return;
           }
-          throw Exception(result.message);
+          throw Exception(_formatFailureMessage(result.message, result.raw));
         }
         if (result.printer != null) {
           await _saveCanonicalPrinterFromTest(
@@ -180,10 +313,20 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
             '';
         final jobId = result.raw?['job_id']?.toString() ?? '';
         final bytes = result.raw?['bytes_sent']?.toString() ?? '';
+        if (result.printer != null) {
+          final resolved = result.printer!;
+          setState(() {
+            _targetPrinterId = resolved.id;
+            _targetPrinterLabel = resolved.displayName;
+            _targetPrinterQueue = resolved.queueName;
+            _targetPrinterBackend = resolved.backend.value;
+          });
+        }
         setState(() {
           _phase = _Phase.success;
           _successWarning = warning;
           _savedPrinterRecord = result.printer != null;
+          _testResultStatus = result.status;
           _successMessage = warning
               ? (result.message.trim().isNotEmpty
                     ? result.message
@@ -199,6 +342,12 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
       }
       final result = await _svc.printTest();
       if (!mounted) return;
+      setState(() {
+        _lastBridgeResponse = result == null
+            ? null
+            : Map<String, dynamic>.from(result);
+        _testResultStatus = result?['status']?.toString() ?? '';
+      });
       // Extract transport label from nested health info in result body
       final transport = result?['transport']?.toString() ?? '';
       final jobId = result?['job_id']?.toString() ?? '';
@@ -276,6 +425,14 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
     final suffix = backend.isEmpty ? '' : '_$backend';
     final raw = 'AUTO_$core$suffix';
     return raw.length > 32 ? raw.substring(0, 32) : raw;
+  }
+
+  String _formatFailureMessage(String message, Map<String, dynamic>? raw) {
+    final details = WindowsPrinterClassification.formatTestFailureDetails(raw);
+    if (details.trim().isEmpty) {
+      return message;
+    }
+    return '$message\n\n$details';
   }
 
   /// Converts a raw exception to a user-friendly Turkish message.
@@ -370,6 +527,15 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
             const SizedBox(height: 10),
             const Divider(height: 1),
             const SizedBox(height: 10),
+            _TargetPrinterCard(
+              label: _targetPrinterLabel,
+              queue: _targetPrinterQueue,
+              backend: _targetPrinterBackend,
+              printerId: _targetPrinterId,
+            ),
+            const SizedBox(height: 10),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
             // ── USB discover row ───────────────────────────────────────
             Row(
               children: [
@@ -450,12 +616,37 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
                     : _successMessage,
               ),
             if (_phase == _Phase.error) _ErrorBox(message: _errorMsg),
+            if (_testResultStatus.isNotEmpty &&
+                (_phase == _Phase.success || _phase == _Phase.error))
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Test durumu: $_testResultStatus',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _phase == _Phase.success
+                        ? const Color(0xFF15803D)
+                        : const Color(0xFFB91C1C),
+                  ),
+                ),
+              ),
+            if (_technicalDetail != null && _technicalDetail!.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  _technicalDetail!,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF6B7280),
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            _BridgeResponseDetails(data: _lastBridgeResponse),
             if (_phase == _Phase.idle && !_bridgeOk)
               _ErrorBox(
-                message:
-                    'Yazıcı servisi çalışmıyor.\n'
-                    'İlk kurulum için terminalde bir kez çalıştırın:\n'
-                    'bash scripts/install_print_bridge_service.sh',
+                message: _bridgeOfflineOperatorMessage(),
               ),
           ],
         ),
@@ -487,6 +678,122 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
 }
 
 // ── Small widgets ────────────────────────────────────────────────────────
+
+class _TargetPrinterCard extends StatelessWidget {
+  const _TargetPrinterCard({
+    required this.label,
+    required this.queue,
+    required this.backend,
+    required this.printerId,
+  });
+
+  final String label;
+  final String queue;
+  final String backend;
+  final String? printerId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F3FF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE9D5FF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Hedef yazıcı',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF7A2FF4),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF374151),
+            ),
+          ),
+          if (queue.isNotEmpty)
+            Text(
+              'Kuyruk: $queue',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+            ),
+          if (backend.isNotEmpty)
+            Text(
+              'Backend: $backend',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+            ),
+          if (printerId != null && printerId!.trim().isNotEmpty)
+            Text(
+              'ID: ${printerId!.trim()}',
+              style: const TextStyle(
+                fontSize: 10,
+                color: Color(0xFF9CA3AF),
+                fontFamily: 'monospace',
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BridgeResponseDetails extends StatelessWidget {
+  const _BridgeResponseDetails({required this.data});
+
+  final Map<String, dynamic>? data;
+
+  @override
+  Widget build(BuildContext context) {
+    if (data == null || data!.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        title: const Text(
+          'Bridge yanıtı',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF6B7280),
+          ),
+        ),
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: SelectableText(
+              const JsonEncoder.withIndent('  ').convert(data!),
+              style: const TextStyle(
+                fontSize: 10,
+                height: 1.45,
+                color: Color(0xFF334155),
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _UsbDeviceRow extends StatelessWidget {
   const _UsbDeviceRow({required this.device});

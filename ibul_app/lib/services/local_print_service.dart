@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart'
     show debugPrint, debugPrintStack, kIsWeb;
 import 'package:http/http.dart' as http;
 
+import '../models/turkish_encoding_calibration.dart';
+
 class LocalPrintHealthStatus {
   const LocalPrintHealthStatus({
     required this.isAvailable,
@@ -49,6 +51,13 @@ class LocalPrintServiceException implements Exception {
   }
 }
 
+class _BridgeResponseCacheEntry {
+  const _BridgeResponseCacheEntry({required this.data, required this.fetchedAt});
+
+  final Map<String, dynamic>? data;
+  final DateTime fetchedAt;
+}
+
 class LocalPrintService {
   LocalPrintService({http.Client? client, Uri? baseUri, Duration? timeout})
     : _client = client ?? http.Client(),
@@ -70,13 +79,38 @@ class LocalPrintService {
     'Accept': 'application/json',
   };
 
-  Future<Map<String, dynamic>?> health() {
-    return _send(
+  static const Duration _bridgeStatusCacheTtl = Duration(seconds: 3);
+
+  _BridgeResponseCacheEntry? _healthCache;
+  _BridgeResponseCacheEntry? _printersCache;
+
+  void invalidateBridgeStatusCache() {
+    _healthCache = null;
+    _printersCache = null;
+  }
+
+  bool _cacheFresh(_BridgeResponseCacheEntry? entry) {
+    if (entry == null) return false;
+    return DateTime.now().difference(entry.fetchedAt) <= _bridgeStatusCacheTtl;
+  }
+
+  Future<Map<String, dynamic>?> health({bool useCache = true}) async {
+    if (useCache && _cacheFresh(_healthCache)) {
+      return _healthCache!.data == null
+          ? null
+          : Map<String, dynamic>.from(_healthCache!.data!);
+    }
+    final result = await _sendSoftOk(
       section: 'Health',
       branch: 'health',
       method: 'GET',
       path: '/health',
     );
+    _healthCache = _BridgeResponseCacheEntry(
+      data: result == null ? null : Map<String, dynamic>.from(result),
+      fetchedAt: DateTime.now(),
+    );
+    return result;
   }
 
   /// GET /warmup — full pipeline warm-up (fonts, USB, Pillow, renderers).
@@ -207,6 +241,23 @@ class LocalPrintService {
     }
   }
 
+  static const Duration defaultPrintTestTimeout = Duration(seconds: 15);
+
+  Future<Map<String, dynamic>?> spoolSnapshot({
+    required String printerName,
+    Duration timeout = const Duration(seconds: 2),
+  }) {
+    final encodedName = Uri.encodeQueryComponent(printerName.trim());
+    return _send(
+      section: 'Setup',
+      branch: 'spool_snapshot',
+      method: 'GET',
+      path: '/spool/snapshot?printer_name=$encodedName',
+      timeout: timeout,
+      requireOk: false,
+    );
+  }
+
   Future<Map<String, dynamic>?> printTest({
     String? targetHost,
     int? targetPort,
@@ -215,8 +266,12 @@ class LocalPrintService {
     String? printerId,
     String? printerName,
     Map<String, dynamic>? printer,
-    String renderMode = 'image',
+    String renderMode = 'text',
+    String testMode = 'escpos_short',
+    Duration? timeout,
   }) {
+    final backend =
+        printer?['backend']?.toString() ?? printer?['transportType']?.toString();
     final body = _mergePrintOptions(
       <String, dynamic>{
         if (printerId != null && printerId.trim().isNotEmpty)
@@ -225,6 +280,9 @@ class LocalPrintService {
           'printer_name': printerName.trim(),
         if (printer != null && printer.isNotEmpty)
           'printer': Map<String, dynamic>.from(printer),
+        'document_type': 'test',
+        'test_mode': testMode,
+        if (backend == 'windows-spool') 'spool_mode': 'RAW',
       },
       targetHost: targetHost,
       targetPort: targetPort,
@@ -244,8 +302,12 @@ class LocalPrintService {
       'queue=${embeddedPrinter?['queue'] ?? embeddedPrinter?['queueName'] ?? '-'} '
       'vendorId=${embeddedPrinter?['vendorId'] ?? '-'} '
       'productId=${embeddedPrinter?['productId'] ?? '-'} '
+      'test_mode=${body['test_mode'] ?? '-'} '
       'render_mode=${body['render_mode'] ?? '-'} '
-      'codePage=${body['codepage'] ?? '-'}',
+      'codePage=${body['codepage'] ?? '-'} '
+      'document_type=${body['document_type'] ?? '-'} '
+      'spool_mode=${body['spool_mode'] ?? '-'} '
+      'transport=${backend ?? '-'}',
     );
     return _send(
       section: 'Receipt',
@@ -253,6 +315,44 @@ class LocalPrintService {
       method: 'POST',
       path: '/print/test',
       body: body.isEmpty ? null : body,
+      timeout: timeout ?? defaultPrintTestTimeout,
+    );
+  }
+
+  Future<Map<String, dynamic>?> printAdvancedBitmapTest({
+    String? targetHost,
+    int? targetPort,
+    String? printerId,
+    String? printerName,
+    Map<String, dynamic>? printer,
+    Duration? timeout,
+  }) {
+    final backend =
+        printer?['backend']?.toString() ?? printer?['transportType']?.toString();
+    final body = _mergePrintOptions(
+      <String, dynamic>{
+        if (printerId != null && printerId.trim().isNotEmpty)
+          'printer_id': printerId.trim(),
+        if (printerName != null && printerName.trim().isNotEmpty)
+          'printer_name': printerName.trim(),
+        if (printer != null && printer.isNotEmpty)
+          'printer': Map<String, dynamic>.from(printer),
+        'document_type': 'test',
+        'test_mode': 'bitmap',
+        'render_mode': 'image',
+        if (backend == 'windows-spool') 'spool_mode': 'RAW',
+      },
+      targetHost: targetHost,
+      targetPort: targetPort,
+      renderMode: 'image',
+    );
+    return _send(
+      section: 'Receipt',
+      branch: 'print_test_bitmap',
+      method: 'POST',
+      path: '/print/test',
+      body: body,
+      timeout: timeout ?? defaultPrintTestTimeout,
     );
   }
 
@@ -278,6 +378,106 @@ class LocalPrintService {
       body: body,
     );
   }
+
+  Future<Map<String, dynamic>?> printTurkishEncodingCalibrationCombined({
+    String? printerId,
+    String? printerName,
+    Map<String, dynamic>? printer,
+    required List<Map<String, dynamic>> candidates,
+    String? testLine,
+    Duration? timeout,
+  }) {
+    final backend =
+        printer?['backend']?.toString() ?? printer?['transportType']?.toString();
+    final primaryLine = testLine ?? kTurkishCalibrationPrimaryTestLine;
+    final body = _mergePrintOptions(
+      <String, dynamic>{
+        if (printerId != null && printerId.trim().isNotEmpty)
+          'printer_id': printerId.trim(),
+        if (printerName != null && printerName.trim().isNotEmpty)
+          'printer_name': printerName.trim(),
+        if (printer != null && printer.isNotEmpty)
+          'printer': Map<String, dynamic>.from(printer),
+        'encoding': 'cp857',
+        'code_page': 13,
+        'codepage': 13,
+        'combined': true,
+        'calibration_mode': 'combined',
+        'candidates': candidates,
+        'test_line': primaryLine,
+        'render_mode': 'text',
+        'test_mode': 'turkish_encoding',
+        if (backend == 'windows-spool') 'spool_mode': 'RAW',
+        'text_length': candidates
+            .map((entry) => entry['line']?.toString() ?? '')
+            .join()
+            .length,
+      },
+      renderMode: 'text',
+      encoding: 'cp857',
+      codePage: 13,
+    );
+    return _send(
+      section: 'Receipt',
+      branch: 'print_turkish_encoding_calibration_combined',
+      method: 'POST',
+      path: '/print/test/turkish-encoding',
+      body: body,
+      timeout: timeout ?? defaultPrintTestTimeout,
+    );
+  }
+
+  Future<Map<String, dynamic>?> printTurkishEncodingCalibration({
+    String? printerId,
+    String? printerName,
+    Map<String, dynamic>? printer,
+    required String encoding,
+    required int codePage,
+    required String label,
+    List<String>? sampleLines,
+    Duration? timeout,
+  }) {
+    final backend =
+        printer?['backend']?.toString() ?? printer?['transportType']?.toString();
+    final body = _mergePrintOptions(
+      <String, dynamic>{
+        if (printerId != null && printerId.trim().isNotEmpty)
+          'printer_id': printerId.trim(),
+        if (printerName != null && printerName.trim().isNotEmpty)
+          'printer_name': printerName.trim(),
+        if (printer != null && printer.isNotEmpty)
+          'printer': Map<String, dynamic>.from(printer),
+        'encoding': encoding,
+        'code_page': codePage,
+        'codepage': codePage,
+        'printer_encoding': encoding,
+        'printer_code_page': codePage,
+        'codepage_command': 'ESC t $codePage',
+        'label': label,
+        'sample_lines': sampleLines ?? kTurkishCalibrationSampleLinesFallback,
+        'render_mode': 'text',
+        'test_mode': 'turkish_encoding',
+        if (backend == 'windows-spool') 'spool_mode': 'RAW',
+        'text_length': (sampleLines ?? kTurkishCalibrationSampleLinesFallback)
+            .join('\n')
+            .length,
+      },
+      renderMode: 'text',
+      encoding: encoding,
+      codePage: codePage,
+    );
+    return _send(
+      section: 'Receipt',
+      branch: 'print_turkish_encoding_calibration',
+      method: 'POST',
+      path: '/print/test/turkish-encoding',
+      body: body,
+      timeout: timeout ?? defaultPrintTestTimeout,
+    );
+  }
+
+  static const List<String> kTurkishCalibrationSampleLinesFallback =
+      kTurkishCalibrationSampleLines;
 
   Future<Map<String, dynamic>?> printReceipt(
     Map<String, dynamic> payload,
@@ -331,17 +531,23 @@ class LocalPrintService {
     });
   }
 
-  Future<Map<String, dynamic>?> printers() async {
-    try {
-      return await _send(
-        section: 'Printers',
-        branch: 'printers',
-        method: 'GET',
-        path: '/printers',
-      );
-    } on LocalPrintServiceException {
-      return null;
+  Future<Map<String, dynamic>?> printers({bool useCache = true}) async {
+    if (useCache && _cacheFresh(_printersCache)) {
+      return _printersCache!.data == null
+          ? null
+          : Map<String, dynamic>.from(_printersCache!.data!);
     }
+    final result = await _sendSoftOk(
+      section: 'Printers',
+      branch: 'printers',
+      method: 'GET',
+      path: '/printers',
+    );
+    _printersCache = _BridgeResponseCacheEntry(
+      data: result == null ? null : Map<String, dynamic>.from(result),
+      fetchedAt: DateTime.now(),
+    );
+    return result;
   }
 
   /// Calls GET /discover and returns discovered USB printer info.
@@ -377,29 +583,21 @@ class LocalPrintService {
   }
 
   Future<Map<String, dynamic>?> setupStatus() async {
-    try {
-      return await _send(
-        section: 'Setup',
-        branch: 'setup_status',
-        method: 'GET',
-        path: '/setup/status',
-      );
-    } on LocalPrintServiceException {
-      return null;
-    }
+    return _sendSoftOk(
+      section: 'Setup',
+      branch: 'setup_status',
+      method: 'GET',
+      path: '/setup/status',
+    );
   }
 
   Future<Map<String, dynamic>?> setupPrerequisites() async {
-    try {
-      return await _send(
-        section: 'Setup',
-        branch: 'setup_prerequisites',
-        method: 'GET',
-        path: '/setup/prerequisites',
-      );
-    } on LocalPrintServiceException {
-      return null;
-    }
+    return _sendSoftOk(
+      section: 'Setup',
+      branch: 'setup_prerequisites',
+      method: 'GET',
+      path: '/setup/prerequisites',
+    );
   }
 
   Future<Map<String, dynamic>?> setupInstall() async {
@@ -619,13 +817,39 @@ class LocalPrintService {
     return merged;
   }
 
-  Future<Map<String, dynamic>?> _send({
+  /// Like [_send] but returns the JSON body even when `ok` is false.
+  /// Used for operator setup endpoints that encode soft failures in the payload.
+  Future<Map<String, dynamic>?> _sendSoftOk({
     required String section,
     required String branch,
     required String method,
     required String path,
     Map<String, dynamic>? body,
   }) async {
+    try {
+      return await _send(
+        section: section,
+        branch: branch,
+        method: method,
+        path: path,
+        body: body,
+        requireOk: false,
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _send({
+    required String section,
+    required String branch,
+    required String method,
+    required String path,
+    Map<String, dynamic>? body,
+    bool requireOk = true,
+    Duration? timeout,
+  }) async {
+    final effectiveTimeout = timeout ?? _timeout;
     final url = _endpoint(path);
     final watch = Stopwatch()..start();
     final encodedBody = body == null ? null : jsonEncode(body);
@@ -660,7 +884,7 @@ class LocalPrintService {
     _log(
       effectiveSection,
       'requestStart requestType=$requestType branch=$branch routeUrl=$url method=$method '
-      'timeoutMs=${_timeout.inMilliseconds} payloadBytes=$payloadBytes '
+      'timeoutMs=${effectiveTimeout.inMilliseconds} payloadBytes=$payloadBytes '
       'payloadSummary=${_payloadSummary(body)} itemCount=$itemCount serviceCount=$serviceCount '
       'plateCount=$plateCount tableNo=$tableNo '
       'browserPreflightLikely=${kIsWeb && method == 'POST'}',
@@ -673,19 +897,25 @@ class LocalPrintService {
         'POST' => _client.post(url, headers: _headers, body: encodedBody),
         _ => throw UnsupportedError('Unsupported local print method: $method'),
       };
-      response = await request.timeout(_timeout);
+      response = await request.timeout(effectiveTimeout);
     } on TimeoutException catch (error, stackTrace) {
       _log(
         effectiveSection,
         'requestFail requestType=$requestType branch=$branch routeUrl=$url method=$method '
-        'timeoutMs=${_timeout.inMilliseconds} durationMs=${watch.elapsedMilliseconds} '
+        'timeoutMs=${effectiveTimeout.inMilliseconds} durationMs=${watch.elapsedMilliseconds} '
         'itemCount=$itemCount serviceCount=$serviceCount plateCount=$plateCount tableNo=$tableNo',
         error: error,
         stackTrace: stackTrace,
       );
+      final timeoutDetails = await _timeoutDetailsForBranch(
+        branch: branch,
+        body: body,
+        timeoutMs: effectiveTimeout.inMilliseconds,
+        error: error,
+      );
       throw LocalPrintServiceException(
         'Yazici servisi zaman asimina ugradi.',
-        details: error,
+        details: timeoutDetails,
       );
     } on http.ClientException catch (error, stackTrace) {
       _log(
@@ -727,9 +957,7 @@ class LocalPrintService {
       'allowPrivateNetwork=${response.headers['access-control-allow-private-network'] ?? '-'} '
       'postDispatched=${method == 'POST'}',
     );
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300 ||
-        responseOk != true) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       final message = _errorMessage(
         response,
         jsonBody,
@@ -749,7 +977,93 @@ class LocalPrintService {
         details: jsonBody,
       );
     }
+    if (requireOk && responseOk != true) {
+      final message = _errorMessage(
+        response,
+        jsonBody,
+        fallback: 'Yazici servisi gecersiz yanit dondu.',
+      );
+      _log(
+        effectiveSection,
+        'requestFail requestType=$requestType branch=$branch routeUrl=$url method=$method '
+        'durationMs=${watch.elapsedMilliseconds} responseStatus=${response.statusCode} '
+        'itemCount=$itemCount serviceCount=$serviceCount plateCount=$plateCount tableNo=$tableNo',
+        error: message,
+      );
+      throw LocalPrintServiceException(
+        message,
+        statusCode: response.statusCode,
+        details: jsonBody,
+      );
+    }
     return jsonBody;
+  }
+
+  Future<Map<String, dynamic>> _timeoutDetailsForBranch({
+    required String branch,
+    required Map<String, dynamic>? body,
+    required int timeoutMs,
+    required TimeoutException error,
+  }) async {
+    final details = <String, dynamic>{
+      'errorCode': 'client_timeout',
+      'timeoutMs': timeoutMs,
+      'exception': error.toString(),
+    };
+    if (branch != 'print_test' && branch != 'print_test_bitmap') {
+      return details;
+    }
+
+    final printerName = _printerNameFromBody(body);
+    details['printer_name'] = printerName;
+    details['printer_id'] = body?['printer_id']?.toString();
+    details['test_mode'] = body?['test_mode']?.toString() ?? 'escpos_short';
+    details['render_mode'] = body?['render_mode']?.toString() ?? 'text';
+
+    if (printerName == null || printerName.isEmpty) {
+      return details;
+    }
+
+    try {
+      final snapshot = await spoolSnapshot(printerName: printerName);
+      if (snapshot != null && snapshot.isNotEmpty) {
+        details['spool_snapshot'] = snapshot;
+        if (snapshot['latest_job_id'] != null) {
+          details['spool_latest_job_id'] = snapshot['latest_job_id'];
+        }
+        if (snapshot['active_job_ids'] is List) {
+          details['spool_active_job_ids'] = snapshot['active_job_ids'];
+        }
+        if (snapshot['job_count'] != null) {
+          details['spool_jobs_after_print'] = snapshot['job_count'];
+        }
+      }
+    } catch (_) {
+      details['spool_snapshot_error'] = 'spool_snapshot_unavailable';
+    }
+
+    return details;
+  }
+
+  String? _printerNameFromBody(Map<String, dynamic>? body) {
+    if (body == null) return null;
+    final embedded = body['printer'];
+    if (embedded is Map) {
+      final map = Map<String, dynamic>.from(embedded);
+      final fromEmbedded =
+          map['queue']?.toString() ??
+          map['queueName']?.toString() ??
+          map['name']?.toString();
+      if (fromEmbedded != null && fromEmbedded.trim().isNotEmpty) {
+        return fromEmbedded.trim();
+      }
+    }
+    final direct =
+        body['printer_name']?.toString() ?? body['printer_queue']?.toString();
+    if (direct != null && direct.trim().isNotEmpty) {
+      return direct.trim();
+    }
+    return null;
   }
 
   Uri _endpoint(String path) => _baseUri.replace(path: path);

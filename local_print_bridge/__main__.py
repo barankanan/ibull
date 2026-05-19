@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 import socket
+import sys
 import time
 
 from .config import BridgeSettings
@@ -70,6 +71,81 @@ def _lock_path() -> Path:
     return bridge_lock_path()
 
 
+def _read_lock_pid(lock_path: Path) -> int | None:
+    try:
+        raw = lock_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x00100000, False, pid)
+        if not handle:
+            return False
+        kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _clear_stale_lock(lock_path: Path) -> bool:
+    if not lock_path.exists():
+        return False
+    pid = _read_lock_pid(lock_path)
+    if pid is not None and _pid_alive(pid):
+        return False
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
+def _exit_quietly() -> None:
+    """Exit immediately so duplicate one-file EXE stubs do not linger."""
+    os._exit(0)
+
+
+_WINDOWS_MUTEX_HANDLE: int | None = None
+
+
+def _acquire_windows_single_instance() -> bool:
+    """Return True when this process owns the global single-instance mutex."""
+    global _WINDOWS_MUTEX_HANDLE
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        ERROR_ALREADY_EXISTS = 183
+        handle = kernel32.CreateMutexW(None, True, "Local\\IbulPrintBridge.SingleInstance")
+        if not handle:
+            return False
+        if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(handle)
+            return False
+        _WINDOWS_MUTEX_HANDLE = handle
+        return True
+    except Exception:
+        return True
+
+
 def _serve_with_retries() -> None:
     retry_delays = (0.0, 1.0, 2.0, 5.0)
     for attempt, delay in enumerate(retry_delays, start=1):
@@ -101,11 +177,26 @@ def _serve_with_retries() -> None:
 def main() -> None:
     settings = BridgeSettings.from_env()
     if _bridge_port_open(settings.host, settings.port):
-        return
+        _exit_quietly()
+    if not _acquire_windows_single_instance():
+        if _bridge_port_open(settings.host, settings.port):
+            _exit_quietly()
+        _exit_quietly()
 
-    lock = _SingleInstanceLock(_lock_path())
+    lock_path = _lock_path()
+    lock = _SingleInstanceLock(lock_path)
     if not lock.acquire():
-        return
+        if _bridge_port_open(settings.host, settings.port):
+            _exit_quietly()
+        if _clear_stale_lock(lock_path):
+            lock = _SingleInstanceLock(lock_path)
+            if lock.acquire():
+                atexit.register(lock.release)
+                _serve_with_retries()
+                return
+        if _bridge_port_open(settings.host, settings.port):
+            _exit_quietly()
+        _exit_quietly()
 
     atexit.register(lock.release)
     _serve_with_retries()

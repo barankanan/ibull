@@ -20,7 +20,7 @@ void main() {
       platform: TargetPlatform.windows,
     );
     expect(p.canDownloadInstaller, isTrue);
-    expect(p.primaryActionLabel, 'İndir ve Kur');
+    expect(p.primaryActionLabel, 'Uygulamayı İndir');
   });
 
   test('stale_printer maps to rescan', () {
@@ -37,7 +37,7 @@ void main() {
       'installer_missing',
       platform: TargetPlatform.windows,
     );
-    expect(p.message, contains('build/web/downloads'));
+    expect(p.message, contains('IbulSellerSetup.exe'));
   });
 }
 

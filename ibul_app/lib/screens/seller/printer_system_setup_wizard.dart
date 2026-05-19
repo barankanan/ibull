@@ -1,13 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/config/runtime_config.dart';
 import '../../models/desktop_printer_setup_models.dart';
+import '../../models/turkish_encoding_calibration.dart';
+import '../../models/windows_printer_classification.dart';
 import '../../models/printer_model.dart';
+import '../../services/bridge_manager.dart';
 import '../../services/desktop_print_orchestrator.dart';
 import '../../services/desktop_print_ports.dart';
 import '../../services/local_print_service.dart';
@@ -35,6 +38,8 @@ class PrinterSystemSetupWizard extends StatefulWidget {
     this.printOrchestrator,
     this.localPrintServiceFactory,
     this.detectedPlatformOverride,
+    this.windowsBridgeUiModeOverride,
+    this.showWindowsInstallerDownloadOverride,
   });
 
   final String restaurantId;
@@ -42,6 +47,12 @@ class PrinterSystemSetupWizard extends StatefulWidget {
   final DesktopPrintOrchestrator? printOrchestrator;
   final LocalPrintServiceFactory? localPrintServiceFactory;
   final String? detectedPlatformOverride;
+
+  /// Test/release override: `dev` shows manual bridge commands, `packaged` shows installer.
+  final String? windowsBridgeUiModeOverride;
+
+  /// Test-only: force web-style unified installer download CTA on Windows.
+  final bool? showWindowsInstallerDownloadOverride;
 
   @override
   State<PrinterSystemSetupWizard> createState() =>
@@ -82,15 +93,51 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   String? _printerDetectionTechnicalError;
   String? _testTechnicalError;
   bool _testPassed = false;
+  bool _turkishEncodingVerified = false;
+  bool _turkishCalibrationBusy = false;
+  String? _selectedEncodingCandidateId;
+  String? _turkishCalibrationError;
+  String? _turkishCalibrationMessage;
+  String _selectedTurkishPrintMode = kTurkishPrintModeText;
+  bool _turkishCombinedSheetPrinted = false;
 
   List<Map<String, dynamic>> _detectedPrinters = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _stalePrinters = const <Map<String, dynamic>>[];
   bool _duplicatePrinterWarning = false;
   String? _selectedTestPrinterId;
   String? _receiptPrinterId;
   String? _kitchenPrinterId;
+  bool _bridgeReachable = false;
+  bool _bridgeHealthy = false;
+  Map<String, dynamic>? _bridgeHealth;
+  int _livePrinterCount = 0;
+  bool _bridgeStartBusy = false;
+  String? _bridgeStartMessage;
 
   String get _windowsInstallerUrl =>
       AppRuntimeConfig.windowsInstallerDownloadUrl;
+
+  bool get _windowsDevBridgeMode {
+    switch (widget.windowsBridgeUiModeOverride) {
+      case 'dev':
+        return true;
+      case 'packaged':
+        return false;
+      default:
+        return !kIsWeb &&
+            kDebugMode &&
+            _selectedPlatform == 'windows' &&
+            (defaultTargetPlatform == TargetPlatform.windows ||
+                widget.detectedPlatformOverride == 'windows');
+    }
+  }
+
+  bool get _showPackagedWindowsInstaller {
+    final showDownload = widget.showWindowsInstallerDownloadOverride ?? kIsWeb;
+    return showDownload &&
+        _selectedPlatform == 'windows' &&
+        !_windowsDevBridgeMode;
+  }
 
   @override
   void initState() {
@@ -109,11 +156,19 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     try {
       final snapshot = await _printOrchestrator.loadSetupSnapshot(
         restaurantId: widget.restaurantId,
+        forceRefresh: true,
       );
-      final driverHelp = await service.driverHelp();
+      Map<String, dynamic>? driverHelp;
+      try {
+        driverHelp = await service.driverHelp();
+      } catch (_) {}
       if (!mounted) return;
-      final legacyPrinters =
-          snapshot.printers.map(_printerToLegacyMap).toList(growable: false);
+      final legacyPrinters = snapshot.livePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
+      final stalePrinters = snapshot.stalePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
       final duplicateMeta = _computeDuplicateMeta(
         legacyPrinters,
         queueStatus: snapshot.queueStatus,
@@ -129,28 +184,43 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
           .toList(growable: false);
       final recommendedId = _firstRecommendedPrinterId(decoratedPrinters);
       setState(() {
-        _setupStatus = snapshot.setupStatus ?? _offlineSetupStatus();
-        _prerequisites = snapshot.prerequisites ?? _offlinePrerequisites();
+        _bridgeReachable = snapshot.bridgeReachable;
+        _bridgeHealthy = snapshot.bridgeHealthy;
+        _bridgeHealth = snapshot.bridgeHealth;
+        _livePrinterCount = snapshot.livePrinterCount;
+        _setupStatus = snapshot.buildOperatorSetupStatus();
+        _prerequisites = snapshot.prerequisites ??
+            <String, dynamic>{
+              'ok': snapshot.bridgeReachable && snapshot.bridgeHealthy,
+              'checks': snapshot.buildOperatorSetupStatus()['checks'],
+            };
         _driverHelp = driverHelp;
-        _detectedPrinters = decoratedPrinters;
+        _detectedPrinters = _sortDetectedPrinters(decoratedPrinters);
+        _stalePrinters = stalePrinters;
         _duplicatePrinterWarning = duplicateMeta.isNotEmpty;
         _selectedTestPrinterId =
             _selectedTestPrinterId ??
             recommendedId ??
             _firstReadyPrinterId(_detectedPrinters) ??
             _firstPrinterId(_detectedPrinters);
-        _receiptPrinterId =
-            _receiptPrinterId ??
-            snapshot.selectedReceiptPrinterRecordId ??
-            snapshot.localConfig?.receiptSelection?.printer.printerRecordId ??
-            snapshot.localConfig?.receiptSelection?.printer.id ??
-            snapshot.selectedReceiptPrinterId;
-        _kitchenPrinterId =
-            _kitchenPrinterId ??
-            snapshot.selectedKitchenPrinterRecordId ??
-            snapshot.localConfig?.kitchenSelection?.printer.printerRecordId ??
-            snapshot.localConfig?.kitchenSelection?.printer.id ??
-            snapshot.selectedKitchenPrinterId;
+        _receiptPrinterId = _coerceLiveSelectionId(
+          currentId: _receiptPrinterId,
+          snapshotId:
+              snapshot.selectedReceiptPrinterRecordId ??
+              snapshot.localConfig?.receiptSelection?.printer.printerRecordId ??
+              snapshot.localConfig?.receiptSelection?.printer.id ??
+              snapshot.selectedReceiptPrinterId,
+          livePrinters: decoratedPrinters,
+        );
+        _kitchenPrinterId = _coerceLiveSelectionId(
+          currentId: _kitchenPrinterId,
+          snapshotId:
+              snapshot.selectedKitchenPrinterRecordId ??
+              snapshot.localConfig?.kitchenSelection?.printer.printerRecordId ??
+              snapshot.localConfig?.kitchenSelection?.printer.id ??
+              snapshot.selectedKitchenPrinterId,
+          livePrinters: decoratedPrinters,
+        );
         if (_selectedTestPrinterId == null && _detectedPrinters.isNotEmpty) {
           _selectedTestPrinterId = _detectedPrinters.first['id']?.toString();
         }
@@ -159,7 +229,35 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       });
     } catch (error) {
       if (!mounted) return;
+      try {
+        final snapshot = await _printOrchestrator.loadSetupSnapshot(
+          restaurantId: widget.restaurantId,
+          forceRefresh: true,
+        );
+        if (snapshot.bridgeReachable) {
+          final legacyPrinters = snapshot.livePrinters
+              .map(_printerToLegacyMap)
+              .toList(growable: false);
+          setState(() {
+            _bridgeReachable = snapshot.bridgeReachable;
+            _bridgeHealthy = snapshot.bridgeHealthy;
+            _bridgeHealth = snapshot.bridgeHealth;
+            _livePrinterCount = snapshot.livePrinterCount;
+            _setupStatus = snapshot.buildOperatorSetupStatus();
+            _detectedPrinters = legacyPrinters;
+            _stalePrinters = snapshot.stalePrinters
+                .map(_printerToLegacyMap)
+                .toList(growable: false);
+            _setupError = null;
+            _setupTechnicalError = error.toString();
+          });
+          return;
+        }
+      } catch (_) {}
       setState(() {
+        _bridgeReachable = false;
+        _bridgeHealthy = false;
+        _livePrinterCount = 0;
         _setupStatus = _offlineSetupStatus();
         _prerequisites = _offlinePrerequisites();
         _setupError = _operatorErrorMessage(
@@ -224,11 +322,19 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       final response = enabled
           ? await service.enableAutostart()
           : await service.disableAutostart();
-      final status = await service.setupStatus();
+      if (!mounted) return;
+      final snapshot = await _printOrchestrator.loadSetupSnapshot(
+        restaurantId: widget.restaurantId,
+        forceRefresh: true,
+      );
       if (!mounted) return;
       setState(() {
         _autostartResponse = response;
-        _setupStatus = status ?? _setupStatus;
+        _bridgeReachable = snapshot.bridgeReachable;
+        _bridgeHealthy = snapshot.bridgeHealthy;
+        _bridgeHealth = snapshot.bridgeHealth;
+        _livePrinterCount = snapshot.livePrinterCount;
+        _setupStatus = snapshot.buildOperatorSetupStatus();
       });
     } catch (error) {
       if (!mounted) return;
@@ -258,9 +364,14 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     try {
       final snapshot = await _printOrchestrator.loadSetupSnapshot(
         restaurantId: widget.restaurantId,
+        forceRefresh: true,
       );
-      final legacyPrinters =
-          snapshot.printers.map(_printerToLegacyMap).toList(growable: false);
+      final legacyPrinters = snapshot.livePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
+      final stalePrinters = snapshot.stalePrinters
+          .map(_printerToLegacyMap)
+          .toList(growable: false);
       final duplicateMeta = _computeDuplicateMeta(
         legacyPrinters,
         queueStatus: snapshot.queueStatus,
@@ -277,7 +388,13 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       final recommendedId = _firstRecommendedPrinterId(printers);
       if (!mounted) return;
       setState(() {
-        _detectedPrinters = printers;
+        _bridgeReachable = snapshot.bridgeReachable;
+        _bridgeHealthy = snapshot.bridgeHealthy;
+        _bridgeHealth = snapshot.bridgeHealth;
+        _livePrinterCount = snapshot.livePrinterCount;
+        _setupStatus = snapshot.buildOperatorSetupStatus();
+        _detectedPrinters = _sortDetectedPrinters(printers);
+        _stalePrinters = stalePrinters;
         _duplicatePrinterWarning = duplicateMeta.isNotEmpty;
         _selectedTestPrinterId =
             _selectedTestPrinterId ??
@@ -318,6 +435,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   }
 
   Map<String, dynamic> _printerToLegacyMap(UnifiedPrinterModel printer) {
+    final operatorTier = printer.raw['operatorTier']?.toString() ?? 'normal';
+    final isPosCandidate = printer.raw['isPosCandidate'] == true;
+    final printVerified = printer.lastTestStatus == 'ok';
     return <String, dynamic>{
       'id': printer.id,
       'selectionId': printer.printerRecordId?.trim().isNotEmpty == true
@@ -330,14 +450,61 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       'printer_record_id': printer.printerRecordId,
       'vendorId': printer.vendorId,
       'productId': printer.productId,
-      'isLive': printer.raw['source'] != 'saved_record',
-      'isSavedOnly': printer.raw['source'] == 'saved_record',
-      'statusLevel': printer.canPrint
-          ? 'ready'
-          : (printer.isAvailable ? 'warning' : 'error'),
-      'statusMessage': printer.statusMessage,
+      'isLive': printer.isLiveDiscovery,
+      'isSavedOnly': printer.isStaleSavedMapping,
+      'operatorTier': operatorTier,
+      'isPosCandidate': isPosCandidate,
+      'isRecommended': isPosCandidate,
+      'printVerified': printVerified,
+      'selectionWarning': WindowsPrinterClassification.selectionWarningFor(
+        printer,
+      ),
+      'statusLevel': printer.isStaleSavedMapping
+          ? 'error'
+          : (printer.statusLevel ?? (printer.canPrint ? 'ready' : 'warning')),
+      'statusMessage': printer.isStaleSavedMapping
+          ? 'Eski/kayıp — canlı taramada yok'
+          : printer.statusMessage,
+      'connectionType':
+          printer.raw['connectionType']?.toString() ??
+          printer.raw['connection_type']?.toString(),
+      'portName':
+          printer.raw['portName']?.toString() ??
+          printer.raw['port_name']?.toString(),
+      'driverName':
+          printer.raw['driverName']?.toString() ??
+          printer.raw['driver_name']?.toString(),
     };
   }
+
+  List<Map<String, dynamic>> _sortDetectedPrinters(
+    List<Map<String, dynamic>> printers,
+  ) {
+    int rank(Map<String, dynamic> printer) {
+      final tier = printer['operatorTier']?.toString() ?? 'normal';
+      switch (tier) {
+        case 'pos_candidate':
+          return 0;
+        case 'normal':
+          return 1;
+        case 'not_recommended':
+          return 2;
+        default:
+          return 3;
+      }
+    }
+
+    final sorted = List<Map<String, dynamic>>.from(printers);
+    sorted.sort((a, b) {
+      final byRank = rank(a).compareTo(rank(b));
+      if (byRank != 0) return byRank;
+      return (a['name']?.toString() ?? '').compareTo(b['name']?.toString() ?? '');
+    });
+    return sorted;
+  }
+
+  bool get _hasWindowsPosCandidate =>
+      _detectedPrinters.any((printer) => printer['isPosCandidate'] == true);
 
   Future<void> _sendTestPrint() async {
     final printerId = _selectedTestPrinterId?.trim() ?? '';
@@ -388,16 +555,29 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
           );
         }
       }
+      final failureDetails = result.ok
+          ? null
+          : WindowsPrinterClassification.formatTestFailureDetails(result.raw);
+      final bridgeBody = result.raw == null || result.raw!.isEmpty
+          ? ''
+          : const JsonEncoder.withIndent('  ').convert(result.raw);
       setState(() {
         _testResponse = result.raw;
         _testPassed = result.ok;
         _testError = result.ok
             ? null
+            : failureDetails != null && failureDetails.isNotEmpty
+            ? '${result.message}\n$failureDetails'
+            : bridgeBody.isNotEmpty
+            ? '${result.status}: ${result.message}\n\nBridge yanıtı:\n$bridgeBody'
             : '${result.status}: ${result.message}';
         _testWarning = result.ok && result.status != 'ready'
             ? result.message
             : null;
       });
+      if (result.ok) {
+        await _refreshTurkishEncodingStatus();
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -418,15 +598,259 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     }
   }
 
+  Future<void> _refreshTurkishEncodingStatus() async {
+    final printer = _selectedUnifiedPrinter();
+    if (printer == null) {
+      if (!mounted) return;
+      setState(() {
+        _turkishEncodingVerified = false;
+        _selectedEncodingCandidateId = null;
+        _turkishCalibrationMessage = null;
+      });
+      return;
+    }
+    final profile = await _printOrchestrator.loadEncodingProfile(
+      restaurantId: widget.restaurantId,
+      printerId: printer.id,
+    );
+    if (!mounted) return;
+    setState(() {
+      _turkishEncodingVerified = profile != null;
+      _selectedEncodingCandidateId = profile?.candidateId;
+      _selectedTurkishPrintMode =
+          profile?.printMode ?? kTurkishPrintModeText;
+      _turkishCalibrationMessage = profile == null
+          ? null
+          : profile.isGuaranteeMode
+          ? 'Türkçe Garanti Modu (görsel/raster)'
+          : '${profile.encoding} / ESC t ${profile.codePage}';
+    });
+  }
+
+  Future<void> _saveTurkishPrintModeSelection() async {
+    final printer = _selectedUnifiedPrinter();
+    if (printer == null) {
+      setState(() {
+        _turkishCalibrationError = 'Önce test yazıcısı seçin.';
+      });
+      return;
+    }
+    setState(() {
+      _turkishCalibrationBusy = true;
+      _turkishCalibrationError = null;
+    });
+    try {
+      final result = await _printOrchestrator.saveTurkishPrintMode(
+        restaurantId: widget.restaurantId,
+        printer: printer,
+        printMode: _selectedTurkishPrintMode,
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        setState(() => _turkishCalibrationError = result.message);
+        return;
+      }
+      setState(() {
+        _turkishEncodingVerified = true;
+        _turkishCalibrationMessage = result.message;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _turkishCalibrationError = _operatorErrorMessage(
+          error,
+          fallback: 'Baskı modu kaydedilemedi.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _turkishCalibrationBusy = false);
+      }
+    }
+  }
+
+  Future<void> _printTurkishGuaranteeSample() async {
+    final printer = _selectedUnifiedPrinter();
+    if (printer == null) {
+      setState(() {
+        _turkishCalibrationError = 'Önce test yazıcısı seçin.';
+      });
+      return;
+    }
+    setState(() {
+      _turkishCalibrationBusy = true;
+      _turkishCalibrationError = null;
+    });
+    try {
+      await _printOrchestrator.saveTurkishPrintMode(
+        restaurantId: widget.restaurantId,
+        printer: printer,
+        printMode: kTurkishPrintModeGuarantee,
+      );
+      final result = await _printOrchestrator.printTurkishGuaranteeSample(
+        restaurantId: widget.restaurantId,
+        printer: printer,
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        setState(() => _turkishCalibrationError = result.message);
+        return;
+      }
+      setState(() {
+        _selectedTurkishPrintMode = kTurkishPrintModeGuarantee;
+        _turkishEncodingVerified = true;
+        _turkishCalibrationMessage =
+            'Garanti modu test fişi gönderildi. Çiğ Köfte, Ciğer Şiş, Kuşbaşı '
+            've Kıyma Dürüm satırlarını kontrol edin.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _turkishCalibrationError = _operatorErrorMessage(
+          error,
+          fallback: 'Garanti modu test fişi gönderilemedi.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _turkishCalibrationBusy = false);
+      }
+    }
+  }
+
+  Future<void> _printTurkishEncodingCombinedSheet() async {
+    final printer = _selectedUnifiedPrinter();
+    if (printer == null) {
+      setState(() {
+        _turkishCalibrationError = 'Önce test yazıcısı seçin.';
+      });
+      return;
+    }
+    setState(() {
+      _turkishCalibrationBusy = true;
+      _turkishCalibrationError = null;
+    });
+    try {
+      final result =
+          await _printOrchestrator.printTurkishEncodingCalibrationSheet(
+            restaurantId: widget.restaurantId,
+            printer: printer,
+          );
+      if (!mounted) return;
+      if (!result.ok) {
+        setState(() {
+          _turkishCalibrationError = result.message;
+        });
+        return;
+      }
+      setState(() {
+        _turkishCalibrationMessage = result.message;
+        _turkishCombinedSheetPrinted = true;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _turkishCalibrationError = _operatorErrorMessage(
+          error,
+          fallback: 'Türkçe karakter testi gönderilemedi.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _turkishCalibrationBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _confirmTurkishEncodingSelection() async {
+    final candidate = turkishEncodingCandidateById(_selectedEncodingCandidateId);
+    final printer = _selectedUnifiedPrinter();
+    if (candidate == null || printer == null) {
+      setState(() {
+        _turkishCalibrationError =
+            'Önce tek fiş testini basın ve doğru çıkan satırı seçin.';
+      });
+      return;
+    }
+    setState(() {
+      _turkishCalibrationBusy = true;
+      _turkishCalibrationError = null;
+    });
+    try {
+      final result = await _printOrchestrator.saveEncodingProfileFromCandidate(
+        restaurantId: widget.restaurantId,
+        printer: printer,
+        candidate: candidate,
+        printModeOverride: _selectedTurkishPrintMode,
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        setState(() {
+          _turkishCalibrationError = result.message;
+          _turkishEncodingVerified = false;
+        });
+        return;
+      }
+      setState(() {
+        _turkishEncodingVerified = true;
+        _turkishCalibrationMessage = result.message;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _turkishCalibrationError = _operatorErrorMessage(
+          error,
+          fallback: 'Türkçe karakter profili kaydedilemedi.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _turkishCalibrationBusy = false;
+        });
+      }
+    }
+  }
+
+  UnifiedPrinterModel? _selectedUnifiedPrinter() {
+    final selected = _selectedPrinter;
+    if (selected == null) return null;
+    return UnifiedPrinterModel.fromBridgeMap(
+      <String, dynamic>{
+        ...selected,
+        'id': selected['id']?.toString() ?? '',
+        'name': selected['queue']?.toString() ?? selected['name']?.toString(),
+        'queue': selected['queue']?.toString() ?? selected['name']?.toString(),
+        'backend': selected['backend']?.toString() ?? 'windows-spool',
+        'source': 'usb_scan',
+        'statusLevel': selected['statusLevel']?.toString() ?? 'ready',
+        'ready': selected['statusLevel']?.toString() == 'ready',
+      },
+      os: DesktopPrinterOs.windows,
+    );
+  }
+
   Future<PrinterActionResult> _runWizardTestPrint({
     required String printerId,
     required Map<String, dynamic>? selectedPrinter,
     required PrinterSetupRole role,
   }) async {
+    final explicit = _selectedUnifiedPrinter();
+    debugPrint(
+      '[WIZARD_TEST_PAYLOAD] '
+      'uiSelectedId=$printerId '
+      'uiMap=${selectedPrinter == null ? '-' : jsonEncode(selectedPrinter)} '
+      'explicit.id=${explicit?.id ?? '-'} '
+      'explicit.queue=${explicit?.queueName ?? '-'} '
+      'explicit.backend=${explicit?.backend.value ?? '-'}',
+    );
     return _printOrchestrator.printTestReceipt(
       restaurantId: widget.restaurantId,
       role: role,
-      printerId: printerId,
+      printerId: explicit?.id ?? printerId,
+      explicitLivePrinter: explicit,
       testSource: 'wizard_test',
       flowName: 'wizard_test',
       source: 'printer_system_setup_wizard',
@@ -477,6 +901,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
         restaurantId: widget.restaurantId,
         receiptPrinterId: _receiptPrinterId ?? '',
         kitchenPrinterId: _kitchenPrinterId ?? '',
+        requireSuccessfulRoleTests: true,
       );
       if (!result.ok) {
         throw StateError(result.message);
@@ -528,7 +953,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       'actionRequired': 'start_bridge',
       'checks': <Map<String, dynamic>>[
         <String, dynamic>{
-          'label': 'Bridge çalışıyor',
+          'label': 'Yazıcı servisi çalışıyor',
           'ok': false,
           'status': 'bridge_not_running',
           'message': 'Yazıcı servisi kapalı veya yanıt vermiyor.',
@@ -542,7 +967,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       'ok': false,
       'step': 'prerequisites',
       'status': 'bridge_not_running',
-      'message': 'Bridge kapalı olduğu için gereksinimler doğrulanamadı.',
+      'message': 'Yazıcı servisi kapalı olduğu için gereksinimler doğrulanamadı.',
       'errorCode': 'bridge_not_running',
       'platform': _selectedPlatform,
       'actionRequired': 'start_bridge',
@@ -612,7 +1037,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       case 'setup_required':
         return 'Kurulum Gerekli';
       case 'bridge_not_running':
-        return 'Bridge Çalışmıyor';
+        return 'Yazıcı Servisi Çalışmıyor';
+      case 'printer_selection_pending':
+        return 'Yazıcı Seçimi Bekleniyor';
       case 'driver_missing':
         return 'Sürücü Eksik';
       case 'printer_offline':
@@ -644,10 +1071,16 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     }
   }
 
-  String _printerLevelLabel(String? level) {
-    switch ((level ?? '').trim().toLowerCase()) {
+  String _printerLevelLabel(Map<String, dynamic> printer) {
+    if (printer['printVerified'] == true) {
+      return 'Baskı doğrulandı';
+    }
+    final tier = printer['operatorTier']?.toString() ?? '';
+    if (tier == 'pos_candidate') return 'POS önerilir';
+    if (tier == 'not_recommended') return 'Uygun değil';
+    switch ((printer['statusLevel']?.toString() ?? '').trim().toLowerCase()) {
       case 'ready':
-        return 'Hazır';
+        return 'Çevrimiçi';
       case 'warning':
         return 'Uyarı';
       case 'error':
@@ -677,15 +1110,13 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       case 1:
         return _setupStatus != null;
       case 2:
-        final status =
-            (_setupStatus?['status']?.toString().trim().toLowerCase() ?? '');
-        return status == 'ready' || status == 'running_unhealthy';
+        return _bridgeReachable;
       case 3:
         return true;
       case 4:
         return _selectedTestPrinterId != null;
       case 5:
-        return _testPassed;
+        return _testPassed && _turkishEncodingVerified;
       case 6:
         return !_saving;
       default:
@@ -696,6 +1127,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   bool get _canCompleteSetup =>
       !_saving &&
       _testPassed &&
+      _turkishEncodingVerified &&
       (_receiptPrinterId?.trim().isNotEmpty ?? false) &&
       (_kitchenPrinterId?.trim().isNotEmpty ?? false);
 
@@ -724,9 +1156,244 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     _detectPrinters();
   }
 
+  String get _headerStatusKey => bridgeOperatorSetupStatusKey(
+    bridgeReachable: _bridgeReachable,
+    bridgeHealthy: _bridgeHealthy,
+    livePrinterCount: _livePrinterCount,
+    bridgeHealth: _bridgeHealth,
+  );
+
+  String? _coerceLiveSelectionId({
+    required String? currentId,
+    required String? snapshotId,
+    required List<Map<String, dynamic>> livePrinters,
+  }) {
+    for (final candidate in <String?>[currentId, snapshotId]) {
+      final id = candidate?.trim() ?? '';
+      if (id.isEmpty) continue;
+      for (final printer in livePrinters) {
+        if (printer['isLive'] != true) continue;
+        final bridgeId = printer['id']?.toString().trim() ?? '';
+        final selectionId = printer['selectionId']?.toString().trim() ?? '';
+        final recordId =
+            printer['printerRecordId']?.toString().trim() ??
+            printer['printer_record_id']?.toString().trim() ??
+            '';
+        if (bridgeId == id || selectionId == id || recordId == id) {
+          return selectionId.isNotEmpty ? selectionId : bridgeId;
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<void> _startBridgeService() async {
+    setState(() {
+      _bridgeStartBusy = true;
+      _bridgeStartMessage = 'Yazıcı servisi başlatılıyor...';
+      _setupError = null;
+    });
+    try {
+      final startResult = await BridgeManager.ensureReady(
+        onProgress: (message) {
+          if (!mounted) return;
+          setState(() => _bridgeStartMessage = message);
+        },
+      );
+      await _refreshSystemCheck();
+      if (!mounted) return;
+      setState(() {
+        _bridgeStartMessage = _bridgeReachable
+            ? 'Yazıcı servisi hazır.'
+            : (startResult.message.isNotEmpty
+                  ? startResult.message
+                  : (kIsWeb
+                        ? 'Yazıcı servisi başlatılamadı. Ibul Satıcı Windows kurulumunu çalıştırın.'
+                        : 'Yazıcı servisini başlatın veya onarın.'));
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _bridgeStartMessage = _operatorErrorMessage(
+          error,
+          fallback: 'Yazıcı servisi başlatılamadı.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _bridgeStartBusy = false);
+      }
+    }
+  }
+
+  Future<void> _repairBridgeService() async {
+    setState(() {
+      _bridgeStartBusy = true;
+      _bridgeStartMessage = 'Yazıcı servisi onarılıyor...';
+      _setupError = null;
+    });
+    try {
+      final startResult = await BridgeManager.ensureReady(
+        onProgress: (message) {
+          if (!mounted) return;
+          setState(() => _bridgeStartMessage = message);
+        },
+      );
+      if (!startResult.ok || !_bridgeReachable) {
+        final service = _localPrintServiceFactory();
+        await service.setupStart();
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+      await _refreshSystemCheck();
+      if (!mounted) return;
+      setState(() {
+        _bridgeStartMessage = _bridgeReachable
+            ? 'Yazıcı servisi hazır.'
+            : (kIsWeb
+                  ? 'Yazıcı servisi onarılamadı. Ibul Satıcı Windows kurulumunu yeniden çalıştırın.'
+                  : 'Yazıcı servisini onarın veya uygulamayı yeniden başlatın.');
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _bridgeStartMessage = _operatorErrorMessage(
+          error,
+          fallback: 'Yazıcı servisi onarılamadı.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _bridgeStartBusy = false);
+      }
+    }
+  }
+
+  Widget _buildBridgeOperatorButtons({bool compact = false}) {
+    final spacing = compact ? 8.0 : 12.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            FilledButton.icon(
+              onPressed: _bridgeStartBusy ? null : _startBridgeService,
+              icon: _bridgeStartBusy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.play_circle_outline),
+              label: Text(
+                _bridgeStartBusy ? 'Başlatılıyor...' : 'Yazıcı servisini başlat',
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: _bridgeStartBusy ? null : _repairBridgeService,
+              icon: const Icon(Icons.build_circle_outlined),
+              label: const Text('Yazıcı servisini onar'),
+            ),
+            OutlinedButton.icon(
+              onPressed: (_bridgeStartBusy || !_bridgeReachable || _detectingPrinters)
+                  ? null
+                  : _detectPrinters,
+              icon: _detectingPrinters
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded, size: 16),
+              label: const Text('Yazıcıları Yeniden Tara'),
+            ),
+          ],
+        ),
+        if (_bridgeStartMessage != null) ...[
+          SizedBox(height: spacing),
+          Text(
+            _bridgeStartMessage!,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF374151)),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _sendAdvancedBitmapTest() async {
+    final printerId = _selectedTestPrinterId;
+    final selectedPrinter = _selectedPrinter;
+    if (printerId == null || selectedPrinter == null) return;
+
+    setState(() {
+      _testingPrinter = true;
+      _testError = null;
+      _testWarning = null;
+      _testTechnicalError = null;
+    });
+    try {
+      final explicit = _selectedUnifiedPrinter();
+      final service = _localPrintServiceFactory();
+      final response = await service.printAdvancedBitmapTest(
+        printerId: explicit?.id ?? printerId,
+        printerName: explicit?.queueName ?? selectedPrinter['queue']?.toString(),
+        printer: explicit == null
+            ? selectedPrinter
+            : <String, dynamic>{
+                'id': explicit.id,
+                'name': explicit.displayName,
+                'queue': explicit.queueName,
+                'queueName': explicit.queueName,
+                'backend': explicit.backend.value,
+                'connectionType': explicit.raw['connectionType'] ??
+                    explicit.raw['connection_type'] ??
+                    'usb',
+              },
+      );
+      if (!mounted) return;
+      final ok = response?['ok'] == true;
+      final failureDetails = ok
+          ? null
+          : WindowsPrinterClassification.formatTestFailureDetails(response);
+      setState(() {
+        _testResponse = response;
+        _testPassed = ok;
+        _testError = ok
+            ? null
+            : failureDetails != null && failureDetails.isNotEmpty
+            ? 'Gelişmiş bitmap testi başarısız.\n$failureDetails'
+            : 'Gelişmiş bitmap testi başarısız.';
+        _testWarning = ok ? 'Bitmap testi gönderildi (Pillow gerekir).' : null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      final details = error is LocalPrintServiceException &&
+              error.details is Map<String, dynamic>
+          ? WindowsPrinterClassification.formatTestFailureDetails(
+              error.details! as Map<String, dynamic>,
+            )
+          : '';
+      setState(() {
+        _testPassed = false;
+        _testError = details.isNotEmpty
+            ? 'Gelişmiş bitmap testi başarısız.\n$details'
+            : _operatorErrorMessage(
+                error,
+                fallback: 'Gelişmiş bitmap testi gönderilemedi.',
+              );
+        _testTechnicalError = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _testingPrinter = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final status = _setupStatus?['status']?.toString();
+    final status = _headerStatusKey;
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(title: const Text('Sistem Kur')),
@@ -838,7 +1505,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
                       content: _buildSystemCheckStep(),
                     ),
                     Step(
-                      title: const Text('Bridge Kurulumu'),
+                      title: const Text('Yazıcı Kurulumu'),
                       isActive: _currentStep >= 2,
                       content: _buildInstallStep(),
                     ),
@@ -1013,40 +1680,94 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
             style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 12),
           ),
         ],
-        _TechnicalDetails(
-          data: <String, dynamic>{
-            'setupStatus': _setupStatus,
-            if (_prerequisites != null) 'prerequisites': _prerequisites,
-            if (_driverHelp != null) 'driverHelp': _driverHelp,
-            if (_setupTechnicalError != null) 'error': _setupTechnicalError,
-          },
-        ),
+        if (!_bridgeReachable) ...[
+          const SizedBox(height: 12),
+          _buildBridgeOperatorButtons(),
+        ],
+        if (kDebugMode)
+          _TechnicalDetails(
+            data: <String, dynamic>{
+              'setupStatus': _setupStatus,
+              if (_prerequisites != null) 'prerequisites': _prerequisites,
+              if (_driverHelp != null) 'driverHelp': _driverHelp,
+              if (_setupTechnicalError != null) 'error': _setupTechnicalError,
+              if (kDebugMode && _selectedPlatform == 'windows')
+                'devStartHint': 'BridgeManager.ensureReady uses packaged EXE when installed',
+            },
+          ),
       ],
     );
   }
 
   Widget _buildInstallStep() {
-    final status = _setupStatus?['status']?.toString();
+    final status = _headerStatusKey;
     final isWindows = _selectedPlatform == 'windows';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          isWindows
+          isWindows && !_showPackagedWindowsInstaller
+              ? 'Yazıcı servisi bu bilgisayarda çalışıyor olmalı. Kapalıysa aşağıdaki düğmeyle başlatın veya onarın.'
+              : isWindows
               ? 'Tarayıcı Windows cihazınıza doğrudan servis kuramaz. Kurulum için yükleyiciyi indirip çalıştırın, sonra tekrar kontrol edin.'
               : 'Yerel yazıcı servisini işletim sistemi üzerinde kurup çalıştırdıktan sonra tekrar kontrol edin.',
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 13,
             color: Color(0xFF4B5563),
             height: 1.45,
           ),
         ),
         const SizedBox(height: 14),
-        if (isWindows) ...[
+        _StatusRow(
+          title: kDebugMode ? 'Bridge (/health)' : 'Yazıcı servisi',
+          value: _bridgeReachable ? 'Erişilebilir' : 'Kapalı',
+          color: _bridgeReachable
+              ? const Color(0xFF15803D)
+              : const Color(0xFFB91C1C),
+        ),
+        const SizedBox(height: 8),
+        _StatusRow(
+          title: 'Yazıcılar (/printers)',
+          value: '$_livePrinterCount yazıcı',
+          color: _livePrinterCount > 0
+              ? const Color(0xFF15803D)
+              : const Color(0xFFB45309),
+        ),
+        if (kDebugMode &&
+            formatBridgeProcessIdentity(_bridgeHealth).isNotEmpty) ...[
+          const SizedBox(height: 8),
+          SelectableText(
+            formatBridgeProcessIdentity(_bridgeHealth),
+            style: const TextStyle(
+              fontSize: 11,
+              fontFamily: 'monospace',
+              color: Color(0xFF6B7280),
+              height: 1.35,
+            ),
+          ),
+        ],
+        if (!_bridgeReachable) ...[
+          const SizedBox(height: 8),
+          _buildBridgeOperatorButtons(compact: true),
+        ] else ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _detectingPrinters ? null : _detectPrinters,
+            icon: _detectingPrinters
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded, size: 16),
+            label: const Text('Yazıcıları Yeniden Tara'),
+          ),
+        ],
+        if (_showPackagedWindowsInstaller) ...[
           FilledButton.icon(
             onPressed: _downloadWindowsInstaller,
             icon: const Icon(Icons.download_rounded),
-            label: const Text('Windows Yazıcı Kurulum Uygulamasını İndir'),
+            label: const Text('Ibul Satıcı Windows\'u İndir'),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
@@ -1068,13 +1789,12 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
           label: const Text('Tekrar Kontrol Et'),
         ),
         const SizedBox(height: 12),
-        if (status != null)
-          _StatusRow(
-            title: 'Durum',
-            value: _wizardStatusLabel(status),
-            color: _wizardStatusColor(status),
-          ),
-        if ((status ?? '').toLowerCase() == 'not_installed')
+        _StatusRow(
+          title: 'Durum',
+          value: _wizardStatusLabel(status),
+          color: _wizardStatusColor(status),
+        ),
+        if (status == 'not_installed')
           const Padding(
             padding: EdgeInsets.only(top: 8),
             child: Text(
@@ -1082,11 +1802,11 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
               style: TextStyle(fontSize: 12, color: Color(0xFFB45309)),
             ),
           ),
-        if ((status ?? '').toLowerCase() == 'running_unhealthy')
+        if (status == 'running_unhealthy')
           const Padding(
             padding: EdgeInsets.only(top: 8),
             child: Text(
-              'Bridge cevap veriyor. Yazıcı taramaya devam edebilirsiniz; sonraki adım hangi parçanın eksik olduğunu gösterecek.',
+              'Yazıcı servisi yanıt veriyor. Yazıcı taramaya devam edebilirsiniz; sonraki adım hangi parçanın eksik olduğunu gösterecek.',
               style: TextStyle(fontSize: 12, color: Color(0xFF0F766E)),
             ),
           ),
@@ -1189,7 +1909,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.search_rounded, size: 16),
-              label: const Text('Yazıcıları Tara'),
+              label: const Text('Yazıcıları Yeniden Tara'),
             ),
           ],
         ),
@@ -1221,6 +1941,10 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
             ),
           ),
         ],
+        if (_selectedPlatform == 'windows' && !_hasWindowsPosCandidate) ...[
+          const SizedBox(height: 12),
+          _WindowsPosSetupGuide(),
+        ],
         if (_detectedPrinters.isEmpty && !_detectingPrinters) ...[
           const SizedBox(height: 12),
           Container(
@@ -1231,9 +1955,11 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: const Color(0xFFFDE68A)),
             ),
-            child: const Text(
-              'Henüz seçilebilir yazıcı bulunamadı. Önce "Yazıcıları Tara" ile tekrar deneyin. MacBook üzerinde yazıcı listesi boşsa sistemi veya CUPS yazıcısını eklemeniz gerekir.',
-              style: TextStyle(
+            child: Text(
+              _selectedPlatform == 'windows'
+                  ? 'Yazıcı bulunamadı. Lütfen Windows\'ta yazıcı sürücüsünü kurun ve sınama sayfası basın. Ardından "Yazıcıları Yeniden Tara" ile listeyi yenileyin.'
+                  : 'Henüz seçilebilir yazıcı bulunamadı. Önce "Yazıcıları Yeniden Tara" ile tekrar deneyin. MacBook üzerinde yazıcı listesi boşsa sistemi veya CUPS yazıcısını eklemeniz gerekir.',
+              style: const TextStyle(
                 fontSize: 12.5,
                 color: Color(0xFF92400E),
                 height: 1.4,
@@ -1241,19 +1967,59 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
             ),
           ),
         ],
+        if (_stalePrinters.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFECACA)),
+            ),
+            child: Text(
+              '${_stalePrinters.length} kayıtlı yazıcı bu bilgisayarda canlı taramada yok '
+              '(ör. eski Mac/CUPS). Aktif yazıcı olarak kullanılamaz; aşağıdan yeni bir Windows yazıcısı seçin.',
+              style: const TextStyle(
+                fontSize: 12.5,
+                color: Color(0xFF991B1B),
+                height: 1.4,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (final printer in _stalePrinters)
+            _DetectedPrinterCard(
+              printer: printer,
+              selected: false,
+              onTap: () {},
+              levelLabel: 'Eski/kayıp',
+              levelColor: const Color(0xFFB91C1C),
+            ),
+        ],
         const SizedBox(height: 12),
         for (final printer in _detectedPrinters)
           _DetectedPrinterCard(
             printer: printer,
             selected: printer['id']?.toString() == _selectedTestPrinterId,
             onTap: () {
+              final warning = printer['selectionWarning']?.toString();
               setState(() {
                 _selectedTestPrinterId = printer['id']?.toString();
                 _receiptPrinterId ??= _selectedTestPrinterId;
                 _kitchenPrinterId ??= _selectedTestPrinterId;
               });
+              unawaited(_refreshTurkishEncodingStatus());
+              if (warning != null && warning.trim().isNotEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(warning),
+                    backgroundColor: const Color(0xFFB45309),
+                  ),
+                );
+              }
             },
-            levelLabel: _printerLevelLabel(printer['statusLevel']?.toString()),
+            levelLabel: _printerLevelLabel(printer),
             levelColor: _printerLevelColor(printer['statusLevel']?.toString()),
           ),
         _TechnicalDetails(
@@ -1297,16 +2063,29 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.receipt_long_outlined),
-          label: const Text('Test Fişi Gönder'),
+          label: const Text('Test Fişi Gönder (Metin / ESC-POS)'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _testingPrinter || selectedPrinter == null
+              ? null
+              : _sendAdvancedBitmapTest,
+          icon: const Icon(Icons.image_outlined, size: 16),
+          label: const Text('Gelişmiş Bitmap Testi'),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Varsayılan test Pillow gerektirmez. Bitmap testi yalnızca gelişmiş doğrulama içindir.',
+          style: TextStyle(fontSize: 11.5, color: Color(0xFF6B7280), height: 1.35),
         ),
         const SizedBox(height: 12),
         _StatusRow(
           title: 'Test durumu',
           value: _testPassed
               ? (_testWarning == null
-                    ? 'Hazır (Test Edildi)'
-                    : 'Hazır (Kuyruğa Gönderildi)')
-              : 'Test Edilmedi',
+                    ? 'Baskı doğrulandı'
+                    : 'Kuyruğa gönderildi (doğrulanmadı)')
+              : 'Test edilmedi',
           color: _testPassed
               ? (_testWarning == null
                     ? const Color(0xFF15803D)
@@ -1344,12 +2123,240 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
               ),
             ),
           ),
+        const SizedBox(height: 20),
+        const Divider(),
+        const SizedBox(height: 12),
+        _buildTurkishEncodingCalibrationSection(),
         _TechnicalDetails(
           data: <String, dynamic>{
             'testResponse': _testResponse,
             if (_testTechnicalError != null) 'error': _testTechnicalError,
           },
         ),
+      ],
+    );
+  }
+
+  Widget _buildTurkishEncodingCalibrationSection() {
+    final printerSelected = _selectedTestPrinterId != null;
+    final guaranteeMode = _selectedTurkishPrintMode == kTurkishPrintModeGuarantee;
+    final recommendGuarantee = !guaranteeMode &&
+        _turkishCombinedSheetPrinted &&
+        !_turkishEncodingVerified;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Türkçe Baskı Modu',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        RadioListTile<String>(
+          value: kTurkishPrintModeText,
+          groupValue: _selectedTurkishPrintMode,
+          onChanged: printerSelected && !_turkishCalibrationBusy
+              ? (value) {
+                  if (value == null) return;
+                  setState(() => _selectedTurkishPrintMode = value);
+                }
+              : null,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text(
+            'Hızlı Mod (Text / RAW)',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          subtitle: const Text(
+            'Daha hızlı; bazı POS-58 klon yazıcılarda Türkçe bozulabilir.',
+            style: TextStyle(fontSize: 11, height: 1.3),
+          ),
+        ),
+        RadioListTile<String>(
+          value: kTurkishPrintModeGuarantee,
+          groupValue: _selectedTurkishPrintMode,
+          onChanged: printerSelected && !_turkishCalibrationBusy
+              ? (value) {
+                  if (value == null) return;
+                  setState(() => _selectedTurkishPrintMode = value);
+                }
+              : null,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text(
+            'Türkçe Garanti Modu (Görsel / Raster)',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          subtitle: const Text(
+            'Biraz daha yavaş; gömülü font ile Türkçe karakterler doğru basılır.',
+            style: TextStyle(fontSize: 11, height: 1.3),
+          ),
+        ),
+        if (recommendGuarantee)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(top: 8, bottom: 8),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF7ED),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFFDBA74)),
+            ),
+            child: const Text(
+              'Bu yazıcıda Türkçe karakterler text modda güvenilir görünmüyor. '
+              'Türkçe Garanti Modu önerilir.',
+              style: TextStyle(fontSize: 12, color: Color(0xFF9A3412), height: 1.35),
+            ),
+          ),
+        const SizedBox(height: 12),
+        const Divider(),
+        const SizedBox(height: 12),
+        const Text(
+          'Türkçe Karakter Testi',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          printerSelected
+              ? (_turkishEncodingVerified
+                    ? (guaranteeMode
+                          ? 'Türkçe Garanti Modu kayıtlı.'
+                          : 'Türkçe karakter doğrulandı.')
+                    : guaranteeMode
+                    ? 'Garanti modu test fişini basıp kaydedin.'
+                    : 'Tek fişte tüm seçenekleri basıp doğru satırı seçin.')
+              : 'Önce yukarıdan test yazıcısı seçin.',
+          style: TextStyle(
+            fontSize: 12,
+            color: _turkishEncodingVerified
+                ? const Color(0xFF15803D)
+                : const Color(0xFFB45309),
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _StatusRow(
+          title: 'Türkçe karakter',
+          value: _turkishEncodingVerified
+              ? (guaranteeMode ? 'Garanti modu kayıtlı' : 'Türkçe karakter doğrulandı')
+              : 'Doğrulanmadı',
+          color: _turkishEncodingVerified
+              ? const Color(0xFF15803D)
+              : const Color(0xFFB45309),
+        ),
+        const SizedBox(height: 8),
+        _StatusRow(
+          title: 'Baskı hızı',
+          value: _testPassed
+              ? (_testWarning == null ? 'Baskı doğrulandı' : 'Kuyruğa gönderildi')
+              : 'Önce test fişi gönderin',
+          color: _testPassed
+              ? (_testWarning == null
+                    ? const Color(0xFF15803D)
+                    : const Color(0xFFD97706))
+              : const Color(0xFF6B7280),
+        ),
+        if (_turkishCalibrationMessage != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              _turkishCalibrationMessage!,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF374151)),
+            ),
+          ),
+        const SizedBox(height: 10),
+        if (guaranteeMode) ...[
+          FilledButton.icon(
+            onPressed: !printerSelected || _turkishCalibrationBusy
+                ? null
+                : _printTurkishGuaranteeSample,
+            icon: _turkishCalibrationBusy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.image_outlined),
+            label: const Text('Garanti modu test fişi bas'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: !printerSelected || _turkishCalibrationBusy
+                ? null
+                : _saveTurkishPrintModeSelection,
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Garanti modunu kaydet'),
+          ),
+        ] else ...[
+          FilledButton.icon(
+            onPressed: !printerSelected || _turkishCalibrationBusy
+                ? null
+                : _printTurkishEncodingCombinedSheet,
+            icon: _turkishCalibrationBusy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.print_outlined),
+            label: const Text('Tüm seçenekleri tek fişte bas'),
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (!guaranteeMode)
+        ...kTurkishEncodingCalibrationCandidates.asMap().entries.map((entry) {
+          final index = entry.key + 1;
+          final candidate = entry.value;
+          final selected = _selectedEncodingCandidateId == candidate.id;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Radio<String>(
+                  value: candidate.id,
+                  groupValue: _selectedEncodingCandidateId,
+                  onChanged: printerSelected && !_turkishCalibrationBusy
+                      ? (value) {
+                          setState(() {
+                            _selectedEncodingCandidateId = value;
+                          });
+                        }
+                      : null,
+                ),
+                Expanded(
+                  child: Text(
+                    candidate.formatReceiptOptionLine(index),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight:
+                          selected ? FontWeight.w600 : FontWeight.w500,
+                      color: const Color(0xFF111827),
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+        if (!guaranteeMode)
+          FilledButton.icon(
+            onPressed: !printerSelected ||
+                    _turkishCalibrationBusy ||
+                    _selectedEncodingCandidateId == null
+                ? null
+                : _confirmTurkishEncodingSelection,
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('Doğru satırı kaydet'),
+          ),
+        if (_turkishCalibrationError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              _turkishCalibrationError!,
+              style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 12),
+            ),
+          ),
       ],
     );
   }
@@ -1545,6 +2552,15 @@ class _DetectedPrinterCard extends StatelessWidget {
     final badgeColor = badgeColorHex.isNotEmpty
         ? Color(int.tryParse(badgeColorHex) ?? 0xFF6B7280)
         : const Color(0xFF6B7280);
+    final tier = printer['operatorTier']?.toString() ?? '';
+    final tierBadge = tier == 'pos_candidate'
+        ? 'POS / Termal'
+        : tier == 'not_recommended'
+        ? 'Önerilmez'
+        : '';
+    final tierColor = tier == 'pos_candidate'
+        ? const Color(0xFF15803D)
+        : const Color(0xFF9CA3AF);
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -1574,9 +2590,20 @@ class _DetectedPrinterCard extends StatelessWidget {
                 _StatusChip(label: levelLabel, color: levelColor),
               ],
             ),
+            if (tierBadge.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              _StatusChip(label: tierBadge, color: tierColor),
+            ],
             if (badge.isNotEmpty) ...[
               const SizedBox(height: 6),
               _StatusChip(label: badge, color: badgeColor),
+            ],
+            if (printer['printVerified'] == true) ...[
+              const SizedBox(height: 6),
+              const _StatusChip(
+                label: 'Baskı doğrulandı',
+                color: Color(0xFF15803D),
+              ),
             ],
             const SizedBox(height: 6),
             Text(
@@ -1757,6 +2784,52 @@ String? _firstRecommendedPrinterId(List<Map<String, dynamic>> printers) {
   return null;
 }
 
+class _WindowsPosSetupGuide extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final steps = WindowsPrinterClassification.windowsPosSetupGuideSteps();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFDBA74)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'POS58 termal yazıcı kurulum rehberi',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF9A3412),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Canlı taramada POS/termal aday bulunamadı. Generic / Text Only veya Fax hedefleri fiş basmaz.',
+            style: TextStyle(fontSize: 12.5, color: Color(0xFF7C2D12), height: 1.4),
+          ),
+          const SizedBox(height: 8),
+          for (var i = 0; i < steps.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                '${i + 1}. ${steps[i]}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF7C2D12),
+                  height: 1.35,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _StatusChip extends StatelessWidget {
   const _StatusChip({required this.label, required this.color});
 
@@ -1862,7 +2935,7 @@ class _TechnicalDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (data == null) return const SizedBox.shrink();
+    if (!kDebugMode || data == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: ExpansionTile(

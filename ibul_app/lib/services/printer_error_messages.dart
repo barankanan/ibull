@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kDebugMode, kIsWeb;
 
 import '../widgets/bridge_error_dialog.dart';
 
@@ -59,9 +60,9 @@ PrinterErrorPresentation presentPrinterErrorCode(
         code: normalized,
         title: 'Yazıcı servisi çalışmıyor',
         message: isWindows
-            ? 'Windows yazıcı servis uygulaması kurulu değil veya çalışmıyor. İndirip kurun, sonra tekrar kontrol edin.'
-            : 'Yazıcı servisine ulaşılamadı. Bridge’i başlatın, sonra tekrar deneyin.',
-        primaryActionLabel: isWindows ? 'İndir ve Kur' : 'Tekrar Dene',
+            ? 'Yazıcı servisi kurulu değil veya çalışmıyor. Ibul Satıcı Windows uygulamasını indirip kurun, sonra tekrar deneyin.'
+            : 'Yazıcı servisine ulaşılamadı. Servisi başlatın, sonra tekrar deneyin.',
+        primaryActionLabel: isWindows ? 'Uygulamayı İndir' : 'Tekrar Dene',
         secondaryActionLabel: isWindows ? 'Logları Aç' : null,
         severity: PrinterErrorSeverity.error,
         canRetry: true,
@@ -142,14 +143,15 @@ PrinterErrorPresentation presentPrinterErrorCode(
         canOpenLogs: true,
       );
     case 'installer_missing':
-      return const PrinterErrorPresentation(
+      return PrinterErrorPresentation(
         code: 'installer_missing',
         title: 'Kurulum dosyası bulunamadı',
-        message:
-            'Kurulum dosyası sunucuda bulunamadı. Lütfen deploy paketini kontrol edin.\n'
-            'Teknik: build/web/downloads/IbulPrintBridgeSetup.exe staging + Firebase Hosting deploy.',
-        primaryActionLabel: 'Deploy Kontrolü',
-        secondaryActionLabel: 'Tekrar Dene',
+        message: kDebugMode
+            ? 'Kurulum dosyası sunucuda bulunamadı. Lütfen deploy paketini kontrol edin.\n'
+                  'Teknik: build/web/downloads/IbulSellerSetup.exe staging + Firebase Hosting deploy.'
+            : 'Kurulum dosyası şu an indirilemiyor. Lütfen daha sonra tekrar deneyin.',
+        primaryActionLabel: kDebugMode ? 'Deploy Kontrolü' : 'Tekrar Dene',
+        secondaryActionLabel: kDebugMode ? 'Tekrar Dene' : null,
         severity: PrinterErrorSeverity.error,
         canRetry: true,
       );
