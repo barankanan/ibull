@@ -79,7 +79,7 @@ class LocalPrintService {
     'Accept': 'application/json',
   };
 
-  static const Duration _bridgeStatusCacheTtl = Duration(seconds: 3);
+  static const Duration _bridgeStatusCacheTtl = Duration(seconds: 5);
 
   _BridgeResponseCacheEntry? _healthCache;
   _BridgeResponseCacheEntry? _printersCache;

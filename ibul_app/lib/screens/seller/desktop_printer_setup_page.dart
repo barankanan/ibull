@@ -1495,11 +1495,20 @@ class _PrintersTabState extends State<_PrintersTab> {
             itemCount: printers.isEmpty ? 4 : printers.length + 3,
             separatorBuilder: (_, _) => const SizedBox(height: 10),
             itemBuilder: (context, index) {
+              Widget wrap(Widget child) {
+                return Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1200),
+                    child: child,
+                  ),
+                );
+              }
               if (index == 0) {
-                return _buildPrintSystemControlCard();
+                return wrap(_buildPrintSystemControlCard());
               }
               if (index == 1) {
-                return _DesktopPrintCenterCard(
+                return wrap(
+                  _DesktopPrintCenterCard(
                   loading: _loadingPrintCenter,
                   saving: _savingPrintCenter,
                   testingReceipt: _testingReceipt,
@@ -1545,10 +1554,12 @@ class _PrintersTabState extends State<_PrintersTab> {
                   bridgeServiceMessage: _bridgeServiceMessage,
                   onStartBridgeService: _startBridgeService,
                   onRepairBridgeService: _repairBridgeService,
+                  ),
                 );
               }
               if (index == 2) {
-                return Container(
+                return wrap(
+                  Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 12,
@@ -1621,6 +1632,7 @@ class _PrintersTabState extends State<_PrintersTab> {
                       ),
                     ],
                   ),
+                  ),
                 );
               }
               if (printers.isEmpty) {
@@ -1632,42 +1644,46 @@ class _PrintersTabState extends State<_PrintersTab> {
                     ),
                   );
                 }
-                return const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.print_disabled_outlined,
-                          size: 52,
-                          color: Color(0xFFD1D5DB),
-                        ),
-                        SizedBox(height: 12),
-                        Text(
-                          'Henüz kayıtlı yazıcı yok.',
-                          style: TextStyle(
-                            color: Color(0xFF6B7280),
-                            fontSize: 14,
+                return wrap(
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.print_disabled_outlined,
+                            size: 52,
+                            color: Color(0xFFD1D5DB),
                           ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Önce Yazıcıları Tara veya Yazıcı Ekle ile başlayın.',
-                          style: TextStyle(
-                            color: Color(0xFF9CA3AF),
-                            fontSize: 12,
+                          SizedBox(height: 12),
+                          Text(
+                            'Henüz kayıtlı yazıcı yok.',
+                            style: TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontSize: 14,
+                            ),
                           ),
-                        ),
-                      ],
+                          SizedBox(height: 4),
+                          Text(
+                            'Önce Yazıcıları Tara veya Yazıcı Ekle ile başlayın.',
+                            style: TextStyle(
+                              color: Color(0xFF9CA3AF),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 );
               }
               final printer = printers[index - 3];
-              return _PrinterCard(
-                printer: printer,
-                restaurantId: widget.restaurantId,
+              return wrap(
+                _PrinterCard(
+                  printer: printer,
+                  restaurantId: widget.restaurantId,
+                ),
               );
             },
           ),

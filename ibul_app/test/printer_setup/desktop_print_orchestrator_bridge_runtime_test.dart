@@ -62,7 +62,7 @@ void main() {
     expect(snapshot.bridgeHealthy, isTrue);
     expect(snapshot.livePrinterCount, 2);
     expect(snapshot.setupStatus?['status'], isNot('bridge_not_running'));
-    expect(snapshot.operatorSetupStatusKey, 'ready');
+    expect(snapshot.operatorSetupStatusKey, 'printer_selection_pending');
   });
 
   test('stale Mac saved_record is not selectable for roles on Windows', () async {
@@ -155,6 +155,52 @@ void main() {
     expect(isSelectableLivePrinter(stale), isFalse);
     expect(isSelectableLivePrinter(live), isTrue);
   });
+
+  test('minimal snapshot skips setup/status/prerequisites/queue/discover calls', () async {
+    var factoryCalls = 0;
+    final svc = _CountingProbeService(
+      availability: LocalPrintHealthStatus(
+        isAvailable: true,
+        reason: 'ok',
+        url: Uri.parse('http://127.0.0.1:3001/health'),
+        durationMs: 1,
+        statusCode: 200,
+      ),
+      healthBody: const <String, dynamic>{'ok': true},
+      printers: const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'windows:POS-58',
+          'name': 'POS-58',
+          'queue': 'POS-58',
+          'backend': 'windows-spool',
+          'ready': true,
+          'statusLevel': 'ready',
+        },
+      ],
+    );
+    final orchestrator = DesktopPrintOrchestrator(
+      printerRepository: _FakePrinterRepo(),
+      printStationService: _FakeStationService(),
+      printServiceFactory: () {
+        factoryCalls += 1;
+        return svc;
+      },
+    );
+
+    final snapshot = await orchestrator.loadSetupSnapshot(
+      restaurantId: 'restaurant-1',
+      forceRefresh: true,
+      minimal: true,
+    );
+
+    expect(snapshot.bridgeReachable, isTrue);
+    expect(snapshot.bridgeHealthy, isTrue);
+    expect(snapshot.livePrinterCount, 1);
+    expect(factoryCalls, 1, reason: 'service instance should be reused');
+    expect(svc.setupStatusCalls, 0);
+    expect(svc.setupPrereqCalls, 0);
+    expect(svc.discoverCalls, 0);
+  });
 }
 
 class _ProbeFakeService extends LocalPrintService {
@@ -195,6 +241,37 @@ class _ProbeFakeService extends LocalPrintService {
     'count': _printers.length,
     'printers': _printers,
   };
+}
+
+class _CountingProbeService extends _ProbeFakeService {
+  _CountingProbeService({
+    required super.availability,
+    required super.healthBody,
+    required super.printers,
+    super.setupStatusBody,
+  });
+
+  int setupStatusCalls = 0;
+  int setupPrereqCalls = 0;
+  int discoverCalls = 0;
+
+  @override
+  Future<Map<String, dynamic>?> setupStatus() async {
+    setupStatusCalls += 1;
+    return super.setupStatus();
+  }
+
+  @override
+  Future<Map<String, dynamic>?> setupPrerequisites() async {
+    setupPrereqCalls += 1;
+    return super.setupPrerequisites();
+  }
+
+  @override
+  Future<Map<String, dynamic>?> discover() async {
+    discoverCalls += 1;
+    return super.discover();
+  }
 }
 
 class _FakeStationService implements PrintStationServicePort {

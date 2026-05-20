@@ -86,7 +86,7 @@ void main() {
     expect((firstLines?.length ?? 0) >= 3, isTrue);
     expect(
       kTurkishCalibrationPrimaryTestLine,
-      'Türkçe Test: ığüşöç İĞÜŞÖÇ',
+      'Türkçe: ığüşöç İĞÜŞÖÇ',
     );
   });
 

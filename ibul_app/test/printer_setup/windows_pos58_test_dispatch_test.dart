@@ -121,12 +121,14 @@ class _Pos58ProbeService extends LocalPrintService {
       );
 
   @override
-  Future<Map<String, dynamic>?> health() async => const <String, dynamic>{
+  Future<Map<String, dynamic>?> health({bool useCache = true}) async =>
+      const <String, dynamic>{
     'ok': true,
   };
 
   @override
-  Future<Map<String, dynamic>?> printers() async => const <String, dynamic>{
+  Future<Map<String, dynamic>?> printers({bool useCache = true}) async =>
+      const <String, dynamic>{
     'ok': true,
     'count': 1,
     'printers': <Map<String, dynamic>>[

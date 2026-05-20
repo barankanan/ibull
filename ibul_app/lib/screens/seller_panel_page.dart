@@ -38,6 +38,7 @@ import '../services/order_service.dart';
 import '../services/order_print_job_service.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
+import '../services/printer_encoding_profile_store.dart';
 import '../services/print_station_service.dart';
 import '../services/printer_event_log_service.dart';
 import '../services/product_question_service.dart';
@@ -74,10 +75,12 @@ import '../widgets/waiter/swipeable_product_card.dart';
 import '../utils/browser_file_download.dart';
 import '../utils/pick_image_file.dart';
 import '../utils/table_labels.dart';
+import '../utils/print_perf_log.dart';
 import '../utils/garson_table_order_state.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_overview_widgets.dart';
+import '../features/seller/panel/helpers/seller_panel_lifecycle_guards.dart';
 import '../features/seller/panel/helpers/seller_panel_module_helpers.dart';
 import '../features/seller/panel/models/seller_panel_types.dart';
 import '../features/seller/panel/widgets/seller_panel_common_widgets.dart';
@@ -122,6 +125,17 @@ class _KitchenDispatchFeedback {
     this.physicallyDispatched = false,
     this.orderId,
     this.printJobIds = const <String>[],
+    this.bridgeRequestMs = 0,
+    this.dispatchPath = '',
+    this.payloadBuildMs = 0,
+    this.printerResolveMs = 0,
+    this.totalToBridgeMs = 0,
+    this.directPrintStartedMs = 0,
+    this.directPrintDoneMs = 0,
+    this.fastPathDecisionMs = 0,
+    this.printerCacheResolveMs = 0,
+    this.fallbackReason = '',
+    this.selectedPrinterId = '',
   });
 
   final String? error;
@@ -132,6 +146,17 @@ class _KitchenDispatchFeedback {
   final bool physicallyDispatched;
   final String? orderId;
   final List<String> printJobIds;
+  final int bridgeRequestMs;
+  final String dispatchPath;
+  final int payloadBuildMs;
+  final int printerResolveMs;
+  final int totalToBridgeMs;
+  final int directPrintStartedMs;
+  final int directPrintDoneMs;
+  final int fastPathDecisionMs;
+  final int printerCacheResolveMs;
+  final String fallbackReason;
+  final String selectedPrinterId;
 
   bool get hasError => error != null && error!.trim().isNotEmpty;
   bool get hasNotice => notice != null && notice!.trim().isNotEmpty;
@@ -308,6 +333,14 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       PrinterEventLogService();
   final DesktopPrintOrchestrator _printOrchestrator =
       DesktopPrintOrchestrator();
+  Map<String, String>? _garsonReceiptStoreContextCache;
+  DateTime? _garsonReceiptStoreContextCachedAt;
+  UnifiedPrinterModel? _garsonCachedReceiptPrinter;
+  DateTime? _garsonCachedReceiptPrinterAt;
+  PrinterEncodingProfile? _garsonCachedReceiptEncodingProfile;
+  UnifiedPrinterModel? _garsonCachedKitchenPrinter;
+  DateTime? _garsonCachedKitchenPrinterAt;
+  PrinterEncodingProfile? _garsonCachedKitchenEncodingProfile;
   bool? _isLocalPrintAvailable;
   String _localPrintStatusLabel = 'Yazıcı kontrol ediliyor';
   String _localPrintStatusMessage = 'Yazıcı durumu kontrol ediliyor.';
@@ -329,6 +362,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   List<Map<String, dynamic>> _sellerOrders = [];
   bool _isLoadingSellerOrders = false;
   int _sellerOrdersLoadRequestId = 0;
+  int _sellerWalletLoadRequestId = 0;
+  int _storeProfileLoadRequestId = 0;
+  bool _sellerPanelControllersDisposed = false;
   List<Map<String, dynamic>> _sellerQuestions = [];
   bool _isLoadingSellerQuestions = false;
   List<SupportTicket> _supportTickets = [];
@@ -347,6 +383,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   String _debouncedSupportQuery = '';
   String _selectedSellerOrderFilter = 'all';
   final Set<String> _highlightedSellerOrderIds = <String>{};
+  late final SellerOrderHighlightExpiryScheduler
+  _sellerOrderHighlightExpiryScheduler;
+  bool _sellerOrdersHadSuccessfulLoad = false;
+  DesktopPrintHub? _cachedDesktopPrintHub;
   String? _selectedSellerOrderItemId;
   Map<String, dynamic>? _selectedSellerOrderDetail;
   List<Map<String, dynamic>> _selectedSellerOrderHistory = [];
@@ -518,6 +558,46 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     );
   }
 
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted || _sellerPanelControllersDisposed) return;
+    setState(fn);
+  }
+
+  bool _canApplySellerOrdersRequest(int requestId) {
+    return canApplySellerPanelAsyncUpdate(
+      mounted: mounted,
+      requestId: requestId,
+      activeRequestId: _sellerOrdersLoadRequestId,
+    );
+  }
+
+  bool _canApplySellerWalletRequest(int requestId) {
+    return mounted &&
+        !_sellerPanelControllersDisposed &&
+        requestId == _sellerWalletLoadRequestId;
+  }
+
+  bool _canApplyStoreProfileRequest(int requestId) {
+    return mounted &&
+        !_sellerPanelControllersDisposed &&
+        requestId == _storeProfileLoadRequestId;
+  }
+
+  void _safeSetStateForSellerOrders(int requestId, VoidCallback fn) {
+    if (!_canApplySellerOrdersRequest(requestId)) return;
+    _safeSetState(fn);
+  }
+
+  void _safeSetStateForSellerWallet(int requestId, VoidCallback fn) {
+    if (!_canApplySellerWalletRequest(requestId)) return;
+    _safeSetState(fn);
+  }
+
+  void _safeSetStateForStoreProfile(int requestId, VoidCallback fn) {
+    if (!_canApplyStoreProfileRequest(requestId)) return;
+    _safeSetState(fn);
+  }
+
   void _invalidateDashboardSnapshot() {
     _dashboardSnapshotCacheKey = null;
     _dashboardSnapshotCache = null;
@@ -563,6 +643,29 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_supportsDirectLocalPrintBridge && _cachedDesktopPrintHub == null) {
+      try {
+        _cachedDesktopPrintHub = context.read<DesktopPrintHub>();
+      } catch (_) {
+        // Provider not in tree during tests or partial mounts.
+      }
+    }
+  }
+
+  void _onSellerOrderHighlightExpired(List<String> expiredOrderIds) {
+    if (!mounted || _sellerPanelControllersDisposed || expiredOrderIds.isEmpty) {
+      return;
+    }
+    setState(() {
+      for (final orderId in expiredOrderIds) {
+        _highlightedSellerOrderIds.remove(orderId);
+      }
+    });
+  }
+
+  @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
@@ -580,6 +683,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     unawaited(_restoreLastSelectedModule());
     unawaited(_restoreGarsonAreaFilter());
     unawaited(_restoreSidebarCollapsed());
+    _sellerOrderHighlightExpiryScheduler = SellerOrderHighlightExpiryScheduler(
+      highlightDuration: const Duration(seconds: 30),
+      onExpired: _onSellerOrderHighlightExpired,
+    );
     _logSellerPanel(
       'Init',
       'branch=store_profile trigger=initState requestUrl=${_sellerPanelRestRequestUrl('stores', query: <String, String>{'select': '*', 'seller_id': 'eq.${_authService.currentUser?.id.trim().isNotEmpty == true ? _authService.currentUser!.id.trim() : '<missing>'}'})}',
@@ -715,7 +822,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     if (_desktopPrintHubRestaurantId == resolvedRestaurantId) {
       return;
     }
-    final hub = context.read<DesktopPrintHub>();
+    final hub = _cachedDesktopPrintHub ?? context.read<DesktopPrintHub>();
+    _cachedDesktopPrintHub = hub;
     await hub.start(resolvedRestaurantId);
     _desktopPrintHubRestaurantId = resolvedRestaurantId;
     _logSellerPanel(
@@ -877,6 +985,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         break;
       case SellerModule.garson:
       case SellerModule.system:
+        unawaited(
+          _warmGarsonPrintCaches(_authService.currentUser?.id.trim() ?? ''),
+        );
         final shouldLoadStoreTables = !_hasLoadedStoreTablesData;
         logDecision('store_tables', shouldLoadStoreTables);
         if (shouldLoadStoreTables) {
@@ -1249,6 +1360,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     });
   }
 
+  void _cancelAllSellerOrderHighlightClearTimers() {
+    _sellerOrderHighlightExpiryScheduler.dispose();
+  }
+
+  void _scheduleSellerOrderHighlightClear(String orderId) {
+    if (orderId.isEmpty || !mounted || _sellerPanelControllersDisposed) {
+      return;
+    }
+    _sellerOrderHighlightExpiryScheduler.schedule(orderId);
+  }
+
   void _setSelectedSupportTab(String value) {
     if (_selectedSupportTab == value) return;
     setState(() {
@@ -1546,7 +1668,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     final requestId = ++_sellerOrdersLoadRequestId;
     final requestUrl = 'OrderService.getSellerOrders(sellerId=$sellerId)';
     final watch = Stopwatch()..start();
-    setState(() => _isLoadingSellerOrders = true);
+    if (!_canApplySellerOrdersRequest(requestId)) return;
+    _safeSetStateForSellerOrders(
+      requestId,
+      () => _isLoadingSellerOrders = true,
+    );
     _logSellerPanelStateUpdate(
       'seller_orders_loading_start',
       note: 'requestId=$requestId',
@@ -1557,17 +1683,21 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         requestUrl: requestUrl,
       );
       final orders = await OrderService.instance.getSellerOrders(sellerId);
-      if (!mounted || requestId != _sellerOrdersLoadRequestId) return;
+      if (!_canApplySellerOrdersRequest(requestId)) return;
       final previousIds = _sellerOrders
           .map((order) => order['id']?.toString())
           .whereType<String>()
           .toSet();
-      final newIds = orders
-          .map((order) => order['id']?.toString())
-          .whereType<String>()
-          .where((id) => !previousIds.contains(id))
-          .toList();
-      setState(() {
+      final hadPriorSnapshot = _sellerOrdersHadSuccessfulLoad;
+      final newIds = sellerOrderIdsToHighlight(
+        hadPriorSnapshot: hadPriorSnapshot,
+        previousIds: previousIds,
+        incomingIds: orders
+            .map((order) => order['id']?.toString())
+            .whereType<String>(),
+      );
+      if (!_canApplySellerOrdersRequest(requestId)) return;
+      _safeSetStateForSellerOrders(requestId, () {
         _sellerOrders = orders;
         _invalidateOrdersDerivedState();
         _highlightedSellerOrderIds.addAll(newIds);
@@ -1583,6 +1713,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           }
         }
       });
+      if (!_canApplySellerOrdersRequest(requestId)) return;
       _debugLogSellerBootstrap(
         branch: 'seller_orders:success',
         requestUrl: requestUrl,
@@ -1602,16 +1733,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       if (selectedItemId != null && selectedItemId.isNotEmpty) {
         unawaited(_loadSelectedSellerOrderHistory(selectedItemId));
       }
+      _sellerOrdersHadSuccessfulLoad = true;
       for (final id in newIds) {
-        Future<void>.delayed(const Duration(seconds: 30), () {
-          if (!mounted) return;
-          setState(() {
-            _highlightedSellerOrderIds.remove(id);
-          });
-        });
+        _scheduleSellerOrderHighlightClear(id);
       }
     } catch (error, stackTrace) {
-      if (requestId != _sellerOrdersLoadRequestId) return;
+      if (!_canApplySellerOrdersRequest(requestId)) return;
       _hasLoadedSellerOrdersData = false;
       _debugLogSellerBootstrap(
         branch: 'seller_orders:catch',
@@ -1620,13 +1747,15 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         error: error,
         stackTrace: stackTrace,
       );
-      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(_mapSellerOrdersLoadError(error))));
     } finally {
-      if (mounted && requestId == _sellerOrdersLoadRequestId) {
-        setState(() => _isLoadingSellerOrders = false);
+      if (_canApplySellerOrdersRequest(requestId)) {
+        _safeSetStateForSellerOrders(
+          requestId,
+          () => _isLoadingSellerOrders = false,
+        );
         _logSellerPanelStateUpdate(
           'seller_orders_loading_end',
           note: 'requestId=$requestId durationMs=${watch.elapsedMilliseconds}',
@@ -1752,16 +1881,18 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   Future<void> _loadSellerWalletBalance({bool silent = false}) async {
     final sellerId = _authService.currentUser?.id ?? '';
     if (sellerId.isEmpty) return;
+    final requestId = ++_sellerWalletLoadRequestId;
     final requestUrl =
         'SellerWalletService.getWalletBalance(sellerId=$sellerId)';
     final watch = Stopwatch()..start();
-    if (!silent && mounted) {
-      setState(() {
+    if (!silent) {
+      if (!_canApplySellerWalletRequest(requestId)) return;
+      _safeSetStateForSellerWallet(requestId, () {
         _isLoadingSellerWallet = true;
       });
       _logSellerPanelStateUpdate(
         'seller_wallet_loading_start',
-        note: 'silent=$silent',
+        note: 'silent=$silent requestId=$requestId',
       );
     }
     try {
@@ -1772,10 +1903,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       final response = await _sellerWalletService.getWalletBalance(
         sellerId: sellerId,
       );
+      if (!_canApplySellerWalletRequest(requestId)) return;
       final available = _toWalletDouble(response['available_balance']);
       final reserved = _toWalletDouble(response['reserved_balance']);
-      if (!mounted) return;
-      setState(() {
+      if (!_canApplySellerWalletRequest(requestId)) return;
+      _safeSetStateForSellerWallet(requestId, () {
         _sellerWalletAvailableBalance = available;
         _sellerWalletReservedBalance = reserved;
         _sellerWalletReady = true;
@@ -1804,19 +1936,21 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         error: error,
         stackTrace: stackTrace,
       );
-      if (!mounted) return;
-      setState(() {
+      if (!_canApplySellerWalletRequest(requestId)) return;
+      _safeSetStateForSellerWallet(requestId, () {
         _sellerWalletReady = false;
         _sellerWalletError = _mapSellerWalletError(error);
       });
     } finally {
-      if (mounted && !silent) {
-        setState(() {
+      if (!silent && _canApplySellerWalletRequest(requestId)) {
+        _safeSetStateForSellerWallet(requestId, () {
           _isLoadingSellerWallet = false;
         });
         _logSellerPanelStateUpdate(
           'seller_wallet_loading_end',
-          note: 'durationMs=${watch.elapsedMilliseconds} silent=$silent',
+          note:
+              'durationMs=${watch.elapsedMilliseconds} silent=$silent '
+              'requestId=$requestId',
         );
       }
     }
@@ -1999,6 +2133,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   @override
   void dispose() {
+    _sellerOrdersLoadRequestId++;
+    _sellerWalletLoadRequestId++;
+    _storeProfileLoadRequestId++;
+    _sellerPanelControllersDisposed = true;
+    _cancelAllSellerOrderHighlightClearTimers();
+    _highlightedSellerOrderIds.clear();
     _logSellerPanel(
       'Dispose',
       'productsSubscription=${_productsSubscription != null} '
@@ -2008,7 +2148,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           'sellerOrderSearchDebounce=${_sellerOrderSearchDebounce != null} '
           'feedbackSearchDebounce=${_feedbackSearchDebounce != null} '
           'supportSearchDebounce=${_supportSearchDebounce != null} '
-          'packagingUploadTimer=${_packagingVideoUploadProgressTimer != null}',
+          'packagingUploadTimer=${_packagingVideoUploadProgressTimer != null} '
+          'sellerOrderHighlightExpiries=${_sellerOrderHighlightExpiryScheduler.scheduledExpiryCount} '
+          'sellerOrderHighlightTimer=${_sellerOrderHighlightExpiryScheduler.activeTimerCount}',
     );
     _productsSubscription?.cancel();
     _productsRealtimeRetryTimer?.cancel();
@@ -2035,6 +2177,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     _facebookController.dispose();
     _twitterController.dispose();
     _websiteController.dispose();
+    _customerServiceController.dispose();
+    _companyTitleController.dispose();
     _productSearchController.dispose();
     _sellerOrderSearchController.dispose();
     _supportSearchController.dispose();
@@ -2044,9 +2188,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     _garsonManualOrdersClearTimer?.cancel();
     _localPrintPollTimer?.cancel();
     _localPrintPollTimer = null;
-    if (_supportsDirectLocalPrintBridge) {
-      unawaited(context.read<DesktopPrintHub>().stop());
+    final printHub = _cachedDesktopPrintHub;
+    if (printHub != null) {
+      unawaited(printHub.stop());
     }
+    _cachedDesktopPrintHub = null;
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -2063,7 +2209,91 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     }
   }
 
+  bool _syncStoreProfileControllersFromData(
+    Map<String, dynamic> data,
+    int requestId,
+  ) {
+    if (!_canApplyStoreProfileRequest(requestId)) return false;
+    _storeNameController.text = data['storeName']?.toString() ?? '';
+    _storeUrlController.text = data['storeUrl']?.toString() ?? '';
+    _storeDescController.text = data['description']?.toString() ?? '';
+    _sloganController.text = data['slogan']?.toString() ?? '';
+    _phoneController.text = data['phone']?.toString() ?? '';
+    _emailController.text = data['email']?.toString() ?? '';
+    _whatsappController.text = data['whatsapp']?.toString() ?? '';
+    _supportPhoneController.text = data['supportPhone']?.toString() ?? '';
+    _addressController.text = data['address']?.toString() ?? '';
+    _postalCodeController.text = data['postalCode']?.toString() ?? '';
+    _taxNumberController.text = data['taxNumber']?.toString() ?? '';
+    _taxOfficeController.text = data['taxOffice']?.toString() ?? '';
+    _companyNameController.text = data['companyName']?.toString() ?? '';
+    _instagramController.text = data['instagram']?.toString() ?? '';
+    _facebookController.text = data['facebook']?.toString() ?? '';
+    _twitterController.text = data['twitter']?.toString() ?? '';
+    _websiteController.text = data['website']?.toString() ?? '';
+    _customerServiceController.text = data['customerService']?.toString() ?? '';
+    _companyTitleController.text = data['companyTitle']?.toString() ?? '';
+    return true;
+  }
+
+  void _applyStoreProfileStateFieldsFromData(
+    Map<String, dynamic> data, {
+    required int requestId,
+    required bool fallbackFromFoodModulesToDashboard,
+  }) {
+    _safeSetStateForStoreProfile(requestId, () {
+      _selectedCity = (data['city'] ?? '').toString().trim();
+      _selectedDistrict = (data['district'] ?? '').toString().trim();
+      _companyType = data['companyType']?.toString() ?? 'Limited Şirket';
+      _storeCategory = (data['category'] ?? '').toString();
+      _storeRating = (data['rating'] as num?)?.toDouble() ?? 0.0;
+      if (_isWaiterEntry) {
+        _selectedModule = SellerModule.garson;
+      } else if (fallbackFromFoodModulesToDashboard) {
+        _selectedModule = SellerModule.dashboard;
+      }
+      _workingHours = data['workingHours']?.toString() ?? '09:00 - 18:00';
+      _storeLat = (data['storeLat'] as num?)?.toDouble();
+      _storeLng = (data['storeLng'] as num?)?.toDouble();
+
+      _isStoreOpen = data['isStoreOpen'] as bool? ?? true;
+      _acceptNewOrders = data['acceptNewOrders'] as bool? ?? true;
+      _allowMessaging = data['allowMessaging'] as bool? ?? true;
+      _isHolidayMode = data['isHolidayMode'] as bool? ?? false;
+
+      _storeLogoUrl = data['logoUrl']?.toString();
+      _storeCoverUrl = data['coverUrl']?.toString();
+      for (var i = 0; i < _storeImages.length; i++) {
+        _storeImages[i] = null;
+      }
+      for (var i = 0; i < _announcementBanners.length; i++) {
+        _announcementBanners[i] = null;
+      }
+      _sellerVideos = <String>[];
+
+      final gallery = data['galleryImages'];
+      if (gallery is List) {
+        for (var i = 0; i < gallery.length && i < 6; i++) {
+          _storeImages[i] = gallery[i]?.toString();
+        }
+      }
+
+      final banners = data['banners'];
+      if (banners is List) {
+        for (var i = 0; i < banners.length && i < 3; i++) {
+          _announcementBanners[i] = banners[i]?.toString();
+        }
+      }
+
+      final videos = data['sellerVideos'];
+      if (videos is List) {
+        _sellerVideos = videos.map((e) => e.toString()).toList();
+      }
+    });
+  }
+
   Future<void> _loadStoreProfile() async {
+    final requestId = ++_storeProfileLoadRequestId;
     final sellerId = _authService.currentUser?.id.trim() ?? '';
     final requestUrl = _sellerPanelRestRequestUrl(
       'stores',
@@ -2073,21 +2303,25 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       },
     );
     final watch = Stopwatch()..start();
-    if (!mounted) return;
-    setState(() {
+    if (!_canApplyStoreProfileRequest(requestId)) return;
+    _safeSetStateForStoreProfile(requestId, () {
       _isLoading = true;
       _storeProfileLoadError = null;
     });
-    _logSellerPanelStateUpdate('store_profile_loading_start');
+    _logSellerPanelStateUpdate(
+      'store_profile_loading_start',
+      note: 'requestId=$requestId',
+    );
     try {
       _debugLogSellerBootstrap(
         branch: 'store_profile:start',
         requestUrl: requestUrl,
       );
       final data = await _storeService.getStoreProfile();
+      if (!_canApplyStoreProfileRequest(requestId)) return;
       if (data != null) {
         if (data['isDeleted'] == true) {
-          if (mounted) {
+          if (_canApplyStoreProfileRequest(requestId)) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('Satıcı hesabınız kalıcı olarak kapatılmıştır.'),
@@ -2095,7 +2329,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             );
             await _authService.signOut();
             await Future.delayed(const Duration(milliseconds: 200));
-            if (mounted) {
+            if (_canApplyStoreProfileRequest(requestId)) {
               debugPrint(
                 '[SellerExit] store deleted — navigating to / via rootNavigator',
               );
@@ -2117,82 +2351,20 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             !isFoodStore &&
             (_selectedModule == SellerModule.garson ||
                 _selectedModule == SellerModule.system);
-        setState(() {
-          _storeNameController.text = data['storeName'] ?? '';
-          _storeUrlController.text = data['storeUrl'] ?? '';
-          _storeDescController.text = data['description'] ?? '';
-          _sloganController.text = data['slogan'] ?? '';
-          _phoneController.text = data['phone'] ?? '';
-          _emailController.text = data['email'] ?? '';
-          _whatsappController.text = data['whatsapp'] ?? '';
-          _supportPhoneController.text = data['supportPhone'] ?? '';
-          _addressController.text = data['address'] ?? '';
-          _postalCodeController.text = data['postalCode'] ?? '';
-          _taxNumberController.text = data['taxNumber'] ?? '';
-          _taxOfficeController.text = data['taxOffice'] ?? '';
-          _companyNameController.text = data['companyName'] ?? '';
-          _instagramController.text = data['instagram'] ?? '';
-          _facebookController.text = data['facebook'] ?? '';
-          _twitterController.text = data['twitter'] ?? '';
-          _websiteController.text = data['website'] ?? '';
-          _customerServiceController.text = data['customerService'] ?? '';
-          _companyTitleController.text = data['companyTitle'] ?? '';
-
-          _selectedCity = (data['city'] ?? '').toString().trim();
-          _selectedDistrict = (data['district'] ?? '').toString().trim();
-          _companyType = data['companyType'] ?? 'Limited Şirket';
-          _storeCategory = (data['category'] ?? '').toString();
-          _storeRating = (data['rating'] as num?)?.toDouble() ?? 0.0;
-          if (_isWaiterEntry) {
-            _selectedModule = SellerModule.garson;
-          } else if (fallbackFromFoodModulesToDashboard) {
-            _selectedModule = SellerModule.dashboard;
-          }
-          _workingHours = data['workingHours'] ?? '09:00 - 18:00';
-          _storeLat = (data['storeLat'] as num?)?.toDouble();
-          _storeLng = (data['storeLng'] as num?)?.toDouble();
-
-          _isStoreOpen = data['isStoreOpen'] ?? true;
-          _acceptNewOrders = data['acceptNewOrders'] ?? true;
-          _allowMessaging = data['allowMessaging'] ?? true;
-          _isHolidayMode = data['isHolidayMode'] ?? false;
-
-          _storeLogoUrl = data['logoUrl'];
-          _storeCoverUrl = data['coverUrl'];
-          for (int i = 0; i < _storeImages.length; i++) {
-            _storeImages[i] = null;
-          }
-          for (int i = 0; i < _announcementBanners.length; i++) {
-            _announcementBanners[i] = null;
-          }
-          _sellerVideos = <String>[];
-
-          if (data['galleryImages'] != null) {
-            final List<dynamic> gallery = data['galleryImages'];
-            for (int i = 0; i < gallery.length && i < 6; i++) {
-              _storeImages[i] = gallery[i];
-            }
-          }
-
-          if (data['banners'] != null) {
-            final List<dynamic> banners = data['banners'];
-            for (int i = 0; i < banners.length && i < 3; i++) {
-              _announcementBanners[i] = banners[i];
-            }
-          }
-
-          if (data['sellerVideos'] != null) {
-            final List<dynamic> videos = data['sellerVideos'];
-            _sellerVideos = videos.map((e) => e.toString()).toList();
-          }
-        });
+        if (!_syncStoreProfileControllersFromData(data, requestId)) return;
+        _applyStoreProfileStateFieldsFromData(
+          data,
+          requestId: requestId,
+          fallbackFromFoodModulesToDashboard: fallbackFromFoodModulesToDashboard,
+        );
+        if (!_canApplyStoreProfileRequest(requestId)) return;
         _applySellerSeo();
         if ((_isWaiterEntry || isFoodStore) &&
             (_selectedModule == SellerModule.garson ||
                 _selectedModule == SellerModule.system)) {
           unawaited(_loadStoreTables(silent: true));
         } else if (_storeTables.isNotEmpty) {
-          setState(() {
+          _safeSetStateForStoreProfile(requestId, () {
             _storeTables = <Map<String, dynamic>>[];
           });
         }
@@ -2216,7 +2388,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
               'durationMs=${watch.elapsedMilliseconds} '
               'storeCategory=${_storeCategory.isEmpty ? '-' : _storeCategory}',
         );
-      } else if (mounted) {
+      } else if (_canApplyStoreProfileRequest(requestId)) {
         _debugLogSellerBootstrap(
           branch: 'store_profile:null_result',
           requestUrl: requestUrl,
@@ -2224,7 +2396,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
               'durationMs=${watch.elapsedMilliseconds} '
               'StoreService.getStoreProfile returned null',
         );
-        setState(() {
+        _safeSetStateForStoreProfile(requestId, () {
           _storeProfileLoadError =
               'Magaza profili bulunamadi. stores kaydi eksik veya seller_id eslesmiyor.';
           _hasLoadedStoreProfile = false;
@@ -2242,18 +2414,19 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         error: e,
         stackTrace: stackTrace,
       );
-      if (mounted) {
-        setState(() {
+      if (_canApplyStoreProfileRequest(requestId)) {
+        _safeSetStateForStoreProfile(requestId, () {
           _storeProfileLoadError = _mapStoreProfileLoadError(e);
           _hasLoadedStoreProfile = false;
         });
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
+      if (_canApplyStoreProfileRequest(requestId)) {
+        _safeSetStateForStoreProfile(requestId, () => _isLoading = false);
         _logSellerPanelStateUpdate(
           'store_profile_loading_end',
-          note: 'durationMs=${watch.elapsedMilliseconds}',
+          note:
+              'durationMs=${watch.elapsedMilliseconds} requestId=$requestId',
         );
       }
     }
@@ -7555,6 +7728,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required int tableNumber,
     required List<Map<String, dynamic>> tableOrders,
   }) async {
+    final tapAt = DateTime.now();
     final sellerId = _resolveGarsonSellerId();
     if (sellerId.isEmpty) {
       if (!mounted) return false;
@@ -7579,23 +7753,62 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
     try {
       for (final order in pending) {
+        final perf = Stopwatch()..start();
         final id = order['id']?.toString() ?? '';
         if (id.isEmpty) continue;
         if (!_garsonKitchenDispatchInFlightOrderIds.add(id)) {
           continue;
         }
         processedAny = true;
+        var printDispatchMs = 0;
         try {
           if (_garsonOrderHasKitchenPrintItems(order)) {
+            final dispatchWatch = Stopwatch()..start();
             await _sellerPrintJobService.dispatchNewOrderFromTableOrder(
               tableOrderId: id,
               waiterName: waiterName,
             );
+            printDispatchMs = dispatchWatch.elapsedMilliseconds;
             printedAny = true;
           }
+          final dbWatch = Stopwatch()..start();
           await _storeService.updateTableOrderStatus(id, 'sent');
+          final dbUpdateMs = dbWatch.elapsedMilliseconds;
+          logPrintPerf(
+            'kitchen_order',
+            <String, Object?>{
+              'tap_at': tapAt.toIso8601String(),
+              'db_create_or_update_ms': dbUpdateMs,
+              'kitchen_payload_build_ms': 0,
+              'print_dispatch_ms': printDispatchMs,
+              'bridge_request_ms': 0,
+              'total_ms': perf.elapsedMilliseconds,
+              'total_submit_to_print_ms': perf.elapsedMilliseconds,
+              'table': tableNumber,
+              'table_order_id': id,
+              'layer': 'seller_panel',
+              'ok': true,
+            },
+          );
         } catch (e) {
           errors.add(e.toString());
+          logPrintPerf(
+            'kitchen_order',
+            <String, Object?>{
+              'tap_at': tapAt.toIso8601String(),
+              'db_create_or_update_ms': 0,
+              'kitchen_payload_build_ms': 0,
+              'print_dispatch_ms': printDispatchMs,
+              'bridge_request_ms': 0,
+              'total_ms': perf.elapsedMilliseconds,
+              'total_submit_to_print_ms': perf.elapsedMilliseconds,
+              'table': tableNumber,
+              'table_order_id': id,
+              'layer': 'seller_panel',
+              'ok': false,
+              'error': e.toString(),
+            },
+          );
         } finally {
           _garsonKitchenDispatchInFlightOrderIds.remove(id);
         }
@@ -7608,7 +7821,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           SnackBar(
             content: Text(
               printedAny
-                  ? 'Sipariş mutfağa gönderildi; mutfak fişi yazdırma kuyruğuna alındı.'
+                  ? 'Sipariş mutfağa gönderildi; mutfak fişi yazıcıya gönderildi.'
                   : 'Sipariş mutfağa gönderildi (mutfak kalemi yok).',
             ),
             backgroundColor: Colors.green.shade700,
@@ -7663,9 +7876,57 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  bool get _hasGarsonStoreContextOnPanel =>
+      _hasLoadedStoreProfile || _storeNameController.text.trim().isNotEmpty;
+
+  Map<String, String> _buildGarsonReceiptStoreContextFromPanelState(
+    String sellerId,
+  ) {
+    final branchSource = _selectedDistrict.trim().isNotEmpty
+        ? _selectedDistrict.trim()
+        : (_selectedCity.trim().isNotEmpty ? _selectedCity.trim() : 'Merkez');
+    final upperBranchSource = branchSource.toUpperCase();
+    final branch =
+        (upperBranchSource.contains('ŞUBE') ||
+            upperBranchSource.contains('SUBE'))
+        ? upperBranchSource
+        : '$upperBranchSource ŞUBE';
+    return <String, String>{
+      'store_id': sellerId,
+      'store_name': _storeNameController.text.trim().isNotEmpty
+          ? _storeNameController.text.trim()
+          : 'Mağaza',
+      'branch': branch,
+      'phone': _phoneController.text.trim().isNotEmpty
+          ? _phoneController.text.trim()
+          : '-',
+    };
+  }
+
+  Map<String, String> _garsonReceiptStoreContextForPrint(String sellerId) {
+    final cacheFresh =
+        _garsonReceiptStoreContextCache != null &&
+        _garsonReceiptStoreContextCachedAt != null &&
+        DateTime.now().difference(_garsonReceiptStoreContextCachedAt!) <=
+            const Duration(minutes: 30);
+    if (cacheFresh) {
+      return Map<String, String>.from(_garsonReceiptStoreContextCache!);
+    }
+    if (_hasGarsonStoreContextOnPanel) {
+      final built = _buildGarsonReceiptStoreContextFromPanelState(sellerId);
+      _garsonReceiptStoreContextCache = built;
+      _garsonReceiptStoreContextCachedAt = DateTime.now();
+      return built;
+    }
+    return _buildGarsonReceiptStoreContextFromPanelState(sellerId);
+  }
+
   Future<Map<String, String>> _loadGarsonReceiptStoreContext(
     String sellerId,
   ) async {
+    if (_hasGarsonStoreContextOnPanel) {
+      return _garsonReceiptStoreContextForPrint(sellerId);
+    }
     const storeContextSelect =
         'seller_id, business_name, phone, district, city';
     final storeRow = await Supabase.instance.client
@@ -7674,27 +7935,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         .eq('seller_id', sellerId)
         .maybeSingle();
 
-    final storeName = _storeNameController.text.trim().isNotEmpty
-        ? _storeNameController.text.trim()
-        : (storeRow?['business_name']?.toString().trim().isNotEmpty ?? false)
+    final storeName = (storeRow?['business_name']?.toString().trim().isNotEmpty ??
+            false)
         ? storeRow!['business_name'].toString().trim()
         : 'Mağaza';
 
-    final phone = _phoneController.text.trim().isNotEmpty
-        ? _phoneController.text.trim()
-        : (storeRow?['phone']?.toString().trim().isNotEmpty ?? false)
+    final phone = (storeRow?['phone']?.toString().trim().isNotEmpty ?? false)
         ? storeRow!['phone'].toString().trim()
         : '-';
 
-    final branchSource = _selectedDistrict.trim().isNotEmpty
-        ? _selectedDistrict.trim()
-        : (storeRow?['district']?.toString().trim().isNotEmpty ?? false)
+    final branchSource = (storeRow?['district']?.toString().trim().isNotEmpty ??
+            false)
         ? storeRow!['district'].toString().trim()
-        : (_selectedCity.trim().isNotEmpty
-              ? _selectedCity.trim()
-              : ((storeRow?['city']?.toString().trim().isNotEmpty ?? false)
-                    ? storeRow!['city'].toString().trim()
-                    : 'Merkez'));
+        : ((storeRow?['city']?.toString().trim().isNotEmpty ?? false)
+              ? storeRow!['city'].toString().trim()
+              : 'Merkez');
 
     final upperBranchSource = branchSource.toUpperCase();
     final branch =
@@ -7703,12 +7958,83 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ? upperBranchSource
         : '$upperBranchSource ŞUBE';
 
-    return <String, String>{
+    final built = <String, String>{
       'store_id': storeRow?['seller_id']?.toString() ?? sellerId,
       'store_name': storeName,
       'branch': branch,
       'phone': phone,
     };
+    _garsonReceiptStoreContextCache = built;
+    _garsonReceiptStoreContextCachedAt = DateTime.now();
+    return built;
+  }
+
+  Future<void> _warmGarsonPrintCaches(String sellerId) async {
+    if (sellerId.isEmpty || !_supportsDirectLocalPrintBridge) return;
+    _garsonReceiptStoreContextForPrint(sellerId);
+    final bridgeReachable =
+        _isLocalPrintAvailable ??
+        await _printOrchestrator.isLocalBridgeReachable(useCache: true);
+    if (bridgeReachable != true) return;
+    unawaited(
+      _printOrchestrator.loadSetupSnapshot(
+        restaurantId: sellerId,
+        minimal: true,
+        flowName: 'garson_warm',
+        source: 'seller_panel_garson',
+      ),
+    );
+    if (_garsonCachedReceiptPrinter == null) {
+      final receiptPrinter =
+          await _printOrchestrator.resolveReceiptPrinterForGarsonFast(sellerId);
+      if (receiptPrinter != null) {
+        _garsonCachedReceiptPrinter = receiptPrinter;
+        _garsonCachedReceiptPrinterAt = DateTime.now();
+        _garsonCachedReceiptEncodingProfile ??=
+            await _printOrchestrator.loadEncodingProfile(
+              restaurantId: sellerId,
+              printerId: receiptPrinter.id,
+            );
+      }
+    }
+    if (_garsonCachedKitchenPrinter == null) {
+      final kitchenPrinter =
+          await _printOrchestrator.resolveKitchenPrinterForGarsonFast(sellerId);
+      if (kitchenPrinter != null) {
+        _garsonCachedKitchenPrinter = kitchenPrinter;
+        _garsonCachedKitchenPrinterAt = DateTime.now();
+        _garsonCachedKitchenEncodingProfile ??=
+            await _printOrchestrator.loadEncodingProfile(
+              restaurantId: sellerId,
+              printerId: kitchenPrinter.id,
+            );
+      }
+    }
+  }
+
+  Future<UnifiedPrinterModel?> _garsonReceiptPrinterForDirectDispatch(
+    String sellerId,
+  ) async {
+    final cacheFresh =
+        _garsonCachedReceiptPrinter != null &&
+        _garsonCachedReceiptPrinterAt != null &&
+        DateTime.now().difference(_garsonCachedReceiptPrinterAt!) <=
+            const Duration(minutes: 30);
+    if (cacheFresh) {
+      return _garsonCachedReceiptPrinter;
+    }
+    final resolved =
+        await _printOrchestrator.resolveReceiptPrinterForGarsonFast(sellerId);
+    if (resolved != null) {
+      _garsonCachedReceiptPrinter = resolved;
+      _garsonCachedReceiptPrinterAt = DateTime.now();
+      _garsonCachedReceiptEncodingProfile ??=
+          await _printOrchestrator.loadEncodingProfile(
+            restaurantId: sellerId,
+            printerId: resolved.id,
+          );
+    }
+    return resolved;
   }
 
   void _scheduleLocalPrintStatusRefreshIfNeeded({
@@ -8769,36 +9095,55 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     List<Map<String, dynamic>>? orders,
     String uiAction = 'adisyon_button',
   }) async {
+    final tapAt = DateTime.now();
     final watch = Stopwatch()..start();
-    final sellerId = _resolveGarsonSellerId();
-    if (sellerId.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Satıcı oturumu bulunamadı.')),
-      );
-      return;
-    }
-
+    var orderFetchMs = 0;
+    var storeProfileFetchMs = 0;
+    var printerResolveMs = 0;
+    var payloadBuildMs = 0;
+    var bridgeRequestMs = 0;
+    String? path;
+    bool? ok;
+    String? errorMessage;
     var storeId = '';
     try {
+      final sellerId = _resolveGarsonSellerId();
+      if (sellerId.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Satıcı oturumu bulunamadı.')),
+        );
+        return;
+      }
+      final providedOrders = (orders ?? const <Map<String, dynamic>>[]);
+      final shouldFetchOrders = providedOrders.isEmpty;
+      final ordersFuture = shouldFetchOrders
+          ? _storeService.getTableOrdersByTable(
+              sellerId: sellerId,
+              tableNumber: tableNumber,
+            )
+          : Future<List<Map<String, dynamic>>>.value(providedOrders);
+
+      final storeContext = _garsonReceiptStoreContextForPrint(sellerId);
+      storeProfileFetchMs = 0;
+
       final bridgeReachableFuture = _supportsDirectLocalPrintBridge
-          ? _printOrchestrator.isLocalBridgeReachable(useCache: true)
+          ? (_isLocalPrintAvailable == true
+                ? Future<bool>.value(true)
+                : _printOrchestrator.isLocalBridgeReachable(useCache: true))
           : Future<bool>.value(false);
+
+      final fetchWatch = Stopwatch()..start();
       final liveData = await Future.wait<dynamic>([
-        _storeService.getTableOrdersByTable(
-          sellerId: sellerId,
-          tableNumber: tableNumber,
-        ),
-        _loadGarsonReceiptStoreContext(sellerId),
+        ordersFuture,
         bridgeReachableFuture,
       ]);
-      final liveTableOrders =
-          List<Map<String, dynamic>>.from(liveData[0] as List);
-      final storeContext = Map<String, String>.from(liveData[1] as Map);
-      final bridgeReachable = liveData[2] as bool;
-      final tableOrders = liveTableOrders.isNotEmpty
-          ? liveTableOrders
-          : (orders ?? const <Map<String, dynamic>>[]);
+      final fetchedOrders = List<Map<String, dynamic>>.from(liveData[0] as List);
+      final bridgeReachable = liveData[1] as bool;
+      if (shouldFetchOrders) {
+        orderFetchMs = fetchWatch.elapsedMilliseconds;
+      }
+      final tableOrders = fetchedOrders;
       if (tableOrders.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -8807,19 +9152,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return;
       }
       storeId = storeContext['store_id'] ?? '';
+      final payloadWatch = Stopwatch()..start();
       final basePayload = _buildGarsonReceiptPayload(
         tableNumber: tableNumber,
         tableOrders: tableOrders,
         storeContext: storeContext,
       );
+      payloadBuildMs = payloadWatch.elapsedMilliseconds;
 
       if (_supportsDirectLocalPrintBridge && bridgeReachable) {
-        final receiptPrinter = await _printOrchestrator.resolvePrinterForDispatch(
-          restaurantId: sellerId,
-          role: PrinterSetupRole.adisyon,
-          flowName: 'waiter_receipt',
-          documentType: 'receipt',
+        final resolveWatch = Stopwatch()..start();
+        final receiptPrinter = await _garsonReceiptPrinterForDirectDispatch(
+          sellerId,
         );
+        printerResolveMs = resolveWatch.elapsedMilliseconds;
         if (receiptPrinter == null) {
           _showPrinterWorkflowSnackBar(
             'Adisyon yazıcısı seçilmemiş.',
@@ -8833,6 +9179,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         )
           ..['printer_id'] = receiptPrinter.id
           ..['printer_name'] = receiptPrinter.displayName;
+        if (_garsonCachedReceiptEncodingProfile != null) {
+          _printOrchestrator.stampEncodingProfileOnPayload(
+            payload,
+            _garsonCachedReceiptEncodingProfile!,
+          );
+        } else {
+          _printOrchestrator.stampDefaultTurkishGuaranteeOnPayload(payload);
+        }
         final printWatch = Stopwatch()..start();
         final directResult = await _printOrchestrator.printPhysicalToPrinter(
           receiptPrinter,
@@ -8843,10 +9197,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           source: 'seller_panel_garson',
           tableId: tableNumber.toString(),
         );
-        debugPrint(
-          '[GarsonPerf] adisyon_bridge_response_ms=${printWatch.elapsedMilliseconds} '
-          'table=$tableNumber ok=${directResult.ok}',
-        );
+        bridgeRequestMs = printWatch.elapsedMilliseconds;
+        path = 'direct';
+        ok = directResult.ok;
         if (!mounted) return;
         if (directResult.ok) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -8965,6 +9318,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           ),
         ),
       );
+      path ??= 'fallback_queue';
     } catch (error, stackTrace) {
       debugPrint(
         'SellerPanel queued receipt print failed for table '
@@ -8976,6 +9330,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         fallback: 'Adisyon yazdırma kuyruğuna alınamadı.',
       );
       _showPrinterWorkflowSnackBar(message, warning: true);
+      errorMessage = message.replaceAll('\n', ' ');
+    } finally {
+      logPrintPerf(
+        'waiter_receipt',
+        <String, Object?>{
+          'tap_at': tapAt.toIso8601String(),
+          'order_fetch_ms': orderFetchMs,
+          'store_profile_fetch_ms': storeProfileFetchMs,
+          'printer_resolve_ms': printerResolveMs,
+          'payload_build_ms': payloadBuildMs,
+          'bridge_request_ms': bridgeRequestMs,
+          'total_ms': watch.elapsedMilliseconds,
+          'table': tableNumber,
+          if (path != null) 'path': path,
+          if (ok != null) 'ok': ok,
+          if (errorMessage != null) 'error': errorMessage,
+        },
+      );
     }
   }
 
@@ -9664,6 +10036,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required int tableNumber,
     Map<String, dynamic>? initialOrder,
   }) {
+    unawaited(
+      _pushGarsonTableFlowPage(
+        tableNumber: tableNumber,
+        initialOrder: initialOrder,
+      ),
+    );
+  }
+
+  Future<void> _pushGarsonTableFlowPage({
+    required int tableNumber,
+    Map<String, dynamic>? initialOrder,
+  }) async {
     final sellerId =
         initialOrder?['seller_id']?.toString().trim().isNotEmpty == true
         ? initialOrder!['seller_id'].toString().trim()
@@ -9685,11 +10069,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       return;
     }
 
+    await _warmGarsonPrintCaches(sellerId);
+    if (!mounted) return;
+
     final tableRow = _storeTableRowByNumber(tableNumber);
     final tableTitle = resolveTableCardTitle(
       tableRow: tableRow,
       tableNumber: tableNumber,
     );
+    final kitchenPrinter = _garsonCachedKitchenPrinter;
+    final bridgeReady =
+        _isLocalPrintAvailable ??
+        await _printOrchestrator.isLocalBridgeReachable(useCache: true);
+    final canFastKitchen =
+        _supportsDirectLocalPrintBridge &&
+        bridgeReady &&
+        kitchenPrinter != null;
 
     final flowPage = _MobileGarsonTableFlowPage(
       sellerId: sellerId,
@@ -9744,6 +10139,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             tableNumber: tableNumber,
             tableOrders: tableOrders,
           ),
+      supportsDirectLocalPrintBridge: _supportsDirectLocalPrintBridge,
+      isLocalPrintAvailable: _isLocalPrintAvailable,
+      canUseLocalPrintFastPath: canFastKitchen,
+      cachedKitchenPrinterId: kitchenPrinter?.id,
+      cachedKitchenPrinterName: kitchenPrinter?.displayName,
+      cachedKitchenPrinterBackend: kitchenPrinter?.backend.value,
+      cachedKitchenPrinterQueue: kitchenPrinter?.queueName,
     );
 
     // Always open as a full-screen route — consistent on mobile and web.
@@ -28396,6 +28798,13 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     this.debugInitialTableOrders = const <Map<String, dynamic>>[],
     this.debugSubmitFeedbackMessage,
     this.debugSubmitFeedbackIsWarning = false,
+    this.supportsDirectLocalPrintBridge = false,
+    this.isLocalPrintAvailable,
+    this.canUseLocalPrintFastPath,
+    this.cachedKitchenPrinterId,
+    this.cachedKitchenPrinterName,
+    this.cachedKitchenPrinterBackend,
+    this.cachedKitchenPrinterQueue,
   });
 
   final String sellerId;
@@ -28433,6 +28842,19 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final List<Map<String, dynamic>> debugInitialTableOrders;
   final String? debugSubmitFeedbackMessage;
   final bool debugSubmitFeedbackIsWarning;
+  final bool supportsDirectLocalPrintBridge;
+  final bool? isLocalPrintAvailable;
+  final bool? canUseLocalPrintFastPath;
+  final String? cachedKitchenPrinterId;
+  final String? cachedKitchenPrinterName;
+  final String? cachedKitchenPrinterBackend;
+  final String? cachedKitchenPrinterQueue;
+
+  bool get effectiveCanUseLocalPrintFastPath =>
+      canUseLocalPrintFastPath ??
+      (supportsDirectLocalPrintBridge &&
+          (isLocalPrintAvailable ?? false) &&
+          (cachedKitchenPrinterId?.trim().isNotEmpty ?? false));
 
   @override
   State<_MobileGarsonTableFlowPage> createState() =>
@@ -28737,6 +29159,14 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       _showDispatchFeedbackSnackBar(message, warning: true);
       return;
     }
+    if (feedback.physicallyDispatched) {
+      _setSubmitFeedback(
+        'Mutfak fişi yazıcıya gönderildi',
+        tone: _GarsonSubmitFeedbackTone.success,
+        autoHideAfter: const Duration(seconds: 4),
+      );
+      return;
+    }
     if (feedback.progressed && !feedback.physicallyDispatched) {
       final prefix = (_lastSubmitActionLabel ?? '').trim();
       _setSubmitFeedback(
@@ -28906,6 +29336,114 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return _orderPrintJobService.safeUserDisplayName(_currentSupabaseUser());
   }
 
+  GarsonKitchenPrinterHint? _kitchenPrinterHintFromWidget() {
+    final id = widget.cachedKitchenPrinterId?.trim() ?? '';
+    if (id.isEmpty) return null;
+    final name = widget.cachedKitchenPrinterName?.trim() ?? '';
+    final queue = widget.cachedKitchenPrinterQueue?.trim() ?? '';
+    final backend = widget.cachedKitchenPrinterBackend?.trim() ?? '';
+    return GarsonKitchenPrinterHint(
+      id: id,
+      name: name.isNotEmpty ? name : id,
+      backend: backend.isNotEmpty ? backend : 'windows-spool',
+      queue: queue.isNotEmpty ? queue : (name.isNotEmpty ? name : id),
+    );
+  }
+
+  Future<bool> _resolveCanUseGarsonKitchenFastPath() async {
+    if (widget.effectiveCanUseLocalPrintFastPath) return true;
+    if (!widget.supportsDirectLocalPrintBridge) return false;
+    final bridge = widget.isLocalPrintAvailable ??
+        await _printOrchestrator.isLocalBridgeReachable(useCache: true);
+    if (!bridge) return false;
+    if (widget.cachedKitchenPrinterId?.trim().isNotEmpty == true) {
+      return true;
+    }
+    final resolved = await _printOrchestrator.resolveKitchenPrinterForGarsonFast(
+      widget.sellerId,
+    );
+    return resolved != null;
+  }
+
+  void _logGarsonKitchenPerf(Map<String, Object?> fields) {
+    final parts = <String>[];
+    for (final entry in fields.entries) {
+      final value = entry.value;
+      if (value == null) continue;
+      parts.add('${entry.key}=$value');
+    }
+    debugPrint('[GarsonPerf][kitchen_order] ${parts.join(' ')}');
+  }
+
+  Map<String, dynamic> _tableOrderFromPrintDispatch(
+    OrderPrintJobDispatchResult result, {
+    required List<Map<String, dynamic>> items,
+    required String status,
+    required int revision,
+    required String updatedAt,
+  }) {
+    final raw = result.raw;
+    return <String, dynamic>{
+      'id': result.orderId ?? raw['order_id']?.toString(),
+      'seller_id': widget.sellerId,
+      'table_number': widget.tableNumber,
+      'items': items,
+      'status': status,
+      'created_at': raw['created_at']?.toString() ??
+          (result.orderSavedAt.isEmpty ? updatedAt : result.orderSavedAt),
+      'updated_at': updatedAt,
+      'revision': revision,
+    };
+  }
+
+  _KitchenDispatchFeedback _feedbackFromImmediateResult(
+    GarsonKitchenImmediateResult result,
+  ) {
+    if (result.fallbackReason == 'print_system_disabled') {
+      return _KitchenDispatchFeedback(
+        notice:
+            'Sipariş kaydedildi. Baskı sistemi kapalı olduğu için mutfak fişi yazdırılmadı.',
+        dispatchPath: 'skipped',
+        fallbackReason: result.fallbackReason,
+      );
+    }
+    if (result.physicallyDispatched) {
+      return _KitchenDispatchFeedback(
+        physicallyDispatched: true,
+        bridgeRequestMs: result.bridgeRequestMs,
+        dispatchPath: result.dispatchPath,
+        payloadBuildMs: result.payloadBuildMs,
+        printerResolveMs: result.printerResolveMs,
+        printerCacheResolveMs: result.printerCacheResolveMs,
+        fastPathDecisionMs: result.fastPathDecisionMs,
+        totalToBridgeMs: result.totalToBridgeMs,
+        directPrintStartedMs: result.directPrintStartedMs,
+        directPrintDoneMs: result.directPrintDoneMs,
+        selectedPrinterId: result.selectedPrinterId,
+      );
+    }
+    if (result.error != null && result.error!.trim().isNotEmpty) {
+      return _KitchenDispatchFeedback(
+        error: result.error,
+        dispatchPath: result.dispatchPath.isEmpty ? 'legacy' : result.dispatchPath,
+        fallbackReason: result.fallbackReason,
+        bridgeRequestMs: result.bridgeRequestMs,
+        payloadBuildMs: result.payloadBuildMs,
+        printerResolveMs: result.printerResolveMs,
+        totalToBridgeMs: result.totalToBridgeMs,
+      );
+    }
+    return _KitchenDispatchFeedback(
+      queuedOnly: result.shouldFallbackLegacy,
+      dispatchPath: result.dispatchPath.isEmpty ? 'legacy' : result.dispatchPath,
+      fallbackReason: result.fallbackReason,
+      bridgeRequestMs: result.bridgeRequestMs,
+      payloadBuildMs: result.payloadBuildMs,
+      printerResolveMs: result.printerResolveMs,
+      totalToBridgeMs: result.totalToBridgeMs,
+    );
+  }
+
   _KitchenDispatchFeedback _feedbackFromDispatchResult(
     OrderPrintJobDispatchResult result,
   ) {
@@ -28925,17 +29463,24 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         error: 'Mutfak yazdırma için eşleşen yazıcı/istasyon bulunamadı.',
       );
     }
-    if (result.dispatchedJobCount > 0) {
+    if (result.physicallyDispatched || result.dispatchedJobCount > 0) {
       return _KitchenDispatchFeedback(
-        physicallyDispatched: true,
+        physicallyDispatched: result.physicallyDispatched,
         orderId: result.orderId,
         printJobIds: result.printJobIds,
+        bridgeRequestMs: result.bridgeRequestMs,
+        dispatchPath: result.dispatchPath,
+        totalToBridgeMs: result.bridgeRequestMs,
       );
     }
     return _KitchenDispatchFeedback(
       queuedOnly: true,
       orderId: result.orderId,
       printJobIds: result.printJobIds,
+      dispatchPath: result.dispatchPath.isEmpty ? 'legacy' : result.dispatchPath,
+      fallbackReason: result.physicallyDispatched
+          ? ''
+          : (result.dispatchPath.contains('hub') ? 'hub_claimed' : 'legacy_queue'),
     );
   }
 
@@ -28972,6 +29517,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   ) async {
     if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
+      final useGarsonFastKitchen = await _resolveCanUseGarsonKitchenFastPath();
       final result = await _orderPrintJobService.dispatchNewOrder(
         restaurantId: widget.sellerId,
         tableNumber: widget.tableNumber,
@@ -28979,6 +29525,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
         jobType: 'new_order',
+        garsonDesktopFastKitchen: useGarsonFastKitchen == true,
       );
       debugPrint(
         '[PrintPipeline] trace=${result.traceId} stage=mobile_dispatch_done '
@@ -28989,6 +29536,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         'printJobCount=${result.printJobCount} '
         'printJobIds=${result.printJobIds.isEmpty ? '-' : result.printJobIds.join(",")} '
         'dispatchedLocal=${result.dispatchedJobCount} '
+        'physicallyDispatched=${result.physicallyDispatched} '
+        'bridgeRequestMs=${result.bridgeRequestMs} '
+        'path=${result.dispatchPath.isEmpty ? '-' : result.dispatchPath} '
         'table=${widget.tableNumber}',
       );
       _orderPrintJobService.debugLogResult(result);
@@ -31217,6 +31767,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           : const <String, dynamic>{};
       late final Map<String, dynamic> submittedOrder;
       _KitchenDispatchFeedback? parallelDispatchFeedback;
+      String? kitchenPerfTapAt;
+      int? kitchenPerfDbSaveMs;
       if (widget.debugUseLocalSubmit) {
         submittedOrder = <String, dynamic>{
           'id': editingId != null && editingId.isNotEmpty
@@ -31304,53 +31856,208 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           updatedAt: updatedAt,
         );
       } else {
-        // Fire table_orders insert AND print_jobs RPC in parallel.
-        // They write to different tables – no dependency between them.
-        final orderSaveWatch = Stopwatch()..start();
+        kitchenPerfTapAt = DateTime.now().toIso8601String();
+        final canFastKitchen = await _resolveCanUseGarsonKitchenFastPath();
         debugPrint(
           '[PrintPipeline] table_order_save_started_at=${DateTime.now().toIso8601String()} '
-          'table=${widget.tableNumber} seller=${widget.sellerId}',
+          'table=${widget.tableNumber} seller=${widget.sellerId} '
+          'canFastKitchen=$canFastKitchen',
         );
-        final results = await Future.wait<dynamic>([
-          _storeService.submitTableOrder(
-            sellerId: widget.sellerId,
+
+        if (canFastKitchen) {
+          var immediate =
+              await _orderPrintJobService.dispatchGarsonKitchenImmediateFromItems(
+            restaurantId: widget.sellerId,
             tableNumber: widget.tableNumber,
             items: items,
-            status: nextStatus,
-            placementSource: 'waiter',
-          ),
-          _dispatchKitchenPrintJobs(items),
-        ]);
-        debugPrint(
-          '[PrintPipeline] parallel_save_ms=${orderSaveWatch.elapsedMilliseconds} '
-          'table=${widget.tableNumber} '
-          'table_order_saved_at=${DateTime.now().toIso8601String()}',
-        );
-        submittedOrder = results[0] as Map<String, dynamic>;
-        parallelDispatchFeedback = results[1] as _KitchenDispatchFeedback;
-        debugPrint(
-          '[GarsonPerf] db_update_ms=${orderSaveWatch.elapsedMilliseconds} '
-          'print_dispatch_ms=${orderSaveWatch.elapsedMilliseconds} '
-          'table=${widget.tableNumber}',
-        );
+            waiterId: _currentWaiterId(),
+            waiterName: _currentWaiterName(),
+            printerHint: _kitchenPrinterHintFromWidget(),
+            canUseLocalPrintFastPath: widget.effectiveCanUseLocalPrintFastPath,
+          );
+          if (!immediate.physicallyDispatched &&
+              immediate.fallbackReason == 'no_cached_kitchen_printer') {
+            immediate =
+                await _orderPrintJobService.dispatchGarsonKitchenImmediateFromItems(
+              restaurantId: widget.sellerId,
+              tableNumber: widget.tableNumber,
+              items: items,
+              waiterId: _currentWaiterId(),
+              waiterName: _currentWaiterName(),
+              printerHint: _kitchenPrinterHintFromWidget(),
+              canUseLocalPrintFastPath: widget.effectiveCanUseLocalPrintFastPath,
+            );
+          }
+          parallelDispatchFeedback = _feedbackFromImmediateResult(immediate);
+
+          if (immediate.physicallyDispatched && mounted) {
+            _setSubmitFeedback(
+              'Mutfak fişi yazıcıya gönderildi',
+              tone: _GarsonSubmitFeedbackTone.success,
+              autoHideAfter: const Duration(seconds: 4),
+            );
+          }
+
+          final dbWatch = Stopwatch()..start();
+          if (immediate.physicallyDispatched) {
+            try {
+              submittedOrder = await _storeService.submitTableOrder(
+                sellerId: widget.sellerId,
+                tableNumber: widget.tableNumber,
+                items: items,
+                status: nextStatus,
+                placementSource: 'waiter',
+              );
+            } catch (dbError) {
+              debugPrint(
+                '[GarsonPerf][kitchen_order] edge=print_ok_db_failed '
+                'table=${widget.tableNumber} error=$dbError',
+              );
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Mutfak fişi yazdırıldı ancak sipariş kaydı güncellenemedi. '
+                      'Lütfen bağlantıyı kontrol edin.',
+                    ),
+                  ),
+                );
+              }
+              rethrow;
+            }
+          } else if (immediate.shouldFallbackLegacy &&
+              (immediate.fallbackReason == 'bridge_unavailable' ||
+                  immediate.fallbackReason == 'no_cached_kitchen_printer')) {
+            debugPrint(
+              '[GarsonPerf][kitchen_order] fallback_reason=${immediate.fallbackReason} '
+              'path=legacy table=${widget.tableNumber}',
+            );
+            final legacyResult = await _orderPrintJobService.dispatchNewOrder(
+              restaurantId: widget.sellerId,
+              tableNumber: widget.tableNumber,
+              items: items,
+              waiterId: _currentWaiterId(),
+              waiterName: _currentWaiterName(),
+              jobType: 'new_order',
+              garsonDesktopFastKitchen: true,
+            );
+            _orderPrintJobService.debugLogResult(legacyResult);
+            parallelDispatchFeedback = _feedbackFromDispatchResult(legacyResult);
+            submittedOrder = _tableOrderFromPrintDispatch(
+              legacyResult,
+              items: items,
+              status: nextStatus,
+              revision: nextRevision,
+              updatedAt: updatedAt,
+            );
+          } else {
+            submittedOrder = await _storeService.submitTableOrder(
+              sellerId: widget.sellerId,
+              tableNumber: widget.tableNumber,
+              items: items,
+              status: nextStatus,
+              placementSource: 'waiter',
+            );
+          }
+          kitchenPerfDbSaveMs = dbWatch.elapsedMilliseconds;
+          debugPrint(
+            '[PrintPipeline] table_order_saved_at=${DateTime.now().toIso8601String()} '
+            'table=${widget.tableNumber} db_save_ms=$kitchenPerfDbSaveMs',
+          );
+        } else {
+          final orderSaveWatch = Stopwatch()..start();
+          final results = await Future.wait<dynamic>([
+            _storeService.submitTableOrder(
+              sellerId: widget.sellerId,
+              tableNumber: widget.tableNumber,
+              items: items,
+              status: nextStatus,
+              placementSource: 'waiter',
+            ),
+            _dispatchKitchenPrintJobs(items),
+          ]);
+          debugPrint(
+            '[PrintPipeline] parallel_save_ms=${orderSaveWatch.elapsedMilliseconds} '
+            'table=${widget.tableNumber} '
+            'table_order_saved_at=${DateTime.now().toIso8601String()}',
+          );
+          submittedOrder = results[0] as Map<String, dynamic>;
+          parallelDispatchFeedback = results[1] as _KitchenDispatchFeedback;
+          debugPrint(
+            '[GarsonPerf] db_save_ms=${orderSaveWatch.elapsedMilliseconds} '
+            'legacy_parallel_ms=${orderSaveWatch.elapsedMilliseconds} '
+            'table=${widget.tableNumber}',
+          );
+        }
       }
       final dispatchFeedback = widget.debugUseLocalSubmit
           ? (parallelDispatchFeedback ?? _KitchenDispatchFeedback.none)
           : parallelDispatchFeedback ?? _KitchenDispatchFeedback.none;
-      final payloadWatch = Stopwatch()..start();
+      final uiReconcileWatch = Stopwatch()..start();
       final optimisticOrders = _buildOptimisticTableOrders(
         existingTableOrders: existingTableOrders,
         submittedOrder: submittedOrder,
         editingOrderId: editingId,
       );
-      debugPrint(
-        '[GarsonPerf] payload_build_ms=${payloadWatch.elapsedMilliseconds} '
-        'ui_reconcile_ms=0 table=${widget.tableNumber}',
-      );
-      debugPrint(
-        '[GarsonPerf] total_submit_to_print_ms=${pipelineWatch.elapsedMilliseconds} '
-        'bridge_response_ms=${dispatchFeedback.physicallyDispatched ? pipelineWatch.elapsedMilliseconds : '-'} '
-        'table=${widget.tableNumber}',
+      final uiReconcileMs = uiReconcileWatch.elapsedMilliseconds;
+      final totalToBridgeMs = dispatchFeedback.totalToBridgeMs > 0
+          ? dispatchFeedback.totalToBridgeMs
+          : dispatchFeedback.bridgeRequestMs;
+      final perfTapAt =
+          kitchenPerfTapAt ?? DateTime.now().toIso8601String();
+      _logGarsonKitchenPerf(<String, Object?>{
+        'tap_at': perfTapAt,
+        'fast_path_decision_ms': dispatchFeedback.fastPathDecisionMs,
+        'printer_cache_resolve_ms': dispatchFeedback.printerCacheResolveMs > 0
+            ? dispatchFeedback.printerCacheResolveMs
+            : dispatchFeedback.printerResolveMs,
+        'payload_build_ms': dispatchFeedback.payloadBuildMs,
+        'bridge_request_ms': dispatchFeedback.bridgeRequestMs,
+        'direct_print_started_ms': dispatchFeedback.directPrintStartedMs,
+        'direct_print_done_ms': dispatchFeedback.directPrintDoneMs > 0
+            ? dispatchFeedback.directPrintDoneMs
+            : totalToBridgeMs,
+        if (kitchenPerfDbSaveMs != null) 'db_save_ms': kitchenPerfDbSaveMs,
+        'ui_reconcile_ms': uiReconcileMs,
+        'total_to_bridge_ms': totalToBridgeMs,
+        'total_submit_to_print_ms': totalToBridgeMs,
+        'total_ui_done_ms': pipelineWatch.elapsedMilliseconds,
+        'physicallyDispatched': dispatchFeedback.physicallyDispatched,
+        'path': dispatchFeedback.dispatchPath.isEmpty
+            ? 'legacy'
+            : dispatchFeedback.dispatchPath,
+        if (dispatchFeedback.selectedPrinterId.isNotEmpty)
+          'printerId': dispatchFeedback.selectedPrinterId,
+        if (widget.cachedKitchenPrinterId?.trim().isNotEmpty == true)
+          'cachedKitchenPrinterId': widget.cachedKitchenPrinterId,
+        if (dispatchFeedback.fallbackReason.isNotEmpty)
+          'fallback_reason': dispatchFeedback.fallbackReason,
+        'table': widget.tableNumber,
+      });
+      logPrintPerf(
+        'kitchen_order',
+        <String, Object?>{
+          'tap_at': perfTapAt,
+          'fast_path_decision_ms': dispatchFeedback.fastPathDecisionMs,
+          'printer_cache_resolve_ms': dispatchFeedback.printerCacheResolveMs > 0
+              ? dispatchFeedback.printerCacheResolveMs
+              : dispatchFeedback.printerResolveMs,
+          'bridge_request_ms': dispatchFeedback.bridgeRequestMs,
+          'payload_build_ms': dispatchFeedback.payloadBuildMs,
+          'total_submit_to_print_ms': totalToBridgeMs,
+          'total_to_bridge_ms': totalToBridgeMs,
+          if (kitchenPerfDbSaveMs != null) 'db_save_ms': kitchenPerfDbSaveMs,
+          'ui_reconcile_ms': uiReconcileMs,
+          'total_ui_done_ms': pipelineWatch.elapsedMilliseconds,
+          'physicallyDispatched': dispatchFeedback.physicallyDispatched,
+          'path': dispatchFeedback.dispatchPath.isEmpty
+              ? 'legacy'
+              : dispatchFeedback.dispatchPath,
+          if (dispatchFeedback.selectedPrinterId.isNotEmpty)
+            'printerId': dispatchFeedback.selectedPrinterId,
+          'table': widget.tableNumber,
+          'ok': dispatchFeedback.physicallyDispatched,
+        },
       );
       if (!mounted) return;
       final actionLabel = (editingId != null && editingId.isNotEmpty)

@@ -198,7 +198,7 @@ class _FakeLocalPrintService extends LocalPrintService {
   }
 
   @override
-  Future<Map<String, dynamic>?> health() async {
+  Future<Map<String, dynamic>?> health({bool useCache = true}) async {
     return const <String, dynamic>{'ok': true, 'printer': <String, dynamic>{'ok': true}};
   }
 
@@ -217,7 +217,7 @@ class _FakeLocalPrintService extends LocalPrintService {
   }
 
   @override
-  Future<Map<String, dynamic>?> printers() async {
+  Future<Map<String, dynamic>?> printers({bool useCache = true}) async {
     return <String, dynamic>{'ok': true, 'count': _printers.length, 'printers': _printers};
   }
 
