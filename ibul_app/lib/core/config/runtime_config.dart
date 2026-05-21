@@ -16,7 +16,7 @@ const String _kIbulDistributionChannel = String.fromEnvironment(
 const String _kIbulSellerDesktopWindowsDownloadUrl = String.fromEnvironment(
   'IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL',
   defaultValue:
-      'https://ibul-ecommerce.web.app/downloads/IbulSellerSetup.exe',
+      'https://github.com/barankanan/ibull/releases/download/v1.0.2-windows-seller/IbulSellerSetup.exe',
 );
 const String _kIbulSellerDesktopMacosDownloadUrl = String.fromEnvironment(
   'IBUL_SELLER_DESKTOP_MACOS_DOWNLOAD_URL',
@@ -46,7 +46,7 @@ class AppRuntimeConfig {
 
   static String? get optionalGoogleClientId => _normalize(_kIbulGoogleClientId);
 
-  /// Web / GitHub download for the unified Windows seller installer.
+  /// GitHub Release download for the unified Windows seller installer (web + panel).
   static String get sellerDesktopWindowsDownloadUrl => _requireHttpUrl(
     'IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL',
     _kIbulSellerDesktopWindowsDownloadUrl,

@@ -148,7 +148,7 @@ PrinterErrorPresentation presentPrinterErrorCode(
         title: 'Kurulum dosyası bulunamadı',
         message: kDebugMode
             ? 'Kurulum dosyası sunucuda bulunamadı. Lütfen deploy paketini kontrol edin.\n'
-                  'Teknik: build/web/downloads/IbulSellerSetup.exe staging + Firebase Hosting deploy.'
+                  'Teknik: GitHub Release asset (IbulSellerSetup.exe) ve IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL.'
             : 'Kurulum dosyası şu an indirilemiyor. Lütfen daha sonra tekrar deneyin.',
         primaryActionLabel: kDebugMode ? 'Deploy Kontrolü' : 'Tekrar Dene',
         secondaryActionLabel: kDebugMode ? 'Tekrar Dene' : null,

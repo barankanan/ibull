@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALLER_LOCAL="$ROOT_DIR/build/windows/installer/IbulSellerSetup.exe"
-URL="${IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL:-${IBUL_WINDOWS_INSTALLER_DOWNLOAD_URL:-https://ibul-ecommerce.web.app/downloads/IbulSellerSetup.exe}}"
+URL="${IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL:-${IBUL_WINDOWS_INSTALLER_DOWNLOAD_URL:-https://github.com/barankanan/ibull/releases/download/v1.0.2-windows-seller/IbulSellerSetup.exe}}"
 
 echo "[1/4] Checking local installer artifact..."
 if [[ ! -f "$INSTALLER_LOCAL" ]]; then
@@ -21,6 +21,12 @@ fi
 
 if [[ "$URL" == *"/downloads/IbulPrintBridgeSetup.exe" ]]; then
   echo "FAIL: Installer URL still points at the retired bridge-only Firebase path: $URL"
+  exit 1
+fi
+
+if [[ "$URL" == *"/downloads/IbulSellerSetup.exe" ]]; then
+  echo "FAIL: Installer URL still points at retired Firebase Hosting path: $URL"
+  echo "Use GitHub Release asset URL (see runtime_config.dart default)."
   exit 1
 fi
 

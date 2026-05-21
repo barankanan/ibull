@@ -1,18 +1,20 @@
-# Hosted Windows downloads
+# Windows seller installer download
 
-Primary customer installer (Firebase Hosting `public/downloads/` after staging):
+**Customer download (web + Satıcı Panel):** GitHub Release asset (Firebase Spark `.exe` hosting yok):
 
-- `IbulSellerSetup.exe` — Ibul Satıcı Windows (desktop app + yazıcı servisi)
+- https://github.com/barankanan/ibull/releases/download/v1.0.2-windows-seller/IbulSellerSetup.exe
 
-Build and stage:
+Uygulama varsayılanı: `AppRuntimeConfig.sellerDesktopWindowsDownloadUrl` (`ibul_app/lib/core/config/runtime_config.dart`).
+
+Build installer:
 
 ```powershell
 pwsh scripts/build_seller_desktop_windows.ps1
-npm run stage:windows-installer
-npm run check:windows-installer
 ```
 
-Public URL example:
+Upload `build/windows/installer/IbulSellerSetup.exe` to a new GitHub Release tag, then bump `IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL` / `runtime_config.dart` if the tag changes.
+
+Legacy Firebase Hosting path (artık müşteri indirmesi için kullanılmıyor):
 
 - `/downloads/IbulSellerSetup.exe`
 
