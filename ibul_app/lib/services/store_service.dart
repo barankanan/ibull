@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config/runtime_config.dart';
 import '../models/seller_product.dart';
 import '../models/sub_admin.dart';
+import '../utils/product_create_log.dart';
+import '../utils/product_edit_log.dart';
 import 'store/store_media_service.dart';
 import 'store/store_mapping_helpers.dart';
 import 'store_notification_trigger_service.dart';
@@ -417,6 +419,7 @@ class StoreService {
     if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
 
     try {
+      productCreateLog('product_save_start', extra: {'name': product.name});
       // 1. Ürünü Veritabanına Ekle (Resimsiz Başlangıç)
       Map<String, dynamic> productDbData =
           StoreServiceMappers.productToSnakeCase(product.toMap());
@@ -424,6 +427,14 @@ class StoreService {
       productDbData['status'] = 'uploading';
       productDbData['image_urls'] = [];
       productDbData['image_url'] = null;
+      if (!productDbData.containsKey('product_type') ||
+          (productDbData['product_type']?.toString().trim().isEmpty ?? true)) {
+        productDbData['product_type'] = 'product';
+      }
+      productCreateLog(
+        'payload_type',
+        extra: {'product_type': productDbData['product_type']},
+      );
       if (product.accessories != null) {
         productDbData['accessories'] = product.accessories;
       }
@@ -462,8 +473,32 @@ class StoreService {
             onProgress('Görsel ${i + 1}/${images.length} yükleniyor...');
           }
 
-          final url = await _uploadProductImage(productId, file, i);
-          uploadedUrls.add(url);
+          productCreateLog(
+            'image_upload_start',
+            extra: {'productId': productId, 'index': i, 'name': file.name},
+          );
+          try {
+            final url = await _uploadProductImage(productId, file, i);
+            uploadedUrls.add(url);
+            productCreateLog(
+              'image_upload_success',
+              extra: {'productId': productId, 'index': i, 'url': url},
+            );
+          } catch (uploadError, uploadStack) {
+            productCreateLog(
+              'product_save_error',
+              extra: {
+                'errorType': uploadError.runtimeType.toString(),
+                'message': uploadError.toString(),
+                'phase': 'image_upload',
+                'index': i,
+              },
+            );
+            debugPrint('Product image upload stack: $uploadStack');
+            throw Exception(
+              'Görsel yüklenemedi. Lütfen tekrar deneyin.',
+            );
+          }
         }
       }
 
@@ -516,10 +551,13 @@ class StoreService {
       final Map<String, dynamic> uploadedProductData = <String, dynamic>{
         'image_urls': uploadedUrls,
         'image_url': uploadedUrls.isNotEmpty ? uploadedUrls.first : null,
-        // Satıcı "Aktif" dediğinde vitrinde görünsün (anonim RLS ile uyumlu).
-        'status': (product.status == 'Aktif') ? 'Aktif' : product.status,
+        'status': _canonicalPersistedProductStatus(product.status),
         'updated_at': DateTime.now().toIso8601String(),
       };
+      productCreateLog(
+        'approval_status_resolved',
+        extra: {'status': uploadedProductData['status']},
+      );
       if (updatedVariants != null) {
         uploadedProductData['variants'] = updatedVariants;
       }
@@ -536,9 +574,27 @@ class StoreService {
           ),
         );
       }
-    } catch (e) {
+      productCreateLog(
+        'product_save_success',
+        extra: {'productId': productId, 'imageCount': uploadedUrls.length},
+      );
+    } catch (e, stack) {
+      productCreateLog(
+        'product_save_error',
+        extra: {
+          'errorType': e.runtimeType.toString(),
+          'message': e.toString(),
+        },
+      );
       debugPrint('Add Product Error: $e');
-      throw Exception('Ürün eklenirken hata oluştu: $e');
+      debugPrint('Add Product stack: $stack');
+      if (e is Exception &&
+          e.toString().contains('Görsel yüklenemedi')) {
+        rethrow;
+      }
+      throw Exception(
+        'Ürün eklenirken hata oluştu: ${productCreateErrorMessage(e)}',
+      );
     }
   }
 
@@ -594,14 +650,9 @@ class StoreService {
         updateData['accessories'] = product.accessories;
       }
 
-      // 'Aktif' ve 'active' her ikisi de aktif durumu temsil eder; DB'ye
-      // her zaman canonical Türkçe değer ('Aktif') yazılır.
+      updateData['status'] = _canonicalPersistedProductStatus(product.status);
       final bool isActiveStatus =
-          product.status.trim().toLowerCase() == 'aktif' ||
-          product.status.trim().toLowerCase() == 'active';
-      if (isActiveStatus) {
-        updateData['status'] = 'Aktif';
-      }
+          _canonicalPersistedProductStatus(product.status) == 'Aktif';
 
       if (variants != null) {
         final updatedVariants = <dynamic>[];
@@ -905,6 +956,10 @@ class StoreService {
 
   /// Onay bekleyen veya düzenleme onayı bekleyen ürünleri tek seferde getirir.
   Future<List<SellerProduct>> fetchPendingProducts() async {
+    adminProductApprovalLog(
+      'pending_query',
+      extra: {'statuses': _pendingProductStatuses.join(',')},
+    );
     final List<dynamic> response = await _supabase
         .from('products')
         .select()
@@ -979,6 +1034,7 @@ class StoreService {
   }
 
   Future<void> approveProduct(String productId) async {
+    adminProductApprovalLog('approve_product', extra: {'productId': productId});
     await _supabase
         .from('products')
         .update({
@@ -989,6 +1045,10 @@ class StoreService {
   }
 
   Future<void> rejectProduct(String productId, String reason) async {
+    adminProductApprovalLog(
+      'reject_product',
+      extra: {'productId': productId, 'reason': reason},
+    );
     await _supabase
         .from('products')
         .update({
@@ -997,6 +1057,30 @@ class StoreService {
           'rejected_at': DateTime.now().toIso8601String(),
         })
         .eq('id', productId);
+  }
+
+  /// DB'ye yazılacak ürün durumunu normalize eder.
+  static String _canonicalPersistedProductStatus(String status) {
+    final normalized = status.trim().toLowerCase().replaceAll(' ', '_');
+    switch (normalized) {
+      case 'aktif':
+      case 'active':
+        return 'Aktif';
+      case 'taslak':
+      case 'draft':
+        return 'Taslak';
+      case 'pending_approval':
+      case 'pending':
+      case 'bekleniyor':
+      case 'beklemede':
+      case 'onay_bekliyor':
+        return 'pending_approval';
+      case 'rejected':
+      case 'reddedildi':
+        return 'rejected';
+      default:
+        return status.trim().isEmpty ? 'Taslak' : status.trim();
+    }
   }
 
   // --- Helper Methods ---
@@ -1661,19 +1745,33 @@ class StoreService {
     String sellerId,
   ) async {
     const fullSelect =
-        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, specifications, product_type, pricing_type, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, created_at, attributes, video_url, video_path, video_public_url, thumbnail_path, thumbnail_public_url, video_duration_seconds, video_size_bytes, thumbnail_size_bytes, video_status, variants, accessories, station_id, printer_routing_enabled';
+        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, specifications, product_type, pricing_type, pricing_mode, base_price, portion_price, price_per_kg, size_options, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, created_at, attributes, video_url, video_path, video_public_url, thumbnail_path, thumbnail_public_url, video_duration_seconds, video_size_bytes, thumbnail_size_bytes, video_status, variants, accessories, station_id, printer_routing_enabled';
+    const fullSelectWithStation =
+        '$fullSelect, stations(name, code)';
     const fallbackSelect =
-        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, specifications, product_type, pricing_type, stock, status, created_at, attributes, video_url, station_id, printer_routing_enabled';
+        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, specifications, product_type, pricing_type, pricing_mode, base_price, portion_price, price_per_kg, size_options, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, created_at, attributes, video_url, station_id, printer_routing_enabled';
+    const fallbackSelectWithStation = '$fallbackSelect, stations(name, code)';
 
-    try {
+    Future<List<Map<String, dynamic>>> runSelect(String select) async {
       final list = await _supabase
           .from('products')
-          .select(fullSelect)
+          .select(select)
           .eq('seller_id', sellerId)
           .order('created_at', ascending: false);
       return List<Map<String, dynamic>>.from(list as List);
+    }
+
+    try {
+      return await runSelect(fullSelectWithStation);
     } catch (e) {
       final message = e.toString();
+      if (message.contains('stations')) {
+        try {
+          return await runSelect(fullSelect);
+        } catch (inner) {
+          debugPrint('getProductsBySellerId stations join fallback: $inner');
+        }
+      }
       if (message.contains('video_path') ||
           message.contains('video_public_url') ||
           message.contains('thumbnail_path') ||
@@ -1685,13 +1783,17 @@ class StoreService {
           message.contains('variants') ||
           message.contains('accessories')) {
         try {
-          final list = await _supabase
-              .from('products')
-              .select(fallbackSelect)
-              .eq('seller_id', sellerId)
-              .order('created_at', ascending: false);
-          return List<Map<String, dynamic>>.from(list as List);
+          return await runSelect(fallbackSelectWithStation);
         } catch (fallbackError) {
+          final fallbackMessage = fallbackError.toString();
+          if (fallbackMessage.contains('stations')) {
+            try {
+              return await runSelect(fallbackSelect);
+            } catch (finalError) {
+              debugPrint('getProductsBySellerId fallback error: $finalError');
+              return [];
+            }
+          }
           debugPrint('getProductsBySellerId fallback error: $fallbackError');
           return [];
         }

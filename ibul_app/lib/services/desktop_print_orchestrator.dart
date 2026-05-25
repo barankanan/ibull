@@ -20,6 +20,7 @@ import 'printer_event_log_service.dart';
 import 'print_station_service.dart';
 import 'printer_repository.dart';
 import 'working_printer_store.dart';
+import 'kitchen_routing_service.dart';
 
 typedef LocalPrintServiceFactory = LocalPrintService Function();
 
@@ -2515,6 +2516,8 @@ class DesktopPrintOrchestrator {
     }
 
     if (requireSuccessfulRoleTests) {
+      final samePrinterSelected =
+          receiptPrinter.id.trim() == kitchenPrinter.id.trim();
       final receiptTestReady = _latestTestStillMatches(
         snapshot.localConfig?.receiptTest,
         receiptPrinter,
@@ -2523,7 +2526,19 @@ class DesktopPrintOrchestrator {
         snapshot.localConfig?.kitchenTest,
         kitchenPrinter,
       );
-      if (!receiptTestReady || !kitchenTestReady) {
+      final sharedPrinterTestReady = samePrinterSelected &&
+          (receiptTestReady || kitchenTestReady);
+      if ((!receiptTestReady && !sharedPrinterTestReady) ||
+          (!kitchenTestReady && !sharedPrinterTestReady)) {
+        debugPrint(
+          '[PrinterRoleSave] error '
+          'seller_id=$restaurantId store_id=${storeId ?? '-'} '
+          'printer_id=${receiptPrinter.id} printer_name=${receiptPrinter.displayName} '
+          'role=receipt+kitchen station_id=- area_id=- '
+          'rpc=savePrinterRoles status=test_required '
+          'receiptTestReady=$receiptTestReady kitchenTestReady=$kitchenTestReady '
+          'samePrinter=$samePrinterSelected',
+        );
         return const PrinterActionResult(
           ok: false,
           status: 'test_required',
@@ -2532,6 +2547,14 @@ class DesktopPrintOrchestrator {
         );
       }
     }
+
+    debugPrint(
+      '[PrinterRoleSave] request '
+      'seller_id=$restaurantId store_id=${storeId ?? '-'} '
+      'receipt_printer_id=${receiptPrinter.id} receipt_printer_name=${receiptPrinter.displayName} '
+      'kitchen_printer_id=${kitchenPrinter.id} kitchen_printer_name=${kitchenPrinter.displayName} '
+      'role=receipt+kitchen rpc=savePrinterRoles',
+    );
 
     final canonicalSelections = <PrinterSetupRole, UnifiedPrinterModel>{
       PrinterSetupRole.adisyon: receiptPrinter,
@@ -2688,6 +2711,13 @@ class DesktopPrintOrchestrator {
       },
     );
 
+    debugPrint(
+      '[PrinterRoleSave] ${cloudSaved ? 'success' : 'partial'} '
+      'seller_id=$restaurantId store_id=${storeId ?? '-'} '
+      'receipt_printer_id=${canonicalReceiptPrinter.id} '
+      'kitchen_printer_id=${canonicalKitchenPrinter.id} '
+      'cloud_saved=$cloudSaved station_config_saved=$stationConfigSaved',
+    );
     return PrinterActionResult(
       ok: true,
       status: cloudSaved ? 'ready' : 'local_saved_only',
@@ -2760,6 +2790,31 @@ class DesktopPrintOrchestrator {
       flowType: flowType ?? flowName,
       endpoint: _physicalPrintEndpoint(payload),
     );
+    if (!payload.isReceipt) {
+      final restaurantKey = restaurantId?.trim() ?? '';
+      final stamped =
+          KitchenTicketHeaderResolver.stampProductionHeaderOnKitchenPayload(
+        requestPayload,
+        stationNamesById: restaurantKey.isEmpty
+            ? null
+            : KitchenTicketHeaderResolver.stationNamesForRestaurant(
+                restaurantKey,
+              ),
+        stationCodesById: restaurantKey.isEmpty
+            ? null
+            : KitchenTicketHeaderResolver.stationCodesForRestaurant(
+                restaurantKey,
+              ),
+        productStationByProductId: restaurantKey.isEmpty
+            ? null
+            : KitchenTicketHeaderResolver.productMappingsForRestaurant(
+                restaurantKey,
+              ),
+      );
+      requestPayload
+        ..clear()
+        ..addAll(stamped);
+    }
     final encodingAlreadyStamped =
         requestPayload['encoding_profile_verified'] == true &&
         requestPayload['turkish_print_mode'] != null;

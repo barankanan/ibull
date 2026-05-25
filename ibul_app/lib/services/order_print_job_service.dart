@@ -9,11 +9,40 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/desktop_printer_setup_models.dart';
 import '../models/mixed_service_order.dart';
 import '../models/printer_model.dart';
+import '../models/seller_product.dart';
 import 'desktop_print_orchestrator.dart';
+import 'kitchen_daily_order_no_store.dart';
+import 'kitchen_order_number_fields.dart';
+import 'kitchen_print_trace_log.dart';
+import 'kitchen_product_mapping_cache_store.dart';
 import 'kitchen_routing_service.dart';
+import 'printer_encoding_profile_store.dart';
 import 'printer_event_log_service.dart';
 import 'printer_repository.dart';
+import '../utils/garson_product_selection.dart';
 import '../utils/print_perf_log.dart';
+
+class _KitchenStationPrintGroup {
+  const _KitchenStationPrintGroup({
+    required this.stationId,
+    required this.stationName,
+    required this.items,
+  });
+
+  final String stationId;
+  final String stationName;
+  final List<Map<String, dynamic>> items;
+}
+
+class _KitchenStationNamesResolveResult {
+  const _KitchenStationNamesResolveResult({
+    required this.namesById,
+    this.fallbackReason = '',
+  });
+
+  final Map<String, String> namesById;
+  final String fallbackReason;
+}
 
 class OrderPrintJobDispatchResult {
   const OrderPrintJobDispatchResult({
@@ -94,6 +123,7 @@ class GarsonKitchenImmediateResult {
     this.payloadBuildMs = 0,
     this.printerResolveMs = 0,
     this.printerCacheResolveMs = 0,
+    this.stationResolveMs = 0,
     this.fastPathDecisionMs = 0,
     this.directPrintStartedMs = 0,
     this.directPrintDoneMs = 0,
@@ -110,6 +140,7 @@ class GarsonKitchenImmediateResult {
   final int payloadBuildMs;
   final int printerResolveMs;
   final int printerCacheResolveMs;
+  final int stationResolveMs;
   final int fastPathDecisionMs;
   final int directPrintStartedMs;
   final int directPrintDoneMs;
@@ -170,6 +201,162 @@ class OrderPrintJobService {
       PrinterEventLogService();
   final Map<String, Map<String, dynamic>> _printerConfigCache =
       <String, Map<String, dynamic>>{};
+  static final Map<String, Map<String, String>> _stationNamesMemoryCache =
+      <String, Map<String, String>>{};
+  static final Map<String, Map<String, String>> _stationCodesMemoryCache =
+      <String, Map<String, String>>{};
+  static final Map<String, DateTime> _stationNamesMemoryCachedAt =
+      <String, DateTime>{};
+  static final Map<String, Map<String, ProductStationMapping>>
+      _productStationMappingsByRestaurant =
+      <String, Map<String, ProductStationMapping>>{};
+  static const Duration _stationNamesCacheTtl = Duration(minutes: 30);
+
+  Map<String, String> cachedStationNamesForRestaurant(String restaurantId) {
+    return Map<String, String>.from(_readCachedStationNames(restaurantId));
+  }
+
+  Map<String, String> cachedStationCodesForRestaurant(String restaurantId) {
+    return Map<String, String>.from(_readCachedStationCodes(restaurantId));
+  }
+
+  Map<String, ProductStationMapping> cachedProductStationMappingsForRestaurant(
+    String restaurantId,
+  ) {
+    return Map<String, ProductStationMapping>.from(
+      _productStationMappingsByRestaurant[restaurantId.trim()] ??
+          const <String, ProductStationMapping>{},
+    );
+  }
+
+  /// Ürün Eşleme önbelleği + servis belleği (garson / hub mutfak başlığı).
+  Map<String, ProductStationMapping> mergedKitchenProductMappingsForRestaurant(
+    String restaurantId, {
+    Map<String, ProductStationMapping>? extra,
+  }) {
+    final id = restaurantId.trim();
+    KitchenProductMappingCacheStore.applyMemoryToResolver(id);
+    final merged = <String, ProductStationMapping>{
+      ...?KitchenTicketHeaderResolver.productMappingsForRestaurant(id),
+      ...cachedProductStationMappingsForRestaurant(id),
+      if (extra != null) ...extra,
+    };
+    return merged;
+  }
+
+  /// Ürün listesinden mutfak routing önbelleğini doldurur (ağ yok).
+  void registerKitchenProductStationMappings({
+    required String restaurantId,
+    required Iterable<SellerProduct> products,
+  }) {
+    final id = restaurantId.trim();
+    if (id.isEmpty) return;
+    final stationNames = KitchenTicketHeaderResolver.sanitizeStationNameMap(
+      _readCachedStationNames(id),
+    );
+    final stationCodes = _readCachedStationCodes(id);
+    final map = <String, ProductStationMapping>{};
+    for (final product in products) {
+      final stationId = product.stationId?.trim() ?? '';
+      if (stationId.isEmpty) continue;
+      var stationName = KitchenTicketHeaderResolver.sanitizeProductionStationName(
+        product.stationName?.trim() ?? '',
+      );
+      if (stationName == kKitchenGeneralStationLabel) {
+        stationName = stationNames[stationId] ?? kKitchenGeneralStationLabel;
+      }
+      final stationCode = product.stationCode?.trim().isNotEmpty == true
+          ? product.stationCode!.trim().toUpperCase()
+          : (stationCodes[stationId] ?? '');
+      map[product.id] = ProductStationMapping(
+        stationId: stationId,
+        stationName: stationName,
+        stationCode: stationCode,
+      );
+      productStationMappingLog(
+        'loaded',
+        extra: {
+          'productId': product.id,
+          'productName': product.name,
+          'stationId': stationId,
+          'stationName': stationName,
+          'stationCode': stationCode,
+          'header': map[product.id]!.headerLabel,
+          'source': product.stationName?.trim().isNotEmpty == true
+              ? 'product_row'
+              : 'station_cache',
+        },
+      );
+    }
+    _productStationMappingsByRestaurant[id] = map;
+    final productNamesById = <String, String>{
+      for (final product in products) product.id: product.name,
+    };
+    KitchenTicketHeaderResolver.registerRestaurantProductStationMappings(
+      id,
+      map,
+      productNamesByProductId: productNamesById,
+    );
+    unawaited(
+      KitchenProductMappingCacheStore.persistMappings(
+        restaurantId: id,
+        mappingsByProductId: map,
+        productNamesByProductId: productNamesById,
+      ),
+    );
+    KitchenTicketHeaderResolver.registerRestaurantStationCaches(
+      restaurantId: id,
+      stationNamesById: stationNames,
+      stationCodesById: stationCodes,
+    );
+  }
+
+  void registerKitchenProductStationMappingsFromMap({
+    required String restaurantId,
+    required Map<String, ProductStationMapping> mappings,
+    Map<String, String>? productNamesByProductId,
+  }) {
+    final id = restaurantId.trim();
+    if (id.isEmpty) return;
+    final copy = Map<String, ProductStationMapping>.from(mappings);
+    _productStationMappingsByRestaurant[id] = copy;
+    KitchenTicketHeaderResolver.registerRestaurantProductStationMappings(
+      id,
+      copy,
+      productNamesByProductId: productNamesByProductId,
+    );
+    if (productNamesByProductId != null && productNamesByProductId.isNotEmpty) {
+      unawaited(
+        KitchenProductMappingCacheStore.persistMappings(
+          restaurantId: id,
+          mappingsByProductId: copy,
+          productNamesByProductId: productNamesByProductId,
+        ),
+      );
+    }
+  }
+
+  /// Garson açılışında arka planda doldurulur; baskı anında DB beklenmez.
+  Future<void> prefetchStationNamesCache(String restaurantId) async {
+    final id = restaurantId.trim();
+    if (id.isEmpty) return;
+    if (_readCachedStationNames(id).isEmpty) {
+      await _fetchStationNamesById(id);
+    }
+  }
+
+  Future<void> prefetchKitchenStationContext({
+    required String restaurantId,
+    Iterable<SellerProduct>? products,
+  }) async {
+    await prefetchStationNamesCache(restaurantId);
+    if (products != null) {
+      registerKitchenProductStationMappings(
+        restaurantId: restaurantId,
+        products: products,
+      );
+    }
+  }
 
   /// Generates a short trace ID for pipeline log correlation.
   static String _generateTraceId() {
@@ -245,6 +432,9 @@ class OrderPrintJobService {
     String? waiterName,
     GarsonKitchenPrinterHint? printerHint,
     bool canUseLocalPrintFastPath = false,
+    Map<String, String>? productStationIdByProductId,
+    Map<String, ProductStationMapping>? productStationByProductId,
+    String? tableAreaName,
   }) async {
     final traceId = _generateTraceId();
     final pipelineWatch = Stopwatch()..start();
@@ -263,6 +453,13 @@ class OrderPrintJobService {
         selectedPrinterId: '',
         fallbackReason: 'direct_print_disabled',
       );
+      logKitchenDispatchPath(
+        path: 'legacy_rpc',
+        physicallyDispatched: false,
+        reason: 'direct_print_disabled',
+        itemCount: items.length,
+        traceId: traceId,
+      );
       return GarsonKitchenImmediateResult(
         traceId: traceId,
         fastPathDecisionMs: fastPathDecisionMs,
@@ -271,7 +468,9 @@ class OrderPrintJobService {
       );
     }
 
-    final printSystemEnabled = await _fetchPrintSystemEnabled(restaurantId);
+    final printSystemEnabled = canUseLocalPrintFastPath
+        ? true
+        : await _fetchPrintSystemEnabled(restaurantId);
     if (!printSystemEnabled) {
       final fastPathDecisionMs = decisionWatch.elapsedMilliseconds;
       _logGarsonKitchenFastPathDecision(
@@ -283,6 +482,13 @@ class OrderPrintJobService {
         selectedPrinterId: '',
         fallbackReason: 'print_system_disabled',
       );
+      logKitchenDispatchPath(
+        path: 'unknown',
+        physicallyDispatched: false,
+        reason: 'print_system_disabled',
+        itemCount: items.length,
+        traceId: traceId,
+      );
       return GarsonKitchenImmediateResult(
         traceId: traceId,
         fastPathDecisionMs: fastPathDecisionMs,
@@ -291,8 +497,26 @@ class OrderPrintJobService {
       );
     }
 
+    final cachedStationNames =
+        KitchenTicketHeaderResolver.sanitizeStationNameMap(
+          _readCachedStationNames(restaurantId),
+        );
+    final productMappings = mergedKitchenProductMappingsForRestaurant(
+      restaurantId,
+      extra: productStationByProductId,
+    );
+    final enrichedItems =
+        KitchenTicketHeaderResolver.enrichItemsWithProductionStations(
+          items: items,
+          stationNamesById: cachedStationNames,
+          stationCodesById: cachedStationCodesForRestaurant(restaurantId),
+          productStationIdByProductId: productStationIdByProductId,
+          productStationByProductId: productMappings,
+          tableAreaName: tableAreaName,
+          restaurantId: restaurantId,
+        );
     final normalized = _routingService
-        .normalizeItems(items)
+        .normalizeItems(enrichedItems)
         .map((item) => item.toPayloadMap())
         .toList(growable: false);
     if (normalized.isEmpty) {
@@ -305,6 +529,13 @@ class OrderPrintJobService {
         cachedKitchenPrinterName: cachedName,
         selectedPrinterId: '',
         fallbackReason: 'payload_build_failed',
+      );
+      logKitchenDispatchPath(
+        path: 'legacy_rpc',
+        physicallyDispatched: false,
+        reason: 'payload_build_failed',
+        itemCount: 0,
+        traceId: traceId,
       );
       return GarsonKitchenImmediateResult(
         traceId: traceId,
@@ -334,6 +565,13 @@ class OrderPrintJobService {
         'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber '
             'phase=garson_immediate_fallback bridge_unavailable',
       );
+      logKitchenDispatchPath(
+        path: 'legacy_rpc',
+        physicallyDispatched: false,
+        reason: 'bridge_unavailable',
+        itemCount: normalized.length,
+        traceId: traceId,
+      );
       return GarsonKitchenImmediateResult(
         traceId: traceId,
         fastPathDecisionMs: fastPathDecisionMs,
@@ -361,6 +599,13 @@ class OrderPrintJobService {
         selectedPrinterId: '',
         fallbackReason: 'no_cached_kitchen_printer',
       );
+      logKitchenDispatchPath(
+        path: 'legacy_rpc',
+        physicallyDispatched: false,
+        reason: 'no_cached_kitchen_printer',
+        itemCount: normalized.length,
+        traceId: traceId,
+      );
       return GarsonKitchenImmediateResult(
         traceId: traceId,
         fastPathDecisionMs: fastPathDecisionMs,
@@ -372,12 +617,30 @@ class OrderPrintJobService {
       );
     }
 
-    final encodingWatch = Stopwatch()..start();
-    final encodingProfile = await _printOrchestrator.loadEncodingProfile(
+    PrinterEncodingProfile? encodingProfile;
+    var encodingLoadMs = 0;
+    if (!canUseLocalPrintFastPath) {
+      final encodingWatch = Stopwatch()..start();
+      encodingProfile = await _printOrchestrator.loadEncodingProfile(
+        restaurantId: restaurantId,
+        printerId: kitchenPrinter.id,
+      );
+      encodingLoadMs = encodingWatch.elapsedMilliseconds;
+    }
+
+    final stationWatch = Stopwatch()..start();
+    final stationResolve = await _resolveStationNamesForKitchenPrint(
       restaurantId: restaurantId,
-      printerId: kitchenPrinter.id,
+      items: enrichedItems,
+      fastPath: canUseLocalPrintFastPath,
     );
-    final encodingLoadMs = encodingWatch.elapsedMilliseconds;
+    final stationResolveMs = stationWatch.elapsedMilliseconds;
+    final stationNamesById =
+        KitchenTicketHeaderResolver.sanitizeStationNameMap(
+          stationResolve.namesById,
+        );
+    final stationCodesById = cachedStationCodesForRestaurant(restaurantId);
+    var stationFallbackReason = stationResolve.fallbackReason;
 
     final payloadWatch = Stopwatch()..start();
     final localOrderTrace = 'garson-local-$traceId';
@@ -385,53 +648,139 @@ class OrderPrintJobService {
       'order_id': localOrderTrace,
       'job_type': 'new_order',
     };
-    final kitchenPayload = _buildKitchenPayload(
-      job: syntheticJob,
-      payload: <String, dynamic>{
-        'table_number': tableNumber,
-        'station_name': 'Genel',
-        if (waiterName != null && waiterName.trim().isNotEmpty)
-          'waiter_name': waiterName.trim(),
-      },
-      fallbackTableNumber: tableNumber,
-      sourceItems: items,
+    final stationGroups = _groupItemsByProductionStation(
+      normalized,
+      stationNamesById: stationNamesById,
+      stationCodesById: stationCodesById,
+      productStationByProductId: productMappings,
     );
-    if (encodingProfile != null) {
-      _printOrchestrator.stampEncodingProfileOnPayload(
-        kitchenPayload,
-        encodingProfile,
+    for (final group in stationGroups) {
+      final groupKey = group.stationId.isEmpty ? '__general__' : group.stationId;
+      final groupCode = group.stationId.isEmpty
+          ? ''
+          : (stationCodesById[group.stationId] ?? '');
+      logKitchenRoutingGroupCreated(
+        groupKey: groupKey,
+        stationId: group.stationId,
+        stationName: group.stationName,
+        stationCode: groupCode,
+        itemCount: group.items.length,
       );
-    } else {
-      _printOrchestrator.stampDefaultTurkishGuaranteeOnPayload(kitchenPayload);
+      kitchenPrintPayloadLog(
+        'grouped_station',
+        extra: {
+          'stationId': group.stationId.isEmpty ? '-' : group.stationId,
+          'stationName': group.stationName,
+          'itemCount': group.items.length,
+        },
+      );
     }
-    kitchenPayload['printer_id'] = kitchenPrinter.id;
-    kitchenPayload['printer_name'] = kitchenPrinter.displayName;
-    kitchenPayload['printer_queue'] = kitchenPrinter.queueName;
-    kitchenPayload['printer_backend'] = kitchenPrinter.backend.value;
-    kitchenPayload['document_type'] = 'kitchen';
-    kitchenPayload['flow_type'] = 'kitchen_order';
-    kitchenPayload['garson_immediate_trace'] = traceId;
     final payloadBuildMs = payloadWatch.elapsedMilliseconds;
-    final printerCacheResolveMsTotal =
-        printerCacheResolveMs + encodingLoadMs;
+    final printerCacheResolveMsTotal = printerCacheResolveMs + encodingLoadMs;
     final directPrintStartedMs = pipelineWatch.elapsedMilliseconds;
     final fastPathDecisionMs = decisionWatch.elapsedMilliseconds;
+    final dailyOrderNo = await KitchenDailyOrderNoStore.nextForRestaurant(
+      restaurantId,
+    );
 
     final bridgeWatch = Stopwatch()..start();
     try {
-      final physicalResult = await _printOrchestrator.printPhysicalToPrinter(
-        kitchenPrinter,
-        PrintPayload.fromQueuedJob(kitchenPayload),
-        restaurantId: restaurantId,
-        flowName: 'kitchen_order',
-        flowType: 'kitchen_order',
-        source: 'order_print_job_service_garson_immediate',
-        tableId: tableNumber.toString(),
+      var physicalOk = true;
+      String? physicalError;
+      for (final group in stationGroups) {
+        kitchenRoutingLog(
+          'station_group_created',
+          extra: {
+            'stationId': group.stationId,
+            'stationName': group.stationName,
+            'itemCount': group.items.length,
+          },
+        );
+        final kitchenPayload = _buildKitchenPayload(
+          job: <String, dynamic>{
+            ...syntheticJob,
+            if (group.stationId.isNotEmpty) 'station_id': group.stationId,
+          },
+          payload: <String, dynamic>{
+            'table_number': tableNumber,
+            if (tableAreaName != null && tableAreaName.trim().isNotEmpty) ...<String, dynamic>{
+              'display_table_label': tableAreaName.trim(),
+              'table_name': tableAreaName.trim(),
+              'table_display_name': tableAreaName.trim(),
+            },
+            'table_area_name':
+                KitchenTicketHeaderResolver.diningAreaFromTableLabel(
+                  tableAreaName,
+                ) ??
+                '',
+            'station_id': group.stationId.isEmpty ? null : group.stationId,
+            if (group.stationId.isNotEmpty) ...<String, dynamic>{
+              'station_code': stationCodesById[group.stationId] ?? '',
+              'station_name': group.stationName,
+              'kitchen_ticket_header': group.stationName,
+            },
+            if (waiterName != null && waiterName.trim().isNotEmpty)
+              'waiter_name': waiterName.trim(),
+            'daily_order_no': dailyOrderNo,
+            'kitchen_order_no': dailyOrderNo,
+          },
+          fallbackTableNumber: tableNumber,
+          sourceItems: group.items,
+          stationNamesById: stationNamesById,
+          productStationByProductId: productMappings,
+          stationCodesById: stationCodesById,
+          tableAreaName: tableAreaName,
+          kitchenTicketHeaderOverride: group.stationName,
+        );
+        stampKitchenOrderNumberFields(kitchenPayload);
+        if (encodingProfile != null) {
+          _printOrchestrator.stampEncodingProfileOnPayload(
+            kitchenPayload,
+            encodingProfile,
+          );
+        } else {
+          _printOrchestrator.stampDefaultTurkishGuaranteeOnPayload(
+            kitchenPayload,
+          );
+        }
+        kitchenPayload['printer_id'] = kitchenPrinter.id;
+        kitchenPayload['printer_name'] = kitchenPrinter.displayName;
+        kitchenPayload['printer_queue'] = kitchenPrinter.queueName;
+        kitchenPayload['printer_backend'] = kitchenPrinter.backend.value;
+        kitchenPayload['document_type'] = 'kitchen';
+        kitchenPayload['flow_type'] = 'kitchen_order';
+        kitchenPayload['garson_immediate_trace'] = traceId;
+        logKitchenFinalBeforeBridge(
+          path: 'direct_garson',
+          payload: kitchenPayload,
+        );
+        final physicalResult = await _printOrchestrator.printPhysicalToPrinter(
+          kitchenPrinter,
+          PrintPayload.fromQueuedJob(kitchenPayload),
+          restaurantId: restaurantId,
+          flowName: 'kitchen_order',
+          flowType: 'kitchen_order',
+          source: 'order_print_job_service_garson_immediate',
+          tableId: tableNumber.toString(),
+        );
+        if (!physicalResult.ok) {
+          physicalOk = false;
+          physicalError =
+              physicalResult.technicalMessage ?? physicalResult.message;
+        }
+      }
+      final physicalResult = PrinterActionResult(
+        ok: physicalOk,
+        status: physicalOk ? 'ready' : 'print_failed',
+        message: physicalError ?? '',
       );
       final bridgeRequestMs = bridgeWatch.elapsedMilliseconds;
       final directPrintDoneMs = pipelineWatch.elapsedMilliseconds;
-      final totalToBridgeMs = pipelineWatch.elapsedMilliseconds;
+      final totalToBridgeMs = directPrintStartedMs + bridgeRequestMs;
       final ok = physicalResult.ok;
+      final combinedFallback = ok
+          ? (stationFallbackReason.isEmpty ? 'none' : stationFallbackReason)
+          : 'direct_bridge_error';
       _logGarsonKitchenFastPathDecision(
         tableNumber: tableNumber,
         canUseLocalPrintFastPath: canUseLocalPrintFastPath,
@@ -439,7 +788,7 @@ class OrderPrintJobService {
         cachedKitchenPrinterId: cachedId,
         cachedKitchenPrinterName: cachedName,
         selectedPrinterId: kitchenPrinter.id,
-        fallbackReason: ok ? 'none' : 'direct_bridge_error',
+        fallbackReason: combinedFallback,
       );
       _logKitchen(
         'Dispatch',
@@ -448,24 +797,33 @@ class OrderPrintJobService {
             'printerId=${kitchenPrinter.id} printerName=${kitchenPrinter.displayName} '
             'bridgeRequestMs=$bridgeRequestMs totalToBridgeMs=$totalToBridgeMs '
             'printerCacheResolveMs=$printerCacheResolveMsTotal '
-            'payloadBuildMs=$payloadBuildMs',
+            'stationResolveMs=$stationResolveMs payloadBuildMs=$payloadBuildMs',
+      );
+      logKitchenDispatchPath(
+        path: ok ? 'direct_garson' : 'direct_garson_failed',
+        physicallyDispatched: ok,
+        reason: combinedFallback,
+        itemCount: normalized.length,
+        traceId: traceId,
       );
       logPrintPerf(
         'kitchen_order',
         <String, Object?>{
           'tap_at': DateTime.now().toIso8601String(),
           'fast_path_decision_ms': fastPathDecisionMs,
+          'printer_resolve_ms': printerCacheResolveMs,
           'printer_cache_resolve_ms': printerCacheResolveMsTotal,
+          'station_resolve_ms': stationResolveMs,
           'payload_build_ms': payloadBuildMs,
           'bridge_request_ms': bridgeRequestMs,
           'total_to_bridge_ms': totalToBridgeMs,
-          'total_submit_to_print_ms': totalToBridgeMs,
           'physicallyDispatched': ok,
           'path': ok ? 'direct_garson' : 'direct_garson_failed',
           'printerId': kitchenPrinter.id,
           'printerName': kitchenPrinter.displayName,
           'layer': 'order_print_job_service_immediate',
           'ok': ok,
+          'fallback_reason': combinedFallback,
           if (!ok)
             'error':
                 physicalResult.technicalMessage ?? physicalResult.message,
@@ -475,15 +833,16 @@ class OrderPrintJobService {
         physicallyDispatched: ok,
         bridgeRequestMs: bridgeRequestMs,
         payloadBuildMs: payloadBuildMs,
-        printerResolveMs: printerCacheResolveMsTotal,
+        printerResolveMs: printerCacheResolveMs,
         printerCacheResolveMs: printerCacheResolveMsTotal,
+        stationResolveMs: stationResolveMs,
         fastPathDecisionMs: fastPathDecisionMs,
         directPrintStartedMs: directPrintStartedMs,
         directPrintDoneMs: directPrintDoneMs,
         totalToBridgeMs: totalToBridgeMs,
         selectedPrinterId: kitchenPrinter.id,
         dispatchPath: ok ? 'direct_garson' : 'direct_garson_failed',
-        fallbackReason: ok ? '' : 'direct_bridge_error',
+        fallbackReason: ok ? stationFallbackReason : 'direct_bridge_error',
         error: ok
             ? null
             : (physicalResult.technicalMessage ?? physicalResult.message),
@@ -505,6 +864,13 @@ class OrderPrintJobService {
             'phase=garson_immediate_error durationMs=${pipelineWatch.elapsedMilliseconds}',
         error: error,
         stackTrace: stackTrace,
+      );
+      logKitchenDispatchPath(
+        path: 'legacy_rpc',
+        physicallyDispatched: false,
+        reason: 'direct_bridge_error',
+        itemCount: normalized.length,
+        traceId: traceId,
       );
       return GarsonKitchenImmediateResult(
         bridgeRequestMs: bridgeWatch.elapsedMilliseconds,
@@ -537,8 +903,22 @@ class OrderPrintJobService {
     final traceId = _generateTraceId();
     final pipelineStartedAt = DateTime.now().toIso8601String();
     final pipelineWatch = Stopwatch()..start();
+    final productMappings =
+        mergedKitchenProductMappingsForRestaurant(restaurantId);
+    final stationNamesById = KitchenTicketHeaderResolver.sanitizeStationNameMap(
+      _readCachedStationNames(restaurantId),
+    );
+    final stationCodesById = cachedStationCodesForRestaurant(restaurantId);
+    final enrichedItems =
+        KitchenTicketHeaderResolver.enrichItemsWithProductionStations(
+          items: items,
+          stationNamesById: stationNamesById,
+          stationCodesById: stationCodesById,
+          productStationByProductId: productMappings,
+          restaurantId: restaurantId,
+        );
     final normalized = _routingService
-        .normalizeItems(items)
+        .normalizeItems(enrichedItems)
         .map((item) => item.toPayloadMap())
         .toList(growable: false);
 
@@ -670,6 +1050,16 @@ class OrderPrintJobService {
             printJobIds: printJobIds,
             sourceItems: items,
           );
+
+    logKitchenDispatchPath(
+      path: useGarsonFastKitchen
+          ? 'print_jobs_garson_fast'
+          : (_canDirectDispatch ? 'print_jobs_legacy_rpc' : 'hub'),
+      physicallyDispatched: dispatchOutcome.physicallyDispatched,
+      reason: dispatchOutcome.dispatchPath,
+      itemCount: normalized.length,
+      traceId: traceId,
+    );
 
     if (dispatchOutcome.hasFailures) {
       throw Exception(dispatchOutcome.failureMessages.join(' | '));
@@ -1034,6 +1424,23 @@ class OrderPrintJobService {
     );
 
     final jobs = await _fetchPrintJobsByIds(printJobIds);
+    final productMappings =
+        mergedKitchenProductMappingsForRestaurant(restaurantId);
+    final stationNamesById =
+        KitchenTicketHeaderResolver.sanitizeStationNameMap(
+          _readCachedStationNames(restaurantId),
+        );
+    final stationCodesById = cachedStationCodesForRestaurant(restaurantId);
+    final enrichedSource =
+        sourceItems != null && sourceItems.isNotEmpty
+            ? KitchenTicketHeaderResolver.enrichItemsWithProductionStations(
+                items: sourceItems,
+                stationNamesById: stationNamesById,
+                stationCodesById: stationCodesById,
+                productStationByProductId: productMappings,
+                restaurantId: restaurantId,
+              )
+            : sourceItems;
     var dispatchedJobCount = 0;
     var failedJobCount = 0;
     final failureMessages = <String>[];
@@ -1045,11 +1452,33 @@ class OrderPrintJobService {
       if (printJobId.isEmpty) continue;
 
       final payload = await _payloadWithPrinterConfig(job);
+      final safePayload = Map<String, dynamic>.from(payload);
+      if (KitchenTicketHeaderResolver.isDiningAreaStationLabel(
+        _textValue(safePayload['area_name']),
+      )) {
+        safePayload.remove('area_name');
+      }
+      final jobStationId = _textValue(
+        job['station_id'] ?? safePayload['station_id'],
+      );
+      final headerOverride = jobStationId.isNotEmpty
+          ? KitchenTicketHeaderResolver.productionHeaderLabel(
+              stationName: stationNamesById[jobStationId] ??
+                  _textValue(safePayload['station_name']),
+              stationCode:
+                  stationCodesById[jobStationId] ??
+                  _textValue(safePayload['station_code']),
+            )
+          : null;
       final kitchenPayload = _buildKitchenPayload(
         job: job,
-        payload: payload,
+        payload: safePayload,
         fallbackTableNumber: tableNumber,
-        sourceItems: sourceItems,
+        sourceItems: enrichedSource,
+        stationNamesById: stationNamesById,
+        stationCodesById: stationCodesById,
+        productStationByProductId: productMappings,
+        kitchenTicketHeaderOverride: headerOverride,
       );
       if (encodingProfile != null) {
         _printOrchestrator.stampEncodingProfileOnPayload(
@@ -1074,6 +1503,10 @@ class OrderPrintJobService {
           dispatchStartedAt: DateTime.now(),
         );
         final bridgeWatch = Stopwatch()..start();
+        logKitchenFinalBeforeBridge(
+          path: 'print_jobs_garson_fast',
+          payload: kitchenPayload,
+        );
         final physicalResult = await _printOrchestrator.printPhysicalToPrinter(
           kitchenPrinter,
           PrintPayload.fromQueuedJob(kitchenPayload),
@@ -1224,10 +1657,38 @@ class OrderPrintJobService {
       }
 
       final payload = await _payloadWithPrinterConfig(job);
-      final area = _textValue(
-        payload['station_name'] ?? payload['area_name'],
-        fallback: 'Genel',
+      final safePayload = Map<String, dynamic>.from(payload);
+      if (KitchenTicketHeaderResolver.isDiningAreaStationLabel(
+        _textValue(safePayload['area_name']),
+      )) {
+        safePayload.remove('area_name');
+      }
+      final productMappings = Map<String, ProductStationMapping>.from(
+        _productStationMappingsByRestaurant[restaurantId] ??
+            const <String, ProductStationMapping>{},
       );
+      final stationNamesById =
+          KitchenTicketHeaderResolver.sanitizeStationNameMap(
+            _readCachedStationNames(restaurantId),
+          );
+      final stationCodesById = cachedStationCodesForRestaurant(restaurantId);
+      final jobStationId = _textValue(
+        job['station_id'] ?? safePayload['station_id'],
+      );
+      final headerOverride = jobStationId.isNotEmpty
+          ? KitchenTicketHeaderResolver.productionHeaderLabel(
+              stationName: stationNamesById[jobStationId] ??
+                  _textValue(safePayload['station_name']),
+              stationCode: stationCodesById[jobStationId] ??
+                  _textValue(safePayload['station_code']),
+            )
+          : KitchenTicketHeaderResolver.productionHeaderLabel(
+              stationName: _textValue(safePayload['station_name']),
+              stationCode: _textValue(safePayload['station_code']),
+            );
+      final area = headerOverride == kKitchenGeneralStationLabel
+          ? kKitchenGeneralStationLabel
+          : headerOverride;
       final printerId = _textValue(
         job['printer_id'] ?? payload['printer_id'],
         fallback: '-',
@@ -1250,14 +1711,14 @@ class OrderPrintJobService {
 
       // Validate payload config before dispatch so misconfigurations are
       // visible in logs rather than silently producing wrong behaviour.
-      _warnPayloadConfig(payload, printJobId: printJobId);
+      _warnPayloadConfig(safePayload, printJobId: printJobId);
 
-      final itemCount = _payloadItems(payload).length;
+      final itemCount = _payloadItems(safePayload).length;
       final tableNo = _resolveTableNo(
-        payload,
+        safePayload,
         fallbackTableNumber: tableNumber,
       );
-      final itemAreaMap = _itemAreaMapping(area, payload);
+      final itemAreaMap = _itemAreaMapping(area, safePayload);
 
       _logKitchen(
         'Mapping',
@@ -1292,9 +1753,13 @@ class OrderPrintJobService {
       try {
         final kitchenPayload = _buildKitchenPayload(
           job: job,
-          payload: payload,
+          payload: safePayload,
           fallbackTableNumber: tableNumber,
           sourceItems: sourceItems,
+          stationNamesById: stationNamesById,
+          stationCodesById: stationCodesById,
+          productStationByProductId: productMappings,
+          kitchenTicketHeaderOverride: headerOverride,
         );
         final preparedPayload = await _printOrchestrator.prepareQueuedPrintPayload(
           restaurantId: restaurantId,
@@ -1351,6 +1816,10 @@ class OrderPrintJobService {
           dispatchStartedAt: dispatchStartedAt,
         );
         final bridgeWatch = Stopwatch()..start();
+        logKitchenFinalBeforeBridge(
+          path: 'print_jobs_legacy_rpc',
+          payload: resolvedPayload,
+        );
         final physicalResult = await _printOrchestrator.printPhysicalToPrinter(
           resolvedPrinter,
           PrintPayload.fromQueuedJob(resolvedPayload),
@@ -1646,17 +2115,35 @@ class OrderPrintJobService {
     required Map<String, dynamic> payload,
     required int fallbackTableNumber,
     List<Map<String, dynamic>>? sourceItems,
+    Map<String, String>? stationNamesById,
+    Map<String, String>? stationCodesById,
+    Map<String, ProductStationMapping>? productStationByProductId,
+    String? tableAreaName,
+    String? kitchenTicketHeaderOverride,
   }) {
     final orderId = _textValue(job['order_id'] ?? payload['order_id']);
     final tableNo = _resolveTableNo(
       payload,
       fallbackTableNumber: fallbackTableNumber,
     );
-    final area = _textValue(
-      payload['station_name'] ?? payload['area_name'],
-      fallback: 'Genel',
-    );
     final stationId = _textValue(job['station_id'] ?? payload['station_id']);
+    final tableAreaOnly = _textValue(payload['table_area_name'], fallback: '');
+    final legacyAreaName = _textValue(payload['area_name'], fallback: '');
+    final diningArea = tableAreaOnly.isNotEmpty
+        ? tableAreaOnly
+        : (KitchenTicketHeaderResolver.isDiningAreaStationLabel(legacyAreaName)
+              ? legacyAreaName
+              : '');
+    if (diningArea.isNotEmpty &&
+        KitchenTicketHeaderResolver.isDiningAreaStationLabel(diningArea)) {
+      kitchenPrintPayloadLog(
+        'reject_table_area_header',
+        extra: {
+          'area': diningArea,
+          'reason': 'table_area_is_not_kitchen_station',
+        },
+      );
+    }
 
     // ── Item source selection ────────────────────────────────────────────────
     // ROOT-CAUSE FIX: when a print job has a non-null stationId, the SQL RPC
@@ -1707,10 +2194,35 @@ class OrderPrintJobService {
     }
 
     final originalItemCount = rawItems.length;
+    final stationHeader = KitchenTicketHeaderResolver.finalizeKitchenTicketHeader(
+      overrideHeader: kitchenTicketHeaderOverride,
+      rawItems: rawItems,
+      payload: payload,
+      stationId: stationId,
+      stationNamesById: stationNamesById,
+      stationCodesById: stationCodesById,
+      productStationByProductId: productStationByProductId,
+      tableAreaName: tableAreaName ?? diningArea,
+    );
+    var fallbackReason = 'resolved';
+    if (stationHeader == kKitchenGeneralStationLabel) {
+      fallbackReason = stationId.isEmpty
+          ? 'no_station_mapping'
+          : 'station_cache_missing_or_dining_label';
+    }
+    kitchenPrintPayloadLog(
+      'ticket_header',
+      extra: {
+        'header': stationHeader,
+        'stationName': stationHeader,
+        'tableAreaName': diningArea.isEmpty ? '-' : diningArea,
+        'fallbackReason': fallbackReason,
+      },
+    );
 
     _logKitchen(
       'Payload',
-      'buildStart orderId=$orderId tableNo=$tableNo area=$area '
+      'buildStart orderId=$orderId tableNo=$tableNo area=$stationHeader '
           'stationId=${stationId.isEmpty ? '<null>' : stationId} '
           'originalItemCount=$originalItemCount itemSource=$itemSourceLabel '
           'hasSourceItems=$hasSourceItems hasPayloadItems=$hasPayloadItems',
@@ -1816,7 +2328,7 @@ class OrderPrintJobService {
           droppedItemCount += 1;
           _logKitchen(
             'Payload',
-            'missingItems orderId=$orderId tableNo=$tableNo area=$area '
+            'missingItems orderId=$orderId tableNo=$tableNo area=$stationHeader '
                 'itemId=$itemId itemName=$itemName reason=station_mismatch '
                 'targetStationId=$stationId itemStationId=${_textValue(normalized['station_id'], fallback: '-')} '
                 'itemSource=$itemSourceLabel',
@@ -1829,15 +2341,15 @@ class OrderPrintJobService {
         normalized,
         orderId: orderId,
         tableNo: tableNo,
-        area: area,
+        area: stationHeader,
         targetStationId: skipStationFilter ? '' : stationId,
       );
       if (kitchenItem == null) {
         droppedItemCount += 1;
         _logKitchen(
           'Payload',
-          'missingItems orderId=$orderId tableNo=$tableNo area=$area '
-              'itemId=$itemId itemName=$itemName reason=empty_after_filter '
+          'missingItems orderId=$orderId tableNo=$tableNo area=$stationHeader '
+                'itemId=$itemId itemName=$itemName reason=empty_after_filter '
               'itemSource=$itemSourceLabel',
         );
         continue;
@@ -1859,7 +2371,7 @@ class OrderPrintJobService {
     if (items.isEmpty && !skipStationFilter && hasPayloadItems) {
       _logKitchen(
         'Payload',
-        'emptyItemsFallback orderId=$orderId tableNo=$tableNo area=$area '
+        'emptyItemsFallback orderId=$orderId tableNo=$tableNo area=$stationHeader '
             'originalSource=$itemSourceLabel '
             'WARN=source_items_all_filtered retrying_with_print_job_payload '
             'payloadItemCount=${payloadItems.length}',
@@ -1872,7 +2384,7 @@ class OrderPrintJobService {
           normalized,
           orderId: orderId,
           tableNo: tableNo,
-          area: area,
+          area: stationHeader,
           targetStationId: '',
         );
         if (kitchenItem == null) {
@@ -1897,7 +2409,7 @@ class OrderPrintJobService {
     if (items.isEmpty) {
       _logKitchen(
         'Payload',
-        'WARN_EMPTY_ITEMS orderId=$orderId tableNo=$tableNo area=$area '
+        'WARN_EMPTY_ITEMS orderId=$orderId tableNo=$tableNo area=$stationHeader '
             'originalItemCount=$originalItemCount droppedItemCount=$droppedItemCount '
             'itemSource=$itemSourceLabel stationId=${stationId.isEmpty ? '<null>' : stationId} '
             'payloadItemCount=${payloadItems.length} '
@@ -1908,23 +2420,22 @@ class OrderPrintJobService {
 
     _logKitchen(
       'Payload',
-      'buildSuccess orderId=$orderId tableNo=$tableNo area=$area '
+      'buildSuccess orderId=$orderId tableNo=$tableNo area=$stationHeader '
           'originalItemCount=$originalItemCount printedItemCount=${items.length} '
           'droppedItemCount=$droppedItemCount serviceItemIds=${serviceItemIds.isEmpty ? '-' : serviceItemIds.join(",")} '
           'plateCount=$plateCount itemSource=$itemSourceLabel',
     );
 
-    return <String, dynamic>{
+    final built = <String, dynamic>{
       'title': 'MUTFAK SIPARISI',
       'store_name': _textValue(
         payload['restaurant_name'] ?? payload['store_name'],
         fallback: 'Restoran',
       ),
       'order_id': orderId,
-      'order_no': _textValue(
-        payload['order_no'] ?? payload['order_number'],
-        fallback: '-',
-      ),
+      'order_no': resolveKitchenPrintedOrderNo(payload),
+      'daily_order_no': payload['daily_order_no'] ?? '',
+      'kitchen_order_no': payload['kitchen_order_no'] ?? '',
       'table_no': tableNo,
       'table_name': _textValue(
         payload['display_table_label'] ??
@@ -1945,11 +2456,13 @@ class OrderPrintJobService {
             payload['table_name'],
         fallback: '',
       ),
-      'table_area_name': _textValue(
-        payload['table_area_name'] ?? payload['area_name'],
-        fallback: '',
-      ),
-      'area_name': area,
+      'table_area_name': diningArea,
+      'kitchen_ticket_header': stationHeader,
+      'station_name': stationHeader,
+      'area_name': stationHeader,
+      if (stationId.isNotEmpty)
+        'station_code':
+            stationCodesById?[stationId] ?? _textValue(payload['station_code']),
       'waiter_name': _textValue(payload['waiter_name'], fallback: '-'),
       'job_type': _textValue(job['job_type'] ?? payload['job_type']),
       'datetime': _textValue(
@@ -1971,6 +2484,9 @@ class OrderPrintJobService {
       'render_mode': 'text',
       'items': items,
     };
+    stampKitchenOrderNumberFields(built);
+    detectTableAreaUsedAsHeader(built, where: '_buildKitchenPayload');
+    return built;
   }
 
   Map<String, dynamic> _normalizeKitchenSourceItem(Map<String, dynamic> item) {
@@ -1979,6 +2495,16 @@ class OrderPrintJobService {
           item['product_id'] ?? item['order_item_id'] ?? item['productId'],
       'name': item['name'] ?? item['product_name'] ?? item['item_name'],
       'item_name': item['item_name'] ?? item['name'] ?? item['product_name'],
+      'product_name': item['product_name'],
+      'display_label': item['display_label'],
+      'label': item['label'],
+      'print_label': item['print_label'],
+      'pricing_mode': item['pricing_mode'],
+      'selected_grams': item['selected_grams'] ?? item['selectedGrams'],
+      'selected_weight_grams':
+          item['selected_weight_grams'] ?? item['selectedWeightGrams'],
+      'selected_size_name':
+          item['selected_size_name'] ?? item['selectedSizeName'],
       'quantity': _intValue(item['quantity'], fallback: 1),
       'gramaj': item['gramaj'],
       'amount_label': item['amount_label'],
@@ -2026,7 +2552,8 @@ class OrderPrintJobService {
     required String targetStationId,
   }) {
     final itemId = _kitchenItemId(item);
-    final itemName = _kitchenItemName(item);
+    final baseName = GarsonProductSelection.printItemBaseName(item);
+    final printLabel = GarsonProductSelection.resolvePrintItemLabel(item);
     final parentMatches = _matchesStation(item['station_id'], targetStationId);
     final children = MixedServiceOrder.normalizeChildItems(item['child_items']);
     final filteredChildren = <Map<String, dynamic>>[];
@@ -2041,7 +2568,7 @@ class OrderPrintJobService {
         _logKitchen(
           'Payload',
           'missingItems orderId=$orderId tableNo=$tableNo area=$area '
-              'itemId=$itemId itemName=$itemName reason=child_station_mismatch '
+              'itemId=$itemId itemName=$printLabel reason=child_station_mismatch '
               'childItemId=${_kitchenItemId(child)} childName=${_kitchenItemName(child)} '
               'targetStationId=${targetStationId.isEmpty ? '-' : targetStationId} '
               'childStationId=${_textValue(child['station_id'], fallback: '-')}',
@@ -2060,13 +2587,33 @@ class OrderPrintJobService {
 
     final kitchenItem = <String, dynamic>{
       'id': itemId,
-      'name': itemName,
+      'name': printLabel,
+      'display_label': printLabel,
       'quantity': _intValue(item['quantity'], fallback: 1),
     };
-    final amountLabel = _textValue(
-      item['amount_label'] ?? item['gramaj'],
-      fallback: '',
-    );
+    if (baseName.isNotEmpty && baseName != printLabel) {
+      kitchenItem['product_name'] = baseName;
+    }
+    final amountLabel = GarsonProductSelection.resolvePrintItemAmountLabel(item);
+    final pricingMode = item['pricing_mode']?.toString().trim() ?? '';
+    if (pricingMode.isNotEmpty) {
+      kitchenItem['pricing_mode'] = pricingMode;
+    }
+    final selectedGrams = item['selected_grams'] ?? item['selectedGrams'];
+    if (selectedGrams != null) {
+      kitchenItem['selected_grams'] = selectedGrams;
+    }
+    final selectedWeightGrams =
+        item['selected_weight_grams'] ?? item['selectedWeightGrams'];
+    if (selectedWeightGrams != null) {
+      kitchenItem['selected_weight_grams'] = selectedWeightGrams;
+    }
+    final selectedSizeName =
+        item['selected_size_name'] ?? item['selectedSizeName'];
+    if (selectedSizeName != null &&
+        selectedSizeName.toString().trim().isNotEmpty) {
+      kitchenItem['selected_size_name'] = selectedSizeName;
+    }
     final textNote = _textValue(
       item['general_note'] ?? item['note'] ?? item['notes'],
       fallback: '',
@@ -2087,6 +2634,11 @@ class OrderPrintJobService {
     if (note.isNotEmpty) {
       kitchenItem['note'] = note;
     }
+    GarsonProductSelection.logGarsonPrintItemLabel(
+      path: 'kitchen',
+      item: item,
+      finalPrintName: printLabel,
+    );
 
     if (filteredChildren.isEmpty) {
       // Use pre-built plates/service_children stored in the DB payload
@@ -2158,15 +2710,18 @@ class OrderPrintJobService {
   }
 
   Map<String, dynamic> _buildKitchenChildPayload(Map<String, dynamic> child) {
+    final printLabel = GarsonProductSelection.resolvePrintItemLabel(child);
+    final baseName = GarsonProductSelection.printItemBaseName(child);
     final payload = <String, dynamic>{
       'id': _kitchenItemId(child),
-      'name': _kitchenItemName(child),
+      'name': printLabel,
+      'display_label': printLabel,
       'quantity': _intValue(child['quantity'], fallback: 1),
     };
-    final amountLabel = _textValue(
-      child['amount_label'] ?? child['selected_option_label'],
-      fallback: '',
-    );
+    if (baseName.isNotEmpty && baseName != printLabel) {
+      payload['product_name'] = baseName;
+    }
+    final amountLabel = GarsonProductSelection.resolvePrintItemAmountLabel(child);
     final note = _textValue(child['note'] ?? child['notes'], fallback: '');
     final stationId = _textValue(child['station_id'], fallback: '');
     if (amountLabel.isNotEmpty) {
@@ -2602,6 +3157,194 @@ class OrderPrintJobService {
   String _textValue(dynamic value, {String fallback = ''}) {
     final rendered = value?.toString().trim() ?? '';
     return rendered.isEmpty ? fallback : rendered;
+  }
+
+  Map<String, String> _stationNamesFromItems(List<Map<String, dynamic>> items) {
+    final map = <String, String>{};
+    for (final item in items) {
+      final stationId = item['station_id']?.toString().trim() ?? '';
+      final stationName = KitchenTicketHeaderResolver.sanitizeProductionStationName(
+        item['station_name']?.toString() ?? '',
+      );
+      if (stationId.isNotEmpty &&
+          stationName.isNotEmpty &&
+          stationName != kKitchenGeneralStationLabel) {
+        map[stationId] = stationName;
+      }
+    }
+    return map;
+  }
+
+  Map<String, String> _readCachedStationNames(String restaurantId) {
+    final cachedAt = _stationNamesMemoryCachedAt[restaurantId];
+    final cached = _stationNamesMemoryCache[restaurantId];
+    if (cachedAt == null || cached == null) return const <String, String>{};
+    if (DateTime.now().difference(cachedAt) > _stationNamesCacheTtl) {
+      return const <String, String>{};
+    }
+    return Map<String, String>.from(cached);
+  }
+
+  Map<String, String> _readCachedStationCodes(String restaurantId) {
+    final cachedAt = _stationNamesMemoryCachedAt[restaurantId];
+    final cached = _stationCodesMemoryCache[restaurantId];
+    if (cachedAt == null || cached == null) return const <String, String>{};
+    if (DateTime.now().difference(cachedAt) > _stationNamesCacheTtl) {
+      return const <String, String>{};
+    }
+    return Map<String, String>.from(cached);
+  }
+
+  Future<_KitchenStationNamesResolveResult> _resolveStationNamesForKitchenPrint({
+    required String restaurantId,
+    required List<Map<String, dynamic>> items,
+    required bool fastPath,
+  }) async {
+    final fromItems = _stationNamesFromItems(items);
+    final merged = <String, String>{..._readCachedStationNames(restaurantId), ...fromItems};
+    var fallbackReason = '';
+
+    final missingIds = <String>{};
+    for (final item in items) {
+      final stationId = item['station_id']?.toString().trim() ?? '';
+      if (stationId.isEmpty) continue;
+      final hasName = merged[stationId]?.trim().isNotEmpty == true;
+      final itemName = KitchenTicketHeaderResolver.sanitizeProductionStationName(
+        item['station_name']?.toString() ?? '',
+      );
+      if (!hasName &&
+          (itemName.isEmpty || itemName == kKitchenGeneralStationLabel)) {
+        missingIds.add(stationId);
+      }
+    }
+
+    if (fastPath) {
+      if (missingIds.isNotEmpty) {
+        fallbackReason = 'station_cache_missing';
+        kitchenRoutingLog(
+          'station_cache_missing',
+          extra: {
+            'restaurantId': restaurantId,
+            'missingStationIds': missingIds.join(','),
+          },
+        );
+      }
+      return _KitchenStationNamesResolveResult(
+        namesById: merged,
+        fallbackReason: fallbackReason,
+      );
+    }
+
+    if (missingIds.isNotEmpty) {
+      final fetched = await _fetchStationNamesById(restaurantId);
+      merged.addAll(fetched);
+      _stationNamesMemoryCache[restaurantId] = Map<String, String>.from(merged);
+      _stationNamesMemoryCachedAt[restaurantId] = DateTime.now();
+    }
+
+    return _KitchenStationNamesResolveResult(
+      namesById: merged,
+      fallbackReason: fallbackReason,
+    );
+  }
+
+  Future<Map<String, String>> _fetchStationNamesById(String restaurantId) async {
+    try {
+      final rows = await _client
+          .from('stations')
+          .select('id,name,code')
+          .eq('restaurant_id', restaurantId);
+      final map = <String, String>{};
+      final codes = <String, String>{};
+      for (final row in List<Map<String, dynamic>>.from(rows as List)) {
+        final id = row['id']?.toString().trim() ?? '';
+        final name = row['name']?.toString().trim() ?? '';
+        final code = row['code']?.toString().trim() ?? '';
+        if (id.isNotEmpty && name.isNotEmpty) {
+          map[id] = KitchenTicketHeaderResolver.sanitizeProductionStationName(
+            name,
+          );
+        }
+        if (id.isNotEmpty && code.isNotEmpty) {
+          codes[id] = code.toUpperCase();
+        }
+      }
+      _stationNamesMemoryCache[restaurantId] = Map<String, String>.from(map);
+      _stationCodesMemoryCache[restaurantId] = Map<String, String>.from(codes);
+      _stationNamesMemoryCachedAt[restaurantId] = DateTime.now();
+      KitchenTicketHeaderResolver.registerRestaurantStationCaches(
+        restaurantId: restaurantId,
+        stationNamesById: map,
+        stationCodesById: codes,
+      );
+      return map;
+    } catch (error, stackTrace) {
+      _logKitchen(
+        'StationLookup',
+        'fetchFailed restaurantId=$restaurantId',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return const <String, String>{};
+    }
+  }
+
+  List<_KitchenStationPrintGroup> _groupItemsByProductionStation(
+    List<Map<String, dynamic>> items, {
+    required Map<String, String> stationNamesById,
+    Map<String, String>? stationCodesById,
+    Map<String, ProductStationMapping>? productStationByProductId,
+  }) {
+    final grouped = <String, _KitchenStationPrintGroup>{};
+    for (final item in items) {
+      logKitchenRoutingGroupInput(item);
+      var stationId = item['station_id']?.toString().trim() ?? '';
+      final productId = item['product_id']?.toString().trim() ?? '';
+      final mapping =
+          productId.isEmpty ? null : productStationByProductId?[productId];
+      if (stationId.isEmpty && mapping != null && mapping.stationId.isNotEmpty) {
+        stationId = mapping.stationId;
+        item['station_id'] = stationId;
+      }
+      if (mapping != null && mapping.stationCode.isNotEmpty) {
+        item['station_code'] = mapping.stationCode;
+      } else if (stationId.isNotEmpty &&
+          (stationCodesById?[stationId] ?? '').isNotEmpty) {
+        item['station_code'] = stationCodesById![stationId]!;
+      }
+      final key = stationId.isEmpty ? '__general__' : stationId;
+      final stationName = KitchenTicketHeaderResolver.resolveProductionHeaderForItem(
+        item: item,
+        stationNamesById: stationNamesById,
+        stationCodesById: stationCodesById,
+        productStationByProductId: productStationByProductId,
+      );
+      grouped.putIfAbsent(
+        key,
+        () => _KitchenStationPrintGroup(
+          stationId: stationId,
+          stationName: stationName,
+          items: <Map<String, dynamic>>[],
+        ),
+      ).items.add(item);
+      logKitchenRoutingGroupCreated(
+        groupKey: key,
+        stationId: stationId,
+        stationName: stationName,
+        stationCode: item['station_code']?.toString() ?? '',
+        itemCount: grouped[key]!.items.length,
+      );
+    }
+    if (grouped.isEmpty) {
+      return <_KitchenStationPrintGroup>[
+        _KitchenStationPrintGroup(
+          stationId: '',
+          stationName: kKitchenGeneralStationLabel,
+          items: items,
+        ),
+      ];
+    }
+    return grouped.values.toList(growable: false);
   }
 
   int _intValue(dynamic value, {int fallback = 0}) {

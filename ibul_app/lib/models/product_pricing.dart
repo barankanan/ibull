@@ -1,5 +1,23 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+
+class ResolvedWeightGramSettings {
+  const ResolvedWeightGramSettings({
+    required this.minGrams,
+    required this.defaultGrams,
+    required this.stepGrams,
+    required this.source,
+    this.maxGrams,
+  });
+
+  final int minGrams;
+  final int defaultGrams;
+  final int stepGrams;
+  final int? maxGrams;
+  final String source;
+}
+
 enum ProductPricingType {
   portion,
   weight;
@@ -250,11 +268,205 @@ class ProductPriceCalculator {
   static const int defaultWeightStepGrams = 250;
   static const int defaultWeightSelectionGrams = 500;
 
+  /// Ürün kaydında en az bir gramaj alanı doluysa global fallback kullanılmaz.
+  static bool hasConfiguredWeightGramSettings({
+    int? minWeightGrams,
+    int? defaultWeightGrams,
+    int? weightStepGrams,
+  }) {
+    return (minWeightGrams ?? 0) > 0 ||
+        (defaultWeightGrams ?? 0) > 0 ||
+        (weightStepGrams ?? 0) > 0;
+  }
+
+  /// Tek kaynak: DB/spec alanları → clamp; yoksa global fallback.
+  static ResolvedWeightGramSettings resolveWeightGramSettings({
+    int? minWeightGrams,
+    int? defaultWeightGrams,
+    int? weightStepGrams,
+    int? maxWeightGrams,
+  }) {
+    final configured = hasConfiguredWeightGramSettings(
+      minWeightGrams: minWeightGrams,
+      defaultWeightGrams: defaultWeightGrams,
+      weightStepGrams: weightStepGrams,
+    );
+    if (!configured) {
+      final min = defaultMinWeightGrams;
+      final step = defaultWeightStepGrams;
+      final max = resolveMaxWeightGrams(maxWeightGrams);
+      final defaultGrams = clampWeightSelection(
+        defaultWeightSelectionGrams,
+        minWeightGrams: min,
+        weightStepGrams: step,
+        maxWeightGrams: max,
+      );
+      return ResolvedWeightGramSettings(
+        minGrams: min,
+        defaultGrams: defaultGrams,
+        stepGrams: step,
+        maxGrams: max,
+        source: 'fallback',
+      );
+    }
+
+    final step = (weightStepGrams ?? 0) > 0
+        ? weightStepGrams!
+        : defaultWeightStepGrams;
+    final min = (minWeightGrams ?? 0) > 0
+        ? minWeightGrams!
+        : ((defaultWeightGrams ?? 0) > 0 ? defaultWeightGrams! : defaultMinWeightGrams);
+    final max = resolveMaxWeightGrams(maxWeightGrams);
+    final defaultTarget = (defaultWeightGrams ?? 0) > 0
+        ? defaultWeightGrams!
+        : min;
+    final defaultGrams = clampWeightSelection(
+      defaultTarget,
+      minWeightGrams: min,
+      weightStepGrams: step,
+      maxWeightGrams: max,
+    );
+    return ResolvedWeightGramSettings(
+      minGrams: min,
+      defaultGrams: defaultGrams,
+      stepGrams: step,
+      maxGrams: max,
+      source: 'product',
+    );
+  }
+
+  static void productParseWeightLog({
+    required String productId,
+    required ResolvedWeightGramSettings settings,
+  }) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[ProductParse] weight_settings_resolved '
+      'productId=$productId '
+      'minGrams=${settings.minGrams} '
+      'defaultGrams=${settings.defaultGrams} '
+      'stepGrams=${settings.stepGrams} '
+      'maxGrams=${settings.maxGrams ?? ''} '
+      'source=${settings.source}',
+    );
+  }
+
+  static void productSaveWeightLog({
+    int? minGrams,
+    int? defaultGrams,
+    int? stepGrams,
+    int? maxGrams,
+  }) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[ProductSave] weight_settings_payload '
+      'minGrams=${minGrams ?? ''} '
+      'defaultGrams=${defaultGrams ?? ''} '
+      'stepGrams=${stepGrams ?? ''} '
+      'maxGrams=${maxGrams ?? ''}',
+    );
+  }
+
   static bool supportsWeightPricing({
     required ProductPricingType pricingType,
     required double? pricePerKg,
   }) {
     return pricingType == ProductPricingType.weight && (pricePerKg ?? 0) > 0;
+  }
+
+  /// Garson / hibrit ürünler: kilo fiyatı veya kayıtlı gramaj + kilo fiyatı.
+  /// Yalnızca global fallback gramaj (500 g) tek başına yeterli değildir.
+  static bool supportsWeightSelection({
+    required double? pricePerKg,
+    ProductPricingType? pricingType,
+    ProductPricingMode? pricingMode,
+    int? minWeightGrams,
+    int? defaultWeightGrams,
+    int? weightStepGrams,
+  }) {
+    final kg = sanitizePrice(pricePerKg);
+    if (kg > 0) return true;
+
+    final hasWeightConfig = hasConfiguredWeightGramSettings(
+      minWeightGrams: minWeightGrams,
+      defaultWeightGrams: defaultWeightGrams,
+      weightStepGrams: weightStepGrams,
+    );
+    if (!hasWeightConfig) return false;
+
+    final mode = pricingMode ?? ProductPricingMode.baseOnly;
+    final type = pricingType ?? ProductPricingType.portion;
+    return mode == ProductPricingMode.hybrid ||
+        mode == ProductPricingMode.weightOnly ||
+        type == ProductPricingType.weight;
+  }
+
+  static double? _readNumericField(Map<String, dynamic> source, List<String> keys) {
+    for (final key in keys) {
+      final raw = source[key];
+      if (raw == null) continue;
+      final parsed = raw is num
+          ? raw.toDouble()
+          : parsePriceValue(raw);
+      if (sanitizePrice(parsed) > 0) return parsed;
+    }
+    return null;
+  }
+
+  /// Tek kaynak: DB / map / specifications içinden kilo fiyatı.
+  static double resolvePricePerKgFromMap(
+    Map<String, dynamic> map, {
+    String? pricingType,
+  }) {
+    final direct = _readNumericField(map, <String>[
+      'price_per_kg',
+      'pricePerKg',
+      'kg_price',
+      'kgPrice',
+      'weight_price',
+      'weightPrice',
+    ]);
+    if (direct != null) return sanitizePrice(direct);
+
+    final specsRaw = map['specifications'] ?? map['pricing_metadata'];
+    if (specsRaw != null) {
+      Map<String, dynamic>? specsMap;
+      if (specsRaw is Map) {
+        specsMap = Map<String, dynamic>.from(specsRaw);
+      } else if (specsRaw is String && specsRaw.trim().isNotEmpty) {
+        try {
+          final decoded = jsonDecode(specsRaw.trim());
+          if (decoded is Map) {
+            specsMap = Map<String, dynamic>.from(decoded);
+          }
+        } catch (_) {}
+      }
+      if (specsMap != null) {
+        final nestedPricing = specsMap['pricing'];
+        if (nestedPricing is Map) {
+          specsMap = Map<String, dynamic>.from(nestedPricing);
+        }
+        final fromSpecs = _readNumericField(specsMap, <String>[
+          'price_per_kg',
+          'pricePerKg',
+          'kg_price',
+          'kgPrice',
+          'weight_price',
+          'weightPrice',
+        ]);
+        if (fromSpecs != null) return sanitizePrice(fromSpecs);
+      }
+    }
+
+    final resolvedType = ProductPricingType.fromValue(
+      pricingType ??
+          map['pricing_type']?.toString() ??
+          map['pricingType']?.toString(),
+    );
+    if (resolvedType == ProductPricingType.weight) {
+      return sanitizePrice(parsePriceValue(map['price']));
+    }
+    return 0;
   }
 
   static double sanitizePrice(double? value) {
@@ -293,10 +505,10 @@ class ProductPriceCalculator {
     return ProductPricingMode.baseOnly;
   }
 
-  static List<ProductSizeOption> normalizeSizeOptions(
+  static List<ProductSizeOption> _sanitizeSizeOptionList(
     Iterable<ProductSizeOption> raw,
   ) {
-    final cleaned = raw
+    return raw
         .map(
           (entry) => entry.copyWith(
             name: entry.name.trim(),
@@ -310,24 +522,103 @@ class ProductPriceCalculator {
         if (sortCompare != 0) return sortCompare;
         return left.name.toLowerCase().compareTo(right.name.toLowerCase());
       });
-    if (cleaned.isEmpty) return const <ProductSizeOption>[];
-    final hasDefault = cleaned.any((entry) => entry.isDefault);
-    if (hasDefault) return cleaned;
-    return [
-      cleaned.first.copyWith(isDefault: true),
-      ...cleaned.skip(1),
-    ];
+  }
+
+  static List<ProductSizeOption> normalizeSizeOptions(
+    Iterable<ProductSizeOption> raw,
+  ) {
+    // Sıralama/filtreleme yapılır; is_default otomatik atanmaz (yalnızca ürün datası).
+    return _sanitizeSizeOptionList(raw);
+  }
+
+  static final RegExp _nonStandardSizePattern = RegExp(
+    r'yarım|yarim|half|duble|double|xl|xxl|büyük|buyuk|large|küçük|kucuk|small|mini',
+    caseSensitive: false,
+  );
+
+  /// Yarım/duble vb. — standart boyut tercihinde kullanılmaz.
+  static bool isNonStandardSizeName(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return false;
+    return _nonStandardSizePattern.hasMatch(trimmed);
+  }
+
+  static final RegExp _garsonRejectedDefaultSizePattern = RegExp(
+    r'yarım|yarim|\bhalf\b',
+    caseSensitive: false,
+  );
+
+  /// Garson modal: is_default olsa bile otomatik seçilmeyecek boyutlar (yarım porsiyon).
+  static bool isGarsonRejectedDefaultSizeName(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return false;
+    return _garsonRejectedDefaultSizePattern.hasMatch(trimmed);
+  }
+
+  static final List<String> _standardSizeNameHints = <String>[
+    'standart',
+    'standard',
+    'normal',
+    '1 porsiyon',
+    'tek porsiyon',
+    'tam',
+    'full',
+    'regular',
+    'tek',
+  ];
+
+  /// Boyut listesinde "standart" isimli seçeneği döndürür (yarım/duble değil).
+  static ProductSizeOption? preferredStandardSizeOption(
+    List<ProductSizeOption> sizeOptions,
+  ) {
+    final normalized = _sanitizeSizeOptionList(sizeOptions);
+    if (normalized.isEmpty) return null;
+    for (final hint in _standardSizeNameHints) {
+      for (final option in normalized) {
+        final name = option.name.trim().toLowerCase();
+        if (name.contains(hint) && !_nonStandardSizePattern.hasMatch(name)) {
+          return option;
+        }
+      }
+    }
+    for (final option in normalized) {
+      if (!_nonStandardSizePattern.hasMatch(option.name)) {
+        return option;
+      }
+    }
+    return null;
+  }
+
+  /// Yalnızca ürün oluştururken işaretlenmiş varsayılan boyut.
+  static ProductSizeOption? explicitDefaultSizeOption(
+    List<ProductSizeOption> sizeOptions,
+  ) {
+    final normalized = sizeOptions
+        .map(
+          (entry) => entry.copyWith(
+            name: entry.name.trim(),
+            price: sanitizePrice(entry.price),
+          ),
+        )
+        .where((entry) => entry.name.isNotEmpty && entry.price > 0)
+        .toList(growable: false);
+    final flagged = normalized
+        .where(
+          (entry) =>
+              entry.isDefault && !isGarsonRejectedDefaultSizeName(entry.name),
+        )
+        .toList();
+    if (flagged.length == 1) return flagged.first;
+    if (flagged.length > 1) {
+      return preferredStandardSizeOption(flagged);
+    }
+    return null;
   }
 
   static ProductSizeOption? defaultSizeOption(
     List<ProductSizeOption> sizeOptions,
   ) {
-    final normalized = normalizeSizeOptions(sizeOptions);
-    if (normalized.isEmpty) return null;
-    return normalized.firstWhere(
-      (entry) => entry.isDefault,
-      orElse: () => normalized.first,
-    );
+    return explicitDefaultSizeOption(sizeOptions);
   }
 
   static ProductSizeOption? findSizeOption({
@@ -463,8 +754,12 @@ class ProductPriceCalculator {
     double? portionStep,
   }) {
     if (!usesPortionLikeStepper(type)) return 0;
+    final min = resolveMinPortionAmount(type, minPortion);
+    final target = type == ProductServiceControlType.portionStepper
+        ? (min < 1 ? 1.0 : min)
+        : min;
     return clampPortionSelection(
-      resolveMinPortionAmount(type, minPortion),
+      target,
       type: type,
       minPortion: minPortion,
       maxPortion: maxPortion,
@@ -656,10 +951,16 @@ class ProductPriceCalculator {
 
     final options = <int>{min, defaultWeight, max};
 
-    for (final common in const [250, 500, 750, 1000]) {
-      if (common < min || common > max) continue;
-      if ((common - min) % step == 0) {
-        options.add(common);
+    if (!hasConfiguredWeightGramSettings(
+      minWeightGrams: minWeightGrams,
+      defaultWeightGrams: defaultWeightGrams,
+      weightStepGrams: weightStepGrams,
+    )) {
+      for (final common in const [250, 500, 750, 1000]) {
+        if (common < min || common > max) continue;
+        if ((common - min) % step == 0) {
+          options.add(common);
+        }
       }
     }
 

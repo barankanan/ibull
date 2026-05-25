@@ -266,19 +266,51 @@ class PrinterRepository implements PrinterRepositoryPort {
     required String stationId,
     required String printerId,
     bool isPrimary = true,
+    String? restaurantId,
+    String? stationName,
+    String? printerName,
   }) async {
-    if (isPrimary) {
-      await _client
-          .from('station_printers')
-          .update({'is_primary': false})
-          .eq('station_id', stationId);
+    final normalizedPrinterId = printerId.trim();
+    final normalizedStationId = stationId.trim();
+    debugPrint(
+      '[PrinterRoleSave] request '
+      'seller_id=${restaurantId ?? '-'} store_id=- '
+      'printer_id=$normalizedPrinterId printer_name=${printerName ?? '-'} '
+      'role=station_mapping station_id=$normalizedStationId '
+      'area_id=$normalizedStationId area_name=${stationName ?? '-'} '
+      'rpc=station_printers.upsert',
+    );
+    if (normalizedStationId.isEmpty || normalizedPrinterId.isEmpty) {
+      throw StateError('station_id ve printer_id zorunludur.');
     }
+    try {
+      if (isPrimary) {
+        await _client
+            .from('station_printers')
+            .update({'is_primary': false})
+            .eq('station_id', normalizedStationId);
+      }
 
-    await _client.from('station_printers').upsert({
-      'station_id': stationId,
-      'printer_id': printerId,
-      'is_primary': isPrimary,
-    }, onConflict: 'station_id,printer_id');
+      await _client.from('station_printers').upsert({
+        'station_id': normalizedStationId,
+        'printer_id': normalizedPrinterId,
+        'is_primary': isPrimary,
+      }, onConflict: 'station_id,printer_id');
+      debugPrint(
+        '[PrinterRoleSave] success '
+        'seller_id=${restaurantId ?? '-'} station_id=$normalizedStationId '
+        'printer_id=$normalizedPrinterId rpc=station_printers.upsert',
+      );
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[PrinterRoleSave] error '
+        'seller_id=${restaurantId ?? '-'} station_id=$normalizedStationId '
+        'printer_id=$normalizedPrinterId rpc=station_printers.upsert '
+        'message=$error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+      rethrow;
+    }
   }
 
   @override

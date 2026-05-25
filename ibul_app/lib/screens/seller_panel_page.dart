@@ -35,6 +35,9 @@ import '../services/auth_service.dart';
 import '../services/support_service.dart';
 import '../services/campaign_service.dart';
 import '../services/order_service.dart';
+import '../services/kitchen_print_trace_log.dart';
+import '../services/kitchen_product_mapping_cache_store.dart';
+import '../services/kitchen_routing_service.dart';
 import '../services/order_print_job_service.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
@@ -75,8 +78,11 @@ import '../widgets/waiter/swipeable_product_card.dart';
 import '../utils/browser_file_download.dart';
 import '../utils/pick_image_file.dart';
 import '../utils/table_labels.dart';
+import '../utils/product_edit_log.dart';
+import '../utils/garson_product_selection.dart';
 import '../utils/print_perf_log.dart';
 import '../utils/garson_table_order_state.dart';
+import '../utils/garson_table_area_groups.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_overview_widgets.dart';
@@ -134,6 +140,7 @@ class _KitchenDispatchFeedback {
     this.directPrintDoneMs = 0,
     this.fastPathDecisionMs = 0,
     this.printerCacheResolveMs = 0,
+    this.stationResolveMs = 0,
     this.fallbackReason = '',
     this.selectedPrinterId = '',
   });
@@ -155,6 +162,7 @@ class _KitchenDispatchFeedback {
   final int directPrintDoneMs;
   final int fastPathDecisionMs;
   final int printerCacheResolveMs;
+  final int stationResolveMs;
   final String fallbackReason;
   final String selectedPrinterId;
 
@@ -425,6 +433,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   bool _hasLoadedSellerQuestionsData = false;
   bool _hasLoadedSellerWalletData = false;
   bool _hasLoadedStoreTablesData = false;
+  String? _storeTablesLoadedForSellerId;
   bool _hasLoadedPendingLocationRequestData = false;
   bool _showStoreMediaSection = false;
 
@@ -902,6 +911,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   void _setSelectedModule(SellerModule module) {
     final previousModule = _selectedModule;
+    sellerNavigationLog(
+      'page_changed_by_user',
+      extra: {'from': previousModule.name, 'to': module.name},
+    );
     _logSellerPanel(
       'Tab',
       'action=select from=${previousModule.name} to=${module.name} '
@@ -2250,7 +2263,27 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       if (_isWaiterEntry) {
         _selectedModule = SellerModule.garson;
       } else if (fallbackFromFoodModulesToDashboard) {
-        _selectedModule = SellerModule.dashboard;
+        final previous = _selectedModule;
+        _selectedModule = resolveSellerModuleAfterProfileReload(
+          currentModule: _selectedModule,
+          storeCategory: (data['category'] ?? '').toString(),
+          garsonOnly: _isWaiterEntry,
+        );
+        if (_selectedModule != previous) {
+          sellerNavigationLog(
+            'page_reset_attempt',
+            extra: {
+              'from': previous.name,
+              'to': _selectedModule.name,
+              'reason': 'module_not_visible_for_category',
+            },
+          );
+        } else {
+          sellerNavigationLog(
+            'store_reload_no_navigation',
+            extra: {'module': _selectedModule.name},
+          );
+        }
       }
       _workingHours = data['workingHours']?.toString() ?? '09:00 - 18:00';
       _storeLat = (data['storeLat'] as num?)?.toDouble();
@@ -2368,7 +2401,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             _storeTables = <Map<String, dynamic>>[];
           });
         }
-        if (fallbackFromFoodModulesToDashboard) {
+        if (fallbackFromFoodModulesToDashboard &&
+            _selectedModule == SellerModule.dashboard) {
           unawaited(_persistSelectedModule(SellerModule.dashboard));
         }
         _hasLoadedStoreProfile = true;
@@ -2549,6 +2583,18 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   Future<void> _loadStoreTables({bool silent = false}) async {
+    final sellerId = _authService.currentUser?.id.trim() ?? '';
+    if (sellerId.isNotEmpty &&
+        _storeTablesLoadedForSellerId != null &&
+        _storeTablesLoadedForSellerId != sellerId) {
+      if (mounted) {
+        setState(() {
+          _storeTables = <Map<String, dynamic>>[];
+          _storeTableAreas = <Map<String, dynamic>>[];
+          _hasLoadedStoreTablesData = false;
+        });
+      }
+    }
     if (!_isFoodStoreCategory(_storeCategory)) {
       if (mounted && _storeTables.isNotEmpty) {
         setState(() => _storeTables = <Map<String, dynamic>>[]);
@@ -2559,7 +2605,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       }
       return;
     }
-    final sellerId = _authService.currentUser?.id ?? '';
     if (sellerId.isEmpty) return;
 
     if (mounted && !silent && !_isLoadingStoreTables) {
@@ -2603,6 +2648,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         setState(() {
           _storeTables = tables;
           _storeTableAreas = areas;
+          _storeTablesLoadedForSellerId = sellerId;
         });
         debugPrint(
           '[GarsonTables] count=${tables.length} '
@@ -2656,6 +2702,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   List<int> _sortedStoreTableNumbers() {
+    final sellerId = _authService.currentUser?.id.trim() ?? '';
+    if (sellerId.isNotEmpty &&
+        _storeTablesLoadedForSellerId != null &&
+        _storeTablesLoadedForSellerId != sellerId) {
+      return const <int>[];
+    }
     final numbers =
         _storeTables
             .map(_tableNumberFromRow)
@@ -2664,6 +2716,141 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             .toList(growable: false)
           ..sort();
     return numbers;
+  }
+
+  bool get _garsonStoreTablesReady {
+    if (_isLoadingStoreTables) return false;
+    if (!_hasLoadedStoreTablesData) return false;
+    final sellerId = _authService.currentUser?.id.trim() ?? '';
+    if (sellerId.isEmpty) return false;
+    if (_storeTablesLoadedForSellerId != sellerId) return false;
+    return true;
+  }
+
+  Widget _buildGarsonTablesLoadingPlaceholder() {
+    return const Center(child: CircularProgressIndicator());
+  }
+
+  List<int> _garsonTableNumbersForGrid({
+    required List<int> orderTableNumbers,
+  }) {
+    return garsonTableNumbersForDisplay(
+      configuredTableNumbers: _sortedStoreTableNumbers(),
+      orderTableNumbers: orderTableNumbers,
+      storeTablesReady: _garsonStoreTablesReady,
+    );
+  }
+
+  List<GarsonTableAreaGroup> _garsonTableAreaGroupsForNumbers(
+    List<int> tableNumbers,
+  ) {
+    return groupGarsonTablesByArea(
+      tableNumbers: tableNumbers,
+      storeTables: _storeTables,
+      storeTableAreas: _storeTableAreas,
+      tableRowForNumber: _storeTableRowByNumber,
+    );
+  }
+
+  Widget _buildGarsonAreaSectionHeader({
+    required String areaName,
+    required int totalCount,
+    required int occupiedCount,
+  }) {
+    final emptyCount = (totalCount - occupiedCount).clamp(0, totalCount);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            areaName.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF0F172A),
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$totalCount masa · $occupiedCount dolu · $emptyCount boş',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGarsonGroupedTableGrids({
+    required List<GarsonTableAreaGroup> groups,
+    required Set<int> occupiedTableNumbers,
+    required Widget Function(int tableNumber) cardBuilder,
+    required int Function(double maxWidth) columnsResolver,
+    required double Function(double maxWidth, int columns) aspectRatioResolver,
+    EdgeInsetsGeometry sectionPadding = const EdgeInsets.fromLTRB(12, 0, 12, 0),
+    double sectionSpacing = 18,
+  }) {
+    if (groups.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < groups.length; i++) ...[
+          Padding(
+            padding: sectionPadding,
+            child: _buildGarsonAreaSectionHeader(
+              areaName: groups[i].areaName,
+              totalCount: groups[i].tableNumbers.length,
+              occupiedCount: groups[i].tableNumbers
+                  .where(occupiedTableNumbers.contains)
+                  .length,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: sectionPadding,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = columnsResolver(constraints.maxWidth);
+                final aspectRatio = aspectRatioResolver(
+                  constraints.maxWidth,
+                  columns,
+                );
+                final numbers = groups[i].tableNumbers;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: numbers.length,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: aspectRatio,
+                  ),
+                  itemBuilder: (context, index) {
+                    return cardBuilder(numbers[index]);
+                  },
+                );
+              },
+            ),
+          ),
+          if (i < groups.length - 1) SizedBox(height: sectionSpacing),
+        ],
+        SizedBox(height: sectionSpacing),
+      ],
+    );
   }
 
   int _firstMissingStoreTableNumber(List<int> sortedNumbers) {
@@ -3481,6 +3668,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   void _applySellerProducts(List<SellerProduct> products) {
     _products = products;
     _productsVersion += 1;
+    final sellerId = _authService.currentUser?.id.trim() ?? '';
+    if (sellerId.isNotEmpty) {
+      _sellerPrintJobService.registerKitchenProductStationMappings(
+        restaurantId: sellerId,
+        products: products,
+      );
+    }
     _invalidateDashboardSnapshot();
     if (_isProductQuickEditMode) {
       _syncProductQuickEditDrafts(products);
@@ -5647,10 +5841,27 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () async {
+                      productEditLog(
+                        'route_decision',
+                        extra: {
+                          'productId': product.id,
+                          'isTemplate': isTemplate,
+                          'resolvedKind':
+                              MixedServiceOrder.productTypeFromProduct(product),
+                        },
+                      );
                       if (isTemplate) {
+                        productEditLog(
+                          'open_service_editor',
+                          extra: {'productId': product.id},
+                        );
                         await _openTemplateEditor(existingProduct: product);
                         return;
                       }
+                      productEditLog(
+                        'open_normal_product_editor',
+                        extra: {'productId': product.id},
+                      );
                       final result = await Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -7137,23 +7348,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     final orders = allOrders;
                     final now = DateTime.now();
 
-                    final maxOrderTableNumber = orders.fold<int>(
-                      0,
-                      (maxValue, order) => math.max(
-                        maxValue,
-                        _garsonTableNumberFromOrder(order),
-                      ),
-                    );
-                    final totalTables = _storeTables.isNotEmpty
-                        ? _storeTables.length
-                        : maxOrderTableNumber;
-                    if (totalTables <= 0) {
-                      return _mobileSurfaceCard(
-                        child: Text(
-                          'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
-                          style: TextStyle(color: Colors.grey.shade600),
-                        ),
-                      );
+                    if (!_garsonStoreTablesReady && _storeTables.isEmpty) {
+                      return _buildGarsonTablesLoadingPlaceholder();
                     }
 
                     final ordersByTable = <int, List<Map<String, dynamic>>>{};
@@ -7202,9 +7398,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             .map((entry) => entry.key)
                             .toSet();
 
-                    final tableNumbers = _sortedStoreTableNumbers().isNotEmpty
-                        ? _sortedStoreTableNumbers()
-                        : List<int>.generate(totalTables, (i) => i + 1);
+                    final tableNumbers = _garsonTableNumbersForGrid(
+                      orderTableNumbers: ordersByTable.keys.toList(
+                        growable: false,
+                      ),
+                    );
+                    if (tableNumbers.isEmpty) {
+                      return _mobileSurfaceCard(
+                        child: Text(
+                          'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      );
+                    }
                     final filteredTableNumbers =
                         tableNumbers.where(_matchesGarsonAreaFilter).toList(growable: false);
                     final activeTableNumbers = <int>{};
@@ -7313,27 +7519,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             ],
                           ),
                         ),
-                        GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: _mobileGarsonGridColumns(
-                                  MediaQuery.of(context).size.width,
-                                ),
-                                crossAxisSpacing: 10,
-                                mainAxisSpacing: 10,
-                                childAspectRatio: _mobileGarsonGridAspectRatio(
-                                  MediaQuery.of(context).size.width,
-                                  _mobileGarsonGridColumns(
-                                    MediaQuery.of(context).size.width,
-                                  ),
-                                ),
-                              ),
-                          itemCount: filteredTableNumbers.length,
-                          itemBuilder: (context, index) {
-                            final tableNumber = filteredTableNumbers[index];
+                        _buildGarsonGroupedTableGrids(
+                          groups: _garsonTableAreaGroupsForNumbers(
+                            filteredTableNumbers,
+                          ),
+                          occupiedTableNumbers: activeTableNumbers,
+                          columnsResolver: _mobileGarsonGridColumns,
+                          aspectRatioResolver: _mobileGarsonGridAspectRatio,
+                          sectionPadding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                          cardBuilder: (tableNumber) {
                             final tableOrders =
                                 ordersByTable[tableNumber] ??
                                 const <Map<String, dynamic>>[];
@@ -7358,21 +7552,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               final orders = allOrders;
               final now = DateTime.now();
 
-              final maxOrderTableNumber = orders.fold<int>(
-                0,
-                (maxValue, order) =>
-                    math.max(maxValue, _garsonTableNumberFromOrder(order)),
-              );
-              final totalTables = _storeTables.isNotEmpty
-                  ? _storeTables.length
-                  : maxOrderTableNumber;
-              if (totalTables <= 0) {
-                return _mobileSurfaceCard(
-                  child: Text(
-                    'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
-                    style: TextStyle(color: Colors.grey.shade600),
-                  ),
-                );
+              if (!_garsonStoreTablesReady && _storeTables.isEmpty) {
+                return _buildGarsonTablesLoadingPlaceholder();
               }
 
               final ordersByTable = <int, List<Map<String, dynamic>>>{};
@@ -7449,11 +7630,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   .toSet()
                   .length;
 
-              // Use actual table numbers (e.g. [1, 3, 5, 10]) instead of
-              // assuming sequential 1..N, so cards map to the correct orders.
-              final tableNumbersForGrid = _sortedStoreTableNumbers().isNotEmpty
-                  ? _sortedStoreTableNumbers()
-                  : List<int>.generate(totalTables, (i) => i + 1);
+              final tableNumbersForGrid = _garsonTableNumbersForGrid(
+                orderTableNumbers: ordersByTable.keys.toList(growable: false),
+              );
+              if (tableNumbersForGrid.isEmpty) {
+                return _mobileSurfaceCard(
+                  child: Text(
+                    'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
+                    style: TextStyle(color: Colors.grey.shade600),
+                  ),
+                );
+              }
               final filteredTableNumbersForGrid = tableNumbersForGrid
                   .where(_matchesGarsonAreaFilter)
                   .toList(growable: false);
@@ -7514,7 +7701,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        _mobileBadge('Toplam Masa', '$totalTables'),
+                        _mobileBadge('Toplam Masa', '${tableNumbersForGrid.length}'),
                         _mobileBadge('Dolu Masa', '$activeTableCount'),
                         _mobileBadge('Yeni Sipariş', '$newCount'),
                         _mobileBadge('Mutfakta', '$mutfaktaCount'),
@@ -7526,74 +7713,60 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     ),
                   ),
                   const SizedBox(height: 10),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final mobileColumns = _mobileGarsonGridColumns(
-                        constraints.maxWidth,
-                      );
-                      final mobileAspectRatio = _mobileGarsonGridAspectRatio(
-                        constraints.maxWidth,
-                        mobileColumns,
-                      );
-                      return GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: filteredTableNumbersForGrid.length,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: mobileColumns,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
-                          childAspectRatio: mobileAspectRatio,
-                        ),
-                        itemBuilder: (context, index) {
-                          final tableNumber = filteredTableNumbersForGrid[index];
-                          final order = selectedOrderByTable[tableNumber];
-                          final orderCount =
-                              ordersByTable[tableNumber]?.length ?? 0;
-                          final draftItems =
-                              _mobileGarsonDraftItemsByTable[tableNumber] ??
-                              const <Map<String, dynamic>>[];
-                          final draftUpdatedAt =
-                              _mobileGarsonDraftUpdatedAtByTable[tableNumber];
-                          final optimisticAt =
-                              _mobileGarsonOptimisticSentAtByTable[tableNumber];
-                          final optimisticItems =
-                              _mobileGarsonOptimisticItemsByTable[tableNumber] ??
-                              const <Map<String, dynamic>>[];
-                          final hasDraft = draftItems.isNotEmpty;
-                          final hasRecentOptimistic =
-                              optimisticAt != null &&
-                              now.difference(optimisticAt) <=
-                                  const Duration(seconds: 45) &&
-                              !hasDraft &&
-                              orderCount == 0;
+                  _buildGarsonGroupedTableGrids(
+                    groups: _garsonTableAreaGroupsForNumbers(
+                      filteredTableNumbersForGrid,
+                    ),
+                    occupiedTableNumbers: activeTableNumbers,
+                    columnsResolver: _mobileGarsonGridColumns,
+                    aspectRatioResolver: _mobileGarsonGridAspectRatio,
+                    sectionPadding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                    cardBuilder: (tableNumber) {
+                      final order = selectedOrderByTable[tableNumber];
+                      final orderCount =
+                          ordersByTable[tableNumber]?.length ?? 0;
+                      final draftItems =
+                          _mobileGarsonDraftItemsByTable[tableNumber] ??
+                          const <Map<String, dynamic>>[];
+                      final draftUpdatedAt =
+                          _mobileGarsonDraftUpdatedAtByTable[tableNumber];
+                      final optimisticAt =
+                          _mobileGarsonOptimisticSentAtByTable[tableNumber];
+                      final optimisticItems =
+                          _mobileGarsonOptimisticItemsByTable[tableNumber] ??
+                          const <Map<String, dynamic>>[];
+                      final hasDraft = draftItems.isNotEmpty;
+                      final hasRecentOptimistic =
+                          optimisticAt != null &&
+                          now.difference(optimisticAt) <=
+                              const Duration(seconds: 45) &&
+                          !hasDraft &&
+                          orderCount == 0;
 
-                          final optimisticOrder = hasRecentOptimistic
-                              ? <String, dynamic>{
-                                  'status': 'sent',
-                                  'created_at': optimisticAt.toIso8601String(),
-                                  'items': optimisticItems,
-                                }
-                              : null;
-                          final displayOrder = hasDraft
-                              ? <String, dynamic>{
-                                  'status': 'draft',
-                                  'created_at': (draftUpdatedAt ?? now)
-                                      .toIso8601String(),
-                                  'items': draftItems,
-                                }
-                              : (order ?? optimisticOrder);
-                          final displayOrderCount = hasDraft
-                              ? 1
-                              : (orderCount > 0
-                                    ? orderCount
-                                    : (hasRecentOptimistic ? 1 : 0));
-                          return _buildMobileGarsonTableCard(
-                            tableNumber: tableNumber,
-                            order: displayOrder,
-                            orderCount: displayOrderCount,
-                          );
-                        },
+                      final optimisticOrder = hasRecentOptimistic
+                          ? <String, dynamic>{
+                              'status': 'sent',
+                              'created_at': optimisticAt.toIso8601String(),
+                              'items': optimisticItems,
+                            }
+                          : null;
+                      final displayOrder = hasDraft
+                          ? <String, dynamic>{
+                              'status': 'draft',
+                              'created_at': (draftUpdatedAt ?? now)
+                                  .toIso8601String(),
+                              'items': draftItems,
+                            }
+                          : (order ?? optimisticOrder);
+                      final displayOrderCount = hasDraft
+                          ? 1
+                          : (orderCount > 0
+                                ? orderCount
+                                : (hasRecentOptimistic ? 1 : 0));
+                      return _buildMobileGarsonTableCard(
+                        tableNumber: tableNumber,
+                        order: displayOrder,
+                        orderCount: displayOrderCount,
                       );
                     },
                   ),
@@ -8010,6 +8183,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             );
       }
     }
+    unawaited(
+      _sellerPrintJobService.prefetchKitchenStationContext(
+        restaurantId: sellerId,
+        products: _products,
+      ),
+    );
   }
 
   Future<UnifiedPrinterModel?> _garsonReceiptPrinterForDirectDispatch(
@@ -8815,14 +8994,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         final lineTotal = _garsonRoundMoney(rawLineTotal);
         final unitPrice = _garsonRoundMoney(rawLineTotal / qty);
         subtotal += rawLineTotal;
+        final printLabel = GarsonProductSelection.resolvePrintItemLabel(item);
+        final amountLabel = GarsonProductSelection.resolvePrintItemAmountLabel(item);
         items.add(<String, dynamic>{
-          'name': (item['name']?.toString().trim().isNotEmpty ?? false)
-              ? item['name'].toString().trim()
-              : '-',
+          'name': printLabel.isNotEmpty ? printLabel : '-',
+          'display_label': printLabel.isNotEmpty ? printLabel : '-',
+          if (amountLabel.isNotEmpty) 'amount_label': amountLabel,
           'qty': qty,
           'price': unitPrice,
           'total': lineTotal,
         });
+        GarsonProductSelection.logGarsonPrintItemLabel(
+          path: 'receipt',
+          item: item,
+          finalPrintName: printLabel,
+        );
       }
     }
 
@@ -8871,6 +9057,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       'payload.table_name=${payload['table_name']} '
       'payload.table_area_name=${payload['table_area_name']}',
     );
+
+    logReceiptFinalBeforeBridge(path: 'garson_receipt_build', payload: payload);
 
     return payload;
   }
@@ -9102,6 +9290,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     var printerResolveMs = 0;
     var payloadBuildMs = 0;
     var bridgeRequestMs = 0;
+    var totalToBridgeMs = 0;
     String? path;
     bool? ok;
     String? errorMessage;
@@ -9161,6 +9350,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       payloadBuildMs = payloadWatch.elapsedMilliseconds;
 
       if (_supportsDirectLocalPrintBridge && bridgeReachable) {
+        final toBridgeWatch = Stopwatch()..start();
         final resolveWatch = Stopwatch()..start();
         final receiptPrinter = await _garsonReceiptPrinterForDirectDispatch(
           sellerId,
@@ -9198,6 +9388,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           tableId: tableNumber.toString(),
         );
         bridgeRequestMs = printWatch.elapsedMilliseconds;
+        totalToBridgeMs = toBridgeWatch.elapsedMilliseconds;
         path = 'direct';
         ok = directResult.ok;
         if (!mounted) return;
@@ -9339,13 +9530,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           'order_fetch_ms': orderFetchMs,
           'store_profile_fetch_ms': storeProfileFetchMs,
           'printer_resolve_ms': printerResolveMs,
+          'station_resolve_ms': 0,
           'payload_build_ms': payloadBuildMs,
           'bridge_request_ms': bridgeRequestMs,
-          'total_ms': watch.elapsedMilliseconds,
+          'total_to_bridge_ms':
+              totalToBridgeMs > 0 ? totalToBridgeMs : bridgeRequestMs,
+          'total_ui_done_ms': watch.elapsedMilliseconds,
           'table': tableNumber,
           if (path != null) 'path': path,
           if (ok != null) 'ok': ok,
           if (errorMessage != null) 'error': errorMessage,
+          if (path == 'direct') 'fallback_reason': 'none',
         },
       );
     }
@@ -9993,13 +10188,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           ...visiblePreviewItems.map((item) {
-                            final qty =
-                                (item['quantity'] as num?)?.toInt() ?? 1;
-                            final name = item['name']?.toString() ?? '-';
+                            final lineLabel =
+                                GarsonProductSelection.orderItemDisplayLabel(
+                              item,
+                            );
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 2),
                               child: Text(
-                                '$qty x $name',
+                                lineLabel.isNotEmpty ? lineLabel : '-',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -10943,6 +11139,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   Future<void> _refreshDashboardData() async {
     final watch = Stopwatch()..start();
+    final preservedModule = _selectedModule;
+    sellerNavigationLog(
+      'auth_refresh_no_navigation',
+      extra: {'module': preservedModule.name, 'trigger': 'refresh_dashboard'},
+    );
     _logSellerPanel(
       'Init',
       'phase=refreshDashboardData '
@@ -10953,6 +11154,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       _loadSellerOrders(),
       _loadSellerQuestions(),
     ]);
+    if (mounted && _selectedModule != preservedModule) {
+      sellerNavigationLog(
+        'unexpected_dashboard_redirect',
+        extra: {
+          'from': preservedModule.name,
+          'to': _selectedModule.name,
+          'trigger': 'refresh_dashboard',
+        },
+      );
+      setState(() => _selectedModule = preservedModule);
+    }
     _refreshProducts();
     _subscribeSupportTickets();
     _logSellerPanel(
@@ -12460,7 +12672,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       case 'inactive':
         return 'Pasif';
       case 'pending':
-        return 'Beklemede';
+        return 'Onay Bekliyor';
       case 'rejected':
         return 'Reddedildi';
       case 'draft':
@@ -12701,10 +12913,27 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               children: [
                 IconButton(
                   onPressed: () async {
+                    productEditLog(
+                      'route_decision',
+                      extra: {
+                        'productId': product.id,
+                        'isTemplate': isTemplate,
+                        'resolvedKind':
+                            MixedServiceOrder.productTypeFromProduct(product),
+                      },
+                    );
                     if (isTemplate) {
+                      productEditLog(
+                        'open_service_editor',
+                        extra: {'productId': product.id},
+                      );
                       await _openTemplateEditor(existingProduct: product);
                       return;
                     }
+                    productEditLog(
+                      'open_normal_product_editor',
+                      extra: {'productId': product.id},
+                    );
                     final result = await Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -19819,14 +20048,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               })
                               .toList(growable: false);
 
-                          final tableNumbers = _sortedStoreTableNumbers();
-                          if (tableNumbers.isEmpty && orders.isEmpty) {
-                            return Center(
-                              child: Text(
-                                'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
-                                style: TextStyle(color: Colors.grey.shade600),
-                              ),
-                            );
+                          if (!_garsonStoreTablesReady && _storeTables.isEmpty) {
+                            return _buildGarsonTablesLoadingPlaceholder();
                           }
 
                           final ordersByTable =
@@ -19854,72 +20077,74 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             );
                           }
 
-                          final displayTableNumbers =
-                              tableNumbers.isNotEmpty
-                                    ? tableNumbers
-                                    : ordersByTable.keys.toList(growable: false)
-                                ..sort();
+                          final displayTableNumbers = _garsonTableNumbersForGrid(
+                            orderTableNumbers:
+                                ordersByTable.keys.toList(growable: false),
+                          );
+                          if (displayTableNumbers.isEmpty) {
+                            return Center(
+                              child: Text(
+                                'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
+                                style: TextStyle(color: Colors.grey.shade600),
+                              ),
+                            );
+                          }
 
-                          return LayoutBuilder(
-                            builder: (context, constraints) {
-                              final webColumns = _webGarsonGridColumns(
-                                constraints.maxWidth,
-                              );
-                              final webAspectRatio = _webGarsonGridAspectRatio(
-                                constraints.maxWidth,
-                                webColumns,
-                              );
-                              return GridView.builder(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                gridDelegate:
-                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: webColumns,
-                                      crossAxisSpacing: 14,
-                                      mainAxisSpacing: 14,
-                                      childAspectRatio: webAspectRatio,
-                                    ),
-                                itemCount: displayTableNumbers.length,
-                                itemBuilder: (context, index) {
-                                  final tableNumber =
-                                      displayTableNumbers[index];
-                                  var tableOrders =
-                                      ordersByTable[tableNumber] ??
-                                      const <Map<String, dynamic>>[];
-                                  final opAt =
-                                      _mobileGarsonOptimisticSentAtByTable[tableNumber];
-                                  final opItems =
-                                      _mobileGarsonOptimisticItemsByTable[tableNumber] ??
-                                      const <Map<String, dynamic>>[];
-                                  if (opAt != null &&
-                                      DateTime.now().difference(opAt) <=
-                                          const Duration(seconds: 45) &&
-                                      tableOrders.isEmpty) {
-                                    tableOrders = [
-                                      <String, dynamic>{
-                                        'status': 'sent',
-                                        'table_number': tableNumber,
-                                        'created_at': opAt.toIso8601String(),
-                                        'items': opItems,
-                                      },
-                                    ];
-                                  }
-                                  final order = tableOrders.firstWhere(
-                                    (order) => !_isGarsonCompletedStatus(
-                                      order['status']?.toString(),
-                                    ),
-                                    orElse: () => tableOrders.isNotEmpty
-                                        ? tableOrders.first
-                                        : <String, dynamic>{},
-                                  );
-                                  return _buildWebGarsonTableCard(
-                                    tableNumber: tableNumber,
-                                    order: order.isEmpty ? null : order,
-                                    orderCount: tableOrders.length,
-                                    tableOrders: tableOrders,
-                                  );
-                                },
-                              );
-                            },
+                          final occupiedTableNumbers = displayTableNumbers
+                              .where(
+                                (tableNo) =>
+                                    (ordersByTable[tableNo]?.isNotEmpty ??
+                                        false),
+                              )
+                              .toSet();
+                          return SingleChildScrollView(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _buildGarsonGroupedTableGrids(
+                              groups: _garsonTableAreaGroupsForNumbers(
+                                displayTableNumbers,
+                              ),
+                              occupiedTableNumbers: occupiedTableNumbers,
+                              columnsResolver: _webGarsonGridColumns,
+                              aspectRatioResolver: _webGarsonGridAspectRatio,
+                              sectionPadding: EdgeInsets.zero,
+                              cardBuilder: (tableNumber) {
+                                var tableOrders =
+                                    ordersByTable[tableNumber] ??
+                                    const <Map<String, dynamic>>[];
+                                final opAt =
+                                    _mobileGarsonOptimisticSentAtByTable[tableNumber];
+                                final opItems =
+                                    _mobileGarsonOptimisticItemsByTable[tableNumber] ??
+                                    const <Map<String, dynamic>>[];
+                                if (opAt != null &&
+                                    DateTime.now().difference(opAt) <=
+                                        const Duration(seconds: 45) &&
+                                    tableOrders.isEmpty) {
+                                  tableOrders = [
+                                    <String, dynamic>{
+                                      'status': 'sent',
+                                      'table_number': tableNumber,
+                                      'created_at': opAt.toIso8601String(),
+                                      'items': opItems,
+                                    },
+                                  ];
+                                }
+                                final order = tableOrders.firstWhere(
+                                  (order) => !_isGarsonCompletedStatus(
+                                    order['status']?.toString(),
+                                  ),
+                                  orElse: () => tableOrders.isNotEmpty
+                                      ? tableOrders.first
+                                      : <String, dynamic>{},
+                                );
+                                return _buildWebGarsonTableCard(
+                                  tableNumber: tableNumber,
+                                  order: order.isEmpty ? null : order,
+                                  orderCount: tableOrders.length,
+                                  tableOrders: tableOrders,
+                                );
+                              },
+                            ),
                           );
                         },
                       );
@@ -20011,14 +20236,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       );
                     }
 
-                    final tableNumbers = _storeTables.isNotEmpty
-                        ? _storeTables
-                              .map(_tableNumberFromRow)
-                              .where((n) => n > 0)
-                              .toSet()
-                              .toList()
-                        : ordersByTable.keys.toList(growable: false);
-                    tableNumbers.sort();
+                    if (!_garsonStoreTablesReady && _storeTables.isEmpty) {
+                      return _buildGarsonTablesLoadingPlaceholder();
+                    }
+
+                    final tableNumbers = _garsonTableNumbersForGrid(
+                      orderTableNumbers:
+                          ordersByTable.keys.toList(growable: false),
+                    );
                     if (tableNumbers.isEmpty) {
                       return Center(
                         child: Column(
@@ -20227,69 +20452,75 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                     ],
                                   ),
                                 )
-                              : LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    final webColumns = _webGarsonGridColumns(
-                                      constraints.maxWidth,
-                                    );
-                                    final webAspectRatio =
-                                        _webGarsonGridAspectRatio(
-                                          constraints.maxWidth,
-                                          webColumns,
-                                        );
-                                    return GridView.builder(
-                                      itemCount: displayTableNumbers.length,
-                                      gridDelegate:
-                                          SliverGridDelegateWithFixedCrossAxisCount(
-                                            crossAxisCount: webColumns,
-                                            crossAxisSpacing: 10,
-                                            mainAxisSpacing: 10,
-                                            childAspectRatio: webAspectRatio,
-                                          ),
-                                      itemBuilder: (context, index) {
-                                        final tableNumber =
-                                            displayTableNumbers[index];
-                                        var tableOrders =
-                                            ordersByTable[tableNumber] ??
-                                            const <Map<String, dynamic>>[];
-                                        final opAt =
-                                            _mobileGarsonOptimisticSentAtByTable[tableNumber];
-                                        final opItems =
-                                            _mobileGarsonOptimisticItemsByTable[tableNumber] ??
-                                            const <Map<String, dynamic>>[];
-                                        if (opAt != null &&
-                                            DateTime.now().difference(opAt) <=
-                                                const Duration(seconds: 45) &&
-                                            tableOrders.isEmpty) {
-                                          tableOrders = [
-                                            <String, dynamic>{
-                                              'status': 'sent',
-                                              'table_number': tableNumber,
-                                              'created_at': opAt
-                                                  .toIso8601String(),
-                                              'items': opItems,
-                                            },
-                                          ];
-                                        }
-                                        Map<String, dynamic>? selectedOrder;
-                                        if (tableOrders.isNotEmpty) {
-                                          selectedOrder = tableOrders
-                                              .firstWhere(
-                                                (order) =>
-                                                    !_isGarsonCompletedStatus(
-                                                      order['status']
-                                                          ?.toString(),
-                                                    ),
-                                                orElse: () => tableOrders.first,
-                                              );
-                                        }
-                                        return _buildWebGarsonTableCard(
-                                          tableNumber: tableNumber,
-                                          order: selectedOrder,
-                                          orderCount: tableOrders.length,
-                                          tableOrders: tableOrders,
-                                        );
-                                      },
+                              : Builder(
+                                  builder: (context) {
+                                    final occupiedTableNumbers =
+                                        displayTableNumbers
+                                            .where(
+                                              (tableNo) =>
+                                                  (ordersByTable[tableNo]
+                                                          ?.isNotEmpty ??
+                                                      false),
+                                            )
+                                            .toSet();
+                                    return SingleChildScrollView(
+                                      child: _buildGarsonGroupedTableGrids(
+                                        groups: _garsonTableAreaGroupsForNumbers(
+                                          displayTableNumbers,
+                                        ),
+                                        occupiedTableNumbers:
+                                            occupiedTableNumbers,
+                                        columnsResolver: _webGarsonGridColumns,
+                                        aspectRatioResolver:
+                                            _webGarsonGridAspectRatio,
+                                        sectionPadding: EdgeInsets.zero,
+                                        cardBuilder: (tableNumber) {
+                                          var tableOrders =
+                                              ordersByTable[tableNumber] ??
+                                              const <Map<String, dynamic>>[];
+                                          final opAt =
+                                              _mobileGarsonOptimisticSentAtByTable[tableNumber];
+                                          final opItems =
+                                              _mobileGarsonOptimisticItemsByTable[tableNumber] ??
+                                              const <Map<String, dynamic>>[];
+                                          if (opAt != null &&
+                                              DateTime.now()
+                                                      .difference(opAt) <=
+                                                  const Duration(
+                                                    seconds: 45,
+                                                  ) &&
+                                              tableOrders.isEmpty) {
+                                            tableOrders = [
+                                              <String, dynamic>{
+                                                'status': 'sent',
+                                                'table_number': tableNumber,
+                                                'created_at': opAt
+                                                    .toIso8601String(),
+                                                'items': opItems,
+                                              },
+                                            ];
+                                          }
+                                          Map<String, dynamic>? selectedOrder;
+                                          if (tableOrders.isNotEmpty) {
+                                            selectedOrder = tableOrders
+                                                .firstWhere(
+                                                  (order) =>
+                                                      !_isGarsonCompletedStatus(
+                                                        order['status']
+                                                            ?.toString(),
+                                                      ),
+                                                  orElse: () =>
+                                                      tableOrders.first,
+                                                );
+                                          }
+                                          return _buildWebGarsonTableCard(
+                                            tableNumber: tableNumber,
+                                            order: selectedOrder,
+                                            orderCount: tableOrders.length,
+                                            tableOrders: tableOrders,
+                                          );
+                                        },
+                                      ),
                                     );
                                   },
                                 ),
@@ -20813,9 +21044,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         (item['selectedWeightGrams'] as num?)?.toInt() ??
         matchedProduct?.resolvedDefaultWeightGrams ??
         0;
-    String? selectedSizeName =
-        item['selectedSizeName']?.toString() ??
-        matchedProduct?.defaultSizeOption?.name;
+    final storedSizeName = item['selected_size_name']?.toString() ??
+        item['selectedSizeName']?.toString();
+    String? selectedSizeName = storedSizeName?.trim().isNotEmpty == true
+        ? storedSizeName
+        : null;
     final availableAttrs = <String>{
       ...?matchedProduct?.attributes,
       ...initialAttrs,
@@ -21388,37 +21621,93 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
-  Future<Map<String, dynamic>?> _configureGarsonProductItem(
+  Future<List<Map<String, dynamic>>?> _configureGarsonProductItem(
     BuildContext ctx,
-    SellerProduct product,
-  ) async {
-    int qty = 1;
-    double selectedServiceAmount = product.resolvedDefaultServiceAmount;
-    int selectedWeightGrams = product.resolvedDefaultWeightGrams;
-    String? selectedSizeName = product.defaultSizeOption?.name;
-    final gramajCtrl = TextEditingController();
-    final notesCtrl = TextEditingController();
+    SellerProduct product, [
+    Map<String, dynamic>? editingItem,
+    int? editIndex,
+  ]) async {
+    final isEditing = editingItem != null;
+    garsonDraftLog(
+      'OpenModal',
+      extra: <String, Object?>{
+        'mode': isEditing ? 'edit' : 'new',
+        'productName': product.name,
+        'editIndex': editIndex ?? -1,
+        'existingQuantity': isEditing
+            ? ((editingItem['quantity'] as num?)?.toInt() ?? 1)
+            : 0,
+      },
+    );
+    final modalState = isEditing
+        ? GarsonProductModalState.fromDraftItem(product, editingItem)
+        : GarsonProductModalState.openNew(product);
+    final notesCtrl = TextEditingController(text: modalState.activeUnit.note);
+    final customGramsCtrl = TextEditingController();
     final attrs = product.attributes;
-    final selected = <String>{};
-
-    // Compute gramaj presets from product weight settings (non-stepper products).
-    // Only shown when at least one weight boundary is configured on the product.
     final gramajPresets =
-        (!product.usesServiceControlStepper &&
-            (product.minWeightGrams != null ||
-                product.weightStepGrams != null ||
-                product.maxWeightGrams != null))
-        ? ProductPriceCalculator.buildPresetWeightOptions(
-            minWeightGrams: product.minWeightGrams,
-            defaultWeightGrams: product.defaultWeightGrams,
-            weightStepGrams: product.weightStepGrams,
-            maxWeightGrams: product.maxWeightGrams,
-          )
-        : const <int>[];
+        GarsonProductSelection.weightQuickGramOptions(product);
 
     // showModalBottomSheet correctly propagates MediaQuery.viewInsets so the
     // note field stays visible when the keyboard is shown (keyboard-safe).
-    return showModalBottomSheet<Map<String, dynamic>>(
+    void syncNoteFromField() => modalState.syncActiveUnitNote(notesCtrl.text);
+
+    void switchActiveUnit(int index, void Function(void Function()) setStateDialog) {
+      syncNoteFromField();
+      setStateDialog(() {
+        modalState.setActiveUnitIndex(index);
+        notesCtrl.text = modalState.activeUnit.note;
+      });
+    }
+
+    void applyCustomGramInput(void Function(void Function()) setStateDialog) {
+      final raw = customGramsCtrl.text;
+      final grams = GarsonProductSelection.parseCustomGramInput(
+        raw,
+        product: product,
+      );
+      if (grams == null) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(
+            content: Text('Geçerli bir gramaj girin (ör. 575).'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+      setStateDialog(() {
+        modalState.setWeightModeForActiveUnit(grams, snapToStep: false);
+        customGramsCtrl.text = '$grams';
+      });
+      if (kDebugMode) {
+        final price = GarsonProductSelection.resolveUnitPrice(
+          product: product,
+          activeMode: GarsonActivePricingMode.weight,
+          selectedGramsForWeight: modalState.selectedGrams,
+        );
+        final probe = GarsonProductSelection.buildOrderItemFromUnit(
+          product: product,
+          quantity: 1,
+          unit: modalState.activeUnit,
+          showGramajUi: modalState.showGramajUi,
+        );
+        debugPrint(
+          '[GarsonProductSelect][custom_gram_apply] ${jsonEncode(<String, Object?>{
+            'raw': raw,
+            'parsedGrams': grams,
+            'activeUnitIndex': modalState.activeUnitIndex,
+            'pricingMode': 'weight',
+            'selectedGrams': modalState.selectedGrams,
+            'selectedWeightGrams': modalState.selectedWeightGrams,
+            'displayLabel': probe['display_label'] ?? '',
+            'amountLabel': probe['amount_label'] ?? probe['gramaj'] ?? '',
+            'price': price,
+          })}',
+        );
+      }
+    }
+
+    return showModalBottomSheet<List<Map<String, dynamic>>>(
       context: ctx,
       isScrollControlled: true,
       useSafeArea: true,
@@ -21446,12 +21735,32 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
+                                  isEditing
+                                      ? 'Satırı düzenle'
+                                      : 'Yeni seçim ekle',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF6B7280),
+                                  ),
+                                ),
+                                Text(
                                   product.name,
                                   style: const TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
+                                if (!isEditing) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Taslaktaki toplam adet bu seçime taşınmaz · yeni satır adet: 1',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ],
                                 const SizedBox(height: 4),
                                 Text(
                                   product.displayPrice,
@@ -21485,9 +21794,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           children: [
                             GestureDetector(
                               onTap: () {
-                                if (qty > 1) {
+                                if (modalState.quantity > 1) {
+                                  syncNoteFromField();
                                   setStateDialog(() {
-                                    qty--;
+                                    modalState.changeQuantity(-1);
+                                    notesCtrl.text = modalState.activeUnit.note;
                                   });
                                 }
                               },
@@ -21517,7 +21828,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 border: Border.all(color: Colors.grey.shade300),
                               ),
                               child: Text(
-                                '$qty',
+                                '${modalState.quantity}',
                                 style: const TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w700,
@@ -21527,8 +21838,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             const SizedBox(width: 8),
                             GestureDetector(
                               onTap: () {
+                                syncNoteFromField();
                                 setStateDialog(() {
-                                  qty++;
+                                  modalState.changeQuantity(1);
+                                  notesCtrl.text = modalState.activeUnit.note;
                                 });
                               },
                               child: Container(
@@ -21551,70 +21864,153 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         ),
                         const SizedBox(height: 12),
                         const Text(
-                          'Gramaj (istege bagli)',
+                          'Adet Seçimleri',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                         const SizedBox(height: 6),
-                        // Gramaj preset chips – only shown when the product
-                        // has at least one weight boundary configured.
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: List<Widget>.generate(modalState.quantity, (
+                            index,
+                          ) {
+                            final isActive = modalState.activeUnitIndex == index;
+                            return ChoiceChip(
+                              label: Text('${index + 1}'),
+                              selected: isActive,
+                              onSelected: (_) =>
+                                  switchActiveUnit(index, setStateDialog),
+                            );
+                          }, growable: false),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      if (modalState.showGramajUi) ...[
+                        const Text(
+                          'Gramaj',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                setStateDialog(() {
+                                  modalState.setWeightMode(
+                                    grams: GarsonProductSelection.clampGrams(
+                                      product,
+                                      modalState.selectedGrams -
+                                          product.resolvedWeightStepGrams,
+                                    ),
+                                  );
+                                  garsonProductSelectLog(
+                                    'gram_selected',
+                                    extra: {'grams': modalState.selectedGrams},
+                                  );
+                                });
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.remove,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Container(
+                                height: 40,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: Colors.grey.shade300,
+                                  ),
+                                ),
+                                child: Text(
+                                  ProductPriceCalculator.formatWeight(
+                                    modalState.selectedGrams,
+                                  ),
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () {
+                                setStateDialog(() {
+                                  modalState.setWeightMode(
+                                    grams: GarsonProductSelection.clampGrams(
+                                      product,
+                                      modalState.selectedGrams +
+                                          product.resolvedWeightStepGrams,
+                                    ),
+                                  );
+                                  garsonProductSelectLog(
+                                    'gram_selected',
+                                    extra: {'grams': modalState.selectedGrams},
+                                  );
+                                });
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                         if (gramajPresets.isNotEmpty) ...[
+                          const SizedBox(height: 8),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
-                            children: [
-                              ...gramajPresets.map((grams) {
-                                final label =
-                                    ProductPriceCalculator.formatWeight(grams);
-                                final isSelected =
-                                    gramajCtrl.text.trim() == label;
-                                return GestureDetector(
-                                  onTap: () => setStateDialog(() {
-                                    if (isSelected) {
-                                      gramajCtrl.text = '';
-                                    } else {
-                                      gramajCtrl.text = label;
-                                    }
-                                  }),
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 150),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 7,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : AppColors.primary.withValues(
-                                              alpha: 0.08,
-                                            ),
-                                      borderRadius: BorderRadius.circular(20),
-                                      border: Border.all(
-                                        color: AppColors.primary.withValues(
-                                          alpha: isSelected ? 1.0 : 0.25,
-                                        ),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      label,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: isSelected
-                                            ? Colors.white
-                                            : AppColors.primary,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }),
-                              // "Miktar giriniz" chip – clears preset and
-                              // lets the user type a custom weight.
-                              GestureDetector(
+                            children: gramajPresets.map((grams) {
+                              final label =
+                                  ProductPriceCalculator.formatWeight(grams);
+                              final isSelected =
+                                  modalState.activeMode ==
+                                      GarsonActivePricingMode.weight &&
+                                  modalState.selectedGrams == grams;
+                              return GestureDetector(
                                 onTap: () => setStateDialog(() {
-                                  gramajCtrl.text = '';
+                                  modalState.setWeightModeForActiveUnit(
+                                    grams,
+                                    snapToStep: true,
+                                  );
+                                  customGramsCtrl.clear();
+                                  garsonProductSelectLog(
+                                    'gram_selected',
+                                    extra: {'grams': modalState.selectedGrams},
+                                  );
                                 }),
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 150),
@@ -21623,42 +22019,118 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                     vertical: 7,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: gramajCtrl.text.trim().isEmpty
-                                        ? Colors.grey.shade200
-                                        : Colors.transparent,
+                                    color: isSelected
+                                        ? AppColors.primary
+                                        : AppColors.primary.withValues(
+                                            alpha: 0.08,
+                                          ),
                                     borderRadius: BorderRadius.circular(20),
                                     border: Border.all(
-                                      color: Colors.grey.shade400,
+                                      color: AppColors.primary.withValues(
+                                        alpha: isSelected ? 1.0 : 0.25,
+                                      ),
                                     ),
                                   ),
                                   child: Text(
-                                    'Miktar giriniz',
+                                    label,
                                     style: TextStyle(
                                       fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.grey.shade700,
+                                      fontWeight: FontWeight.w600,
+                                      color: isSelected
+                                          ? Colors.white
+                                          : AppColors.primary,
                                     ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              );
+                            }).toList(growable: false),
                           ),
-                          const SizedBox(height: 8),
                         ],
-                        TextField(
-                          controller: gramajCtrl,
-                          decoration: InputDecoration(
-                            hintText: 'Orn: 250g',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: customGramsCtrl,
+                                keyboardType: TextInputType.number,
+                                decoration: InputDecoration(
+                                  labelText: 'Özel Gramaj',
+                                  hintText: 'Örn. 575',
+                                  suffixText: 'g',
+                                  isDense: true,
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(
+                                      color: modalState.isCustomGramSelection
+                                          ? AppColors.primary
+                                          : Colors.grey.shade300,
+                                      width: modalState.isCustomGramSelection
+                                          ? 1.5
+                                          : 1,
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.primary,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                ),
+                                onSubmitted: (_) =>
+                                    applyCustomGramInput(setStateDialog),
+                              ),
                             ),
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
+                            const SizedBox(width: 8),
+                            FilledButton(
+                              onPressed: () =>
+                                  applyCustomGramInput(setStateDialog),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                              ),
+                              child: const Text('Uygula'),
                             ),
-                          ),
-                          onChanged: (_) => setStateDialog(() {}),
+                          ],
+                        ),
+                        Builder(
+                          builder: (context) {
+                            final previewPrice =
+                                GarsonProductSelection.resolveUnitPrice(
+                              product: product,
+                              activeMode: modalState.activeMode ==
+                                      GarsonActivePricingMode.weight
+                                  ? GarsonActivePricingMode.weight
+                                  : GarsonActivePricingMode.portion,
+                              selectedGramsForWeight:
+                                  modalState.activeMode ==
+                                      GarsonActivePricingMode.weight
+                                  ? modalState.selectedGrams
+                                  : null,
+                            );
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text(
+                                'Hesaplanan: ${ProductPriceCalculator.formatCurrency(previewPrice)}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            );
+                          },
                         ),
                         const SizedBox(height: 12),
                       ],
@@ -21676,9 +22148,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             GestureDetector(
                               onTap: () {
                                 setStateDialog(() {
-                                  selectedServiceAmount =
+                                  modalState.setPortionMode();
+                                  modalState.selectedServiceAmount =
                                       ProductPriceCalculator.clampPortionSelection(
-                                        selectedServiceAmount -
+                                        modalState.selectedServiceAmount -
                                             product.resolvedPortionStepAmount,
                                         type:
                                             product.resolvedServiceControlType,
@@ -21718,7 +22191,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 child: Text(
                                   ProductPriceCalculator.formatServiceAmountLabel(
                                     type: product.resolvedServiceControlType,
-                                    amount: selectedServiceAmount,
+                                    amount: modalState.selectedServiceAmount,
                                   ),
                                   style: const TextStyle(
                                     fontSize: 14,
@@ -21731,9 +22204,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             GestureDetector(
                               onTap: () {
                                 setStateDialog(() {
-                                  selectedServiceAmount =
+                                  modalState.setPortionMode();
+                                  modalState.selectedServiceAmount =
                                       ProductPriceCalculator.clampPortionSelection(
-                                        selectedServiceAmount +
+                                        modalState.selectedServiceAmount +
                                             product.resolvedPortionStepAmount,
                                         type:
                                             product.resolvedServiceControlType,
@@ -21778,15 +22252,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             GestureDetector(
                               onTap: () {
                                 setStateDialog(() {
-                                  selectedWeightGrams =
-                                      ProductPriceCalculator.clampWeightSelection(
-                                        selectedWeightGrams -
-                                            product.resolvedWeightStepGrams,
-                                        minWeightGrams: product.minWeightGrams,
-                                        weightStepGrams:
-                                            product.weightStepGrams,
-                                        maxWeightGrams: product.maxWeightGrams,
-                                      );
+                                  modalState.setWeightMode(
+                                    grams: ProductPriceCalculator
+                                        .clampWeightSelection(
+                                      modalState.selectedWeightGrams -
+                                          product.resolvedWeightStepGrams,
+                                      minWeightGrams: product.minWeightGrams,
+                                      weightStepGrams: product.weightStepGrams,
+                                      maxWeightGrams: product.maxWeightGrams,
+                                    ),
+                                  );
                                 });
                               },
                               child: Container(
@@ -21819,7 +22294,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 child: Text(
                                   ProductPriceCalculator.formatServiceAmountLabel(
                                     type: product.resolvedServiceControlType,
-                                    grams: selectedWeightGrams,
+                                    grams: modalState.selectedWeightGrams,
                                   ),
                                   style: const TextStyle(
                                     fontSize: 14,
@@ -21832,15 +22307,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             GestureDetector(
                               onTap: () {
                                 setStateDialog(() {
-                                  selectedWeightGrams =
-                                      ProductPriceCalculator.clampWeightSelection(
-                                        selectedWeightGrams +
-                                            product.resolvedWeightStepGrams,
-                                        minWeightGrams: product.minWeightGrams,
-                                        weightStepGrams:
-                                            product.weightStepGrams,
-                                        maxWeightGrams: product.maxWeightGrams,
-                                      );
+                                  modalState.setWeightMode(
+                                    grams: ProductPriceCalculator
+                                        .clampWeightSelection(
+                                      modalState.selectedWeightGrams +
+                                          product.resolvedWeightStepGrams,
+                                      minWeightGrams: product.minWeightGrams,
+                                      weightStepGrams: product.weightStepGrams,
+                                      maxWeightGrams: product.maxWeightGrams,
+                                    ),
+                                  );
                                 });
                               },
                               child: Container(
@@ -21875,25 +22351,39 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         Wrap(
                           spacing: 8,
                           runSpacing: 8,
-                          children: product.normalizedSizeOptions
-                              .map((option) {
-                                final isSelected =
-                                    selectedSizeName?.trim().toLowerCase() ==
-                                    option.name.trim().toLowerCase();
-                                return ChoiceChip(
-                                  label: Text(
-                                    '${option.name} · ${ProductPriceCalculator.formatCurrency(option.price)}',
-                                  ),
-                                  selected: isSelected,
-                                  onSelected: (_) {
-                                    setStateDialog(() {
-                                      selectedSizeName = option.name;
-                                      gramajCtrl.text = option.name;
-                                    });
-                                  },
-                                );
-                              })
-                              .toList(growable: false),
+                          children: [
+                            if (!product.usesPortionLikeStepper)
+                              ChoiceChip(
+                                label: Text(
+                                  'Tam porsiyon · ${ProductPriceCalculator.formatCurrency(product.effectiveBaseUnitPrice)}',
+                                ),
+                                selected: modalState.activeMode ==
+                                    GarsonActivePricingMode.portion,
+                                onSelected: (_) {
+                                  setStateDialog(modalState.setPortionMode);
+                                },
+                              ),
+                            ...product.normalizedSizeOptions.map((option) {
+                              final isSelected =
+                                  modalState.activeMode ==
+                                      GarsonActivePricingMode.size &&
+                                  modalState.selectedSizeName
+                                          ?.trim()
+                                          .toLowerCase() ==
+                                      option.name.trim().toLowerCase();
+                              return ChoiceChip(
+                                label: Text(
+                                  '${option.name} · ${ProductPriceCalculator.formatCurrency(option.price)}',
+                                ),
+                                selected: isSelected,
+                                onSelected: (_) {
+                                  setStateDialog(
+                                    () => modalState.setSizeMode(option.name),
+                                  );
+                                },
+                              );
+                            }),
+                          ],
                         ),
                         const SizedBox(height: 12),
                       ],
@@ -21908,6 +22398,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       TextField(
                         controller: notesCtrl,
                         maxLines: 2,
+                        onChanged: (_) => syncNoteFromField(),
                         decoration: InputDecoration(
                           hintText: 'Örn: Az tuzlu, yanında ketçap',
                           border: OutlineInputBorder(
@@ -21933,15 +22424,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           spacing: 8,
                           runSpacing: 8,
                           children: attrs.map((a) {
-                            final isSelected = selected.contains(a);
+                            final isSelected =
+                                modalState.selectedFeatures.contains(a);
                             return GestureDetector(
                               onTap: () {
                                 setStateDialog(() {
-                                  if (isSelected) {
-                                    selected.remove(a);
-                                  } else {
-                                    selected.add(a);
-                                  }
+                                  modalState.toggleFeature(a);
                                 });
                               },
                               child: AnimatedContainer(
@@ -21989,88 +22477,58 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           }).toList(),
                         ),
                       ],
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Seçim özeti',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              modalState.buildSelectionSummary(),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                       const SizedBox(height: 16),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: () {
-                            final quantity = product.usesServiceControlStepper
-                                ? 1
-                                : qty;
-                            final unitPrice =
-                                ProductPriceCalculator.resolveServiceControlledUnitPrice(
-                                  serviceControlType:
-                                      product.resolvedServiceControlType,
-                                  pricingType: product.resolvedPricingType,
-                                  pricingMode: product.resolvedPricingMode,
-                                  basePrice:
-                                      product.basePrice ?? product.portionPrice,
-                                  portionPrice: product.portionPrice,
-                                  pricePerKg: product.pricePerKg,
-                                  sizeOptions: product.normalizedSizeOptions,
-                                  selectedSizeName: selectedSizeName,
-                                  fallbackPrice: product.price,
-                                  selectedAmount: product.usesPortionLikeStepper
-                                      ? selectedServiceAmount
-                                      : null,
-                                  selectedWeightGrams:
-                                      product.resolvedServiceControlType ==
-                                          ProductServiceControlType
-                                              .weightStepper
-                                      ? selectedWeightGrams
-                                      : null,
-                                );
-                            final normalizedSizeName =
-                                selectedSizeName?.trim() ?? '';
-                            final amountLabel = normalizedSizeName.isNotEmpty
-                                ? normalizedSizeName
-                                : product.usesServiceControlStepper
-                                ? ProductPriceCalculator.formatServiceAmountLabel(
-                                    type: product.resolvedServiceControlType,
-                                    amount: product.usesPortionLikeStepper
-                                        ? selectedServiceAmount
-                                        : null,
-                                    grams:
-                                        product.resolvedServiceControlType ==
-                                            ProductServiceControlType
-                                                .weightStepper
-                                        ? selectedWeightGrams
-                                        : null,
-                                  )
-                                : gramajCtrl.text.trim();
-                            final item = <String, dynamic>{
-                              'product_id': product.id,
-                              'name': product.name,
-                              'price': unitPrice,
-                              'quantity': quantity,
-                              'gramaj': amountLabel,
-                              'amountLabel': amountLabel,
-                              'selectedSizeName': normalizedSizeName.isEmpty
-                                  ? null
-                                  : normalizedSizeName,
-                              'selectedSizePrice': normalizedSizeName.isEmpty
-                                  ? null
-                                  : unitPrice,
-                              'serviceControlType': product
-                                  .resolvedServiceControlType
-                                  .storageValue,
-                              'selectedServiceAmount':
-                                  product.usesPortionLikeStepper
-                                  ? selectedServiceAmount
-                                  : null,
-                              'selectedWeightGrams':
-                                  product.resolvedServiceControlType ==
-                                      ProductServiceControlType.weightStepper
-                                  ? selectedWeightGrams
-                                  : null,
-                              'line_total': unitPrice * quantity,
-                              'notes': notesCtrl.text.trim(),
-                              'station_id': product.stationId,
-                              'printer_routing_enabled':
-                                  product.printerRoutingEnabled,
-                              'attributes': selected.toList(),
-                            };
-                            Navigator.pop(bCtx, item);
+                            syncNoteFromField();
+                            final lines = modalState.buildConfirmedLines();
+                            final totalQty = lines.fold<int>(
+                              0,
+                              (sum, line) =>
+                                  sum + ((line['quantity'] as num?)?.toInt() ?? 1),
+                            );
+                            garsonProductSelectLog(
+                              'confirm_lines',
+                              extra: <String, Object?>{
+                                'mode': isEditing ? 'edit' : 'new',
+                                'lineCount': lines.length,
+                                'totalQuantity': totalQty,
+                              },
+                            );
+                            Navigator.pop(bCtx, lines);
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
@@ -22100,7 +22558,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           },
         );
       },
-    );
+    ).whenComplete(() {
+      notesCtrl.dispose();
+      customGramsCtrl.dispose();
+    });
   }
 
   Widget _buildStoreModule() {
@@ -28630,10 +29091,12 @@ class _StoreLocationChangeDialogState
 }
 
 typedef _GarsonConfigureProductItem =
-    Future<Map<String, dynamic>?> Function(
+    Future<List<Map<String, dynamic>>?> Function(
       BuildContext context,
-      SellerProduct product,
-    );
+      SellerProduct product, [
+      Map<String, dynamic>? editingItem,
+      int? editIndex,
+    ]);
 typedef _GarsonEditItemSettings =
     Future<void> Function(
       BuildContext context,
@@ -28919,6 +29382,83 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   OrderPrintJobService get _orderPrintJobService =>
       _orderPrintJobServiceInstance ??= OrderPrintJobService();
 
+  Map<String, String> _productStationIdByProductId() {
+    final map = <String, String>{};
+    for (final product in <SellerProduct>[
+      ...widget.products,
+      ..._queriedProducts,
+    ]) {
+      final stationId = product.stationId?.trim() ?? '';
+      if (stationId.isEmpty) continue;
+      map[product.id] = stationId;
+    }
+    return map;
+  }
+
+  Map<String, ProductStationMapping> _productStationMappingByProductId() {
+    KitchenProductMappingCacheStore.applyMemoryToResolver(widget.sellerId);
+    final stationNames = _orderPrintJobService.cachedStationNamesForRestaurant(
+      widget.sellerId,
+    );
+    final stationCodes = _orderPrintJobService.cachedStationCodesForRestaurant(
+      widget.sellerId,
+    );
+    final map = <String, ProductStationMapping>{
+      ..._orderPrintJobService.mergedKitchenProductMappingsForRestaurant(
+        widget.sellerId,
+      ),
+    };
+    for (final product in <SellerProduct>[
+      ...widget.products,
+      ..._queriedProducts,
+    ]) {
+      final stationId = product.stationId?.trim() ?? '';
+      if (stationId.isEmpty) continue;
+      final stationName = KitchenTicketHeaderResolver.sanitizeProductionStationName(
+        product.stationName?.trim().isNotEmpty == true
+            ? product.stationName!.trim()
+            : (stationNames[stationId] ?? ''),
+      );
+      final stationCode = product.stationCode?.trim().isNotEmpty == true
+          ? product.stationCode!.trim().toUpperCase()
+          : (stationCodes[stationId] ?? '');
+      map[product.id] = ProductStationMapping(
+        stationId: stationId,
+        stationName: stationName,
+        stationCode: stationCode,
+      );
+      logGarsonProductStationFields(
+        productId: product.id,
+        productName: product.name,
+        stationId: stationId,
+        stationName: stationName,
+        stationCode: stationCode,
+      );
+      logProductStationMappingLoaded(
+        productId: product.id,
+        productName: product.name,
+        stationId: stationId,
+        stationName: stationName,
+        stationCode: stationCode,
+        source: product.stationName?.trim().isNotEmpty == true
+            ? 'products.station_id/stations join'
+            : 'station_cache',
+      );
+    }
+    _orderPrintJobService.registerKitchenProductStationMappingsFromMap(
+      restaurantId: widget.sellerId,
+      mappings: map,
+      productNamesByProductId: <String, String>{
+        for (final product in <SellerProduct>[
+          ...widget.products,
+          ..._queriedProducts,
+        ])
+          if (map.containsKey(product.id)) product.id: product.name,
+      },
+    );
+    return map;
+  }
+
   bool get _debugPrintSystemEnabled =>
       widget.debugPrintSystemEnabledOverride ?? true;
 
@@ -29054,6 +29594,16 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       setState(() {
         _queriedProducts = queriedProducts;
       });
+      _orderPrintJobService.registerKitchenProductStationMappings(
+        restaurantId: widget.sellerId,
+        products: queriedProducts,
+      );
+      unawaited(
+        _orderPrintJobService.prefetchKitchenStationContext(
+          restaurantId: widget.sellerId,
+          products: queriedProducts,
+        ),
+      );
     } catch (error) {
       debugPrint('[GarsonProducts] direct seller query failed: $error');
     } finally {
@@ -29415,6 +29965,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         payloadBuildMs: result.payloadBuildMs,
         printerResolveMs: result.printerResolveMs,
         printerCacheResolveMs: result.printerCacheResolveMs,
+        stationResolveMs: result.stationResolveMs,
         fastPathDecisionMs: result.fastPathDecisionMs,
         totalToBridgeMs: result.totalToBridgeMs,
         directPrintStartedMs: result.directPrintStartedMs,
@@ -29953,20 +30504,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
 
   List<MixedServiceDisplayEntry> _itemDetailLines(Map<String, dynamic> item) {
     final lines = <MixedServiceDisplayEntry>[];
-    final gramaj = item['gramaj']?.toString().trim() ?? '';
-    final notes = item['notes']?.toString().trim() ?? '';
-    final attrs =
-        (item['attributes'] as List?)
-            ?.whereType<String>()
-            .where((s) => s.isNotEmpty)
-            .toList() ??
-        const <String>[];
-    if (gramaj.isNotEmpty) {
-      lines.add(MixedServiceDisplayEntry.item(gramaj));
-    }
-    final noteParts = <String>[if (notes.isNotEmpty) notes, ...attrs];
-    if (noteParts.isNotEmpty) {
-      lines.add(MixedServiceDisplayEntry.item('Not: ${noteParts.join(', ')}'));
+    final featureLine = GarsonProductSelection.orderItemFeatureNoteLine(item);
+    if (featureLine.isNotEmpty) {
+      lines.add(MixedServiceDisplayEntry.item(featureLine));
     }
     lines.addAll(MixedServiceOrder.childItemDisplayEntries(item));
     return lines;
@@ -30158,6 +30698,52 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return total;
   }
 
+  int _draftLineCountForProduct(SellerProduct product) {
+    var count = 0;
+    for (final item in _draftItems) {
+      if (_isMixedServiceItem(item)) continue;
+      final itemProductId = item['product_id']?.toString();
+      if (itemProductId != null && itemProductId.isNotEmpty) {
+        if (itemProductId != product.id) continue;
+      } else if ((item['name']?.toString() ?? '') != product.name) {
+        continue;
+      }
+      count++;
+    }
+    return count;
+  }
+
+  /// Yalnızca ürün için tek taslak satır varsa o satırın indeksini döner.
+  int _singleDraftIndexForProduct(SellerProduct product) {
+    if (_draftLineCountForProduct(product) != 1) return -1;
+    for (var i = 0; i < _draftItems.length; i++) {
+      final item = _draftItems[i];
+      if (_isMixedServiceItem(item)) continue;
+      final itemProductId = item['product_id']?.toString();
+      if (itemProductId != null && itemProductId.isNotEmpty) {
+        if (itemProductId != product.id) continue;
+      } else if ((item['name']?.toString() ?? '') != product.name) {
+        continue;
+      }
+      return i;
+    }
+    return -1;
+  }
+
+  int _portionQuickAddDraftIndex(SellerProduct product) {
+    final probe = GarsonProductSelection.buildOrderItem(
+      product: product,
+      quantity: 1,
+      activeMode: GarsonActivePricingMode.portion,
+    );
+    final key = GarsonProductSelection.orderLineMergeKey(probe);
+    return _draftItems.indexWhere(
+      (item) =>
+          !_isMixedServiceItem(item) &&
+          GarsonProductSelection.orderLineMergeKey(item) == key,
+    );
+  }
+
   SellerProduct? _sellerProductById(String productId) {
     for (final product in _allGarsonProducts()) {
       if (product.id == productId) return product;
@@ -30165,20 +30751,30 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return null;
   }
 
-  int _simpleDraftIndexForProduct(SellerProduct product) {
-    return _draftItems.indexWhere((item) {
-      if (_isMixedServiceItem(item)) return false;
-      final itemProductId = item['product_id']?.toString();
-      final matchesProduct = itemProductId != null && itemProductId.isNotEmpty
-          ? itemProductId == product.id
-          : (item['name']?.toString() ?? '') == product.name;
-      if (!matchesProduct) return false;
-      final notes = item['notes']?.toString().trim() ?? '';
-      final attrs =
-          (item['attributes'] as List?)?.whereType<String>().toList() ??
-          const <String>[];
-      return notes.isEmpty && attrs.isEmpty;
-    });
+  int _simpleDraftIndexForProduct(
+    SellerProduct product, {
+    GarsonActivePricingMode? pricingMode,
+    String? selectedSizeName,
+    double? selectedServiceAmount,
+    int? selectedWeightGrams,
+    int? selectedGramsForWeight,
+  }) {
+    final probe = GarsonProductSelection.buildOrderItem(
+      product: product,
+      quantity: 1,
+      activeMode: pricingMode ??
+          GarsonProductSelection.resolveDefaults(product).pricingMode,
+      selectedSizeName: selectedSizeName,
+      selectedServiceAmount: selectedServiceAmount,
+      selectedWeightGrams: selectedWeightGrams,
+      selectedGramsForWeight: selectedGramsForWeight,
+    );
+    final key = GarsonProductSelection.orderLineMergeKey(probe);
+    return _draftItems.indexWhere(
+      (item) =>
+          !_isMixedServiceItem(item) &&
+          GarsonProductSelection.orderLineMergeKey(item) == key,
+    );
   }
 
   Map<String, dynamic>? _simpleDraftItemForProduct(SellerProduct product) {
@@ -30217,73 +30813,49 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     double? selectedServiceAmount,
     int? selectedWeightGrams,
     String? selectedSizeName,
+    GarsonActivePricingMode? activeMode,
+    int? selectedGramsForWeight,
   }) {
-    final effectiveWeight =
-        product.resolvedServiceControlType ==
-            ProductServiceControlType.weightStepper
-        ? ProductPriceCalculator.clampWeightSelection(
-            selectedWeightGrams ?? product.resolvedDefaultWeightGrams,
-            minWeightGrams: product.minWeightGrams,
-            weightStepGrams: product.weightStepGrams,
-            maxWeightGrams: product.maxWeightGrams,
-          )
-        : null;
+    final defaults = GarsonProductSelection.resolveDefaults(product);
+    final mode = activeMode ?? GarsonActivePricingMode.portion;
     final effectiveServiceAmount =
         ProductPriceCalculator.usesPortionLikeStepper(
           product.resolvedServiceControlType,
         )
         ? ProductPriceCalculator.clampPortionSelection(
-            selectedServiceAmount ?? product.resolvedDefaultServiceAmount,
+            selectedServiceAmount ?? defaults.serviceAmount,
             type: product.resolvedServiceControlType,
             minPortion: product.minPortion,
             maxPortion: product.maxPortion,
             portionStep: product.portionStep,
           )
         : null;
-    final unitPrice = ProductPriceCalculator.resolveServiceControlledUnitPrice(
-      serviceControlType: product.resolvedServiceControlType,
-      pricingType: product.resolvedPricingType,
-      pricingMode: product.resolvedPricingMode,
-      basePrice: product.basePrice ?? product.portionPrice,
-      portionPrice: product.portionPrice,
-      pricePerKg: product.pricePerKg,
-      sizeOptions: product.normalizedSizeOptions,
-      selectedSizeName: selectedSizeName,
-      fallbackPrice: product.price,
-      selectedAmount: effectiveServiceAmount,
-      selectedWeightGrams: effectiveWeight,
-    );
-    final normalizedSizeName = selectedSizeName?.trim() ?? '';
-    final amountLabel = normalizedSizeName.isNotEmpty
-        ? normalizedSizeName
-        : product.usesServiceControlStepper
-        ? ProductPriceCalculator.formatServiceAmountLabel(
-            type: product.resolvedServiceControlType,
-            amount: effectiveServiceAmount,
-            grams: effectiveWeight,
+    final effectiveWeight =
+        product.resolvedServiceControlType ==
+            ProductServiceControlType.weightStepper
+        ? ProductPriceCalculator.clampWeightSelection(
+            selectedWeightGrams ?? defaults.weightGrams,
+            minWeightGrams: product.minWeightGrams,
+            weightStepGrams: product.weightStepGrams,
+            maxWeightGrams: product.maxWeightGrams,
           )
-        : '';
-    return <String, dynamic>{
-      'product_id': product.id,
-      'name': product.name,
-      'price': unitPrice,
-      'quantity': quantity,
-      'gramaj': amountLabel,
-      'amountLabel': amountLabel,
-      'selectedSizeName': normalizedSizeName.isEmpty
-          ? null
-          : normalizedSizeName,
-      'selectedSizePrice': normalizedSizeName.isEmpty ? null : unitPrice,
-      'serviceControlType': product.resolvedServiceControlType.storageValue,
-      'selectedServiceAmount': effectiveServiceAmount,
-      'selectedWeightGrams': effectiveWeight,
-      'line_total': unitPrice * quantity,
-      'notes': notes.trim(),
-      'station_id': product.stationId,
-      'printer_routing_enabled': product.printerRoutingEnabled,
-      'attributes': attributes,
-      'unitPriceSnapshot': unitPrice,
-    };
+        : null;
+    return GarsonProductSelection.buildOrderItem(
+      product: product,
+      quantity: quantity,
+      activeMode: mode,
+      selectedSizeName: mode == GarsonActivePricingMode.size
+          ? (selectedSizeName ?? defaults.sizeName)
+          : null,
+      selectedServiceAmount: effectiveServiceAmount,
+      selectedWeightGrams: effectiveWeight,
+      selectedGramsForWeight:
+          mode == GarsonActivePricingMode.weight
+          ? (selectedGramsForWeight ?? defaults.gramsForWeightPrice)
+          : null,
+      notes: notes,
+      attributes: attributes,
+    );
   }
 
   void _setServiceControlledProductAmount(
@@ -30361,13 +30933,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       }
     }
 
-    final index = _draftItems.indexWhere(
-      (item) =>
-          (item['name']?.toString() ?? '') == product.name &&
-          (item['gramaj']?.toString() ?? '').isEmpty &&
-          (item['notes']?.toString() ?? '').isEmpty &&
-          ((item['attributes'] as List?)?.isEmpty ?? true),
-    );
+    final index = _portionQuickAddDraftIndex(product);
 
     // Duplicate detection: product was already in the draft AND was added
     // within the last 3 seconds — intercept and show a confirmation warning
@@ -30384,66 +30950,36 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         productName: product.name,
         onIncreaseQty: () {
           if (!mounted) return;
-          final i = _draftItems.indexWhere(
-            (item) =>
-                (item['name']?.toString() ?? '') == product.name &&
-                (item['gramaj']?.toString() ?? '').isEmpty &&
-                (item['notes']?.toString() ?? '').isEmpty &&
-                ((item['attributes'] as List?)?.isEmpty ?? true),
-          );
+          final i = _portionQuickAddDraftIndex(product);
+          if (i < 0) return;
           setState(() {
-            if (i >= 0 && i < _draftItems.length) {
-              final qty = (_draftItems[i]['quantity'] as num?)?.toInt() ?? 1;
-              _draftItems[i]['quantity'] = qty + 1;
-            }
+            final qty = (_draftItems[i]['quantity'] as num?)?.toInt() ?? 1;
+            _draftItems[i] = _copyDraftItemWithQuantity(_draftItems[i], qty + 1);
           });
           _recentlyAddedProductIds[productKey] = DateTime.now();
           _notifyDraftChanged();
         },
         onKeepBoth: () {
           if (!mounted) return;
-          setState(() {
-            _draftItems.add(<String, dynamic>{
-              'product_id': product.id,
-              'name': product.name,
-              'price': product.price,
-              'line_total': product.price,
-              'quantity': 1,
-              'gramaj': '',
-              'notes': '',
-              'station_id': product.stationId,
-              'printer_routing_enabled': product.printerRoutingEnabled,
-              'attributes': <String>[],
-            });
-          });
+          _upsertGarsonDraftLine(
+            _buildDraftItem(product, quantity: 1),
+          );
           _recentlyAddedProductIds[productKey] = DateTime.now();
-          _notifyDraftChanged();
         },
       );
       return;
     }
 
     _recentlyAddedProductIds[productKey] = DateTime.now();
-    setState(() {
-      if (index >= 0) {
+    if (index >= 0) {
+      setState(() {
         final qty = (_draftItems[index]['quantity'] as num?)?.toInt() ?? 1;
-        _draftItems[index]['quantity'] = qty + 1;
-      } else {
-        _draftItems.add(<String, dynamic>{
-          'product_id': product.id,
-          'name': product.name,
-          'price': product.price,
-          'line_total': product.price,
-          'quantity': 1,
-          'gramaj': '',
-          'notes': '',
-          'station_id': product.stationId,
-          'printer_routing_enabled': product.printerRoutingEnabled,
-          'attributes': <String>[],
-        });
-      }
-    });
-    _notifyDraftChanged();
+        _draftItems[index] = _copyDraftItemWithQuantity(_draftItems[index], qty + 1);
+      });
+      _notifyDraftChanged();
+    } else {
+      _upsertGarsonDraftLine(_buildDraftItem(product, quantity: 1));
+    }
   }
 
   /// Removes ALL draft entries for [product] and shows a SnackBar with an undo
@@ -30484,16 +31020,136 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     );
   }
 
-  Future<void> _addConfiguredProduct(SellerProduct product) async {
+  void _upsertGarsonDraftLine(
+    Map<String, dynamic> item, {
+    int? replaceIndex,
+  }) {
+    final normalized = _normalizeItem(item);
+    final mergeKey = GarsonProductSelection.orderLineMergeKey(normalized);
+    final addQty = (normalized['quantity'] as num?)?.toInt() ?? 1;
+    setState(() {
+      if (replaceIndex != null &&
+          replaceIndex >= 0 &&
+          replaceIndex < _draftItems.length) {
+        final old = _draftItems[replaceIndex];
+        garsonDraftLog(
+          'merge_decision',
+          extra: {
+            'existingKey': GarsonProductSelection.orderLineMergeKey(old),
+            'newKey': mergeKey,
+            'merged': false,
+            'replaced': true,
+            'oldQty': (old['quantity'] as num?)?.toInt() ?? 1,
+            'newQty': addQty,
+          },
+        );
+        _draftItems[replaceIndex] = normalized;
+        return;
+      }
+
+      final existingIndex = _draftItems.indexWhere(
+        (draft) =>
+            !_isMixedServiceItem(draft) &&
+            GarsonProductSelection.orderLineMergeKey(draft) == mergeKey,
+      );
+      if (existingIndex >= 0) {
+        final oldQty =
+            (_draftItems[existingIndex]['quantity'] as num?)?.toInt() ?? 1;
+        final newQty = oldQty + addQty;
+        garsonDraftLog(
+          'merge_decision',
+          extra: {
+            'existingKey': mergeKey,
+            'newKey': mergeKey,
+            'merged': true,
+            'oldQty': oldQty,
+            'newQty': newQty,
+          },
+        );
+        _draftItems[existingIndex] = _copyDraftItemWithQuantity(
+          _draftItems[existingIndex],
+          newQty,
+        );
+      } else {
+        garsonDraftLog(
+          'merge_decision',
+          extra: {
+            'existingKey': '',
+            'newKey': mergeKey,
+            'merged': false,
+            'oldQty': 0,
+            'newQty': addQty,
+          },
+        );
+        _draftItems.add(normalized);
+      }
+    });
+    _notifyDraftChanged();
+  }
+
+  Future<void> _addConfiguredProduct(
+    SellerProduct product, {
+    int? editDraftIndex,
+    Map<String, dynamic>? editingItem,
+  }) async {
     if (_isTemplateProduct(product)) {
       await _showTemplateProductActions(product);
       return;
     }
-    final item = await widget.configureProductItem(context, product);
-    if (item == null || !mounted) return;
+    final lines = await widget.configureProductItem(
+      context,
+      product,
+      editingItem,
+      editDraftIndex,
+    );
+    if (lines == null || lines.isEmpty || !mounted) return;
+    if (editDraftIndex != null &&
+        editDraftIndex >= 0 &&
+        editDraftIndex < _draftItems.length) {
+      _replaceGarsonDraftLinesAt(editDraftIndex, lines);
+      return;
+    }
+    garsonDraftLog(
+      'AppendLine',
+      extra: const <String, Object?>{'reason': 'new_selection'},
+    );
+    for (final item in lines) {
+      _upsertGarsonDraftLine(item);
+    }
+  }
+
+  void _replaceGarsonDraftLinesAt(
+    int replaceIndex,
+    List<Map<String, dynamic>> items,
+  ) {
+    if (items.isEmpty) return;
+    final oldQty = replaceIndex >= 0 && replaceIndex < _draftItems.length
+        ? ((_draftItems[replaceIndex]['quantity'] as num?)?.toInt() ?? 1)
+        : 0;
     setState(() {
-      _draftItems.add(_normalizeItem(item));
+      if (replaceIndex >= 0 && replaceIndex < _draftItems.length) {
+        _draftItems.removeAt(replaceIndex);
+      }
+      var insertAt = replaceIndex.clamp(0, _draftItems.length);
+      for (final raw in items) {
+        final normalized = _normalizeItem(raw);
+        _draftItems.insert(insertAt, normalized);
+        insertAt++;
+      }
     });
+    final newQty = items.fold<int>(
+      0,
+      (sum, line) => sum + ((line['quantity'] as num?)?.toInt() ?? 1),
+    );
+    garsonDraftLog(
+      'ReplaceLine',
+      extra: <String, Object?>{
+        'oldIndex': replaceIndex,
+        'oldQuantity': oldQty,
+        'newQuantity': newQty,
+        'addedLines': items.length,
+      },
+    );
     _notifyDraftChanged();
   }
 
@@ -30516,7 +31172,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     final lineTotal = unitPrice * safeQuantity;
     updated['line_total'] = lineTotal;
     updated['total_price'] = lineTotal;
-    return updated;
+    return GarsonProductSelection.enrichOrderItem(updated);
   }
 
   bool get _isEditingOrder => _editingOrderId?.isNotEmpty == true;
@@ -30575,19 +31231,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   /// Mixed-service items should be handled before calling this; the caller is
   /// responsible for keeping them in separate rows.
   String _draftItemCompositeKey(Map<String, dynamic> item) {
-    final productId = item['product_id']?.toString() ?? '';
-    final name = item['name']?.toString() ?? '';
-    final identity = productId.isNotEmpty ? 'id:$productId' : 'name:$name';
-    final gramaj = item['gramaj']?.toString().trim() ?? '';
-    final note = item['notes']?.toString().trim() ?? '';
-    final unitPrice = MixedServiceOrder.parsePrice(
-      item['unitPriceSnapshot'] ?? item['price'],
-    ).toStringAsFixed(2);
-    final attrs =
-        ((item['attributes'] as List?)?.whereType<String>().toList() ??
-              <String>[])
-          ..sort();
-    return '$identity\x00$gramaj\x00$note\x00$unitPrice\x00${attrs.join('|')}';
+    return GarsonProductSelection.orderLineMergeKey(item);
   }
 
   /// Builds a merged list of display rows for [_draftItems].
@@ -30779,11 +31423,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   }
 
   String _draftItemPreviewLabel(Map<String, dynamic> item) {
-    final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-    final name = item['name']?.toString() ?? '-';
-    final amountLabel = _draftItemAmountLabel(item);
-    if (amountLabel.isEmpty) return '$qty x $name';
-    return '$qty x $name • $amountLabel';
+    return GarsonProductSelection.orderItemDisplayLabel(item);
   }
 
   String _updatedEntryReason(_GarsonOrderChangeEntry entry) {
@@ -31349,14 +31989,31 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       return;
     }
 
+    final productId = original['product_id']?.toString() ?? '';
+    SellerProduct? matchedProduct = productId.isNotEmpty
+        ? _sellerProductById(productId)
+        : null;
+    matchedProduct ??= _allGarsonProducts().cast<SellerProduct?>().firstWhere(
+      (p) => (p?.name.trim().toLowerCase() ?? '') ==
+          (original['name']?.toString().trim().toLowerCase() ?? ''),
+      orElse: () => null,
+    );
+
+    if (matchedProduct != null) {
+      final updatedLines = await widget.configureProductItem(
+        context,
+        matchedProduct,
+        original,
+        index,
+      );
+      if (updatedLines == null || updatedLines.isEmpty || !mounted) return;
+      _replaceGarsonDraftLinesAt(index, updatedLines);
+      return;
+    }
+
     await widget.editItemSettings(context, original, (updated) {
       if (!mounted) return;
-      setState(() {
-        if (index < _draftItems.length) {
-          _draftItems[index] = _normalizeItem(updated);
-        }
-      });
-      _notifyDraftChanged();
+      _upsertGarsonDraftLine(updated, replaceIndex: index);
     });
   }
 
@@ -31865,6 +32522,15 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         );
 
         if (canFastKitchen) {
+          final productStationIds = _productStationIdByProductId();
+          final productStationMappings = _productStationMappingByProductId();
+          final tableLabel = widget.tableTitleOverride?.trim();
+          logKitchenDispatchPath(
+            path: 'direct_garson_attempt',
+            physicallyDispatched: false,
+            reason: 'submit_started canFastKitchen=true',
+            itemCount: items.length,
+          );
           var immediate =
               await _orderPrintJobService.dispatchGarsonKitchenImmediateFromItems(
             restaurantId: widget.sellerId,
@@ -31874,6 +32540,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
             waiterName: _currentWaiterName(),
             printerHint: _kitchenPrinterHintFromWidget(),
             canUseLocalPrintFastPath: widget.effectiveCanUseLocalPrintFastPath,
+            productStationIdByProductId: productStationIds,
+            productStationByProductId: productStationMappings,
+            tableAreaName: tableLabel,
           );
           if (!immediate.physicallyDispatched &&
               immediate.fallbackReason == 'no_cached_kitchen_printer') {
@@ -31886,6 +32555,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
               waiterName: _currentWaiterName(),
               printerHint: _kitchenPrinterHintFromWidget(),
               canUseLocalPrintFastPath: widget.effectiveCanUseLocalPrintFastPath,
+              productStationIdByProductId: productStationIds,
+              productStationByProductId: productStationMappings,
+              tableAreaName: tableLabel,
             );
           }
           parallelDispatchFeedback = _feedbackFromImmediateResult(immediate);
@@ -31932,6 +32604,13 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
               '[GarsonPerf][kitchen_order] fallback_reason=${immediate.fallbackReason} '
               'path=legacy table=${widget.tableNumber}',
             );
+            logKitchenDispatchPath(
+              path: 'legacy_rpc',
+              physicallyDispatched: false,
+              reason:
+                  'immediate_fallback_${immediate.fallbackReason ?? 'unknown'}',
+              itemCount: items.length,
+            );
             final legacyResult = await _orderPrintJobService.dispatchNewOrder(
               restaurantId: widget.sellerId,
               tableNumber: widget.tableNumber,
@@ -31965,6 +32644,12 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
             'table=${widget.tableNumber} db_save_ms=$kitchenPerfDbSaveMs',
           );
         } else {
+          logKitchenDispatchPath(
+            path: 'legacy_rpc',
+            physicallyDispatched: false,
+            reason: 'canFastKitchen=false parallel_save',
+            itemCount: items.length,
+          );
           final orderSaveWatch = Stopwatch()..start();
           final results = await Future.wait<dynamic>([
             _storeService.submitTableOrder(
@@ -32008,9 +32693,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       _logGarsonKitchenPerf(<String, Object?>{
         'tap_at': perfTapAt,
         'fast_path_decision_ms': dispatchFeedback.fastPathDecisionMs,
+        'printer_resolve_ms': dispatchFeedback.printerResolveMs,
         'printer_cache_resolve_ms': dispatchFeedback.printerCacheResolveMs > 0
             ? dispatchFeedback.printerCacheResolveMs
             : dispatchFeedback.printerResolveMs,
+        'station_resolve_ms': dispatchFeedback.stationResolveMs,
         'payload_build_ms': dispatchFeedback.payloadBuildMs,
         'bridge_request_ms': dispatchFeedback.bridgeRequestMs,
         'direct_print_started_ms': dispatchFeedback.directPrintStartedMs,
@@ -32039,9 +32726,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         <String, Object?>{
           'tap_at': perfTapAt,
           'fast_path_decision_ms': dispatchFeedback.fastPathDecisionMs,
+          'printer_resolve_ms': dispatchFeedback.printerResolveMs,
           'printer_cache_resolve_ms': dispatchFeedback.printerCacheResolveMs > 0
               ? dispatchFeedback.printerCacheResolveMs
               : dispatchFeedback.printerResolveMs,
+          'station_resolve_ms': dispatchFeedback.stationResolveMs,
           'bridge_request_ms': dispatchFeedback.bridgeRequestMs,
           'payload_build_ms': dispatchFeedback.payloadBuildMs,
           'total_submit_to_print_ms': totalToBridgeMs,
@@ -32053,6 +32742,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           'path': dispatchFeedback.dispatchPath.isEmpty
               ? 'legacy'
               : dispatchFeedback.dispatchPath,
+          if (dispatchFeedback.fallbackReason.isNotEmpty)
+            'fallback_reason': dispatchFeedback.fallbackReason,
           if (dispatchFeedback.selectedPrinterId.isNotEmpty)
             'printerId': dispatchFeedback.selectedPrinterId,
           'table': widget.tableNumber,
@@ -32344,6 +33035,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                     final imageUrl = product.imageUrl?.trim() ?? '';
                     final outOfStock = product.stock <= 0;
                     final draftQty = _draftQuantityForProduct(product);
+                    final draftLineCount = _draftLineCountForProduct(product);
+                    final singleDraftIndex = _singleDraftIndexForProduct(product);
                     final isAdded = draftQty > 0;
                     final isTemplate = _isTemplateProduct(product);
                     final isServiceConfigured =
@@ -32482,6 +33175,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                   ? 'Taslakta hazır'
                                   : isServiceConfigured && !isAdded
                                   ? serviceStepperLabel ?? 'Seçildi'
+                                  : draftLineCount > 1
+                                  ? '$draftQty adet · $draftLineCount satır'
                                   : '$draftQty adet taslakta',
                               style: const TextStyle(
                                 fontSize: 10.5,
@@ -32593,19 +33288,40 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                             valueLabel: serviceStepperLabel,
                           )
                         else if (!isTemplate && !usesServiceStepper && isAdded)
-                          ProductQuantityStepper(
-                            quantity: draftQty,
-                            onAdd: () => _quickAddProduct(product),
-                            onIncrement: () => _changeDraftQty(
-                              _simpleDraftIndexForProduct(product),
-                              1,
-                            ),
-                            onDecrement: () => _changeDraftQty(
-                              _simpleDraftIndexForProduct(product),
-                              -1,
-                            ),
-                            compact: true,
-                          )
+                          draftLineCount > 1
+                              ? SizedBox(
+                                  height: 32,
+                                  child: OutlinedButton(
+                                    onPressed: outOfStock
+                                        ? null
+                                        : () => _addConfiguredProduct(product),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      'Seçim ekle',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : ProductQuantityStepper(
+                                  quantity: draftQty,
+                                  onAdd: () => _quickAddProduct(product),
+                                  onIncrement: () => _changeDraftQty(
+                                    singleDraftIndex,
+                                    1,
+                                  ),
+                                  onDecrement: () => _changeDraftQty(
+                                    singleDraftIndex,
+                                    -1,
+                                  ),
+                                  compact: true,
+                                )
                         else
                           SizedBox(
                             height: 32,
@@ -32635,7 +33351,20 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                         IconButton(
                           onPressed: outOfStock
                               ? null
-                              : () => _addConfiguredProduct(product),
+                              : () {
+                                  if (singleDraftIndex >= 0) {
+                                    final draftItem = Map<String, dynamic>.from(
+                                      _draftItems[singleDraftIndex],
+                                    );
+                                    _addConfiguredProduct(
+                                      product,
+                                      editDraftIndex: singleDraftIndex,
+                                      editingItem: draftItem,
+                                    );
+                                  } else {
+                                    _addConfiguredProduct(product);
+                                  }
+                                },
                           icon: const Icon(Icons.tune, size: 18),
                           tooltip: isTemplate
                               ? _isMenuTemplateProduct(product)
@@ -32722,7 +33451,13 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                           : '${product.name}_$index',
                       isInDraft: isAdded,
                       enabled: !outOfStock,
-                      onEdit: () => _addConfiguredProduct(product),
+                      onEdit: () {
+                        if (singleDraftIndex >= 0) {
+                          _editDraftItem(singleDraftIndex);
+                        } else {
+                          _addConfiguredProduct(product);
+                        }
+                      },
                       onQuickRemove: () =>
                           _quickRemoveProductFromDraft(product),
                       child: card,
@@ -34346,7 +35081,12 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
             final amountLabel = rawAmountLabel.isNotEmpty
                 ? rawAmountLabel
                 : item['amount_label']?.toString().trim() ?? '';
-            final name = item['name']?.toString() ?? '-';
+            final name = item['display_label']?.toString().trim().isNotEmpty ==
+                    true
+                ? item['display_label'].toString().trim()
+                : GarsonProductSelection.orderItemTitleLabel(item).isNotEmpty
+                ? GarsonProductSelection.orderItemTitleLabel(item)
+                : item['name']?.toString() ?? '-';
             final detailLines = _itemDetailLines(item);
             final quantityLabel = amountLabel.isNotEmpty && !isMixedService
                 ? amountLabel
@@ -34723,7 +35463,12 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
             final item = items[i];
             final qty = (item['quantity'] as num?)?.toInt() ?? 1;
             final isMixedService = _isMixedServiceItem(item);
-            final name = item['name']?.toString() ?? '-';
+            final name = item['display_label']?.toString().trim().isNotEmpty ==
+                    true
+                ? item['display_label'].toString().trim()
+                : GarsonProductSelection.orderItemTitleLabel(item).isNotEmpty
+                ? GarsonProductSelection.orderItemTitleLabel(item)
+                : item['name']?.toString() ?? '-';
             final detailLines = _itemDetailLines(item);
             final lineTotal = _itemLineTotal(item);
             final rawAmountLabel = item['amountLabel']?.toString().trim() ?? '';

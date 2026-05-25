@@ -23,9 +23,18 @@ class StoreMediaService {
 
   int get _targetImageBytes => kIsWeb ? 500 * 1024 : 700 * 1024;
 
-  /// Web and macOS encoders do not support WebP output in flutter_image_compress.
-  bool get _useJpegEncoding =>
-      kIsWeb || defaultTargetPlatform == TargetPlatform.macOS;
+  /// Web ve masaüstü platformlarda WebP encoder yok; JPEG kullan.
+  bool get _useJpegEncoding {
+    if (kIsWeb) return true;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+        return true;
+      default:
+        return false;
+    }
+  }
 
   CompressFormat get _compressFormat =>
       _useJpegEncoding ? CompressFormat.jpeg : CompressFormat.webp;
@@ -312,10 +321,17 @@ class StoreMediaService {
     try {
       return await _compressBytesWithFormat(input, _compressFormat);
     } on UnsupportedError {
-      if (_compressFormat == CompressFormat.jpeg) {
-        return input;
-      }
-      return _compressBytesWithFormat(input, CompressFormat.jpeg);
+      // UnimplementedError da UnsupportedError alt sınıfıdır (Windows masaüstü).
+      return _compressBytesFallback(input);
+    }
+  }
+
+  Future<Uint8List> _compressBytesFallback(Uint8List input) async {
+    if (_compressFormat == CompressFormat.jpeg) return input;
+    try {
+      return await _compressBytesWithFormat(input, CompressFormat.jpeg);
+    } on UnsupportedError {
+      return input;
     }
   }
 

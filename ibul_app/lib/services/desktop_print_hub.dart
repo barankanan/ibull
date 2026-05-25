@@ -11,6 +11,9 @@ import '../models/desktop_printer_setup_models.dart';
 import '../models/printer_model.dart';
 import 'bridge_manager.dart';
 import 'desktop_print_orchestrator.dart';
+import 'kitchen_hub_payload_stamp.dart';
+import 'kitchen_print_trace_log.dart';
+import 'kitchen_product_mapping_cache_store.dart';
 import 'local_print_service.dart';
 import 'printer_event_log_service.dart';
 
@@ -232,6 +235,7 @@ class DesktopPrintHub extends ChangeNotifier {
     _restaurantId = trimmed;
     _started = true;
     debugPrint('[PrintHub] start restaurantId=$_restaurantId');
+    unawaited(KitchenProductMappingCacheStore.hydrateResolver(trimmed));
     // Restore previously-failed jobs from storage.
     await _loadPersistedState();
     // Kick off background checks (non-blocking).
@@ -887,14 +891,36 @@ class DesktopPrintHub extends ChangeNotifier {
     // ── Stage 2: Payload already enriched — validate and resolve ─────────
     final enrichMs = dispatchWatch.elapsedMilliseconds;
 
+    final jobRecordForStamp = fullJob ?? jobRecord;
+    final isKitchenJob = _restaurantId != null &&
+        isHubKitchenPrintJob(payload, jobRecordForStamp);
+    if (isKitchenJob && _restaurantId != null) {
+      await KitchenProductMappingCacheStore.ensureHydrated(_restaurantId!);
+    }
+    var kitchenPrintBodies = <Map<String, dynamic>>[payload];
+    if (isKitchenJob) {
+      kitchenPrintBodies = buildHubKitchenPrintRequests(
+        restaurantId: _restaurantId!,
+        payload: payload,
+        jobStationId: jobRecordForStamp['station_id']?.toString(),
+      );
+      payload = kitchenPrintBodies.first;
+    } else {
+      kitchenTraceJsonLog('KitchenPrintPayload', 'HubStampSkipped', <String, Object?>{
+        'reason': 'not_kitchen_job',
+        'jobType': payload['job_type'] ?? jobRecordForStamp['job_type'] ?? '',
+        'itemCount': payload['items'] is List ? (payload['items'] as List).length : 0,
+      });
+    }
+
     final tableNo = payload['table_no']?.toString() ?? '-';
-    final area =
+    var area =
         payload['station_name']?.toString() ??
         payload['area_name']?.toString() ??
         'Genel';
     final preparedPayload = await _printOrchestrator.prepareQueuedPrintPayload(
       restaurantId: _restaurantId!,
-      jobRecord: fullJob,
+      jobRecord: fullJob ?? jobRecordForStamp,
       payload: payload,
     );
     payload = preparedPayload.payload;
@@ -1145,30 +1171,68 @@ class DesktopPrintHub extends ChangeNotifier {
     Object? finalError;
     Map<String, dynamic>? bridgeResult;
     try {
-      for (var attempt = 1; attempt <= _maxPrintAttempts; attempt++) {
-        try {
-          final physicalResult = await _printOrchestrator
-              .printPhysicalToPrinter(
-                preparedPayload.printer!,
-                PrintPayload.fromQueuedJob(payload),
-                restaurantId: _restaurantId!,
-              );
-          bridgeResult = physicalResult.raw;
-          if (!physicalResult.ok) {
-            finalError =
-                physicalResult.technicalMessage ?? physicalResult.message;
-            throw Exception(physicalResult.message);
-          }
-          finalError = null;
-          break; // success
-        } catch (e) {
-          finalError = e;
-          debugPrint(
-            '[PrintHub] attempt $attempt/$_maxPrintAttempts failed '
-            'jobId=$jobId error=$e',
+      final bodiesToPrint = isKitchenJob && resolvedRole != 'adisyon'
+          ? kitchenPrintBodies
+          : <Map<String, dynamic>>[payload];
+
+      for (
+        var stationIndex = 0;
+        stationIndex < bodiesToPrint.length && finalError == null;
+        stationIndex++
+      ) {
+        var printPayload = Map<String, dynamic>.from(bodiesToPrint[stationIndex]);
+        _mergeHubPrinterDispatchFields(printPayload, payload);
+
+        if (isKitchenJob && resolvedRole != 'adisyon' && _restaurantId != null) {
+          printPayload = stampHubKitchenPrintPayload(
+            restaurantId: _restaurantId!,
+            payload: printPayload,
+            jobStationId: jobRecordForStamp['station_id']?.toString(),
           );
-          if (attempt < _maxPrintAttempts) {
-            await Future<void>.delayed(const Duration(milliseconds: 100));
+          area =
+              printPayload['station_name']?.toString() ??
+              printPayload['area_name']?.toString() ??
+              area;
+          logKitchenFinalBeforeBridge(path: 'hub', payload: printPayload);
+          if (stationIndex == 0) {
+            logKitchenDispatchPath(
+              path: 'hub',
+              physicallyDispatched: true,
+              reason:
+                  'hub_physical_print_attempt jobId=$jobId split=${bodiesToPrint.length}',
+              itemCount: printPayload['items'] is List
+                  ? (printPayload['items'] as List).length
+                  : 0,
+              traceId: trace,
+            );
+          }
+        }
+
+        for (var attempt = 1; attempt <= _maxPrintAttempts; attempt++) {
+          try {
+            final physicalResult = await _printOrchestrator
+                .printPhysicalToPrinter(
+                  preparedPayload.printer!,
+                  PrintPayload.fromQueuedJob(printPayload),
+                  restaurantId: _restaurantId!,
+                );
+            bridgeResult = physicalResult.raw;
+            if (!physicalResult.ok) {
+              finalError =
+                  physicalResult.technicalMessage ?? physicalResult.message;
+              throw Exception(physicalResult.message);
+            }
+            finalError = null;
+            break;
+          } catch (e) {
+            finalError = e;
+            debugPrint(
+              '[PrintHub] attempt $attempt/$_maxPrintAttempts failed '
+              'jobId=$jobId stationIndex=$stationIndex error=$e',
+            );
+            if (attempt < _maxPrintAttempts) {
+              await Future<void>.delayed(const Duration(milliseconds: 100));
+            }
           }
         }
       }
@@ -1329,6 +1393,35 @@ class DesktopPrintHub extends ChangeNotifier {
     );
     _reusablePrintServiceBaseUri = baseUri;
     return _reusablePrintService!;
+  }
+
+  void _mergeHubPrinterDispatchFields(
+    Map<String, dynamic> target,
+    Map<String, dynamic> prepared,
+  ) {
+    for (final key in <String>[
+      'printer_id',
+      'printer_name',
+      'printer_queue',
+      'printer_backend',
+      'printer_device_identifier',
+      'printer_encoding',
+      'encoding',
+      'printer_code_page',
+      'printer_codepage',
+      'code_page',
+      'codepage',
+      'printer_role',
+      'document_type',
+      'flow_type',
+      'render_mode',
+      'encoding_profile_verified',
+      'turkish_print_mode',
+    ]) {
+      if (prepared.containsKey(key) && prepared[key] != null) {
+        target[key] = prepared[key];
+      }
+    }
   }
 
   String _readText(Object? value) => value?.toString().trim() ?? '';

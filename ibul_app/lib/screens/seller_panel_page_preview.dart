@@ -41,8 +41,9 @@ class SellerPanelGarsonPreview extends StatelessWidget {
           products: data.products,
           initialTabIndex: data.initialTabIndex,
           initialDraftItems: data.initialDraftItems,
-          configureProductItem: (context, product) async =>
-              _previewDraftItemFromProduct(product),
+          configureProductItem:
+              (context, product, [existingItem, replaceIndex]) async =>
+                  [_previewDraftItemFromProduct(product)],
           editItemSettings: (context, item, onSave) async =>
               onSave(Map<String, dynamic>.from(item)),
           onDraftChanged: (_, _) {},
@@ -264,8 +265,9 @@ class _SellerPanelGarsonOperationHarnessState
                         products: _products,
                         initialTabIndex: _initialTabIndex,
                         initialDraftItems: _draftItems,
-                        configureProductItem: (context, product) async =>
-                            _previewDraftItemFromProduct(product),
+                        configureProductItem:
+                            (context, product, [existingItem, replaceIndex]) async =>
+                                [_previewDraftItemFromProduct(product)],
                         editItemSettings: (context, item, onSave) async =>
                             onSave(Map<String, dynamic>.from(item)),
                         onDraftChanged: _handleDraftChanged,

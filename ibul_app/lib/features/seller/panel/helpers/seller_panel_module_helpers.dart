@@ -62,6 +62,23 @@ String sellerModuleLabel(SellerModule module) {
   }
 }
 
+/// Profil yenilemesinde sekme sıfırlanmasın; yalnızca görünür olmayan modüllerde dashboard.
+SellerModule resolveSellerModuleAfterProfileReload({
+  required SellerModule currentModule,
+  required String? storeCategory,
+  required bool garsonOnly,
+}) {
+  if (garsonOnly) return SellerModule.garson;
+  if (isSellerFoodStoreCategory(storeCategory)) return currentModule;
+  if (currentModule != SellerModule.garson &&
+      currentModule != SellerModule.system) {
+    return currentModule;
+  }
+  final visible = visibleSellerModules(storeCategory, garsonOnly: false);
+  if (visible.contains(currentModule)) return currentModule;
+  return SellerModule.dashboard;
+}
+
 IconData sellerModuleIcon(SellerModule module) {
   switch (module) {
     case SellerModule.dashboard:

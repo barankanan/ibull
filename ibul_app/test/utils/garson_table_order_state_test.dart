@@ -2,6 +2,41 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/utils/garson_table_order_state.dart';
 
 void main() {
+  group('garsonTableNumbersForDisplay', () {
+    test('does not render mock sequential tables while store snapshot loading', () {
+      expect(
+        garsonTableNumbersForDisplay(
+          configuredTableNumbers: const <int>[],
+          orderTableNumbers: const <int>[1, 2],
+          storeTablesReady: false,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('uses configured tables when available', () {
+      expect(
+        garsonTableNumbersForDisplay(
+          configuredTableNumbers: const <int>[3, 1, 5],
+          orderTableNumbers: const <int>[2],
+          storeTablesReady: true,
+        ),
+        [1, 3, 5],
+      );
+    });
+
+    test('falls back to order table numbers only after store tables ready', () {
+      expect(
+        garsonTableNumbersForDisplay(
+          configuredTableNumbers: const <int>[],
+          orderTableNumbers: const <int>[4, 2, 4],
+          storeTablesReady: true,
+        ),
+        [2, 4],
+      );
+    });
+  });
+
   group('garsonOrderActivityAt / time label', () {
     test('revized order uses updated_at not created_at', () {
       final order = <String, dynamic>{

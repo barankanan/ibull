@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 
+import '../utils/garson_product_selection.dart';
 import 'product_pricing.dart';
 import 'seller_product.dart';
 
@@ -144,12 +145,14 @@ class MixedServiceOrder {
     }
   }
 
-  /// Resolves the product kind using a priority chain (single source of truth).
+  /// Resolves the product kind using explicit metadata only.
   ///
   /// Priority:
   ///   1. `specifications._ibul_product_type` (JSON field in specs column)
   ///   2. `productType` field (DB `product_type` column)
-  ///   3. `category` or `subCategory` containing "servis" (Turkish, trim+lowercase)
+  ///
+  /// Category/subcategory names (e.g. Yemek > Servis) and product titles do
+  /// not affect the resolved kind. Template rows must set type explicitly.
   ///
   /// Returns one of: [menuTemplateProductType], [serviceTemplateProductType],
   /// or `'standard'`.
@@ -171,12 +174,6 @@ class MixedServiceOrder {
     // 2. product_type field
     final fromType = normalizeTemplateProductType(productType, fallback: '');
     if (fromType.isNotEmpty) return fromType;
-    // 3. category/subCategory containing "servis"
-    final cat = (category ?? '').trim().toLowerCase();
-    final sub = (subCategory ?? '').trim().toLowerCase();
-    if (cat.contains('servis') || sub.contains('servis')) {
-      return serviceTemplateProductType;
-    }
     return 'standard';
   }
 
@@ -391,8 +388,19 @@ class MixedServiceOrder {
           (item['selected_service_amount'] as num?)?.toDouble() ??
           (item['selectedServiceAmount'] as num?)?.toDouble(),
       'selected_weight_grams':
+          _coalescedGramsFromItem(item) ??
           (item['selected_weight_grams'] as num?)?.toInt() ??
           (item['selectedWeightGrams'] as num?)?.toInt(),
+      'selected_grams':
+          _coalescedGramsFromItem(item) ??
+          (item['selected_grams'] as num?)?.toInt() ??
+          (item['selectedGrams'] as num?)?.toInt(),
+      'selected_size_name':
+          item['selected_size_name']?.toString() ??
+          item['selectedSizeName']?.toString(),
+      'selectedSizeName':
+          item['selectedSizeName']?.toString() ??
+          item['selected_size_name']?.toString(),
       'notes': item['notes']?.toString() ?? item['note']?.toString() ?? '',
       'note': item['note']?.toString() ?? item['notes']?.toString() ?? '',
       'general_note':
@@ -402,6 +410,12 @@ class MixedServiceOrder {
           '',
       'station_id':
           item['station_id']?.toString() ?? item['stationId']?.toString(),
+      'station_name':
+          item['station_name']?.toString() ??
+          item['kitchen_station_name']?.toString(),
+      'kitchen_station_name':
+          item['kitchen_station_name']?.toString() ??
+          item['station_name']?.toString(),
       'printer_routing_enabled': item['printer_routing_enabled'] != false,
       'attributes':
           (item['attributes'] as List?)?.whereType<String>().toList() ??
@@ -445,7 +459,7 @@ class MixedServiceOrder {
       normalized['total_price'] = lineTotal;
       normalized['line_total'] = lineTotal;
     }
-    return normalized;
+    return GarsonProductSelection.enrichOrderItem(normalized);
   }
 
   static List<Map<String, dynamic>> normalizeChildItems(dynamic raw) {
@@ -1558,13 +1572,27 @@ class MixedServiceOrder {
     return Map<String, dynamic>.from(decoded);
   }
 
+  static int? _coalescedGramsFromItem(Map<String, dynamic> item) {
+    final grams = (item['selected_grams'] as num?)?.toInt() ??
+        (item['selectedGrams'] as num?)?.toInt() ??
+        (item['selected_weight_grams'] as num?)?.toInt() ??
+        (item['selectedWeightGrams'] as num?)?.toInt();
+    return grams != null && grams > 0 ? grams : null;
+  }
+
   static String _normalizePricingMode(String? raw, {required String fallback}) {
-    final value = (raw ?? '').trim();
+    final value = (raw ?? '').trim().toLowerCase();
     if (value == fixedPriceMode ||
         value == autoSumPriceMode ||
         value == manualPriceMode ||
         value == manualAllowedPriceMode) {
       return value;
+    }
+    if (value == 'portion' || value == 'size') {
+      return value;
+    }
+    if (value == 'kilo' || value == 'weight') {
+      return 'kilo';
     }
     return fallback;
   }

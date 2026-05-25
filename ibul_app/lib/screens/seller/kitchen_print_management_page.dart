@@ -19,6 +19,9 @@ import '../../services/printer_event_log_service.dart';
 import '../../services/print_station_service.dart';
 import '../../services/printer_repository.dart';
 import '../../services/station_repository.dart';
+import '../../services/kitchen_print_trace_log.dart';
+import '../../services/kitchen_product_mapping_cache_store.dart';
+import '../../services/kitchen_routing_service.dart';
 import '../../services/store_service.dart';
 import '../../services/local_print_service.dart';
 import '../../utils/print_perf_log.dart';
@@ -161,6 +164,9 @@ class _KitchenPrintManagementPageState
     _printersStream = _createPrintersStream();
     _assignmentsFuture = _loadAssignmentsData();
     _productsFuture = _loadProductRoutingData();
+    unawaited(
+      KitchenProductMappingCacheStore.ensureHydrated(widget.restaurantId),
+    );
     _loadPrintStationState();
     _logPrinterSettings(
       'Init',
@@ -1318,6 +1324,14 @@ class _KitchenPrintManagementPageState
         'Products',
         'fetchSuccess restaurantId=${widget.restaurantId} areaCount=${stations.length} productCount=${products.length} selectedAreaId=- emptyBranch=$emptyBranch',
       );
+      _syncProductRoutingCacheFromLists(products, stations);
+      for (final product in products) {
+        final stationId =
+            _productStationDraft[product.id] ?? product.stationId;
+        if (stationId != null && stationId.isNotEmpty) {
+          _upsertProductMappingCache(product, stationId, stations);
+        }
+      }
       return <dynamic>[products, stations];
     } catch (error, stackTrace) {
       _logPrinterSettings(
@@ -1555,6 +1569,105 @@ class _KitchenPrintManagementPageState
     }
   }
 
+  void _syncProductRoutingCacheFromLists(
+    List<SellerProduct> products,
+    List<StationModel> stations,
+  ) {
+    final stationById = <String, ({String name, String code})>{
+      for (final station in stations)
+        station.id: (name: station.name, code: station.code),
+    };
+    KitchenProductMappingCacheStore.syncProductRoutingUi(
+      restaurantId: widget.restaurantId,
+      rows: <({String productId, String productName, String? stationId})>[
+        for (final product in products)
+          (
+            productId: product.id,
+            productName: product.name,
+            stationId: _productStationDraft[product.id] ?? product.stationId,
+          ),
+      ],
+      stationById: stationById,
+    );
+  }
+
+  Future<void> _persistProductStationSelectionToDb(
+    SellerProduct product,
+    String? stationId,
+    List<StationModel> stations,
+  ) async {
+    if (stationId == null || stationId.isEmpty) return;
+    try {
+      await Supabase.instance.client
+          .from('products')
+          .update({
+            'station_id': stationId,
+            'printer_routing_enabled':
+                _productRoutingDraft[product.id] ?? product.printerRoutingEnabled,
+          })
+          .eq('id', product.id)
+          .eq('seller_id', widget.restaurantId);
+      StationModel? station;
+      for (final candidate in stations) {
+        if (candidate.id == stationId) {
+          station = candidate;
+          break;
+        }
+      }
+      if (station == null) return;
+      final header = KitchenTicketHeaderResolver.productionHeaderLabel(
+        stationName: station.name,
+        stationCode: station.code,
+      );
+      await KitchenProductMappingCacheStore.persistSingleProduct(
+        restaurantId: widget.restaurantId,
+        productId: product.id,
+        productName: product.name,
+        mapping: ProductStationMapping(
+          stationId: stationId,
+          stationName: header == kKitchenGeneralStationLabel
+              ? station.name
+              : header,
+          stationCode: station.code.toUpperCase(),
+        ),
+      );
+    } catch (_) {
+      // Dropdown seçimi bellek önbelleğinde; DB yazımı best-effort.
+    }
+  }
+
+  void _upsertProductMappingCache(
+    SellerProduct product,
+    String? stationId,
+    List<StationModel> stations,
+  ) {
+    if (stationId == null || stationId.isEmpty) return;
+    StationModel? station;
+    for (final candidate in stations) {
+      if (candidate.id == stationId) {
+        station = candidate;
+        break;
+      }
+    }
+    if (station == null) return;
+    final header = KitchenTicketHeaderResolver.productionHeaderLabel(
+      stationName: station.name,
+      stationCode: station.code,
+    );
+    KitchenProductMappingCacheStore.upsertProductSync(
+      restaurantId: widget.restaurantId,
+      productId: product.id,
+      productName: product.name,
+      mapping: ProductStationMapping(
+        stationId: stationId,
+        stationName:
+            header == kKitchenGeneralStationLabel ? station.name : header,
+        stationCode: station.code.toUpperCase(),
+      ),
+      source: 'dropdown_selection',
+    );
+  }
+
   Future<void> _saveProductRouting(SellerProduct product) async {
     if (_productSavingMap[product.id] == true) return;
     final selectedStation =
@@ -1586,6 +1699,51 @@ class _KitchenPrintManagementPageState
       );
 
       if (!mounted) return;
+      var stationName = product.stationName?.trim() ?? '';
+      var stationCode = (product.stationCode ?? '').trim().toUpperCase();
+      if (selectedStation != null && selectedStation.isNotEmpty) {
+        try {
+          final stations = await _stationRepository.fetchStations(
+            widget.restaurantId,
+          );
+          for (final station in stations) {
+            if (station.id == selectedStation) {
+              stationName = station.name;
+              stationCode = station.code.toUpperCase();
+              break;
+            }
+          }
+        } catch (_) {
+          // Cache güncellemesi best-effort; hub print cache-only kalır.
+        }
+        final headerLabel = KitchenTicketHeaderResolver.productionHeaderLabel(
+          stationName: stationName,
+          stationCode: stationCode,
+        );
+        final mapping = ProductStationMapping(
+          stationId: selectedStation,
+          stationName: headerLabel == kKitchenGeneralStationLabel
+              ? stationName
+              : headerLabel,
+          stationCode: stationCode,
+        );
+        unawaited(
+          KitchenProductMappingCacheStore.persistSingleProduct(
+            restaurantId: widget.restaurantId,
+            productId: product.id,
+            productName: product.name,
+            mapping: mapping,
+          ),
+        );
+      }
+      logProductStationMappingLoaded(
+        productId: product.id,
+        productName: product.name,
+        stationId: selectedStation ?? '',
+        stationName: stationName,
+        stationCode: stationCode,
+        source: 'product_mapping_ui_save',
+      );
       setState(() {
         _productStationDraft.remove(product.id);
         _productRoutingDraft.remove(product.id);
@@ -3948,10 +4106,24 @@ class _KitchenPrintManagementPageState
                   'dropdownChanged restaurantId=${widget.restaurantId} areaCount=${stations.length} printerCount=${printers.length} selectedPrinterId=$value selectedAreaId=${station.id} emptyBranch=selection_changed',
                 );
                 try {
+                  final resolvedPrinterId =
+                      _normalizeSelectedPrinterId(
+                        printers: printers,
+                        selectedPrinterId: value,
+                      ) ??
+                      value;
+                  if (resolvedPrinterId.isEmpty) {
+                    throw StateError(
+                      'Yazıcı kaydı bulunamadı. Önce Yazıcılar sekmesinden POS-58 kaydını oluşturun.',
+                    );
+                  }
                   await _printerRepository.assignPrinterToStation(
                     stationId: station.id,
-                    printerId: value,
+                    printerId: resolvedPrinterId,
                     isPrimary: true,
+                    restaurantId: widget.restaurantId,
+                    stationName: station.name,
+                    printerName: _printerNameById(resolvedPrinterId),
                   );
                   _logPrinterSettings(
                     'Assignments',
@@ -4435,6 +4607,14 @@ class _KitchenPrintManagementPageState
                             'productId=${product.id}',
                       );
                       setState(() => _productStationDraft[product.id] = value);
+                      _upsertProductMappingCache(product, value, stations);
+                      unawaited(
+                        _persistProductStationSelectionToDb(
+                          product,
+                          value,
+                          stations,
+                        ),
+                      );
                     },
             ),
           ),

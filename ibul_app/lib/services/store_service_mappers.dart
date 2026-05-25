@@ -131,6 +131,8 @@ class StoreServiceMappers {
       'image_urls': data['imageUrls'],
       'description': data['description'],
       'specifications': _serializeSpecifications(data['specifications']),
+      if (data['productType'] != null)
+        'product_type': data['productType'],
       'preparation_time': data['preparationTime'],
       'created_at': DateTime.now().toIso8601String(),
       'attributes': data['attributes'] ?? [],

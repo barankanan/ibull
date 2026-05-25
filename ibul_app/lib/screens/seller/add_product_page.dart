@@ -17,6 +17,7 @@ import '../../services/media/product_media_types.dart';
 import '../../services/store_service.dart';
 import '../../utils/pick_image_file.dart';
 import '../../utils/preparation_time_formatter.dart';
+import '../../utils/product_create_log.dart';
 import '../../utils/xfile_image_provider.dart';
 import '../../widgets/dynamic_category_attribute_form.dart';
 import '../../widgets/seller/service_control_selector.dart';
@@ -170,6 +171,9 @@ class _AddProductPageState extends State<AddProductPage> {
           _pricePerKgValue > 0 ||
           (_selectedServiceControlType == ProductServiceControlType.none &&
               _selectedPricingType == ProductPricingType.weight));
+
+  /// Hibrit (porsiyon + kilo) ürünlerde gramaj alanları da DB'ye yazılır.
+  bool get _shouldPersistWeightGramSettings => _isWeightPricingActive;
 
   bool get _usesPortionLikeServiceControl =>
       _isFoodCategory &&
@@ -2417,16 +2421,16 @@ class _AddProductPageState extends State<AddProductPage> {
           portionStep: _usesPortionLikeServiceControl
               ? _parsedPortionStep()
               : null,
-          defaultWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          defaultWeightGrams: _shouldPersistWeightGramSettings
               ? _parsedDefaultWeight()
               : null,
-          minWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          minWeightGrams: _shouldPersistWeightGramSettings
               ? _parsedMinWeight()
               : null,
-          weightStepGrams: _pricingTypeForSave == ProductPricingType.weight
+          weightStepGrams: _shouldPersistWeightGramSettings
               ? _parsedWeightStep()
               : null,
-          maxWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+          maxWeightGrams: _shouldPersistWeightGramSettings
               ? _parsedMaxWeight()
               : null,
           discountPrice:
@@ -5677,15 +5681,38 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   Future<void> _pickImage(int index) async {
+    productCreateLog('image_pick_start', extra: {'slot': index});
     try {
       final XFile? image = await _pickSingleImageFile();
       if (image != null) {
+        final bytes = await image.readAsBytes();
+        productCreateLog(
+          'image_pick_success',
+          extra: {
+            'slot': index,
+            'name': image.name,
+            'path': image.path,
+            'bytes': bytes.length,
+          },
+        );
+        if (!mounted) return;
         setState(() {
           _productImages[index] = image;
         });
       }
-    } catch (e) {
-      debugPrint('Error picking image: $e');
+    } catch (e, stack) {
+      productCreateLog(
+        'product_save_error',
+        extra: {
+          'errorType': e.runtimeType.toString(),
+          'message': e.toString(),
+          'phase': 'image_pick',
+        },
+      );
+      debugPrint('Error picking image stack: $stack');
+      if (mounted) {
+        _showError('Görsel seçilemedi. Lütfen tekrar deneyin.');
+      }
     }
   }
 
@@ -5804,10 +5831,10 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   Future<void> _pickMultipleImages() async {
+    productCreateLog('image_pick_start', extra: {'bulk': true});
     try {
-      final List<XFile> images = _toXFiles(
-        await pickImageFiles(allowMultiple: true),
-      );
+      final picked = await pickImageFiles(allowMultiple: true);
+      final List<XFile> images = _toXFiles(picked);
       if (!mounted) return;
       if (images.isNotEmpty) {
         int uploadedCount = 0;
@@ -5821,12 +5848,27 @@ class _AddProductPageState extends State<AddProductPage> {
           });
           uploadedCount++;
         }
+        productCreateLog(
+          'image_pick_success',
+          extra: {'bulk': true, 'count': uploadedCount},
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('$uploadedCount görsel seçildi')),
         );
       }
-    } catch (e) {
-      debugPrint('Error picking multiple images: $e');
+    } catch (e, stack) {
+      productCreateLog(
+        'product_save_error',
+        extra: {
+          'errorType': e.runtimeType.toString(),
+          'message': e.toString(),
+          'phase': 'image_pick_bulk',
+        },
+      );
+      debugPrint('Error picking multiple images stack: $stack');
+      if (mounted) {
+        _showError('Görseller seçilemedi. Lütfen tekrar deneyin.');
+      }
     }
   }
 
@@ -6076,16 +6118,16 @@ class _AddProductPageState extends State<AddProductPage> {
       minPortion: _usesPortionLikeServiceControl ? _parsedMinPortion() : null,
       maxPortion: _usesPortionLikeServiceControl ? _parsedMaxPortion() : null,
       portionStep: _usesPortionLikeServiceControl ? _parsedPortionStep() : null,
-      defaultWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+      defaultWeightGrams: _shouldPersistWeightGramSettings
           ? _parsedDefaultWeight()
           : null,
-      minWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+      minWeightGrams: _shouldPersistWeightGramSettings
           ? _parsedMinWeight()
           : null,
-      weightStepGrams: _pricingTypeForSave == ProductPricingType.weight
+      weightStepGrams: _shouldPersistWeightGramSettings
           ? _parsedWeightStep()
           : null,
-      maxWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+      maxWeightGrams: _shouldPersistWeightGramSettings
           ? _parsedMaxWeight()
           : null,
       discountPrice:
@@ -6148,15 +6190,21 @@ class _AddProductPageState extends State<AddProductPage> {
 
   String _friendlyError(Object e) {
     final raw = e.toString();
-    final msg = raw
-        .replaceFirst('Exception: ', '')
-        .replaceFirst('Ürün eklenirken hata: ', '')
-        .trim();
+    final msg = productCreateErrorMessage(e).isNotEmpty
+        ? productCreateErrorMessage(e)
+        : raw
+              .replaceFirst('Exception: ', '')
+              .replaceFirst('Ürün eklenirken hata oluştu: ', '')
+              .replaceFirst('Ürün eklenirken hata: ', '')
+              .trim();
     if (msg.contains('timed out') || msg.contains('zaman aşımı')) {
       return 'İnternet yavaş olduğu için işlem zaman aşımına uğradı. Daha küçük görsel deneyin veya tekrar deneyin.';
     }
     if (msg.contains('unauthorized') || msg.contains('permission-denied')) {
       return 'Yetki hatası: Storage/Firestore kuralları yüklemeyi engelliyor.';
+    }
+    if (msg.contains('Görsel yüklenemedi')) {
+      return 'Görsel yüklenemedi. Lütfen tekrar deneyin.';
     }
     return msg.isEmpty ? 'Bilinmeyen hata oluştu' : msg;
   }
@@ -6297,10 +6345,19 @@ class _AddProductPageState extends State<AddProductPage> {
       ),
     );
 
-    // Ürün verilerini oluştur
-    // Yeni ürünlerde status 'Aktif' gönderilir; StoreService.addProduct vitrin için 'Aktif' yazar.
-    // Böylece Admin panelindeki onay listesine düşer.
-    final String targetStatus = 'Aktif';
+    // Yayınla → admin onayı bekler (müşteri vitrininde görünmez).
+    const String targetStatus = 'pending_approval';
+    productCreateLog(
+      'approval_status_resolved',
+      extra: {'status': targetStatus, 'action': 'publish'},
+    );
+    productCreateLog(
+      'publish_requested_pending_review',
+      extra: {
+        'mainCategory': _selectedMainCategory,
+        'subCategory': _selectedSubCategory,
+      },
+    );
     final String productId =
         widget.productId ?? DateTime.now().millisecondsSinceEpoch.toString();
 
@@ -6429,6 +6486,28 @@ class _AddProductPageState extends State<AddProductPage> {
         .take(5)
         .toList();
 
+    final resolvedProductType = 'product';
+    productCreateLog(
+      'product_type_resolved',
+      extra: {'product_type': resolvedProductType},
+    );
+    productCreateLog(
+      'category_selected',
+      extra: {
+        'mainCategory': _selectedMainCategory,
+        'subCategory': _selectedSubCategory,
+      },
+    );
+
+    if (_shouldPersistWeightGramSettings) {
+      ProductPriceCalculator.productSaveWeightLog(
+        minGrams: _parsedMinWeight(),
+        defaultGrams: _parsedDefaultWeight(),
+        stepGrams: _parsedWeightStep(),
+        maxGrams: _parsedMaxWeight(),
+      );
+    }
+
     // Ürün nesnesini oluştur
     final product = SellerProduct(
       id: productId,
@@ -6452,16 +6531,16 @@ class _AddProductPageState extends State<AddProductPage> {
       minPortion: _usesPortionLikeServiceControl ? _parsedMinPortion() : null,
       maxPortion: _usesPortionLikeServiceControl ? _parsedMaxPortion() : null,
       portionStep: _usesPortionLikeServiceControl ? _parsedPortionStep() : null,
-      defaultWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+      defaultWeightGrams: _shouldPersistWeightGramSettings
           ? _parsedDefaultWeight()
           : null,
-      minWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+      minWeightGrams: _shouldPersistWeightGramSettings
           ? _parsedMinWeight()
           : null,
-      weightStepGrams: _pricingTypeForSave == ProductPricingType.weight
+      weightStepGrams: _shouldPersistWeightGramSettings
           ? _parsedWeightStep()
           : null,
-      maxWeightGrams: _pricingTypeForSave == ProductPricingType.weight
+      maxWeightGrams: _shouldPersistWeightGramSettings
           ? _parsedMaxWeight()
           : null,
       discountPrice:
@@ -6506,6 +6585,14 @@ class _AddProductPageState extends State<AddProductPage> {
           .where((i) => i != null)
           .cast<XFile>()
           .toList();
+      productCreateLog(
+        'product_save_start',
+        extra: {
+          'productId': productId,
+          'imageCount': validImages.length,
+          'isEdit': widget.isEdit,
+        },
+      );
       stageNotifier.value = ProductMediaStage.saving;
       progressNotifier.value = 'Ürün verileri kaydediliyor...';
 
@@ -6541,6 +6628,11 @@ class _AddProductPageState extends State<AddProductPage> {
 
       await _persistStructuredProductAttributes(productId);
 
+      productCreateLog(
+        'product_save_success',
+        extra: {'productId': productId},
+      );
+
       setState(() {
         _existingVideoUrl = uploadedVideoUrl;
         _existingVideoPath = uploadedVideoPath;
@@ -6571,14 +6663,22 @@ class _AddProductPageState extends State<AddProductPage> {
           SnackBar(
             content: Text(
               widget.isEdit
-                  ? 'Ürün başarıyla güncellendi.'
-                  : 'Ürün başarıyla yayınlandı!',
+                  ? 'Ürün güncellendi. Onay sürecine gönderildi.'
+                  : 'Ürün onay için gönderildi. Admin onayından sonra yayına alınacak.',
             ),
           ),
         );
         Navigator.pop(context, true); // Close add product page
       }
-    } catch (e) {
+    } catch (e, stack) {
+      productCreateLog(
+        'product_save_error',
+        extra: {
+          'errorType': e.runtimeType.toString(),
+          'message': e.toString(),
+        },
+      );
+      debugPrint('Publish product stack: $stack');
       if (mounted) {
         Navigator.pop(context); // Close loading dialog
         ScaffoldMessenger.of(

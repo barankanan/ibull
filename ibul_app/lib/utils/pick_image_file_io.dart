@@ -10,7 +10,10 @@ import 'pick_image_file_models.dart';
 Future<List<PickedImageFile>> pickImageFiles({
   bool allowMultiple = false,
 }) async {
-  final bool loadBytes = defaultTargetPlatform == TargetPlatform.macOS;
+  final bool loadBytes =
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.linux;
   final result = await FilePicker.platform.pickFiles(
     type: FileType.image,
     allowMultiple: allowMultiple,

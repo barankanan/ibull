@@ -54,6 +54,8 @@ class SellerProduct {
   final List<String>? additionalInfoItems;
   final List<Map<String, String>>? faq; // New: Sıkça Sorulan Sorular
   final String? stationId;
+  final String? stationName;
+  final String? stationCode;
   final bool printerRoutingEnabled;
 
   SellerProduct({
@@ -106,6 +108,8 @@ class SellerProduct {
     this.additionalInfoItems,
     this.faq,
     this.stationId,
+    this.stationName,
+    this.stationCode,
     this.printerRoutingEnabled = true,
   });
 
@@ -153,8 +157,27 @@ class SellerProduct {
   bool get usesPortionLikeStepper =>
       ProductPriceCalculator.usesPortionLikeStepper(resolvedServiceControlType);
 
-  bool get hasWeightPricing =>
-      ProductPriceCalculator.sanitizePrice(pricePerKg) > 0;
+  double get effectivePricePerKg =>
+      ProductPriceCalculator.sanitizePrice(pricePerKg);
+
+  bool get hasConfiguredWeightGramFields =>
+      ProductPriceCalculator.hasConfiguredWeightGramSettings(
+        minWeightGrams: minWeightGrams,
+        defaultWeightGrams: defaultWeightGrams,
+        weightStepGrams: weightStepGrams,
+      );
+
+  bool get hasWeightPricing => effectivePricePerKg > 0;
+
+  bool get supportsGarsonWeightSelection =>
+      ProductPriceCalculator.supportsWeightSelection(
+        pricePerKg: pricePerKg,
+        pricingType: resolvedPricingType,
+        pricingMode: resolvedPricingMode,
+        minWeightGrams: minWeightGrams,
+        defaultWeightGrams: defaultWeightGrams,
+        weightStepGrams: weightStepGrams,
+      );
 
   bool get hasSizeOptions => normalizedSizeOptions.isNotEmpty;
 
@@ -204,19 +227,22 @@ class SellerProduct {
         portionStep: portionStep,
       );
 
-  int get resolvedMinWeightGrams =>
-      ProductPriceCalculator.resolveMinWeightGrams(minWeightGrams);
-
-  int get resolvedWeightStepGrams =>
-      ProductPriceCalculator.resolveWeightStepGrams(weightStepGrams);
-
-  int get resolvedDefaultWeightGrams =>
-      ProductPriceCalculator.resolveDefaultWeightGrams(
-        defaultWeightGrams: defaultWeightGrams,
+  ResolvedWeightGramSettings get resolvedWeightGramSettings =>
+      ProductPriceCalculator.resolveWeightGramSettings(
         minWeightGrams: minWeightGrams,
+        defaultWeightGrams: defaultWeightGrams,
         weightStepGrams: weightStepGrams,
         maxWeightGrams: maxWeightGrams,
       );
+
+  int get resolvedMinWeightGrams => resolvedWeightGramSettings.minGrams;
+
+  int get resolvedWeightStepGrams => resolvedWeightGramSettings.stepGrams;
+
+  int get resolvedDefaultWeightGrams =>
+      resolvedWeightGramSettings.defaultGrams;
+
+  int? get resolvedMaxWeightGrams => resolvedWeightGramSettings.maxGrams;
 
   String? get displayServiceControlInfo {
     final type = resolvedServiceControlType;
@@ -292,6 +318,7 @@ class SellerProduct {
       'additionalInfoItems': additionalInfoItems,
       'faq': faq,
       'stationId': stationId,
+      'stationCode': stationCode,
       'printerRoutingEnabled': printerRoutingEnabled,
     };
   }
@@ -325,7 +352,24 @@ class SellerProduct {
       mainImg = imgUrls.first;
     }
 
-    return SellerProduct(
+    final resolvedPricingType =
+        map['pricing_type']?.toString() ??
+        map['pricingType']?.toString() ??
+        ProductPricingType.portion.storageValue;
+    final resolvedPortionPrice =
+        (map['portion_price'] as num?)?.toDouble() ??
+        (map['portionPrice'] as num?)?.toDouble() ??
+        (map['base_price'] as num?)?.toDouble() ??
+        (map['basePrice'] as num?)?.toDouble();
+    final resolvedPricePerKg = ProductPriceCalculator.resolvePricePerKgFromMap(
+      map,
+      pricingType: resolvedPricingType,
+    );
+    final resolvedSizeOptions = ProductSizeOption.listFromDynamic(
+      map['size_options'] ?? map['sizeOptions'],
+    );
+
+    final product = SellerProduct(
       id: id,
       name: map['name'] ?? '',
       brand: map['brand'] ?? '',
@@ -337,37 +381,17 @@ class SellerProduct {
           map['pricing_mode']?.toString() ??
           map['pricingMode']?.toString() ??
           ProductPriceCalculator.resolvePricingMode(
-          basePrice:
-            (map['base_price'] as num?)?.toDouble() ??
-            (map['basePrice'] as num?)?.toDouble() ??
-            (map['portion_price'] as num?)?.toDouble() ??
-            (map['portionPrice'] as num?)?.toDouble(),
-          pricePerKg:
-            (map['price_per_kg'] as num?)?.toDouble() ??
-            (map['pricePerKg'] as num?)?.toDouble(),
-          sizeOptions: ProductSizeOption.listFromDynamic(
-            map['size_options'] ?? map['sizeOptions'],
-          ),
+          basePrice: resolvedPortionPrice,
+          pricePerKg: resolvedPricePerKg > 0 ? resolvedPricePerKg : null,
+          sizeOptions: resolvedSizeOptions,
           ).storageValue,
-        basePrice:
-          (map['base_price'] as num?)?.toDouble() ??
-          (map['basePrice'] as num?)?.toDouble() ??
-          (map['portion_price'] as num?)?.toDouble() ??
-          (map['portionPrice'] as num?)?.toDouble(),
-      pricingType:
-          map['pricing_type']?.toString() ??
-          map['pricingType']?.toString() ??
-          ProductPricingType.portion.storageValue,
+        basePrice: resolvedPortionPrice,
+      pricingType: resolvedPricingType,
       portionPrice:
-          (map['portion_price'] as num?)?.toDouble() ??
-          (map['portionPrice'] as num?)?.toDouble() ??
+          resolvedPortionPrice ??
           ProductPriceCalculator.parsePriceValue(map['price']),
-      pricePerKg:
-          (map['price_per_kg'] as num?)?.toDouble() ??
-          (map['pricePerKg'] as num?)?.toDouble(),
-        sizeOptions: ProductSizeOption.listFromDynamic(
-        map['size_options'] ?? map['sizeOptions'],
-        ),
+      pricePerKg: resolvedPricePerKg > 0 ? resolvedPricePerKg : null,
+        sizeOptions: resolvedSizeOptions,
         selectedSizeName:
           map['selected_size_name']?.toString() ??
           map['selectedSizeName']?.toString(),
@@ -420,7 +444,7 @@ class SellerProduct {
       storeName: map['store_name'],
       videoUrl:
           map['video_public_url'] ??
-          map['video_url'], // DB column name usually snake_case
+          map['video_url'],
       videoPath: map['video_path'],
       videoPublicUrl: map['video_public_url'],
       thumbnailPath: map['thumbnail_path'],
@@ -429,7 +453,7 @@ class SellerProduct {
       videoSizeBytes: (map['video_size_bytes'] as num?)?.toInt(),
       thumbnailSizeBytes: (map['thumbnail_size_bytes'] as num?)?.toInt(),
       videoStatus: map['video_status'],
-      variants: map['variants'], // DB column name usually snake_case
+      variants: map['variants'],
       accessories: map['accessories'] != null
           ? List<String>.from(map['accessories'])
           : null,
@@ -441,8 +465,35 @@ class SellerProduct {
                 .toList()
           : null,
       stationId: map['station_id']?.toString(),
+      stationName: _parseProductionStationName(map),
+      stationCode: _parseProductionStationCode(map),
       printerRoutingEnabled: map['printer_routing_enabled'] != false,
     );
+    ProductPriceCalculator.productParseWeightLog(
+      productId: product.id,
+      settings: product.resolvedWeightGramSettings,
+    );
+    return product;
+  }
+
+  static String? _parseProductionStationName(Map<String, dynamic> map) {
+    final nested = map['stations'];
+    if (nested is Map) {
+      final name = nested['name']?.toString().trim() ?? '';
+      if (name.isNotEmpty) return name;
+    }
+    final direct = map['station_name']?.toString().trim() ?? '';
+    return direct.isEmpty ? null : direct;
+  }
+
+  static String? _parseProductionStationCode(Map<String, dynamic> map) {
+    final nested = map['stations'];
+    if (nested is Map) {
+      final code = nested['code']?.toString().trim() ?? '';
+      if (code.isNotEmpty) return code;
+    }
+    final direct = map['station_code']?.toString().trim() ?? '';
+    return direct.isEmpty ? null : direct;
   }
 
   static String? _normalizeSpecifications(Object? value) {

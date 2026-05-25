@@ -173,3 +173,16 @@ Map<String, dynamic> applyGarsonSubmittedOrderItems({
     'updated_at': updatedAt,
   };
 }
+
+/// Garson masa ızgarası: mock 1..N üretmez; store snapshot hazır değilse boş döner.
+List<int> garsonTableNumbersForDisplay({
+  required List<int> configuredTableNumbers,
+  required List<int> orderTableNumbers,
+  required bool storeTablesReady,
+}) {
+  if (configuredTableNumbers.isNotEmpty) {
+    return List<int>.from(configuredTableNumbers)..sort();
+  }
+  if (!storeTablesReady) return const <int>[];
+  return orderTableNumbers.where((n) => n > 0).toSet().toList()..sort();
+}

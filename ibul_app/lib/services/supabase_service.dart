@@ -11,6 +11,7 @@ import '../models/product_pricing.dart';
 import 'store/store_mapping_helpers.dart';
 import '../utils/text_normalizer.dart';
 import 'store_follow_service.dart';
+import '../utils/product_edit_log.dart';
 
 class SupabaseService {
   // Singleton pattern
@@ -21,18 +22,13 @@ class SupabaseService {
   static const int homePageSize = 24;
   static const int defaultPageSize = 20;
 
-  /// Anonim alışveriş vitrininde gösterilen ürün durumları.
-  /// Satıcı arayüzünde "Aktif" seçilse bile kayıt `pending_approval` olarak
-  /// tutulabiliyordu; bu yüzden her iki durum da sorguya dahildir.
+  /// Anonim alışveriş vitrininde gösterilen ürün durumları (admin onaylı).
   /// Supabase `products` SELECT RLS politikası bu liste ile uyumlu olmalıdır.
-  static const List<String> publicCatalogProductStatuses = [
-    'Aktif',
-    'pending_approval',
-  ];
+  static const List<String> publicCatalogProductStatuses = ['Aktif'];
 
   static bool isPublicCatalogProductStatus(String? status) {
     final s = status?.trim() ?? '';
-    return s == 'Aktif' || s == 'pending_approval';
+    return s == 'Aktif';
   }
 
   String _stripUnsupportedColumnsFromSelect(
@@ -1265,7 +1261,20 @@ class SupabaseService {
           ? jsonEncode(data['specifications'])
           : null,
       stock: data['stock'],
-      isActive: isPublicCatalogProductStatus(data['status']?.toString()),
+      isActive: () {
+        final status = data['status']?.toString();
+        final visible = isPublicCatalogProductStatus(status);
+        if (!visible &&
+            (status ?? '').trim().isNotEmpty &&
+            status!.trim().toLowerCase() != 'taslak' &&
+            status.trim().toLowerCase() != 'draft') {
+          productVisibilityLog(
+            'hide_unapproved_product',
+            extra: {'productId': data['id'], 'status': status},
+          );
+        }
+        return visible;
+      }(),
       attributes: data['attributes'] != null
           ? jsonEncode(data['attributes'])
           : null,
