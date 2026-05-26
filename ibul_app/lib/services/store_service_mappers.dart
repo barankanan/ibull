@@ -134,7 +134,6 @@ class StoreServiceMappers {
       if (data['productType'] != null)
         'product_type': data['productType'],
       'preparation_time': data['preparationTime'],
-      'created_at': DateTime.now().toIso8601String(),
       'attributes': data['attributes'] ?? [],
       'video_url': data['videoPublicUrl'] ?? data['videoUrl'],
       'video_path': data['videoPath'],
@@ -151,6 +150,8 @@ class StoreServiceMappers {
       'faq': data['faq'],
       'station_id': data['stationId'],
       'printer_routing_enabled': data['printerRoutingEnabled'] ?? true,
+      // created_at is intentionally omitted here.
+      // INSERT paths must set it explicitly; UPDATE paths must never overwrite it.
     };
   }
 }

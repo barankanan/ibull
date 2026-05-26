@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 
 import 'product_pricing.dart';
 
@@ -324,7 +324,7 @@ class SellerProduct {
   }
 
   factory SellerProduct.fromMap(Map<String, dynamic> map, String id) {
-    debugPrint('DB Verisi (SellerProduct): $map'); // Debug Print
+    if (kDebugMode) debugPrint('DB Verisi (SellerProduct): $map');
 
     DateTime created;
     if (map['created_at'] != null) {
