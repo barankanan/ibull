@@ -192,11 +192,12 @@ class MyApp extends StatelessWidget {
 
   Widget _buildSellerPanel({required String source, Object? arguments}) {
     final entryRole = parseSellerPanelEntryRole(arguments);
+    final widgetKey = ValueKey<String>('seller_panel_${entryRole.name}');
     debugPrint(
       '[SellerPanel][Init] routeEnter source=$source path=/seller '
-      'entryRole=${entryRole.name}',
+      'entryRole=${entryRole.name} widgetKey=$widgetKey',
     );
-    return SellerPanelPage(entryRole: entryRole);
+    return SellerPanelPage(key: widgetKey, entryRole: entryRole);
   }
 
   @override
