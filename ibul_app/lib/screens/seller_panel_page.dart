@@ -573,11 +573,16 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   /// pending changes; the visible grid is refreshed explicitly by the user.
   List<Map<String, dynamic>> _garsonManualTableOrders =
       <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonVisibleOrdersSnapshot =
+      <Map<String, dynamic>>[];
   String? _garsonManualTableOrdersSellerId;
   String? _garsonManualTableOrdersSignature;
   bool _hasLoadedGarsonTableOrdersData = false;
   bool _hasLoadedGarsonBootstrapData = false;
   bool _garsonManualRefreshInProgress = false;
+  bool _garsonInitialVisibleSeedDone = false;
+  bool _isGarsonInitialLoading = false;
+  String? _garsonInitialLoadError;
   int _garsonManualRefreshGeneration = 0;
   int _garsonBuildRenderCount = 0;
   final ValueNotifier<bool> _garsonHasPendingRemoteChanges =
@@ -813,6 +818,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       'isGarsonTableRouteOpen=$_isGarsonTableRouteOpen '
       'garsonPendingChanges=${_garsonHasPendingRemoteChanges.value} '
       'garsonRefreshGeneration=$_garsonManualRefreshGeneration '
+      'garsonInitialSeedDone=$_garsonInitialVisibleSeedDone '
+      'garsonInitialLoading=$_isGarsonInitialLoading '
       'dashboardRefreshRunning=$_isDashboardRefreshRunning '
       'productsStreamState=$_productsStreamState '
       'garsonStreamState=$_garsonStreamState',
@@ -845,16 +852,97 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   List<Map<String, dynamic>> _garsonOrdersSnapshotForUi() {
-    return List<Map<String, dynamic>>.unmodifiable(_garsonManualTableOrders);
+    return List<Map<String, dynamic>>.unmodifiable(
+      _garsonVisibleOrdersSnapshot,
+    );
+  }
+
+  void _publishGarsonVisibleSnapshotFromCurrentState({required String source}) {
+    if (!_isGarsonVisible && !_isGarsonTableRouteOpen) return;
+    if (_garsonVisibleOrdersController.isClosed) return;
+    final snapshot = List<Map<String, dynamic>>.unmodifiable(
+      _garsonManualTableOrders,
+    );
+    _garsonVisibleOrdersSnapshot = snapshot;
+    _garsonVisibleOrdersController.add(snapshot);
+    debugPrint(
+      '[GarsonVisibleSnapshot][publish] '
+      'source=$source '
+      'tables=${_storeTables.length} '
+      'products=${_products.length} '
+      'orders=${snapshot.length}',
+    );
   }
 
   void _publishGarsonVisibleOrders([List<Map<String, dynamic>>? orders]) {
     if (_garsonVisibleOrdersController.isClosed) return;
-    final snapshot =
-        List<Map<String, dynamic>>.unmodifiable(
-          orders ?? _garsonManualTableOrders,
-        );
+    final snapshot = List<Map<String, dynamic>>.unmodifiable(
+      orders ?? _garsonManualTableOrders,
+    );
+    _garsonVisibleOrdersSnapshot = snapshot;
     _garsonVisibleOrdersController.add(snapshot);
+  }
+
+  Future<void> _ensureGarsonInitialVisibleData({
+    String source = 'garson_initial_visible_seed',
+  }) async {
+    if (!shouldRunGarsonInitialVisibleSeed(
+      isGarsonVisible: _isGarsonVisible,
+      initialVisibleSeedDone: _garsonInitialVisibleSeedDone,
+      initialLoading: _isGarsonInitialLoading,
+    )) {
+      return;
+    }
+
+    _safeSetState(() {
+      _isGarsonInitialLoading = true;
+      _garsonInitialLoadError = null;
+    });
+
+    try {
+      _publishGarsonVisibleSnapshotFromCurrentState(
+        source: '${source}_memory_seed',
+      );
+
+      if (_storeCategory.trim().isEmpty &&
+          !_hasLoadedStoreProfile &&
+          !_isLoading) {
+        await _loadStoreProfile();
+      }
+
+      final shouldBootstrap = shouldRunGarsonInitialBootstrapLoad(
+        hasStoreTables: _storeTables.isNotEmpty,
+        hasProducts: _products.isNotEmpty,
+        hasPublishedOrders: _garsonManualTableOrdersSignature != null,
+      );
+      if (shouldBootstrap) {
+        await _refreshGarsonDataManually(
+          source: source,
+          allowInitialAutoSeed: true,
+        );
+      }
+
+      if (!mounted) return;
+      _publishGarsonVisibleSnapshotFromCurrentState(
+        source: '${source}_final_seed',
+      );
+      _safeSetState(() {
+        _garsonInitialVisibleSeedDone = true;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('[GarsonInitialLoad][error] source=$source error=$error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
+      _safeSetState(() {
+        _garsonInitialLoadError = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        _safeSetState(() {
+          _isGarsonInitialLoading = false;
+        });
+      }
+    }
   }
 
   void _notifyLocalPrintUiChanged() {
@@ -1453,7 +1541,19 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   Future<void> _refreshGarsonDataManually({
     String source = 'garson_manual_refresh_button',
+    bool allowInitialAutoSeed = false,
   }) async {
+    if (!shouldAllowGarsonManualRefresh(
+      source: source,
+      allowInitialAutoSeed: allowInitialAutoSeed,
+    )) {
+      debugPrint(
+        '[GarsonManualRefresh][blocked] '
+        'source=$source '
+        'reason=not_user_manual',
+      );
+      return;
+    }
     if (shouldSkipManualGarsonRefresh(
       refreshInProgress: _garsonManualRefreshInProgress,
     )) {
@@ -1470,14 +1570,18 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       await Future.wait<void>(<Future<void>>[
         _loadStoreTables(silent: false, source: source),
         _loadProductsSnapshot(source: source).then((_) {}),
-        _loadGarsonTableOrdersSnapshot(source: source, showError: true).then(
-          (_) {},
-        ),
+        _loadGarsonTableOrdersSnapshot(
+          source: source,
+          showError: true,
+        ).then((_) {}),
       ]);
       _ensureGarsonRealtimeMonitoring(_resolveGarsonSellerId());
       if (!mounted) return;
       _hasLoadedGarsonBootstrapData = true;
       _garsonHasPendingRemoteChanges.value = false;
+      _publishGarsonVisibleSnapshotFromCurrentState(
+        source: '${source}_publish',
+      );
       debugPrint(
         '[GarsonManualRefresh][done] '
         'tables=${_storeTables.length} '
@@ -1561,12 +1665,15 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           _warmGarsonPrintCaches(_authService.currentUser?.id.trim() ?? ''),
         );
         final shouldBootstrapGarson = !_hasLoadedGarsonBootstrapData;
-        logDecision('garson_manual_bootstrap', shouldBootstrapGarson);
-        if (shouldBootstrapGarson) {
-          unawaited(_refreshGarsonDataManually(source: 'garson_initial_load'));
-        } else {
-          _ensureGarsonRealtimeMonitoring(_resolveGarsonSellerId());
-        }
+        logDecision('garson_initial_visible_seed', shouldBootstrapGarson);
+        unawaited(
+          _ensureGarsonInitialVisibleData(
+            source: shouldBootstrapGarson
+                ? 'garson_initial_visible_seed'
+                : 'garson_visible_reenter_seed',
+          ),
+        );
+        _ensureGarsonRealtimeMonitoring(_resolveGarsonSellerId());
         break;
       case SellerModule.system:
         unawaited(
@@ -3642,7 +3749,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         if (_shouldBlockGarsonBackgroundPublish(
           source: source,
           hasPublishedData:
-              _storeTablesSignature != null || _storeTableAreasSignature != null,
+              _storeTablesSignature != null ||
+              _storeTableAreasSignature != null,
         )) {
           debugPrint(
             '[GarsonAutoRefresh][blocked] '
@@ -3738,8 +3846,99 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     return true;
   }
 
+  bool _shouldShowGarsonInitialLoadingUi(List<Map<String, dynamic>> orders) {
+    return shouldShowGarsonInitialLoading(
+      initialLoading: _isGarsonInitialLoading,
+      initialVisibleSeedDone: _garsonInitialVisibleSeedDone,
+      visibleOrderCount: orders.length,
+      storeTableCount: _storeTables.length,
+    );
+  }
+
   Widget _buildGarsonTablesLoadingPlaceholder() {
     return const Center(child: CircularProgressIndicator());
+  }
+
+  Widget _buildGarsonInitialLoadErrorState() {
+    final message =
+        _garsonInitialLoadError?.replaceFirst('Exception: ', '') ??
+        'Garson verileri yüklenemedi.';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.error_outline_rounded,
+              size: 42,
+              color: Color(0xFFDC2626),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF374151),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: () => unawaited(
+                _refreshGarsonDataManually(
+                  source: 'garson_manual_refresh_button',
+                ),
+              ),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Yenile'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGarsonEmptyState({required String message}) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.table_restaurant_outlined,
+                color: AppColors.primary,
+                size: 40,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Garson verisi henüz hazır değil',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF374151),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   List<int> _garsonTableNumbersForGrid({required List<int> orderTableNumbers}) {
@@ -8653,23 +8852,36 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 return FutureBuilder<List<Map<String, dynamic>>>(
                   future: _getSellerTableOrdersFallbackFuture(sellerId),
                   builder: (context, fallbackSnapshot) {
-                    if (fallbackSnapshot.connectionState ==
-                        ConnectionState.waiting) {
+                    final allOrders = _resolveGarsonTableOrdersForUi(
+                      fallbackSnapshot.data,
+                    );
+                    if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
                       return const Center(child: CircularProgressIndicator());
                     }
-                    if (fallbackSnapshot.hasError) {
+                    if (fallbackSnapshot.hasError &&
+                        allOrders.isEmpty &&
+                        _storeTables.isEmpty) {
                       return _mobileSurfaceCard(
                         child: Text('Hata: ${fallbackSnapshot.error}'),
                       );
                     }
-                    final allOrders = _resolveGarsonTableOrdersForUi(
-                      fallbackSnapshot.data,
-                    );
                     final orders = allOrders;
                     final now = DateTime.now();
 
-                    if (!_garsonStoreTablesReady && _storeTables.isEmpty) {
-                      return _buildGarsonTablesLoadingPlaceholder();
+                    if (_garsonInitialLoadError != null &&
+                        orders.isEmpty &&
+                        _storeTables.isEmpty &&
+                        !_isGarsonInitialLoading) {
+                      return _buildGarsonInitialLoadErrorState();
+                    }
+
+                    if (orders.isEmpty &&
+                        _storeTables.isEmpty &&
+                        !_isGarsonInitialLoading) {
+                      return _buildGarsonEmptyState(
+                        message:
+                            'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
+                      );
                     }
 
                     final ordersByTable = <int, List<Map<String, dynamic>>>{};
@@ -8877,15 +9089,27 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   },
                 );
               }
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
               final allOrders = _resolveGarsonTableOrdersForUi(snapshot.data);
               final orders = allOrders;
               final now = DateTime.now();
 
-              if (!_garsonStoreTablesReady && _storeTables.isEmpty) {
+              if (_shouldShowGarsonInitialLoadingUi(orders)) {
                 return _buildGarsonTablesLoadingPlaceholder();
+              }
+
+              if (_garsonInitialLoadError != null &&
+                  orders.isEmpty &&
+                  _storeTables.isEmpty &&
+                  !_isGarsonInitialLoading) {
+                return _buildGarsonInitialLoadErrorState();
+              }
+
+              if (orders.isEmpty &&
+                  _storeTables.isEmpty &&
+                  !_isGarsonInitialLoading) {
+                return _buildGarsonEmptyState(
+                  message: 'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
+                );
               }
 
               final ordersByTable = <int, List<Map<String, dynamic>>>{};
@@ -21704,59 +21928,39 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       return FutureBuilder<List<Map<String, dynamic>>>(
                         future: _getSellerTableOrdersFallbackFuture(sellerId),
                         builder: (context, fallbackSnapshot) {
-                          if (fallbackSnapshot.connectionState ==
-                              ConnectionState.waiting) {
+                          final allOrders = _resolveGarsonTableOrdersForUi(
+                            fallbackSnapshot.data,
+                          );
+                          if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
                             return const Center(
                               child: CircularProgressIndicator(),
                             );
                           }
-                          if (fallbackSnapshot.hasError) {
+                          if (fallbackSnapshot.hasError &&
+                              allOrders.isEmpty &&
+                              _storeTables.isEmpty) {
                             return Center(
                               child: Text('Hata: ${fallbackSnapshot.error}'),
                             );
                           }
-                          final allOrders = _resolveGarsonTableOrdersForUi(
-                            fallbackSnapshot.data,
-                          );
+                          if (_garsonInitialLoadError != null &&
+                              allOrders.isEmpty &&
+                              _storeTables.isEmpty &&
+                              !_isGarsonInitialLoading) {
+                            return _buildGarsonInitialLoadErrorState();
+                          }
+                          if (allOrders.isEmpty &&
+                              _storeTables.isEmpty &&
+                              !_isGarsonInitialLoading) {
+                            return _buildGarsonEmptyState(
+                              message:
+                                  'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
+                            );
+                          }
                           if (allOrders.isEmpty && _storeTables.isEmpty) {
-                            return Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Container(
-                                    width: 80,
-                                    height: 80,
-                                    decoration: BoxDecoration(
-                                      color: AppColors.primary.withValues(
-                                        alpha: 0.07,
-                                      ),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: const Icon(
-                                      Icons.table_restaurant_outlined,
-                                      color: AppColors.primary,
-                                      size: 40,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  const Text(
-                                    'Henüz masa siparişi yok',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF374151),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Müşteriler sipariş verdiğinde burada görünecek.',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Colors.grey.shade500,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                            return _buildGarsonEmptyState(
+                              message:
+                                  'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
                             );
                           }
 
@@ -21782,8 +21986,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               })
                               .toList(growable: false);
 
-                          if (!_garsonStoreTablesReady &&
-                              _storeTables.isEmpty) {
+                          if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
                             return _buildGarsonTablesLoadingPlaceholder();
                           }
 
@@ -21886,51 +22089,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         },
                       );
                     }
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
                     final allOrders = _resolveGarsonTableOrdersForUi(
                       snapshot.data,
                     );
+                    if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (_garsonInitialLoadError != null &&
+                        allOrders.isEmpty &&
+                        _storeTables.isEmpty &&
+                        !_isGarsonInitialLoading) {
+                      return _buildGarsonInitialLoadErrorState();
+                    }
                     if (allOrders.isEmpty && _storeTables.isEmpty) {
-                      return Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 80,
-                              height: 80,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withValues(
-                                  alpha: 0.07,
-                                ),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: const Icon(
-                                Icons.table_restaurant_outlined,
-                                color: AppColors.primary,
-                                size: 40,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'Henüz masa siparişi yok',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF374151),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Müşteriler sipariş verdiğinde burada görünecek.',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey.shade500,
-                              ),
-                            ),
-                          ],
-                        ),
+                      return _buildGarsonEmptyState(
+                        message:
+                            'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
                       );
                     }
 
@@ -21974,7 +22148,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       );
                     }
 
-                    if (!_garsonStoreTablesReady && _storeTables.isEmpty) {
+                    if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
                       return _buildGarsonTablesLoadingPlaceholder();
                     }
 

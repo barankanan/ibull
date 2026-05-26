@@ -165,106 +165,93 @@ void main() {
     // elsewhere (see seller_navigation_preservation_test.dart) but the
     // combination is the actual user-visible guarantee.
 
-    test(
-      'products timeout fallback while user on garson — no dashboard '
-      'refresh allowed',
-      () {
-        // Dashboard refresh must skip when the user is on garson. The
-        // products fallback path used to call _refreshDashboardData
-        // indirectly — this guard ensures it cannot.
-        expect(
-          shouldRunDashboardRefresh(selectedModule: SellerModule.garson),
-          isFalse,
-        );
-      },
-    );
+    test('products timeout fallback while user on garson — no dashboard '
+        'refresh allowed', () {
+      // Dashboard refresh must skip when the user is on garson. The
+      // products fallback path used to call _refreshDashboardData
+      // indirectly — this guard ensures it cannot.
+      expect(
+        shouldRunDashboardRefresh(selectedModule: SellerModule.garson),
+        isFalse,
+      );
+    });
 
-    test(
-      'products timeout fallback while user on garson — no async '
-      'dashboard write allowed',
-      () {
-        // The realtime fallback is async and not user-initiated. If
-        // anything in that branch tried to flip the module to dashboard,
-        // the hard-block must reject it.
-        expect(
-          shouldHardBlockGarsonDashboardWrite(
-            current: SellerModule.garson,
-            next: SellerModule.dashboard,
-            hasUserSelectedModule: true,
-            isGarsonTableRouteOpen: false,
-            userInitiated: false,
-            parentRestore: false,
-          ),
-          isTrue,
-        );
-      },
-    );
+    test('products timeout fallback while user on garson — no async '
+        'dashboard write allowed', () {
+      // The realtime fallback is async and not user-initiated. If
+      // anything in that branch tried to flip the module to dashboard,
+      // the hard-block must reject it.
+      expect(
+        shouldHardBlockGarsonDashboardWrite(
+          current: SellerModule.garson,
+          next: SellerModule.dashboard,
+          hasUserSelectedModule: true,
+          isGarsonTableRouteOpen: false,
+          userInitiated: false,
+          parentRestore: false,
+        ),
+        isTrue,
+      );
+    });
 
-    test(
-      'products timeout fallback while user is in a garson table route — '
-      'route preservation hard-block holds',
-      () {
-        // Even if _selectedModule were somehow not garson at the moment
-        // of the timeout (e.g. between a setState frame), the route-open
-        // flag still pins navigation to garson.
-        expect(
-          shouldHardBlockGarsonDashboardWrite(
-            current: SellerModule.dashboard,
-            next: SellerModule.dashboard,
-            hasUserSelectedModule: false,
-            isGarsonTableRouteOpen: true,
-            userInitiated: false,
-            parentRestore: false,
-          ),
-          isTrue,
-        );
-      },
-    );
+    test('products timeout fallback while user is in a garson table route — '
+        'route preservation hard-block holds', () {
+      // Even if _selectedModule were somehow not garson at the moment
+      // of the timeout (e.g. between a setState frame), the route-open
+      // flag still pins navigation to garson.
+      expect(
+        shouldHardBlockGarsonDashboardWrite(
+          current: SellerModule.dashboard,
+          next: SellerModule.dashboard,
+          hasUserSelectedModule: false,
+          isGarsonTableRouteOpen: true,
+          userInitiated: false,
+          parentRestore: false,
+        ),
+        isTrue,
+      );
+    });
 
-    test(
-      'products timeout fallback render decision: garson stays garson '
-      'across 10 rebuilds',
-      () {
-        // The realtime fallback triggers a setState which re-runs build.
-        // resolveSellerPanelRenderTarget must be deterministic on identical
-        // inputs so the user never sees a transient dashboard frame.
-        final results = <String>[];
-        for (var i = 0; i < 10; i++) {
-          results.add(resolveSellerPanelRenderTarget(
+    test('products timeout fallback render decision: garson stays garson '
+        'across 10 rebuilds', () {
+      // The realtime fallback triggers a setState which re-runs build.
+      // resolveSellerPanelRenderTarget must be deterministic on identical
+      // inputs so the user never sees a transient dashboard frame.
+      final results = <String>[];
+      for (var i = 0; i < 10; i++) {
+        results.add(
+          resolveSellerPanelRenderTarget(
             selectedModule: SellerModule.garson,
             storeCategory: 'Yemek & İçecek',
             isWaiterEntry: false,
-          ));
-        }
-        expect(
-          results,
-          List<String>.filled(10, SellerPanelRenderTargets.garson),
-          reason:
-              '10 rebuilds during the realtime retry window must all '
-              'render garson — even one dashboard frame is a regression',
+          ),
         );
-      },
-    );
+      }
+      expect(
+        results,
+        List<String>.filled(10, SellerPanelRenderTargets.garson),
+        reason:
+            '10 rebuilds during the realtime retry window must all '
+            'render garson — even one dashboard frame is a regression',
+      );
+    });
 
-    test(
-      'waiter entry guarantees garson render even on non-food store '
-      '(profile not loaded yet edge case)',
-      () {
-        // While the seller profile is still loading the storeCategory
-        // can be empty/null. The render decision must NOT silently fall
-        // back to dashboard for waiter sessions.
-        for (final category in <String?>[null, '', 'Giyim']) {
-          expect(
-            resolveSellerPanelRenderTarget(
-              selectedModule: SellerModule.garson,
-              storeCategory: category,
-              isWaiterEntry: true,
-            ),
-            SellerPanelRenderTargets.garson,
-          );
-        }
-      },
-    );
+    test('waiter entry guarantees garson render even on non-food store '
+        '(profile not loaded yet edge case)', () {
+      // While the seller profile is still loading the storeCategory
+      // can be empty/null. The render decision must NOT silently fall
+      // back to dashboard for waiter sessions.
+      for (final category in <String?>[null, '', 'Giyim']) {
+        expect(
+          resolveSellerPanelRenderTarget(
+            selectedModule: SellerModule.garson,
+            storeCategory: category,
+            isWaiterEntry: true,
+          ),
+          SellerPanelRenderTargets.garson,
+        );
+      }
+    });
   });
 
   group('garson manual refresh policy', () {
@@ -304,17 +291,20 @@ void main() {
       );
     });
 
-    test('garson active + table_orders timeout fallback publish is blocked', () {
-      expect(
-        shouldBlockGarsonBackgroundPublish(
-          selectedModule: SellerModule.garson,
-          manualRefreshInProgress: false,
-          hasPublishedData: true,
-          source: 'table_orders_stream_error',
-        ),
-        isTrue,
-      );
-    });
+    test(
+      'garson active + table_orders timeout fallback publish is blocked',
+      () {
+        expect(
+          shouldBlockGarsonBackgroundPublish(
+            selectedModule: SellerModule.garson,
+            manualRefreshInProgress: false,
+            hasPublishedData: true,
+            source: 'table_orders_stream_error',
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test('first garson snapshot is allowed before visible data exists', () {
       expect(
@@ -345,50 +335,195 @@ void main() {
       expect(shouldSkipManualGarsonRefresh(refreshInProgress: false), isFalse);
     });
 
-    test('table orders signature is stable across ordering but detects change', () {
-      final first = tableOrdersListSignature(<Map<String, dynamic>>[
-        <String, dynamic>{
-          'id': '2',
-          'table_number': 7,
-          'status': 'new',
-          'updated_at': '2026-05-26T10:00:00Z',
-          'items': const <Map<String, dynamic>>[],
-        },
-        <String, dynamic>{
-          'id': '1',
-          'table_number': 5,
-          'status': 'sent',
-          'updated_at': '2026-05-26T09:00:00Z',
-          'items': const <Map<String, dynamic>>[],
-        },
-      ]);
-      final reordered = tableOrdersListSignature(<Map<String, dynamic>>[
-        <String, dynamic>{
-          'id': '1',
-          'table_number': 5,
-          'status': 'sent',
-          'updated_at': '2026-05-26T09:00:00Z',
-          'items': const <Map<String, dynamic>>[],
-        },
-        <String, dynamic>{
-          'id': '2',
-          'table_number': 7,
-          'status': 'new',
-          'updated_at': '2026-05-26T10:00:00Z',
-          'items': const <Map<String, dynamic>>[],
-        },
-      ]);
-      final changed = tableOrdersListSignature(<Map<String, dynamic>>[
-        <String, dynamic>{
-          'id': '1',
-          'table_number': 5,
-          'status': 'done',
-          'updated_at': '2026-05-26T09:00:00Z',
-          'items': const <Map<String, dynamic>>[],
-        },
-      ]);
-      expect(first, reordered);
-      expect(changed, isNot(first));
+    test(
+      'background refresh source is blocked but manual and initial seed are allowed',
+      () {
+        expect(
+          shouldAllowGarsonManualRefresh(
+            source: 'products_stream',
+            allowInitialAutoSeed: false,
+          ),
+          isFalse,
+        );
+        expect(
+          shouldAllowGarsonManualRefresh(
+            source: 'garson_manual_refresh_button',
+            allowInitialAutoSeed: false,
+          ),
+          isTrue,
+        );
+        expect(
+          shouldAllowGarsonManualRefresh(
+            source: 'garson_initial_visible_seed',
+            allowInitialAutoSeed: true,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('garson initial visible seed only runs once while visible', () {
+      expect(
+        shouldRunGarsonInitialVisibleSeed(
+          isGarsonVisible: true,
+          initialVisibleSeedDone: false,
+          initialLoading: false,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldRunGarsonInitialVisibleSeed(
+          isGarsonVisible: false,
+          initialVisibleSeedDone: false,
+          initialLoading: false,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldRunGarsonInitialVisibleSeed(
+          isGarsonVisible: true,
+          initialVisibleSeedDone: true,
+          initialLoading: false,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldRunGarsonInitialVisibleSeed(
+          isGarsonVisible: true,
+          initialVisibleSeedDone: false,
+          initialLoading: true,
+        ),
+        isFalse,
+      );
     });
+
+    test(
+      'garson initial bootstrap load runs only when cache is incomplete',
+      () {
+        expect(
+          shouldRunGarsonInitialBootstrapLoad(
+            hasStoreTables: false,
+            hasProducts: true,
+            hasPublishedOrders: true,
+          ),
+          isTrue,
+        );
+        expect(
+          shouldRunGarsonInitialBootstrapLoad(
+            hasStoreTables: true,
+            hasProducts: false,
+            hasPublishedOrders: true,
+          ),
+          isTrue,
+        );
+        expect(
+          shouldRunGarsonInitialBootstrapLoad(
+            hasStoreTables: true,
+            hasProducts: true,
+            hasPublishedOrders: false,
+          ),
+          isTrue,
+        );
+        expect(
+          shouldRunGarsonInitialBootstrapLoad(
+            hasStoreTables: true,
+            hasProducts: true,
+            hasPublishedOrders: true,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'cached data while waiting does not show infinite initial spinner',
+      () {
+        expect(
+          shouldShowGarsonInitialLoading(
+            initialLoading: true,
+            initialVisibleSeedDone: false,
+            visibleOrderCount: 0,
+            storeTableCount: 0,
+          ),
+          isTrue,
+        );
+        expect(
+          shouldShowGarsonInitialLoading(
+            initialLoading: true,
+            initialVisibleSeedDone: false,
+            visibleOrderCount: 1,
+            storeTableCount: 0,
+          ),
+          isFalse,
+        );
+        expect(
+          shouldShowGarsonInitialLoading(
+            initialLoading: false,
+            initialVisibleSeedDone: false,
+            visibleOrderCount: 0,
+            storeTableCount: 0,
+          ),
+          isFalse,
+        );
+        expect(
+          shouldShowGarsonInitialLoading(
+            initialLoading: true,
+            initialVisibleSeedDone: true,
+            visibleOrderCount: 0,
+            storeTableCount: 0,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'table orders signature is stable across ordering but detects change',
+      () {
+        final first = tableOrdersListSignature(<Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': '2',
+            'table_number': 7,
+            'status': 'new',
+            'updated_at': '2026-05-26T10:00:00Z',
+            'items': const <Map<String, dynamic>>[],
+          },
+          <String, dynamic>{
+            'id': '1',
+            'table_number': 5,
+            'status': 'sent',
+            'updated_at': '2026-05-26T09:00:00Z',
+            'items': const <Map<String, dynamic>>[],
+          },
+        ]);
+        final reordered = tableOrdersListSignature(<Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': '1',
+            'table_number': 5,
+            'status': 'sent',
+            'updated_at': '2026-05-26T09:00:00Z',
+            'items': const <Map<String, dynamic>>[],
+          },
+          <String, dynamic>{
+            'id': '2',
+            'table_number': 7,
+            'status': 'new',
+            'updated_at': '2026-05-26T10:00:00Z',
+            'items': const <Map<String, dynamic>>[],
+          },
+        ]);
+        final changed = tableOrdersListSignature(<Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': '1',
+            'table_number': 5,
+            'status': 'done',
+            'updated_at': '2026-05-26T09:00:00Z',
+            'items': const <Map<String, dynamic>>[],
+          },
+        ]);
+        expect(first, reordered);
+        expect(changed, isNot(first));
+      },
+    );
   });
 }

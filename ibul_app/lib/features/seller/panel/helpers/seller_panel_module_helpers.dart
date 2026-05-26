@@ -439,6 +439,44 @@ bool shouldBlockGarsonBackgroundPublish({
 bool shouldSkipManualGarsonRefresh({required bool refreshInProgress}) =>
     refreshInProgress;
 
+bool shouldAllowGarsonManualRefresh({
+  required String source,
+  required bool allowInitialAutoSeed,
+}) {
+  if (source == 'garson_manual_refresh_button') return true;
+  return allowInitialAutoSeed;
+}
+
+bool shouldRunGarsonInitialVisibleSeed({
+  required bool isGarsonVisible,
+  required bool initialVisibleSeedDone,
+  required bool initialLoading,
+}) {
+  if (!isGarsonVisible) return false;
+  if (initialVisibleSeedDone) return false;
+  if (initialLoading) return false;
+  return true;
+}
+
+bool shouldRunGarsonInitialBootstrapLoad({
+  required bool hasStoreTables,
+  required bool hasProducts,
+  required bool hasPublishedOrders,
+}) {
+  return !hasStoreTables || !hasProducts || !hasPublishedOrders;
+}
+
+bool shouldShowGarsonInitialLoading({
+  required bool initialLoading,
+  required bool initialVisibleSeedDone,
+  required int visibleOrderCount,
+  required int storeTableCount,
+}) {
+  if (!initialLoading) return false;
+  if (initialVisibleSeedDone) return false;
+  return visibleOrderCount == 0 && storeTableCount == 0;
+}
+
 String tableOrdersListSignature(List<Map<String, dynamic>> orders) {
   if (orders.isEmpty) return 'empty';
   final entries = orders.map((order) {
@@ -450,8 +488,7 @@ String tableOrdersListSignature(List<Map<String, dynamic>> orders) {
     final items = order['items'];
     final itemCount = items is List ? items.length : 0;
     return '$id|$tableNo|$status|$updatedAt|i$itemCount';
-  }).toList()
-    ..sort();
+  }).toList()..sort();
   return '${entries.length}#${entries.join(';')}';
 }
 
@@ -462,11 +499,9 @@ String garsonStoreTablesSignature(List<Map<String, dynamic>> rows) {
     final tableNo = (row['table_number'] ?? '').toString();
     final areaId = (row['area_id'] ?? '').toString();
     final areaName = (row['area_name'] ?? '').toString();
-    final updatedAt = (row['updated_at'] ?? row['created_at'] ?? '')
-        .toString();
+    final updatedAt = (row['updated_at'] ?? row['created_at'] ?? '').toString();
     return '$id|$tableNo|$areaId|$areaName|$updatedAt';
-  }).toList()
-    ..sort();
+  }).toList()..sort();
   return '${entries.length}#${entries.join(';')}';
 }
 
