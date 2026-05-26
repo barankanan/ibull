@@ -22,49 +22,78 @@ class SellerDashboardDistributionCard extends StatelessWidget {
     required this.statusCounts,
     required this.totalOrderCount,
     required this.completionRate,
+    this.isFoodBusiness = false,
   });
 
   final Map<String, int> statusCounts;
   final int totalOrderCount;
   final double completionRate;
+  final bool isFoodBusiness;
 
   @override
   Widget build(BuildContext context) {
-    final rows = [
-      {
-        'label': 'Yeni',
-        'value': statusCounts['new'] ?? 0,
-        'color': const Color(0xFF3B82F6),
-      },
-      {
-        'label': 'Hazırlıyor',
-        'value': statusCounts['preparing'] ?? 0,
-        'color': const Color(0xFFF59E0B),
-      },
-      {
-        'label': 'Kargoya Hazır',
-        'value': statusCounts['ready_to_ship'] ?? 0,
-        'color': const Color(0xFF22C55E),
-      },
-      {
-        'label': 'Kargoda',
-        'value': statusCounts['shipped'] ?? 0,
-        'color': const Color(0xFF8B5CF6),
-      },
-      {
-        'label': 'Teslim Edildi',
-        'value': statusCounts['delivered'] ?? 0,
-        'color': const Color(0xFF10B981),
-      },
-    ];
+    // Restaurant businesses show table/kitchen statuses instead of cargo statuses.
+    final List<Map<String, dynamic>> rows;
+    if (isFoodBusiness) {
+      rows = [
+        {
+          'label': 'Açık Masa',
+          'value': statusCounts['open_tables'] ?? 0,
+          'color': const Color(0xFF3B82F6),
+        },
+        {
+          'label': 'Mutfağa İletilen',
+          'value': statusCounts['sent_to_kitchen'] ?? 0,
+          'color': const Color(0xFFF59E0B),
+        },
+        {
+          'label': 'Bugün Kapanan',
+          'value': statusCounts['closed_today'] ?? 0,
+          'color': const Color(0xFF10B981),
+        },
+        {
+          'label': 'İptal',
+          'value': statusCounts['restaurant_cancelled'] ?? 0,
+          'color': const Color(0xFFEF4444),
+        },
+      ];
+    } else {
+      rows = [
+        {
+          'label': 'Yeni',
+          'value': statusCounts['new'] ?? 0,
+          'color': const Color(0xFF3B82F6),
+        },
+        {
+          'label': 'Hazırlıyor',
+          'value': statusCounts['preparing'] ?? 0,
+          'color': const Color(0xFFF59E0B),
+        },
+        {
+          'label': 'Kargoya Hazır',
+          'value': statusCounts['ready_to_ship'] ?? 0,
+          'color': const Color(0xFF22C55E),
+        },
+        {
+          'label': 'Kargoda',
+          'value': statusCounts['shipped'] ?? 0,
+          'color': const Color(0xFF8B5CF6),
+        },
+        {
+          'label': 'Teslim Edildi',
+          'value': statusCounts['delivered'] ?? 0,
+          'color': const Color(0xFF10B981),
+        },
+      ];
+    }
 
     return SellerDashboardCardShell(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Sipariş Dağılımı',
-            style: TextStyle(
+          Text(
+            isFoodBusiness ? 'Masa & Sipariş Dağılımı' : 'Sipariş Dağılımı',
+            style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
               color: Color(0xFF1E293B),
@@ -73,12 +102,17 @@ class SellerDashboardDistributionCard extends StatelessWidget {
           const SizedBox(height: 16),
           ...rows.map((row) {
             final value = row['value'] as int;
-            final total = totalOrderCount == 0 ? 1 : totalOrderCount;
+            final base = isFoodBusiness
+                ? ((statusCounts['open_tables'] ?? 0) +
+                    (statusCounts['closed_today'] ?? 0) +
+                    (statusCounts['restaurant_cancelled'] ?? 0))
+                : totalOrderCount;
+            final total = base == 0 ? 1 : base;
             return Padding(
               padding: const EdgeInsets.only(bottom: 14),
               child: SellerDashboardProgressRow(
                 label: row['label'] as String,
-                valueLabel: '$value / $totalOrderCount',
+                valueLabel: '$value / ${isFoodBusiness ? base : totalOrderCount}',
                 progress: value / total,
                 color: row['color'] as Color,
               ),

@@ -6,13 +6,17 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
     final statusCounts = _dashboardStatusCounts();
     final topProducts = _dashboardTopProducts();
     final pendingTasks = _dashboardPendingTasks(metrics, statusCounts);
-    final totalOrderCount = _sellerOrders.length;
+    final isFoodBusiness = _isFoodStoreCategory(_storeCategory);
+    final totalOrderCount = _combinedDashboardOrders.length;
     final deliveredCount = statusCounts['delivered'] ?? 0;
     final completionRate = totalOrderCount == 0
         ? 0.0
         : (deliveredCount / totalOrderCount) * 100;
     return RefreshIndicator(
-      onRefresh: _refreshDashboardData,
+      onRefresh: () => _refreshDashboardData(
+        source: 'mobile_dashboard_pull_to_refresh',
+        userInitiated: true,
+      ),
       child: ListView(
         padding: const EdgeInsets.only(bottom: 8),
         physics: const AlwaysScrollableScrollPhysics(
@@ -62,28 +66,59 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildMobileSectionTitle('Sipariş Durumu'),
+                _buildMobileSectionTitle(
+                  isFoodBusiness ? 'Masa & Sipariş Durumu' : 'Sipariş Durumu',
+                ),
                 const SizedBox(height: 10),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children: [
-                    _mobileBadge('Yeni', '${statusCounts['new'] ?? 0}'),
-                    _mobileBadge(
-                      'Hazırlanıyor',
-                      '${statusCounts['preparing'] ?? 0}',
-                    ),
-                    _mobileBadge(
-                      'Kargoya Hazır',
-                      '${statusCounts['ready_to_ship'] ?? 0}',
-                    ),
-                    _mobileBadge('Kargoda', '${statusCounts['shipped'] ?? 0}'),
-                    _mobileBadge(
-                      'Tamamlandı',
-                      '${statusCounts['delivered'] ?? 0}',
-                    ),
-                    _mobileBadge('İade', '${statusCounts['returns'] ?? 0}'),
-                  ],
+                  children: isFoodBusiness
+                      ? [
+                          _mobileBadge(
+                            'Açık Masa',
+                            '${statusCounts['open_tables'] ?? 0}',
+                          ),
+                          _mobileBadge(
+                            'Mutfakta',
+                            '${statusCounts['sent_to_kitchen'] ?? 0}',
+                          ),
+                          _mobileBadge(
+                            'Bugün Kapanan',
+                            '${statusCounts['closed_today'] ?? 0}',
+                          ),
+                          _mobileBadge(
+                            'İptal',
+                            '${statusCounts['restaurant_cancelled'] ?? 0}',
+                          ),
+                          _mobileBadge(
+                            'Online Yeni',
+                            '${statusCounts['new'] ?? 0}',
+                          ),
+                        ]
+                      : [
+                          _mobileBadge('Yeni', '${statusCounts['new'] ?? 0}'),
+                          _mobileBadge(
+                            'Hazırlanıyor',
+                            '${statusCounts['preparing'] ?? 0}',
+                          ),
+                          _mobileBadge(
+                            'Kargoya Hazır',
+                            '${statusCounts['ready_to_ship'] ?? 0}',
+                          ),
+                          _mobileBadge(
+                            'Kargoda',
+                            '${statusCounts['shipped'] ?? 0}',
+                          ),
+                          _mobileBadge(
+                            'Tamamlandı',
+                            '${statusCounts['delivered'] ?? 0}',
+                          ),
+                          _mobileBadge(
+                            'İade',
+                            '${statusCounts['returns'] ?? 0}',
+                          ),
+                        ],
                 ),
               ],
             ),
@@ -160,71 +195,143 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
     final pendingTasks = dashboardSnapshot.pendingTasks;
     final averageOrderChange = dashboardSnapshot.averageOrderChange;
     final today = DateTime.now();
-    final operationCards = [
-      {
-        'icon': Icons.notifications_active_outlined,
-        'iconColor': const Color(0xFF2563EB),
-        'iconBackground': const Color(0xFFE8F0FF),
-        'title': 'Yeni Sipariş',
-        'value': '${statusCounts['new'] ?? 0}',
-        'subtitle': 'Aksiyon gerekli',
-        'trend': '+${_dashboardTodayStatusCount(const ['new', 'confirmed'])}',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.schedule_outlined,
-        'iconColor': const Color(0xFFF59E0B),
-        'iconBackground': const Color(0xFFFFF4DB),
-        'title': 'Hazırlanıyor',
-        'value': '${statusCounts['preparing'] ?? 0}',
-        'subtitle': 'Devam ediyor',
-        'trend':
-            '+${_dashboardTodayStatusCount(const ['preparing', 'ready_to_ship'])}',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.inventory_2_outlined,
-        'iconColor': const Color(0xFF22C55E),
-        'iconBackground': const Color(0xFFDCFCE7),
-        'title': 'Kargoya Hazır',
-        'value': '${statusCounts['ready_to_ship'] ?? 0}',
-        'subtitle': 'Gönderilmeli',
-        'trend': '${metrics.lowStockProducts} risk',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.local_shipping_outlined,
-        'iconColor': const Color(0xFF7C3AED),
-        'iconBackground': const Color(0xFFF1E8FF),
-        'title': 'Kargoda',
-        'value': '${statusCounts['shipped'] ?? 0}',
-        'subtitle': 'Takipte',
-        'trend':
-            '+${_dashboardTodayStatusCount(const ['shipped', 'transfer', 'branch', 'out_for_delivery'])}',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.verified_outlined,
-        'iconColor': const Color(0xFF10B981),
-        'iconBackground': const Color(0xFFDCFCE7),
-        'title': 'Bugün Teslim',
-        'value': '${_dashboardTodayStatusCount(const ['delivered'])}',
-        'subtitle': 'Tamamlandı',
-        'trend':
-            '+${math.max(0, _dashboardTodayStatusCount(const ['delivered']) - 1)}',
-        'trendColor': const Color(0xFF16A34A),
-      },
-      {
-        'icon': Icons.replay_circle_filled_outlined,
-        'iconColor': const Color(0xFFEF4444),
-        'iconBackground': const Color(0xFFFFE5E5),
-        'title': 'İade / İptal',
-        'value': '${statusCounts['returns'] ?? 0}',
-        'subtitle': 'İnceleniyor',
-        'trend': '-${statusCounts['returns'] ?? 0}',
-        'trendColor': const Color(0xFFEF4444),
-      },
-    ];
+    final isFoodBusiness = _isFoodStoreCategory(_storeCategory);
+
+    // ── Operation cards: restaurant vs e-commerce ─────────────────────────
+    final List<Map<String, dynamic>> operationCards;
+    if (isFoodBusiness) {
+      operationCards = [
+        {
+          'icon': Icons.trending_up_rounded,
+          'iconColor': const Color(0xFF2563EB),
+          'iconBackground': const Color(0xFFE8F0FF),
+          'title': 'Bugünkü Ciro',
+          'value': _formatDashboardCurrency(metrics.todayRevenue),
+          'subtitle': '${statusCounts['today_table_orders'] ?? 0} garson sip.',
+          'trend': _formatChangeLabel(metrics.todayRevenueChangePercent),
+          'trendColor': metrics.todayRevenueChangePercent >= 0
+              ? const Color(0xFF16A34A)
+              : const Color(0xFFEF4444),
+        },
+        {
+          'icon': Icons.table_restaurant_outlined,
+          'iconColor': const Color(0xFF16A34A),
+          'iconBackground': const Color(0xFFDCFCE7),
+          'title': 'Açık Masa',
+          'value': '${statusCounts['open_tables'] ?? 0}',
+          'subtitle': 'Aktif servis',
+          'trend': '+${statusCounts['today_table_orders'] ?? 0} bugün',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.receipt_long_outlined,
+          'iconColor': const Color(0xFFF59E0B),
+          'iconBackground': const Color(0xFFFFF4DB),
+          'title': 'Garson Siparişi',
+          'value': '${statusCounts['today_table_orders'] ?? 0}',
+          'subtitle': 'Bugün',
+          'trend': '+${statusCounts['today_table_orders'] ?? 0}',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.soup_kitchen_outlined,
+          'iconColor': const Color(0xFF7C3AED),
+          'iconBackground': const Color(0xFFF1E8FF),
+          'title': 'Mutfağa İletilen',
+          'value': '${statusCounts['sent_to_kitchen'] ?? 0}',
+          'subtitle': 'Hazırlanıyor',
+          'trend': '+${statusCounts['sent_to_kitchen'] ?? 0}',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.check_circle_outline_rounded,
+          'iconColor': const Color(0xFF10B981),
+          'iconBackground': const Color(0xFFDCFCE7),
+          'title': 'Bugün Kapanan',
+          'value': '${statusCounts['closed_today'] ?? 0}',
+          'subtitle': 'Tamamlandı',
+          'trend': '+${statusCounts['closed_today'] ?? 0}',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.replay_circle_filled_outlined,
+          'iconColor': const Color(0xFFEF4444),
+          'iconBackground': const Color(0xFFFFE5E5),
+          'title': 'İptal / İade',
+          'value': '${statusCounts['restaurant_cancelled'] ?? 0}',
+          'subtitle': 'İnceleniyor',
+          'trend': '-${statusCounts['restaurant_cancelled'] ?? 0}',
+          'trendColor': const Color(0xFFEF4444),
+        },
+      ];
+    } else {
+      operationCards = [
+        {
+          'icon': Icons.notifications_active_outlined,
+          'iconColor': const Color(0xFF2563EB),
+          'iconBackground': const Color(0xFFE8F0FF),
+          'title': 'Yeni Sipariş',
+          'value': '${statusCounts['new'] ?? 0}',
+          'subtitle': 'Aksiyon gerekli',
+          'trend':
+              '+${_dashboardTodayStatusCount(const ['new', 'confirmed'])}',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.schedule_outlined,
+          'iconColor': const Color(0xFFF59E0B),
+          'iconBackground': const Color(0xFFFFF4DB),
+          'title': 'Hazırlanıyor',
+          'value': '${statusCounts['preparing'] ?? 0}',
+          'subtitle': 'Devam ediyor',
+          'trend':
+              '+${_dashboardTodayStatusCount(const ['preparing', 'ready_to_ship'])}',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.inventory_2_outlined,
+          'iconColor': const Color(0xFF22C55E),
+          'iconBackground': const Color(0xFFDCFCE7),
+          'title': 'Kargoya Hazır',
+          'value': '${statusCounts['ready_to_ship'] ?? 0}',
+          'subtitle': 'Gönderilmeli',
+          'trend': '${metrics.lowStockProducts} risk',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.local_shipping_outlined,
+          'iconColor': const Color(0xFF7C3AED),
+          'iconBackground': const Color(0xFFF1E8FF),
+          'title': 'Kargoda',
+          'value': '${statusCounts['shipped'] ?? 0}',
+          'subtitle': 'Takipte',
+          'trend':
+              '+${_dashboardTodayStatusCount(const ['shipped', 'transfer', 'branch', 'out_for_delivery'])}',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.verified_outlined,
+          'iconColor': const Color(0xFF10B981),
+          'iconBackground': const Color(0xFFDCFCE7),
+          'title': 'Bugün Teslim',
+          'value': '${_dashboardTodayStatusCount(const ['delivered'])}',
+          'subtitle': 'Tamamlandı',
+          'trend':
+              '+${math.max(0, _dashboardTodayStatusCount(const ['delivered']) - 1)}',
+          'trendColor': const Color(0xFF16A34A),
+        },
+        {
+          'icon': Icons.replay_circle_filled_outlined,
+          'iconColor': const Color(0xFFEF4444),
+          'iconBackground': const Color(0xFFFFE5E5),
+          'title': 'İade / İptal',
+          'value': '${statusCounts['returns'] ?? 0}',
+          'subtitle': 'İnceleniyor',
+          'trend': '-${statusCounts['returns'] ?? 0}',
+          'trendColor': const Color(0xFFEF4444),
+        },
+      ];
+    }
     final revenueCards = [
       {
         'icon': Icons.trending_up_rounded,
@@ -308,7 +415,10 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: _refreshDashboardData,
+                onPressed: () => _refreshDashboardData(
+                  source: 'desktop_dashboard_yenile_button',
+                  userInitiated: true,
+                ),
                 icon: const Icon(Icons.refresh_rounded, size: 18),
                 label: const Text('Yenile'),
                 style: OutlinedButton.styleFrom(
@@ -498,6 +608,7 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
                   statusCounts: statusCounts,
                   totalOrderCount: totalOrderCount,
                   completionRate: completionRate,
+                  isFoodBusiness: isFoodBusiness,
                 ),
               ),
             ],
@@ -520,29 +631,55 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
                 child: _buildOverviewTopProductsCard(topProducts),
               ),
               const SizedBox(width: 14),
-              Expanded(child: _buildOverviewCargoSummaryCard(cargoSummary)),
+              if (!isFoodBusiness)
+                Expanded(
+                  child: _buildOverviewCargoSummaryCard(cargoSummary),
+                )
+              else
+                Expanded(
+                  child: _buildFoodAveragesCard(
+                    statusCounts: statusCounts,
+                    metrics: metrics,
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 20),
           _buildDashboardSectionLabel('PERFORMANS METRİKLERİ'),
           const SizedBox(height: 10),
           _buildDashboardGrid([
-            _buildOverviewPerformanceCard(
-              icon: Icons.alarm_on_rounded,
-              iconColor: const Color(0xFF6366F1),
-              iconBackground: const Color(0xFFEDE9FE),
-              title: 'Zamanında Gönderim',
-              value:
-                  '${_dashboardShippingPerformance(statusCounts).toStringAsFixed(0)}%',
-              valueSuffix: '',
-              progress: _dashboardShippingPerformance(statusCounts) / 100,
-              progressColor: const Color(0xFF6366F1),
-            ),
+            if (!isFoodBusiness)
+              _buildOverviewPerformanceCard(
+                icon: Icons.alarm_on_rounded,
+                iconColor: const Color(0xFF6366F1),
+                iconBackground: const Color(0xFFEDE9FE),
+                title: 'Zamanında Gönderim',
+                value:
+                    '${_dashboardShippingPerformance(statusCounts).toStringAsFixed(0)}%',
+                valueSuffix: '',
+                progress: _dashboardShippingPerformance(statusCounts) / 100,
+                progressColor: const Color(0xFF6366F1),
+              )
+            else
+              _buildOverviewPerformanceCard(
+                icon: Icons.table_restaurant_outlined,
+                iconColor: const Color(0xFF6366F1),
+                iconBackground: const Color(0xFFEDE9FE),
+                title: 'Masa Doluluk',
+                value:
+                    '${statusCounts['open_tables'] ?? 0}',
+                valueSuffix: ' masa',
+                progress: ((statusCounts['open_tables'] ?? 0) /
+                        math.max(1, (statusCounts['open_tables'] ?? 0) +
+                            (statusCounts['closed_today'] ?? 0)))
+                    .clamp(0.0, 1.0),
+                progressColor: const Color(0xFF6366F1),
+              ),
             _buildOverviewPerformanceCard(
               icon: Icons.shield_outlined,
               iconColor: const Color(0xFF10B981),
               iconBackground: const Color(0xFFDCFCE7),
-              title: 'Sipariş Tamamlama',
+              title: isFoodBusiness ? 'Masa Tamamlama' : 'Sipariş Tamamlama',
               value: '${completionRate.toStringAsFixed(0)}%',
               valueSuffix: '',
               progress: completionRate / 100,
@@ -574,6 +711,109 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
               progressColor: const Color(0xFFEF4444),
             ),
           ], minItemWidth: 240),
+        ],
+      ),
+    );
+  }
+
+  /// Summary card shown on the right side of the bottom row for food businesses,
+  /// replacing the e-commerce cargo summary card.
+  Widget _buildFoodAveragesCard({
+    required Map<String, int> statusCounts,
+    required SellerDashboardMetrics metrics,
+  }) {
+    final todayTableOrders = statusCounts['today_table_orders'] ?? 0;
+    final openTables = statusCounts['open_tables'] ?? 0;
+    final closedToday = statusCounts['closed_today'] ?? 0;
+    final sentToKitchen = statusCounts['sent_to_kitchen'] ?? 0;
+    final restaurantCancelled = statusCounts['restaurant_cancelled'] ?? 0;
+
+    final avgOrderValue = metrics.averageOrderValue;
+
+    final rows = <Map<String, dynamic>>[
+      {
+        'icon': Icons.receipt_long_outlined,
+        'label': 'Bugün Sipariş',
+        'value': '$todayTableOrders',
+        'color': const Color(0xFF2563EB),
+      },
+      {
+        'icon': Icons.table_restaurant_outlined,
+        'label': 'Açık Masa',
+        'value': '$openTables',
+        'color': const Color(0xFF16A34A),
+      },
+      {
+        'icon': Icons.soup_kitchen_outlined,
+        'label': 'Mutfağa İletilen',
+        'value': '$sentToKitchen',
+        'color': const Color(0xFFF59E0B),
+      },
+      {
+        'icon': Icons.check_circle_outline_rounded,
+        'label': 'Bugün Kapanan',
+        'value': '$closedToday',
+        'color': const Color(0xFF10B981),
+      },
+      {
+        'icon': Icons.cancel_outlined,
+        'label': 'İptal',
+        'value': '$restaurantCancelled',
+        'color': const Color(0xFFEF4444),
+      },
+      {
+        'icon': Icons.payments_outlined,
+        'label': 'Ort. Sipariş',
+        'value': _formatDashboardCurrency(avgOrderValue),
+        'color': const Color(0xFF7C3AED),
+      },
+    ];
+
+    return SellerDashboardCardShell(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Restoran Özeti',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1E293B),
+            ),
+          ),
+          const SizedBox(height: 14),
+          ...rows.map((row) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    row['icon'] as IconData,
+                    size: 16,
+                    color: row['color'] as Color,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      row['label'] as String,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    row['value'] as String,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF1E293B),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
         ],
       ),
     );

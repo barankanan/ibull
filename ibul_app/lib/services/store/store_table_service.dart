@@ -366,6 +366,44 @@ class StoreTableService {
     }
   }
 
+  /// Moves an existing table to a different area by updating its area_id,
+  /// area_name and area_table_number.  Pass an empty areaId/areaName to clear.
+  Future<void> updateStoreTableArea({
+    required String tableId,
+    required String areaId,
+    required String areaName,
+  }) async {
+    final normalizedTableId = tableId.trim();
+    if (normalizedTableId.isEmpty) return;
+    try {
+      // Count existing tables in the target area for area_table_number.
+      int areaTableNumber = 1;
+      if (areaId.trim().isNotEmpty) {
+        final existing = await _supabase
+            .from('store_tables')
+            .select('area_table_number')
+            .eq('area_id', areaId.trim());
+        final nums = (existing as List)
+            .map((r) => _parseTableNumberValue(r['area_table_number']))
+            .where((n) => n > 0)
+            .toList(growable: false);
+        final max = nums.isEmpty ? 0 : nums.reduce((a, b) => a > b ? a : b);
+        areaTableNumber = max + 1;
+      }
+      await _supabase.from('store_tables').update({
+        'area_id': areaId.trim().isEmpty ? null : areaId.trim(),
+        'area_name': areaName.trim().isEmpty ? null : areaName.trim(),
+        'area_table_number': areaTableNumber,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', normalizedTableId);
+    } catch (error) {
+      if (_isStoreTablesMissingError(error)) {
+        throw _storeTablesUnavailableException();
+      }
+      rethrow;
+    }
+  }
+
   Future<Map<String, dynamic>?> removeLastStoreTable({String? sellerId}) async {
     final tables = await getStoreTables(sellerId: sellerId, onlyActive: true);
     if (tables.isEmpty) return null;

@@ -2,6 +2,87 @@ import '../models/seller_product.dart';
 import 'campaign_service.dart';
 import 'support_service.dart';
 
+/// Unified order model for dashboard calculations.
+/// Online orders and garson/table orders are both normalised to this shape
+/// so that all stats (revenue, count, chart, pending tasks) work on a single
+/// list regardless of source.
+class DashboardOrderMetric {
+  const DashboardOrderMetric({
+    required this.id,
+    required this.source,
+    required this.status,
+    required this.createdAt,
+    required this.totalAmount,
+    required this.isCancelled,
+    required this.isPaidOrRevenueEligible,
+    this.tableName,
+  });
+
+  /// 'online' | 'table'
+  final String source;
+  final String id;
+  final String status;
+  final DateTime createdAt;
+  final double totalAmount;
+  final bool isCancelled;
+  final bool isPaidOrRevenueEligible;
+
+  /// Populated only for source == 'table'
+  final String? tableName;
+
+  static DashboardOrderMetric fromOnlineOrder(Map<String, dynamic> order) {
+    final status =
+        (order['status'] ?? '').toString().trim().toLowerCase();
+    final isCancelled = status.contains('cancel') ||
+        status.contains('return') ||
+        status.contains('refund') ||
+        status.contains('iptal') ||
+        status.contains('iade');
+    final amount =
+        (order['total_price'] ??
+                order['totalPrice'] ??
+                order['total_amount'] ??
+                order['totalAmount'] ??
+                0)
+            as num;
+    return DashboardOrderMetric(
+      id: order['id']?.toString() ?? '',
+      source: 'online',
+      status: status,
+      createdAt:
+          DateTime.tryParse(
+                (order['created_at'] ?? order['createdAt'])?.toString() ?? '',
+              )?.toLocal() ??
+          DateTime.now(),
+      totalAmount: amount.toDouble(),
+      isCancelled: isCancelled,
+      isPaidOrRevenueEligible: !isCancelled,
+    );
+  }
+
+  static DashboardOrderMetric fromTableOrder(
+    Map<String, dynamic> order, {
+    required double computedTotal,
+  }) {
+    final rawStatus =
+        (order['status'] ?? 'new').toString().trim().toLowerCase();
+    final isCancelled = rawStatus == 'cancelled';
+    return DashboardOrderMetric(
+      id: order['id']?.toString() ?? '',
+      source: 'table',
+      status: rawStatus,
+      createdAt:
+          DateTime.tryParse(order['created_at']?.toString() ?? '')
+              ?.toLocal() ??
+          DateTime.now(),
+      totalAmount: computedTotal,
+      isCancelled: isCancelled,
+      isPaidOrRevenueEligible: !isCancelled,
+      tableName: 'Masa ${order['table_number'] ?? '-'}',
+    );
+  }
+}
+
 class SellerDashboardSeriesPoint {
   const SellerDashboardSeriesPoint({
     required this.label,

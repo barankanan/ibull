@@ -1196,18 +1196,42 @@ class SupabaseService {
 
   Future<List<CategoryWithSubcategories>> getCategoriesWithSubs() async {
     final mainCategories = await getMainCategories();
-    final List<CategoryWithSubcategories> result = [];
+    if (mainCategories.isEmpty) return const [];
 
-    for (var mainCat in mainCategories) {
-      if (mainCat.id != null) {
-        final subs = await getSubCategories(mainCat.id!);
-        result.add(
-          CategoryWithSubcategories(mainCategory: mainCat, subCategories: subs),
-        );
+    // Fetch all sub-categories in a single query instead of N+1 round-trips,
+    // then group by parent_id client-side.
+    List<DBCategory> allSubs;
+    try {
+      final response = await _supabase
+          .from('categories')
+          .select()
+          .not('parent_id', 'is', null)
+          .eq('is_active', true)
+          .order('order_index', ascending: true);
+      allSubs = (response as List)
+          .map((item) => _mapToDBCategory(item as Map<String, dynamic>))
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('Error getting sub-categories in bulk: $e');
+      allSubs = const [];
+    }
+
+    final subsByParentId = <int, List<DBCategory>>{};
+    for (final sub in allSubs) {
+      if (sub.parentId != null) {
+        subsByParentId.putIfAbsent(sub.parentId!, () => []).add(sub);
       }
     }
 
-    return result;
+    return mainCategories
+        .where((cat) => cat.id != null)
+        .map(
+          (mainCat) => CategoryWithSubcategories(
+            mainCategory: mainCat,
+            subCategories: subsByParentId[mainCat.id] ?? const [],
+          ),
+        )
+        .toList(growable: false);
   }
 
   // ==================== MAPPERS ====================

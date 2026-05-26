@@ -21,6 +21,10 @@ class StoreService {
   static const Duration _storePublicInfoTtl = Duration(minutes: 10);
   static const Duration _tableOrderTimeout = Duration(seconds: 10);
 
+  /// Session-level cache for the current seller's business name.
+  /// Populated by [getStoreProfile]; invalidated by [updateStoreProfile].
+  String? _cachedBusinessName;
+
   String? get currentUserId => _supabase.auth.currentUser?.id;
   late final StoreMediaService _mediaService = StoreMediaService(
     supabase: _supabase,
@@ -282,7 +286,13 @@ class StoreService {
     final requestUrl = _debugRestRequestUrl(
       'stores',
       query: <String, String>{
-        'select': '*',
+        'select':
+            'business_name,website,description,slogan,phone,email,whatsapp,'
+                'support_phone,address,postal_code,tax_number,instagram,facebook,'
+                'twitter,city,district,business_type,working_hours,is_store_open,'
+                'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
+                'cover_url,gallery_images,banners,seller_videos,store_lat,'
+                'store_lng,category,rating,is_verified',
         'seller_id': 'eq.$userId',
       },
     );
@@ -290,10 +300,18 @@ class StoreService {
       '[StoreService] getStoreProfile requestUrl=$requestUrl authUserId=$userId',
     );
 
+    const storeProfileColumns =
+        'business_name,website,description,slogan,phone,email,whatsapp,'
+        'support_phone,address,postal_code,tax_number,instagram,facebook,'
+        'twitter,city,district,business_type,working_hours,is_store_open,'
+        'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
+        'cover_url,gallery_images,banners,seller_videos,store_lat,'
+        'store_lng,category,rating,is_verified';
+
     try {
       final data = await _supabase
           .from('stores')
-          .select()
+          .select(storeProfileColumns)
           .eq('seller_id', userId)
           .maybeSingle();
 
@@ -306,7 +324,10 @@ class StoreService {
       }
 
       // Map snake_case to camelCase for UI consumption
-      return StoreServiceMappers.storeToCamelCase(data);
+      final mapped = StoreServiceMappers.storeToCamelCase(data);
+      final name = mapped['storeName']?.toString().trim() ?? '';
+      if (name.isNotEmpty) _cachedBusinessName = name;
+      return mapped;
     } catch (e, stackTrace) {
       debugPrint(
         '[StoreService] getStoreProfile failed requestUrl=$requestUrl '
@@ -341,6 +362,9 @@ class StoreService {
     dbData['seller_id'] = currentUserId; // Ensure ID is set
 
     await _supabase.from('stores').upsert(dbData);
+
+    // Invalidate cached business name so the next call fetches fresh data.
+    _cachedBusinessName = null;
 
     if (dbData.containsKey('banners')) {
       unawaited(_notifyFollowersStoreAnnouncement());
@@ -427,6 +451,7 @@ class StoreService {
       productDbData['status'] = 'uploading';
       productDbData['image_urls'] = [];
       productDbData['image_url'] = null;
+      productDbData['created_at'] = DateTime.now().toIso8601String();
       if (!productDbData.containsKey('product_type') ||
           (productDbData['product_type']?.toString().trim().isEmpty ?? true)) {
         productDbData['product_type'] = 'product';
@@ -1184,6 +1209,18 @@ class StoreService {
     return _tableService.removeStoreTableById(tableId);
   }
 
+  Future<void> updateStoreTableArea({
+    required String tableId,
+    required String areaId,
+    required String areaName,
+  }) {
+    return _tableService.updateStoreTableArea(
+      tableId: tableId,
+      areaId: areaId,
+      areaName: areaName,
+    );
+  }
+
   Future<Map<String, dynamic>?> removeLastStoreTable({String? sellerId}) {
     return _tableService.removeLastStoreTable(sellerId: sellerId);
   }
@@ -1928,6 +1965,10 @@ class StoreService {
     final userId = currentUserId;
     if (userId == null) return 'Mağaza';
 
+    if (_cachedBusinessName != null && _cachedBusinessName!.isNotEmpty) {
+      return _cachedBusinessName!;
+    }
+
     try {
       final row = await _supabase
           .from('stores')
@@ -1935,6 +1976,7 @@ class StoreService {
           .eq('seller_id', userId)
           .maybeSingle();
       final name = row?['business_name']?.toString().trim() ?? '';
+      if (name.isNotEmpty) _cachedBusinessName = name;
       return name.isNotEmpty ? name : 'Mağaza';
     } catch (_) {
       return 'Mağaza';
