@@ -14,93 +14,93 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  test('/printers exposes POS-58 as windows:POS-58 with queue POS-58', () async {
-    final orchestrator = DesktopPrintOrchestrator(
-      printerRepository: _FakePrinterRepo(),
-      printStationService: _FakeStationService(),
-      printServiceFactory: () => _Pos58ProbeService(),
-    );
+  test(
+    '/printers exposes POS-58 as windows:POS-58 with queue POS-58',
+    () async {
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepo(),
+        printStationService: _FakeStationService(),
+        printServiceFactory: () => _Pos58ProbeService(),
+      );
 
-    final snapshot = await orchestrator.loadSetupSnapshot(
-      restaurantId: 'restaurant-1',
-      forceRefresh: true,
-    );
+      final snapshot = await orchestrator.loadSetupSnapshot(
+        restaurantId: 'restaurant-1',
+        forceRefresh: true,
+      );
 
-    final pos58 = snapshot.livePrinters.firstWhere(
-      (printer) => printer.queueName == 'POS-58',
-    );
-    expect(pos58.id, 'windows:POS-58');
-    expect(pos58.backend, DesktopPrinterBackend.windowsSpool);
-    expect(pos58.canPrint, isTrue);
-  });
+      final pos58 = snapshot.livePrinters.firstWhere(
+        (printer) => printer.queueName == 'POS-58',
+      );
+      expect(pos58.id, 'windows:POS-58');
+      expect(pos58.backend, DesktopPrinterBackend.windowsSpool);
+      expect(pos58.canPrint, isTrue);
+    },
+  );
 
-  test('wizard_test sends POS-58 queue to bridge without role fallback', () async {
-    final capture = _Pos58CaptureService();
-    final orchestrator = DesktopPrintOrchestrator(
-      printerRepository: _FakePrinterRepo(
-        saved: <PrinterModel>[
-          PrinterModel.fromMap(<String, dynamic>{
-            'id': 'mac-record-1',
-            'restaurant_id': 'restaurant-1',
-            'name': 'Generic / Text Only',
-            'code': 'GENERIC',
-            'connection_type': 'usb',
-            'device_identifier': 'Generic / Text Only',
-            'paper_width_mm': 58,
-            'is_active': true,
-            'supports_cut': false,
-          }),
-        ],
-      ),
-      printStationService: _FakeStationService(),
-      printServiceFactory: () => capture,
-    );
+  test(
+    'wizard_test sends POS-58 queue to bridge without role fallback',
+    () async {
+      final capture = _Pos58CaptureService();
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepo(
+          saved: <PrinterModel>[
+            PrinterModel.fromMap(<String, dynamic>{
+              'id': 'mac-record-1',
+              'restaurant_id': 'restaurant-1',
+              'name': 'Generic / Text Only',
+              'code': 'GENERIC',
+              'connection_type': 'usb',
+              'device_identifier': 'Generic / Text Only',
+              'paper_width_mm': 58,
+              'is_active': true,
+              'supports_cut': false,
+            }),
+          ],
+        ),
+        printStationService: _FakeStationService(),
+        printServiceFactory: () => capture,
+      );
 
-    final snapshot = await orchestrator.loadSetupSnapshot(
-      restaurantId: 'restaurant-1',
-      forceRefresh: true,
-    );
-    final explicit = snapshot.livePrinters.firstWhere(
-      (printer) => printer.id == 'windows:POS-58',
-    );
+      final snapshot = await orchestrator.loadSetupSnapshot(
+        restaurantId: 'restaurant-1',
+        forceRefresh: true,
+      );
+      final explicit = snapshot.livePrinters.firstWhere(
+        (printer) => printer.id == 'windows:POS-58',
+      );
 
-    final result = await orchestrator.printTestReceipt(
-      restaurantId: 'restaurant-1',
-      printerId: 'windows:POS-58',
-      explicitLivePrinter: explicit,
-      testSource: 'wizard_test',
-    );
+      final result = await orchestrator.printTestReceipt(
+        restaurantId: 'restaurant-1',
+        printerId: 'windows:POS-58',
+        explicitLivePrinter: explicit,
+        testSource: 'wizard_test',
+      );
 
-    expect(result.ok, isTrue);
-    expect(capture.lastPrinterId, 'windows:POS-58');
-    expect(capture.lastPrinterName, 'POS-58');
-    expect(capture.lastPrinter?['backend'], 'windows-spool');
-    expect(capture.lastPrinter?['queue'], 'POS-58');
-    expect(
-      capture.lastPrinter?['name'],
-      'POS-58',
-    );
-    expect(capture.lastRenderMode, 'text');
-    expect(capture.lastTestMode, 'escpos_short');
-  });
+      expect(result.ok, isTrue);
+      expect(capture.lastPrinterId, 'windows:POS-58');
+      expect(capture.lastPrinterName, 'POS-58');
+      expect(capture.lastPrinter?['backend'], 'windows-spool');
+      expect(capture.lastPrinter?['queue'], 'POS-58');
+      expect(capture.lastPrinter?['name'], 'POS-58');
+      expect(capture.lastRenderMode, 'text');
+      expect(capture.lastTestMode, 'escpos_short');
+    },
+  );
 
   test('Windows POS-58 with POS58 VID/PID stays on windows-spool', () {
-    final printer = UnifiedPrinterModel.fromBridgeMap(
-      <String, dynamic>{
-        'id': 'windows:POS-58',
-        'name': 'POS-58',
-        'queue': 'POS-58',
-        'backend': 'windows-spool',
-        'vendorId': '0x0416',
-        'productId': '0x5011',
-        'statusLevel': 'ready',
-        'ready': true,
-        'operatorTier': 'pos_candidate',
-        'isPosCandidate': true,
-        'portName': 'USB002',
-      },
-      os: DesktopPrinterOs.windows,
-    );
+    final printer = UnifiedPrinterModel.fromBridgeMap(<String, dynamic>{
+      'id': 'windows:POS-58',
+      'name': 'POS-58',
+      'queue': 'POS-58',
+      'backend': 'windows-spool',
+      'vendorId': '0x0416',
+      'productId': '0x5011',
+      'statusLevel': 'ready',
+      'ready': true,
+      'operatorTier': 'pos_candidate',
+      'isPosCandidate': true,
+      'portName': 'USB002',
+    }, os: DesktopPrinterOs.windows);
 
     expect(printer.backend, DesktopPrinterBackend.windowsSpool);
     expect(printer.queueName, 'POS-58');
@@ -122,31 +122,29 @@ class _Pos58ProbeService extends LocalPrintService {
 
   @override
   Future<Map<String, dynamic>?> health({bool useCache = true}) async =>
-      const <String, dynamic>{
-    'ok': true,
-  };
+      const <String, dynamic>{'ok': true};
 
   @override
   Future<Map<String, dynamic>?> printers({bool useCache = true}) async =>
       const <String, dynamic>{
-    'ok': true,
-    'count': 1,
-    'printers': <Map<String, dynamic>>[
-      <String, dynamic>{
-        'id': 'windows:POS-58',
-        'name': 'POS-58',
-        'queue': 'POS-58',
-        'backend': 'windows-spool',
-        'ready': true,
-        'statusLevel': 'ready',
-        'operatorTier': 'pos_candidate',
-        'isPosCandidate': true,
-        'portName': 'USB002',
-        'driverName': 'POS-58 11.3.0.1',
-        'connectionType': 'usb',
-      },
-    ],
-  };
+        'ok': true,
+        'count': 1,
+        'printers': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'windows:POS-58',
+            'name': 'POS-58',
+            'queue': 'POS-58',
+            'backend': 'windows-spool',
+            'ready': true,
+            'statusLevel': 'ready',
+            'operatorTier': 'pos_candidate',
+            'isPosCandidate': true,
+            'portName': 'USB002',
+            'driverName': 'POS-58 11.3.0.1',
+            'connectionType': 'usb',
+          },
+        ],
+      };
 }
 
 class _FakePrinterRepo implements PrinterRepositoryPort {
@@ -186,11 +184,15 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
   }
 
   @override
-  Future<void> updateAssignedRoles(String printerId, List<PrinterRole> roles) async {}
+  Future<void> updateAssignedRoles(
+    String printerId,
+    List<PrinterRole> roles,
+  ) async {}
 
   @override
-  Future<List<dynamic>> fetchStationPrinterMappings(String restaurantId) async =>
-      const <dynamic>[];
+  Future<List<dynamic>> fetchStationPrinterMappings(
+    String restaurantId,
+  ) async => const <dynamic>[];
 
   @override
   Future<void> deletePrinter(String printerId) async {}
@@ -202,7 +204,9 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
   Future<void> deleteStationPrinterMappingsForPrinter(String printerId) async {}
 
   @override
-  Future<void> deleteStationPrinterMappingsForRestaurant(String restaurantId) async {}
+  Future<void> deleteStationPrinterMappingsForRestaurant(
+    String restaurantId,
+  ) async {}
 
   @override
   Future<void> recordTestPrintResult({
@@ -236,23 +240,22 @@ class _FakeStationService implements PrintStationServicePort {
   Future<Map<String, dynamic>?> fetchLocalQueueStatus() async => null;
 
   @override
-  Future<List<Map<String, dynamic>>> fetchPausedPrintJobs(String restaurantId) async =>
-      const <Map<String, dynamic>>[];
+  Future<List<Map<String, dynamic>>> fetchPausedPrintJobs(
+    String restaurantId,
+  ) async => const <Map<String, dynamic>>[];
 
   @override
   Future<bool> setPrintSystemEnabled({
     required String restaurantId,
     required bool enabled,
     bool? previousEnabled,
-  }) async =>
-      true;
+  }) async => true;
 
   @override
   Future<bool> resumePausedPrintJob({
     required String restaurantId,
     required String jobId,
-  }) async =>
-      true;
+  }) async => true;
 
   @override
   bool isLocalStationReady(Map<String, dynamic>? queueStatus) => false;
@@ -270,15 +273,13 @@ class _FakeStationService implements PrintStationServicePort {
     required String kitchenPrinterId,
     required String kitchenPrinterName,
     Map<String, dynamic>? roleMappings,
-  }) async =>
-      null;
+  }) async => null;
 
   @override
   Future<Map<String, dynamic>?> patchStationConfiguration({
     required String restaurantId,
     required Map<String, dynamic> fields,
-  }) async =>
-      null;
+  }) async => null;
 
   @override
   Future<Map<String, dynamic>?> configureLocalBridgeAsPrintStation({
@@ -294,8 +295,7 @@ class _FakeStationService implements PrintStationServicePort {
     String? bridgePrinterQueue,
     String? bridgeUsbVendorId,
     String? bridgeUsbProductId,
-  }) async =>
-      null;
+  }) async => null;
 }
 
 class _Pos58CaptureService extends _Pos58ProbeService {
@@ -314,6 +314,7 @@ class _Pos58CaptureService extends _Pos58ProbeService {
     String? printerId,
     String? printerName,
     Map<String, dynamic>? printer,
+    Map<String, dynamic>? extraBody,
     String renderMode = 'text',
     String testMode = 'escpos_short',
     Duration? timeout,

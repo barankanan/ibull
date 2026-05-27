@@ -52,7 +52,10 @@ class LocalPrintServiceException implements Exception {
 }
 
 class _BridgeResponseCacheEntry {
-  const _BridgeResponseCacheEntry({required this.data, required this.fetchedAt});
+  const _BridgeResponseCacheEntry({
+    required this.data,
+    required this.fetchedAt,
+  });
 
   final Map<String, dynamic>? data;
   final DateTime fetchedAt;
@@ -266,12 +269,14 @@ class LocalPrintService {
     String? printerId,
     String? printerName,
     Map<String, dynamic>? printer,
+    Map<String, dynamic>? extraBody,
     String renderMode = 'text',
     String testMode = 'escpos_short',
     Duration? timeout,
   }) {
     final backend =
-        printer?['backend']?.toString() ?? printer?['transportType']?.toString();
+        printer?['backend']?.toString() ??
+        printer?['transportType']?.toString();
     final body = _mergePrintOptions(
       <String, dynamic>{
         if (printerId != null && printerId.trim().isNotEmpty)
@@ -283,6 +288,7 @@ class LocalPrintService {
         'document_type': 'test',
         'test_mode': testMode,
         if (backend == 'windows-spool') 'spool_mode': 'RAW',
+        if (extraBody != null) ...Map<String, dynamic>.from(extraBody),
       },
       targetHost: targetHost,
       targetPort: targetPort,
@@ -328,7 +334,8 @@ class LocalPrintService {
     Duration? timeout,
   }) {
     final backend =
-        printer?['backend']?.toString() ?? printer?['transportType']?.toString();
+        printer?['backend']?.toString() ??
+        printer?['transportType']?.toString();
     final body = _mergePrintOptions(
       <String, dynamic>{
         if (printerId != null && printerId.trim().isNotEmpty)
@@ -388,7 +395,8 @@ class LocalPrintService {
     Duration? timeout,
   }) {
     final backend =
-        printer?['backend']?.toString() ?? printer?['transportType']?.toString();
+        printer?['backend']?.toString() ??
+        printer?['transportType']?.toString();
     final primaryLine = testLine ?? kTurkishCalibrationPrimaryTestLine;
     final body = _mergePrintOptions(
       <String, dynamic>{
@@ -438,7 +446,8 @@ class LocalPrintService {
     Duration? timeout,
   }) {
     final backend =
-        printer?['backend']?.toString() ?? printer?['transportType']?.toString();
+        printer?['backend']?.toString() ??
+        printer?['transportType']?.toString();
     final body = _mergePrintOptions(
       <String, dynamic>{
         if (printerId != null && printerId.trim().isNotEmpty)

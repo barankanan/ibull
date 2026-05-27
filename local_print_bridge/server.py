@@ -260,7 +260,9 @@ class _SmartTransport:
 
     Transport selection priority:
       1. Per-request ``target_host`` / ``target_port`` fields (network TCP override)
-      2. Global ``transport_mode`` from BridgeSettings:
+      2. Selected printer backend (``tcp`` / ``network-tcp`` / ``ethernet`` →
+         direct ``NetworkTcpTransport`` and never touches CUPS/USB).
+      3. Global ``transport_mode`` from BridgeSettings:
          - ``network``  → NetworkTcpTransport (settings.network_host:network_port)
          - ``usb``      → UsbDirectTransport only
          - ``cups``     → CupsRawTransport only
@@ -398,6 +400,11 @@ class _SmartTransport:
 
         if selected_printer:
             backend = str(selected_printer.get("backend") or "").strip().lower()
+            transport_type = str(
+                selected_printer.get("transportType")
+                or selected_printer.get("transport_type")
+                or ""
+            ).strip().lower()
             queue = str(
                 selected_printer.get("queue")
                 or selected_printer.get("queueName")
@@ -405,6 +412,33 @@ class _SmartTransport:
                 or selected_printer.get("displayName")
                 or ""
             ).strip()
+            # Ethernet/TCP printers MUST bypass CUPS/USB entirely. Accept the
+            # historical "network-tcp" alias as well as the new "tcp" backend
+            # alongside "ethernet" transport type.
+            if (
+                backend in {"tcp", "network-tcp"}
+                or transport_type == "ethernet"
+            ):
+                host = str(
+                    selected_printer.get("host")
+                    or selected_printer.get("ipAddress")
+                    or selected_printer.get("ip_address")
+                    or ""
+                ).strip()
+                port_value = (
+                    selected_printer.get("port")
+                    if selected_printer.get("port") is not None
+                    else selected_printer.get("tcp_port")
+                )
+                port = _parse_port(port_value) or 9100
+                if host:
+                    return NetworkTcpTransport(host=host, port=port).print_bytes(
+                        payload,
+                        job_name=job_name,
+                    )
+                raise TransportError(
+                    "Ethernet yazıcı için IP adresi yapılandırılmamış."
+                )
             if backend == "windows-spool":
                 return WindowsSpoolTransport(queue).print_bytes(payload, job_name=job_name)
             if backend == "cups":
@@ -421,14 +455,6 @@ class _SmartTransport:
                     vendor_id=vendor_id,
                     product_id=product_id,
                 ).print_bytes(payload, job_name=job_name)
-            if backend == "network-tcp":
-                host = str(selected_printer.get("host") or "").strip()
-                port = _parse_port(selected_printer.get("port")) or 9100
-                if host:
-                    return NetworkTcpTransport(host=host, port=port).print_bytes(
-                        payload,
-                        job_name=job_name,
-                    )
 
         mode = self._settings.transport_mode
 
@@ -503,6 +529,94 @@ def build_short_safe_test_payload() -> ReceiptPayload:
             "discount": "0.00",
             "grand_total": "0.00",
             "footer_note": "Kısa test",
+        }
+    )
+
+
+def build_ethernet_test_payload(
+    *,
+    host: str,
+    port: int,
+    paper_width_mm: int = 80,
+    auto_cut: bool = True,
+    role_label: str | None = None,
+    printer_name: str | None = None,
+) -> ReceiptPayload:
+    """ESC/POS test receipt tailored for Ethernet / TCP 9100 printers.
+
+    Mirrors the operator-facing spec:
+
+        NETUM / ZJ-8360 Ethernet Test
+        Bağlantı: Ethernet TCP
+        IP: 192.168.1.100
+        Port: 9100
+        Kağıt: 80mm
+        Rol: Adisyon
+        Türkçe Test: ÇĞİÖŞÜ çğıöşü
+        Tarih: ...
+        Kesme Testi
+
+    The receipt purposefully exercises:
+      - Turkish UTF-8 characters (validates encoding/codepage)
+      - A multi-line body (validates word wrap on 80mm/58mm)
+      - Auto-cut command at the end (validates the printer cutter)
+    """
+
+    safe_host = (host or "").strip() or "?"
+    safe_port = int(port) if isinstance(port, int) else 9100
+    safe_role = (role_label or "Adisyon").strip() or "Adisyon"
+    safe_name = (printer_name or "Ethernet Yazıcı").strip() or "Ethernet Yazıcı"
+
+    return ReceiptPayload.from_dict(
+        {
+            "store_name": safe_name,
+            "branch": "ETHERNET TEST",
+            "phone": f"{safe_host}:{safe_port}",
+            "table_no": safe_role,
+            "datetime": datetime.now().astimezone().isoformat(),
+            "items": [
+                {
+                    "name": "Bağlantı: Ethernet TCP",
+                    "qty": 1,
+                    "total": "0.00",
+                    "price": "0.00",
+                },
+                {
+                    "name": f"IP: {safe_host}",
+                    "qty": 1,
+                    "total": "0.00",
+                    "price": "0.00",
+                },
+                {
+                    "name": f"Port: {safe_port}",
+                    "qty": 1,
+                    "total": "0.00",
+                    "price": "0.00",
+                },
+                {
+                    "name": f"Kağıt: {paper_width_mm}mm",
+                    "qty": 1,
+                    "total": "0.00",
+                    "price": "0.00",
+                },
+                {
+                    "name": f"Rol: {safe_role}",
+                    "qty": 1,
+                    "total": "0.00",
+                    "price": "0.00",
+                },
+                {
+                    "name": "Türkçe Test: ÇĞİÖŞÜ çğıöşü Iİ ıi",
+                    "qty": 1,
+                    "total": "0.00",
+                    "price": "0.00",
+                    "note": "ğ Ğ ş Ş ı İ ç Ç ö Ö ü Ü",
+                },
+            ],
+            "subtotal": "0.00",
+            "discount": "0.00",
+            "grand_total": "0.00",
+            "footer_note": "Kesme Testi" if auto_cut else "Test tamam",
         }
     )
 
@@ -1610,9 +1724,65 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             raw_body.setdefault("test_mode", "escpos_short")
         elif test_mode in {"bitmap", "image", "turkish"}:
             raw_body["render_mode"] = "image"
-        payload = build_short_safe_test_payload() if test_mode == "escpos_short" else build_test_payload()
+        elif test_mode in {"ethernet", "ethernet_test", "tcp_test"}:
+            # Ethernet test receipt uses an image render so the Türkçe block
+            # and the cut command are emitted regardless of the printer's
+            # active codepage; this matches the operator-facing spec.
+            raw_body["render_mode"] = "image"
+            raw_body.setdefault("test_mode", "ethernet_test")
         target_host, target_port = self._extract_target(raw_body)
         selected_printer = self._resolve_selected_printer(raw_body)
+        if test_mode in {"ethernet_connection", "tcp_connection", "connection"}:
+            self._handle_ethernet_connection_test(
+                raw_body=raw_body,
+                target_host=target_host,
+                target_port=target_port,
+                selected_printer=selected_printer,
+            )
+            return
+        if test_mode in {"ethernet", "ethernet_test", "tcp_test"}:
+            host_for_receipt = target_host or (
+                str(selected_printer.get("host") if selected_printer else "")
+                or str(selected_printer.get("ip_address") if selected_printer else "")
+                or str(selected_printer.get("ipAddress") if selected_printer else "")
+            )
+            try:
+                port_for_receipt = int(
+                    target_port
+                    or (selected_printer.get("port") if selected_printer else None)
+                    or 9100
+                )
+            except (TypeError, ValueError):
+                port_for_receipt = 9100
+            paper_raw = (selected_printer or {}).get("paper_width_mm") if selected_printer else None
+            if paper_raw is None and selected_printer is not None:
+                paper_raw = selected_printer.get("paperWidthMm")
+            try:
+                paper_width = int(paper_raw) if paper_raw is not None else 80
+            except (TypeError, ValueError):
+                paper_width = 80
+            auto_cut_raw = (selected_printer or {}).get("auto_cut") if selected_printer else None
+            if auto_cut_raw is None and selected_printer is not None:
+                auto_cut_raw = selected_printer.get("autoCut")
+            auto_cut_flag = bool(auto_cut_raw) if auto_cut_raw is not None else True
+            role_label = str(raw_body.get("printer_role") or raw_body.get("role") or "Adisyon").strip()
+            printer_name = str(
+                (selected_printer or {}).get("name")
+                or raw_body.get("printer_name")
+                or "Ethernet Yazıcı"
+            ).strip()
+            payload = build_ethernet_test_payload(
+                host=host_for_receipt or "",
+                port=port_for_receipt,
+                paper_width_mm=paper_width,
+                auto_cut=auto_cut_flag,
+                role_label=role_label or "Adisyon",
+                printer_name=printer_name or "Ethernet Yazıcı",
+            )
+        elif test_mode == "escpos_short":
+            payload = build_short_safe_test_payload()
+        else:
+            payload = build_test_payload()
         self._log_print_test_request(
             raw_body=raw_body,
             selected_printer=selected_printer,
@@ -1653,6 +1823,125 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             target_port=target_port,
             selected_printer=selected_printer,
             require_physical_confirmation=not fast_test,
+        )
+
+    def _handle_ethernet_connection_test(
+        self,
+        *,
+        raw_body: dict[str, object],
+        target_host: str | None,
+        target_port: int | None,
+        selected_printer: dict[str, object] | None,
+    ) -> None:
+        host = target_host or (
+            str(selected_printer.get("host") if selected_printer else "")
+            or str(selected_printer.get("ip_address") if selected_printer else "")
+            or str(selected_printer.get("ipAddress") if selected_printer else "")
+        )
+        try:
+            port = int(
+                target_port
+                or (selected_printer.get("port") if selected_printer else None)
+                or 9100
+            )
+        except (TypeError, ValueError):
+            port = 9100
+
+        LOGGER.info(
+            "[EthernetPrinter][connection_test_start] host=%s port=%d",
+            host or "-",
+            port,
+        )
+        self._log_print_test_request(
+            raw_body=raw_body,
+            selected_printer=selected_printer,
+        )
+        try:
+            result = NetworkTcpTransport(host=host or "", port=port).health()
+        except TransportError as exc:
+            result = {
+                "ok": False,
+                "error_code": str(getattr(exc, "code", "") or "tcp_io_error"),
+                "reason": str(exc),
+            }
+        if result.get("ok") is True:
+            LOGGER.info(
+                "[EthernetPrinter][connection_test_success] host=%s port=%d",
+                host,
+                port,
+            )
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "status": "connected",
+                    "message": "Ethernet yazıcıya bağlantı başarılı.",
+                    "backend": "tcp",
+                    "transport": "ethernet",
+                    "transport_type": "ethernet",
+                    "actual_backend": "tcp",
+                    "physical_confirmation": True,
+                    "bytes_sent": 0,
+                    "target_host": host,
+                    "target_port": port,
+                    "printer": selected_printer
+                    or {
+                        "id": f"tcp:{host}:{port}",
+                        "name": f"Ethernet {host}",
+                        "displayName": f"Ethernet {host}",
+                        "backend": "tcp",
+                        "transportType": "ethernet",
+                        "transport_type": "ethernet",
+                        "host": host,
+                        "port": port,
+                        "source": "ethernet_dialog_form",
+                    },
+                },
+            )
+            return
+
+        error_code = str(result.get("error_code") or "tcp_unreachable").strip() or "tcp_unreachable"
+        error_message = str(
+            result.get("reason")
+            or result.get("error")
+            or "Ethernet yazıcıya bağlantı kurulamadı."
+        ).strip() or "Ethernet yazıcıya bağlantı kurulamadı."
+        LOGGER.error(
+            "[EthernetPrinter][connection_test_error] code=%s host=%s port=%d",
+            error_code,
+            host or "-",
+            port,
+        )
+        status = (
+            HTTPStatus.GATEWAY_TIMEOUT
+            if error_code == "tcp_timeout"
+            else HTTPStatus.SERVICE_UNAVAILABLE
+        )
+        self._send_json(
+            status,
+            {
+                "ok": False,
+                "status": "connection_failed",
+                "errorCode": error_code,
+                "error": error_message,
+                "backend": "tcp",
+                "transport": "ethernet",
+                "transport_type": "ethernet",
+                "target_host": host,
+                "target_port": port,
+                "printer": selected_printer
+                or {
+                    "id": f"tcp:{host}:{port}",
+                    "name": f"Ethernet {host}",
+                    "displayName": f"Ethernet {host}",
+                    "backend": "tcp",
+                    "transportType": "ethernet",
+                    "transport_type": "ethernet",
+                    "host": host,
+                    "port": port,
+                    "source": "ethernet_dialog_form",
+                },
+            },
         )
 
     def _handle_print_turkish_encoding_calibration(self) -> None:
@@ -2819,15 +3108,16 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 exc,
                 elapsed_ms,
             )
-            self._send_json(
-                HTTPStatus.INTERNAL_SERVER_ERROR,
-                {
-                    "ok": False,
-                    "error": str(exc),
-                    "queue_status": "failed",
-                    "printer": selected_printer or {"id": printer_id, "name": printer_name},
-                },
-            )
+            response: dict[str, object] = {
+                "ok": False,
+                "error": str(exc),
+                "queue_status": "failed",
+                "printer": selected_printer or {"id": printer_id, "name": printer_name},
+            }
+            structured_code = getattr(exc, "code", None)
+            if isinstance(structured_code, str) and structured_code:
+                response["errorCode"] = structured_code
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, response)
             return
         except Exception as exc:  # pragma: no cover - defensive guard
             elapsed_ms = int((_time.monotonic() - t0) * 1000)
@@ -3304,6 +3594,32 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         ).strip()
         vendor_id = raw_body.get("vendorId", raw_body.get("vendor_id"))
         product_id = raw_body.get("productId", raw_body.get("product_id"))
+
+        # Ethernet printer id pattern: "tcp:host:port" — synthesize the
+        # selected_printer dict so callers that only know the id can still
+        # dispatch through TCP without going through CUPS/USB discovery.
+        if (
+            printer_id.lower().startswith("tcp:")
+            and printer_data is None
+        ):
+            parts = printer_id.split(":", 2)
+            if len(parts) >= 2 and parts[1].strip():
+                host = parts[1].strip()
+                port_value: object = parts[2].strip() if len(parts) >= 3 else None
+                try:
+                    parsed_port = (
+                        int(port_value) if port_value not in (None, "") else 9100
+                    )
+                except (TypeError, ValueError):
+                    parsed_port = 9100
+                printer_data = {
+                    "id": printer_id,
+                    "name": printer_name or f"Ethernet {host}",
+                    "backend": "tcp",
+                    "transportType": "ethernet",
+                    "host": host,
+                    "port": parsed_port,
+                }
 
         resolver = getattr(self.transport, "resolve_printer", None)
         selected = None

@@ -14,18 +14,16 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  UnifiedPrinterModel pos58Printer() => UnifiedPrinterModel.fromBridgeMap(
-    <String, dynamic>{
-      'id': 'windows:POS-58',
-      'name': 'POS-58',
-      'queue': 'POS-58',
-      'backend': 'windows-spool',
-      'transportType': 'windows-spool',
-      'ready': true,
-      'statusLevel': 'ready',
-    },
-    os: DesktopPrinterOs.windows,
-  );
+  UnifiedPrinterModel pos58Printer() =>
+      UnifiedPrinterModel.fromBridgeMap(<String, dynamic>{
+        'id': 'windows:POS-58',
+        'name': 'POS-58',
+        'queue': 'POS-58',
+        'backend': 'windows-spool',
+        'transportType': 'windows-spool',
+        'ready': true,
+        'statusLevel': 'ready',
+      }, os: DesktopPrinterOs.windows);
 
   test('adisyon_test uses text/raw POS-58 payload on /print/receipt', () async {
     final capture = _Pos58PhysicalCaptureService();
@@ -48,10 +46,7 @@ void main() {
     expect(capture.lastReceiptBody?['render_mode'], 'text');
     expect(capture.lastReceiptBody?['spool_mode'], 'RAW');
     expect(capture.lastReceiptBody?['flow_type'], 'adisyon_test');
-    expect(
-      capture.lastReceiptBody?['printer']?['backend'],
-      'windows-spool',
-    );
+    expect(capture.lastReceiptBody?['printer']?['backend'], 'windows-spool');
   });
 
   test('kitchen_test uses text/raw POS-58 payload on /print/kitchen', () async {
@@ -138,38 +133,38 @@ void main() {
     },
   );
 
-  test('prepareQueuedPrintPayload forces text mode for POS-58 receipt jobs', () async {
-    final orchestrator = DesktopPrintOrchestrator(
-      printerRepository: _FakePrinterRepo(),
-      printStationService: _FakeStationService(),
-      printServiceFactory: () => _Pos58ProbeService(),
-    );
-    await orchestrator.savePrinterRoles(
-      restaurantId: 'restaurant-1',
-      receiptPrinterId: 'windows:POS-58',
-      kitchenPrinterId: 'windows:POS-58',
-    );
+  test(
+    'prepareQueuedPrintPayload forces text mode for POS-58 receipt jobs',
+    () async {
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepo(),
+        printStationService: _FakeStationService(),
+        printServiceFactory: () => _Pos58ProbeService(),
+      );
+      await orchestrator.savePrinterRoles(
+        restaurantId: 'restaurant-1',
+        receiptPrinterId: 'windows:POS-58',
+        kitchenPrinterId: 'windows:POS-58',
+      );
 
-    final prepared = await orchestrator.prepareQueuedPrintPayload(
-      restaurantId: 'restaurant-1',
-      jobRecord: <String, dynamic>{
-        'id': 'job-1',
-        'printer_role': 'adisyon',
-      },
-      payload: <String, dynamic>{
-        'document_type': 'receipt',
-        'printer_role': 'adisyon',
-        'store_name': 'ibul',
-        'table_no': '3',
-        'items': const <Map<String, dynamic>>[],
-        'render_mode': 'image',
-      },
-    );
+      final prepared = await orchestrator.prepareQueuedPrintPayload(
+        restaurantId: 'restaurant-1',
+        jobRecord: <String, dynamic>{'id': 'job-1', 'printer_role': 'adisyon'},
+        payload: <String, dynamic>{
+          'document_type': 'receipt',
+          'printer_role': 'adisyon',
+          'store_name': 'ibul',
+          'table_no': '3',
+          'items': const <Map<String, dynamic>>[],
+          'render_mode': 'image',
+        },
+      );
 
-    expect(prepared.printer?.id, 'windows:POS-58');
-    expect(prepared.payload['render_mode'], 'text');
-    expect(prepared.payload['spool_mode'], 'RAW');
-  });
+      expect(prepared.printer?.id, 'windows:POS-58');
+      expect(prepared.payload['render_mode'], 'text');
+      expect(prepared.payload['spool_mode'], 'RAW');
+    },
+  );
 }
 
 class _Pos58PhysicalCaptureService extends _Pos58ProbeService {
@@ -223,28 +218,26 @@ class _Pos58ProbeService extends LocalPrintService {
 
   @override
   Future<Map<String, dynamic>?> health({bool useCache = true}) async =>
-      const <String, dynamic>{
-    'ok': true,
-  };
+      const <String, dynamic>{'ok': true};
 
   @override
   Future<Map<String, dynamic>?> printers({bool useCache = true}) async =>
       const <String, dynamic>{
-    'ok': true,
-    'count': 1,
-    'printers': <Map<String, dynamic>>[
-      <String, dynamic>{
-        'id': 'windows:POS-58',
-        'name': 'POS-58',
-        'queue': 'POS-58',
-        'backend': 'windows-spool',
-        'ready': true,
-        'statusLevel': 'ready',
-        'operatorTier': 'pos_candidate',
-        'isPosCandidate': true,
-      },
-    ],
-  };
+        'ok': true,
+        'count': 1,
+        'printers': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'windows:POS-58',
+            'name': 'POS-58',
+            'queue': 'POS-58',
+            'backend': 'windows-spool',
+            'ready': true,
+            'statusLevel': 'ready',
+            'operatorTier': 'pos_candidate',
+            'isPosCandidate': true,
+          },
+        ],
+      };
 }
 
 class _Pos58CaptureService extends _Pos58ProbeService {
@@ -259,6 +252,7 @@ class _Pos58CaptureService extends _Pos58ProbeService {
     String? printerId,
     String? printerName,
     Map<String, dynamic>? printer,
+    Map<String, dynamic>? extraBody,
     String renderMode = 'text',
     String testMode = 'escpos_short',
     Duration? timeout,
@@ -309,11 +303,15 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
   }
 
   @override
-  Future<void> updateAssignedRoles(String printerId, List<PrinterRole> roles) async {}
+  Future<void> updateAssignedRoles(
+    String printerId,
+    List<PrinterRole> roles,
+  ) async {}
 
   @override
-  Future<List<dynamic>> fetchStationPrinterMappings(String restaurantId) async =>
-      const <dynamic>[];
+  Future<List<dynamic>> fetchStationPrinterMappings(
+    String restaurantId,
+  ) async => const <dynamic>[];
 
   @override
   Future<void> deletePrinter(String printerId) async {}
@@ -325,7 +323,9 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
   Future<void> deleteStationPrinterMappingsForPrinter(String printerId) async {}
 
   @override
-  Future<void> deleteStationPrinterMappingsForRestaurant(String restaurantId) async {}
+  Future<void> deleteStationPrinterMappingsForRestaurant(
+    String restaurantId,
+  ) async {}
 
   @override
   Future<void> recordTestPrintResult({
@@ -359,23 +359,22 @@ class _FakeStationService implements PrintStationServicePort {
   Future<Map<String, dynamic>?> fetchLocalQueueStatus() async => null;
 
   @override
-  Future<List<Map<String, dynamic>>> fetchPausedPrintJobs(String restaurantId) async =>
-      const <Map<String, dynamic>>[];
+  Future<List<Map<String, dynamic>>> fetchPausedPrintJobs(
+    String restaurantId,
+  ) async => const <Map<String, dynamic>>[];
 
   @override
   Future<bool> setPrintSystemEnabled({
     required String restaurantId,
     required bool enabled,
     bool? previousEnabled,
-  }) async =>
-      true;
+  }) async => true;
 
   @override
   Future<bool> resumePausedPrintJob({
     required String restaurantId,
     required String jobId,
-  }) async =>
-      true;
+  }) async => true;
 
   @override
   bool isLocalStationReady(Map<String, dynamic>? queueStatus) => false;
@@ -393,15 +392,13 @@ class _FakeStationService implements PrintStationServicePort {
     required String kitchenPrinterId,
     required String kitchenPrinterName,
     Map<String, dynamic>? roleMappings,
-  }) async =>
-      null;
+  }) async => null;
 
   @override
   Future<Map<String, dynamic>?> patchStationConfiguration({
     required String restaurantId,
     required Map<String, dynamic> fields,
-  }) async =>
-      null;
+  }) async => null;
 
   @override
   Future<Map<String, dynamic>?> configureLocalBridgeAsPrintStation({
@@ -417,6 +414,5 @@ class _FakeStationService implements PrintStationServicePort {
     String? bridgePrinterQueue,
     String? bridgeUsbVendorId,
     String? bridgeUsbProductId,
-  }) async =>
-      null;
+  }) async => null;
 }

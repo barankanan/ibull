@@ -23,6 +23,7 @@ from local_print_bridge.print_station import (
 class _FakeTransport:
     def __init__(self) -> None:
         self.calls: list[tuple[bytes, str, dict[str, object] | None]] = []
+        self.queue_status_calls = 0
 
     def health(self) -> dict[str, object]:
         return {"ok": True, "transport": "fake", "queue": "Thermal58"}
@@ -69,6 +70,14 @@ class _FakeTransport:
             raw_output="request id is Thermal58-101 (1 file(s))",
             bytes_sent=len(payload),
         )
+
+    def queue_status(self, queue_name: str) -> dict[str, object]:
+        self.queue_status_calls += 1
+        return {
+            "queue_status": "idle",
+            "queue_has_active_job": False,
+            "queue_name": queue_name,
+        }
 
 
 class PrintBridgeServerTests(unittest.TestCase):
@@ -210,6 +219,122 @@ class PrintBridgeServerTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertTrue(body["ok"])
         self.assertEqual(body.get("render_mode"), "text")
+
+    def test_ethernet_connection_test_bypasses_queue_checks(self) -> None:
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "https://ibul-ecommerce.web.app",
+        }
+        payload = json.dumps(
+            {
+                "test_mode": "ethernet_connection",
+                "target_host": "192.168.1.100",
+                "target_port": 9100,
+                "printer": {
+                    "id": "tcp:192.168.1.100:9100",
+                    "name": "NETUM ZJ-8360 Ethernet",
+                    "displayName": "NETUM ZJ-8360 Ethernet",
+                    "backend": "tcp",
+                    "transportType": "ethernet",
+                    "transport_type": "ethernet",
+                    "host": "192.168.1.100",
+                    "port": 9100,
+                    "source": "ethernet_dialog_form",
+                },
+            }
+        )
+        with mock.patch(
+            "local_print_bridge.server.NetworkTcpTransport.health",
+            return_value={
+                "ok": True,
+                "transport": "network-tcp",
+                "host": "192.168.1.100",
+                "port": 9100,
+            },
+        ):
+            connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            connection.request("POST", "/print/test", body=payload, headers=headers)
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body.get("backend"), "tcp")
+        self.assertEqual(body.get("target_host"), "192.168.1.100")
+        self.assertEqual(body.get("target_port"), 9100)
+        self.assertEqual(body["printer"]["transport_type"], "ethernet")
+        self.assertEqual(self.transport.queue_status_calls, 0)
+        self.assertEqual(len(self.transport.calls), 0)
+
+    def test_ethernet_test_print_bypasses_queue_checks(self) -> None:
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "https://ibul-ecommerce.web.app",
+        }
+        payload = json.dumps(
+            {
+                "test_mode": "ethernet_test",
+                "target_host": "192.168.1.100",
+                "target_port": 9100,
+                "printer": {
+                    "id": "tcp:192.168.1.100:9100",
+                    "name": "NETUM ZJ-8360 Ethernet",
+                    "displayName": "NETUM ZJ-8360 Ethernet",
+                    "backend": "tcp",
+                    "transportType": "ethernet",
+                    "transport_type": "ethernet",
+                    "host": "192.168.1.100",
+                    "port": 9100,
+                    "source": "ethernet_dialog_form",
+                },
+            }
+        )
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("POST", "/print/test", body=payload, headers=headers)
+        response = connection.getresponse()
+        body = json.loads(response.read())
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(self.transport.queue_status_calls, 0)
+        self.assertEqual(len(self.transport.calls), 1)
+
+    def test_ethernet_connection_test_returns_friendly_tcp_error(self) -> None:
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "https://ibul-ecommerce.web.app",
+        }
+        payload = json.dumps(
+            {
+                "test_mode": "ethernet_connection",
+                "target_host": "192.168.1.100",
+                "target_port": 9100,
+            }
+        )
+        with mock.patch(
+            "local_print_bridge.server.NetworkTcpTransport.health",
+            return_value={
+                "ok": False,
+                "transport": "network-tcp",
+                "host": "192.168.1.100",
+                "port": 9100,
+                "error_code": "tcp_unreachable",
+                "reason": "192.168.1.100:9100 adresine ulaşılamıyor.",
+            },
+        ):
+            connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            connection.request("POST", "/print/test", body=payload, headers=headers)
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+
+        self.assertEqual(response.status, 503)
+        self.assertFalse(body["ok"])
+        self.assertEqual(body.get("errorCode"), "tcp_unreachable")
+        self.assertIn("ulaşılamıyor", body.get("error", ""))
+        self.assertEqual(self.transport.queue_status_calls, 0)
 
     def test_resolve_render_mode_maps_escpos_short_to_text(self) -> None:
         handler = PrintBridgeHandler.__new__(PrintBridgeHandler)

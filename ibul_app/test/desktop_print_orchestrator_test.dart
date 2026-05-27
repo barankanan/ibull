@@ -227,6 +227,82 @@ void main() {
   );
 
   test(
+    'printBridgeTest skips snapshot fallback for explicit ethernet printer',
+    () async {
+      final fakeRepo = _FakePrinterRepository();
+      final fakeStation = _FakePrintStationService();
+      final fakePrint = _FakeLocalPrintService(
+        discoveredPrinters: <Map<String, dynamic>>[
+          _cupsPrinter('cups:selected', 'POS-58', 'POS58_QUEUE'),
+        ],
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: fakeRepo,
+        printStationService: fakeStation,
+        printServiceFactory: () => fakePrint,
+      );
+      final ethernetPrinter = UnifiedPrinterModel(
+        id: 'tcp:192.168.1.100:9100',
+        displayName: 'NETUM ZJ-8360 Ethernet',
+        queueName: 'NETUM ZJ-8360 Ethernet',
+        backend: DesktopPrinterBackend.tcp,
+        os: DesktopPrinterOs.macos,
+        isAvailable: true,
+        canPrint: true,
+        statusLevel: 'ready',
+        statusMessage: 'Ethernet yazıcı hazır.',
+        raw: const <String, dynamic>{
+          'id': 'tcp:192.168.1.100:9100',
+          'name': 'NETUM ZJ-8360 Ethernet',
+          'backend': 'tcp',
+          'transportType': 'ethernet',
+          'transport_type': 'ethernet',
+          'host': '192.168.1.100',
+          'ip_address': '192.168.1.100',
+          'port': 9100,
+          'paper_width_mm': 80,
+          'auto_cut': true,
+        },
+      );
+
+      final result = await orchestrator.printBridgeTest(
+        restaurantId: 'rest-ethernet',
+        printerId: ethernetPrinter.id,
+        printerName: ethernetPrinter.displayName,
+        explicitPrinter: ethernetPrinter,
+        skipSetupSnapshot: true,
+        targetHost: '192.168.1.100',
+        targetPort: 9100,
+        testMode: 'ethernet_test',
+        extraBody: const <String, dynamic>{
+          'backend': 'tcp',
+          'transportType': 'ethernet',
+          'transport_type': 'ethernet',
+          'host': '192.168.1.100',
+          'ip_address': '192.168.1.100',
+          'port': 9100,
+          'printer_role': 'mutfak',
+        },
+      );
+
+      expect(result.ok, isTrue);
+      expect(fakeRepo.fetchPrintersCallCount, 0);
+      expect(fakePrint.lastPrintTestPrinterId, 'tcp:192.168.1.100:9100');
+      expect(fakePrint.lastPrintTestPrinter?['backend'], 'tcp');
+      expect(fakePrint.lastPrintTestPrinter?['transportType'], 'ethernet');
+      expect(fakePrint.lastPrintTestPrinter?['host'], '192.168.1.100');
+      expect(fakePrint.lastPrintTestPrinter?['port'], 9100);
+      expect(fakePrint.lastPrintTestTargetHost, '192.168.1.100');
+      expect(fakePrint.lastPrintTestTargetPort, 9100);
+      expect(fakePrint.lastPrintTestExtraBody?['backend'], 'tcp');
+      expect(fakePrint.lastPrintTestExtraBody?['transportType'], 'ethernet');
+      expect(fakePrint.lastPrintTestExtraBody?['host'], '192.168.1.100');
+      expect(fakePrint.lastPrintTestExtraBody?['port'], 9100);
+      expect(fakePrint.lastPrintTestExtraBody?['printer_role'], 'mutfak');
+    },
+  );
+
+  test(
     'savePrinterRoles stores db ids remotely and bridge-compatible canonical role mappings',
     () async {
       final fakeRepo = _FakePrinterRepository();
@@ -627,8 +703,10 @@ void main() {
                 'STMicroelectronics_POS58_Printer_USB-179',
                 'STMicroelectronics_POS58_Printer_USB-180',
               ],
-              'lp_command': 'lp -d STMicroelectronics_POS58_Printer_USB -o raw ...',
-              'lp_output': 'request id is STMicroelectronics_POS58_Printer_USB-179',
+              'lp_command':
+                  'lp -d STMicroelectronics_POS58_Printer_USB -o raw ...',
+              'lp_output':
+                  'request id is STMicroelectronics_POS58_Printer_USB-179',
             },
           ),
         ],
@@ -657,47 +735,44 @@ void main() {
     },
   );
 
-  test(
-    'printBridgeTest shows duplicate test suppressed message',
-    () async {
-      final fakeRepo = _FakePrinterRepository();
-      final fakeStation = _FakePrintStationService();
-      final fakePrint = _FakeLocalPrintService(
-        discoveredPrinters: <Map<String, dynamic>>[
-          _usbPrinter('usb:receipt', 'POS58 USB', 'POS58_USB'),
-        ],
-        printTestResponses: <Object>[
-          const LocalPrintServiceException(
-            'Test çok sık gönderildi.',
-            statusCode: 429,
-            details: <String, dynamic>{
-              'ok': false,
-              'errorCode': 'duplicate_test_suppressed',
-              'cooldown_seconds': 5,
-            },
-          ),
-        ],
-      );
+  test('printBridgeTest shows duplicate test suppressed message', () async {
+    final fakeRepo = _FakePrinterRepository();
+    final fakeStation = _FakePrintStationService();
+    final fakePrint = _FakeLocalPrintService(
+      discoveredPrinters: <Map<String, dynamic>>[
+        _usbPrinter('usb:receipt', 'POS58 USB', 'POS58_USB'),
+      ],
+      printTestResponses: <Object>[
+        const LocalPrintServiceException(
+          'Test çok sık gönderildi.',
+          statusCode: 429,
+          details: <String, dynamic>{
+            'ok': false,
+            'errorCode': 'duplicate_test_suppressed',
+            'cooldown_seconds': 5,
+          },
+        ),
+      ],
+    );
 
-      final orchestrator = DesktopPrintOrchestrator(
-        printerRepository: fakeRepo,
-        printStationService: fakeStation,
-        printServiceFactory: () => fakePrint,
-      );
+    final orchestrator = DesktopPrintOrchestrator(
+      printerRepository: fakeRepo,
+      printStationService: fakeStation,
+      printServiceFactory: () => fakePrint,
+    );
 
-      final result = await orchestrator.printBridgeTest(
-        restaurantId: 'rest-duplicate-guard',
-      );
+    final result = await orchestrator.printBridgeTest(
+      restaurantId: 'rest-duplicate-guard',
+    );
 
-      expect(result.ok, isFalse);
-      expect(result.status, 'test_failed');
-      expect(
-        result.message,
-        'Aynı test kısa süre önce gönderildi. Lütfen birkaç saniye bekleyin.',
-      );
-      expect(result.raw?['errorCode'], 'duplicate_test_suppressed');
-    },
-  );
+    expect(result.ok, isFalse);
+    expect(result.status, 'test_failed');
+    expect(
+      result.message,
+      'Aynı test kısa süre önce gönderildi. Lütfen birkaç saniye bekleyin.',
+    );
+    expect(result.raw?['errorCode'], 'duplicate_test_suppressed');
+  });
 
   test(
     'printBridgeTest does not dispatch when print system is disabled',
@@ -712,9 +787,7 @@ void main() {
       final fakePrint = _FakeLocalPrintService(
         queueStatusPayload: <String, dynamic>{
           'ok': true,
-          'queue': <String, dynamic>{
-            'print_system_enabled': false,
-          },
+          'queue': <String, dynamic>{'print_system_enabled': false},
         },
       );
 
@@ -1996,9 +2069,11 @@ class _FakePrinterRepository implements PrinterRepositoryPort {
   final List<StationPrinterModel> stationMappings = <StationPrinterModel>[];
   final Map<String, List<PrinterRole>> lastAssignedRoles =
       <String, List<PrinterRole>>{};
+  int fetchPrintersCallCount = 0;
 
   @override
   Future<List<PrinterModel>> fetchPrinters(String restaurantId) async {
+    fetchPrintersCallCount += 1;
     return List<PrinterModel>.from(_printers);
   }
 
@@ -2270,6 +2345,9 @@ class _FakeLocalPrintService extends LocalPrintService {
   String? lastPrintTestPrinterId;
   String? lastPrintTestPrinterName;
   Map<String, dynamic>? lastPrintTestPrinter;
+  Map<String, dynamic>? lastPrintTestExtraBody;
+  String? lastPrintTestTargetHost;
+  int? lastPrintTestTargetPort;
   Map<String, dynamic>? lastReceiptPayload;
   Map<String, dynamic>? lastKitchenPayload;
   int releaseUsbPrintersCallCount = 0;
@@ -2290,7 +2368,7 @@ class _FakeLocalPrintService extends LocalPrintService {
   }
 
   @override
-  Future<Map<String, dynamic>?> health() async {
+  Future<Map<String, dynamic>?> health({bool useCache = true}) async {
     return healthPayload ??
         <String, dynamic>{
           'ok': true,
@@ -2318,7 +2396,7 @@ class _FakeLocalPrintService extends LocalPrintService {
   }
 
   @override
-  Future<Map<String, dynamic>?> printers() async {
+  Future<Map<String, dynamic>?> printers({bool useCache = true}) async {
     return <String, dynamic>{'printers': discoveredPrinters};
   }
 
@@ -2345,6 +2423,7 @@ class _FakeLocalPrintService extends LocalPrintService {
     String? printerId,
     String? printerName,
     Map<String, dynamic>? printer,
+    Map<String, dynamic>? extraBody,
     String renderMode = 'text',
     String testMode = 'escpos_short',
     Duration? timeout,
@@ -2352,9 +2431,14 @@ class _FakeLocalPrintService extends LocalPrintService {
     printTestCallCount += 1;
     lastPrintTestPrinterId = printerId;
     lastPrintTestPrinterName = printerName;
+    lastPrintTestTargetHost = targetHost;
+    lastPrintTestTargetPort = targetPort;
     lastPrintTestPrinter = printer == null
         ? null
         : Map<String, dynamic>.from(printer);
+    lastPrintTestExtraBody = extraBody == null
+        ? null
+        : Map<String, dynamic>.from(extraBody);
     if (printTestResponses != null && printTestResponses!.isNotEmpty) {
       final next = printTestResponses!.removeAt(0);
       if (next is Exception) {
