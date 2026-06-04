@@ -21,6 +21,27 @@ LOGGER = logging.getLogger("local_print_bridge")
 # Fallback chain for Turkish text: try each codec in order.
 # Never fall back to utf-8 — raw UTF-8 bytes confuse most ESC/POS devices.
 _TURKISH_CODEC_FALLBACKS = ("cp857", "cp1254", "iso8859_9", "cp437")
+_SAFE_TEXT_FALLBACK_MAP = str.maketrans(
+    {
+        "İ": "I",
+        "I": "I",
+        "ı": "i",
+        "Ş": "S",
+        "ş": "s",
+        "Ğ": "G",
+        "ğ": "g",
+        "Ü": "U",
+        "ü": "u",
+        "Ö": "O",
+        "ö": "o",
+        "Ç": "C",
+        "ç": "c",
+    }
+)
+
+
+def normalize_text_for_safe_fallback(text: str) -> str:
+    return text.translate(_SAFE_TEXT_FALLBACK_MAP)
 
 
 def encode_text_report(text: str, encoding: str) -> tuple[bytes, str, list[str], list[str]]:
@@ -60,6 +81,19 @@ def encode_text_report(text: str, encoding: str) -> tuple[bytes, str, list[str],
         except (UnicodeEncodeError, LookupError):
             continue
     issues.append("replace_fallback=cp437")
+    normalized = normalize_text_for_safe_fallback(text)
+    if normalized != text:
+        try:
+            encoded = normalized.encode("cp857", errors="strict")
+            issues.append("normalized_fallback=cp857")
+            LOGGER.warning(
+                "encode_text_report: normalized fallback codec=cp857 original=%.60r normalized=%.60r",
+                text,
+                normalized,
+            )
+            return encoded, "cp857(normalized)", issues, unsupported_chars
+        except UnicodeEncodeError:
+            pass
     LOGGER.error(
         "encode_text_report: all codecs failed encoding=%s text_preview=%.60r issues=%s unsupported_chars=%r",
         encoding,

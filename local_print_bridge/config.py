@@ -92,6 +92,26 @@ def _as_bool(raw: str | None, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def contains_turkish_chars(text: str | None) -> bool:
+    """Detect Turkish characters that require special handling in ESC/POS.
+    
+    Turkish-specific chars: ç, ğ, ı, ö, ş, ü, Ç, Ğ, İ, Ö, Ş, Ü
+    If found, image/raster mode should be enforced to guarantee correct rendering.
+    """
+    if not text:
+        return False
+    turkish_chars = set("çğıöşüÇĞİÖŞÜ")
+    return any(char in turkish_chars for char in text)
+
+
+def default_raster_width_px(paper_width_mm: int) -> int:
+    if paper_width_mm <= 58:
+        return 384
+    if paper_width_mm <= 72:
+        return 512
+    return 576
+
+
 def write_env_file(updates: dict[str, str], env_path: Path | None = None) -> None:
     """Merge *updates* into the .env file (upsert; existing comments are preserved).
 
@@ -282,6 +302,17 @@ class BridgeSettings:
     print_system_enabled: bool = True
     # Per-request: Turkish Guarantee Mode uses bundled mono fonts only (raster).
     turkish_guarantee_mode: bool = False
+    raster_mode: str = "gs_v_0"
+    fallback_raster_mode: str = "esc_star"
+    raster_width_px: int | None = None
+    receipt_render_mode: str = "image"
+    receipt_raster_mode: str = "esc_star"
+    receipt_encoding: str = _DEFAULT_SAFE_ENCODING
+    receipt_codepage: int | None = _DEFAULT_SAFE_CODEPAGE
+    receipt_printer_profile: str = "pos58"
+    receipt_paper_width_mm: int = 58
+    receipt_raster_width_px: int = 384
+    receipt_chars_per_line: int = 32
 
     @classmethod
     def from_env(cls) -> "BridgeSettings":
@@ -302,6 +333,15 @@ class BridgeSettings:
         render_mode = os.getenv("PRINT_BRIDGE_RENDER_MODE", "image").strip().lower()
         if render_mode not in {"image", "text"}:
             render_mode = "image"
+        raster_mode = os.getenv("PRINT_BRIDGE_RASTER_MODE", "gs_v_0").strip().lower()
+        if raster_mode not in {"gs_v_0", "esc_star"}:
+            raster_mode = "gs_v_0"
+        fallback_raster_mode = os.getenv(
+            "PRINT_BRIDGE_FALLBACK_RASTER_MODE",
+            "esc_star",
+        ).strip().lower()
+        if fallback_raster_mode not in {"gs_v_0", "esc_star"}:
+            fallback_raster_mode = "esc_star"
         raster_chunk_height = int(os.getenv("PRINT_BRIDGE_RASTER_CHUNK_HEIGHT", "256"))
         transport_mode = os.getenv("PRINT_BRIDGE_TRANSPORT", "auto").strip().lower()
         if transport_mode not in {"auto", "usb", "cups", "network"}:
@@ -312,6 +352,18 @@ class BridgeSettings:
         usb_product_id = int(usb_pid_raw, 16) if usb_pid_raw else None
         network_host = os.getenv("PRINT_BRIDGE_NETWORK_HOST", "").strip()
         network_port = int(os.getenv("PRINT_BRIDGE_NETWORK_PORT", "9100"))
+        receipt_render_mode = os.getenv("PRINT_BRIDGE_RECEIPT_RENDER_MODE", "image").strip().lower()
+        if receipt_render_mode not in {"image", "text"}:
+            receipt_render_mode = "image"
+        receipt_raster_mode = os.getenv("PRINT_BRIDGE_RECEIPT_RASTER_MODE", "esc_star").strip().lower()
+        if receipt_raster_mode not in {"gs_v_0", "esc_star"}:
+            receipt_raster_mode = "esc_star"
+        receipt_encoding = os.getenv("PRINT_BRIDGE_RECEIPT_ENCODING", _DEFAULT_SAFE_ENCODING).strip() or _DEFAULT_SAFE_ENCODING
+        receipt_codepage = _parse_int(os.getenv("PRINT_BRIDGE_RECEIPT_CODEPAGE")) or _DEFAULT_SAFE_CODEPAGE
+        receipt_profile = os.getenv("PRINT_BRIDGE_RECEIPT_PRINTER_PROFILE", "pos58").strip() or "pos58"
+        receipt_paper_width_mm = _parse_int(os.getenv("PRINT_BRIDGE_RECEIPT_PAPER_WIDTH_MM")) or 58
+        receipt_raster_width_px = _parse_int(os.getenv("PRINT_BRIDGE_RECEIPT_RASTER_WIDTH_PX")) or 384
+        receipt_chars_per_line = _parse_int(os.getenv("PRINT_BRIDGE_RECEIPT_CHARS_PER_LINE")) or 32
         return cls(
             host=os.getenv("PRINT_BRIDGE_HOST", "127.0.0.1").strip() or "127.0.0.1",
             port=int(os.getenv("PRINT_BRIDGE_PORT", "3001")),
@@ -337,6 +389,18 @@ class BridgeSettings:
             network_host=network_host,
             network_port=network_port,
             print_system_enabled=_as_bool(os.getenv("PRINT_SYSTEM_ENABLED"), default=True),
+            raster_mode=raster_mode,
+            fallback_raster_mode=fallback_raster_mode,
+            raster_width_px=_parse_int(os.getenv("PRINT_BRIDGE_RASTER_WIDTH_PX"))
+            or default_raster_width_px(paper_width_mm),
+            receipt_render_mode=receipt_render_mode,
+            receipt_raster_mode=receipt_raster_mode,
+            receipt_encoding=receipt_encoding,
+            receipt_codepage=receipt_codepage,
+            receipt_printer_profile=receipt_profile,
+            receipt_paper_width_mm=receipt_paper_width_mm,
+            receipt_raster_width_px=receipt_raster_width_px,
+            receipt_chars_per_line=receipt_chars_per_line,
         )
 
     def as_dict(self) -> dict[str, object]:
@@ -349,7 +413,18 @@ class BridgeSettings:
             "encoding": self.encoding,
             "codepage": self.codepage,
             "render_mode": self.render_mode,
+            "raster_mode": self.raster_mode,
+            "fallback_raster_mode": self.fallback_raster_mode,
             "raster_chunk_height": self.raster_chunk_height,
+            "raster_width_px": self.raster_width_px or default_raster_width_px(self.paper_width_mm),
+            "receipt_render_mode": self.receipt_render_mode,
+            "receipt_raster_mode": self.receipt_raster_mode,
+            "receipt_encoding": self.receipt_encoding,
+            "receipt_codepage": self.receipt_codepage,
+            "receipt_printer_profile": self.receipt_printer_profile,
+            "receipt_paper_width_mm": self.receipt_paper_width_mm,
+            "receipt_raster_width_px": self.receipt_raster_width_px,
+            "receipt_chars_per_line": self.receipt_chars_per_line,
             "cut_mode": self.cut_mode,
             "usb_vendor_id": f"0x{self.usb_vendor_id:04x}" if self.usb_vendor_id else None,
             "usb_product_id": f"0x{self.usb_product_id:04x}" if self.usb_product_id else None,

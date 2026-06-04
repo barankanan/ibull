@@ -312,7 +312,17 @@ class UsbDirectTransport:
         except usb.core.USBError as exc:
             raise TransportError(
                 f"Cannot claim USB interface: {exc}. "
-                "If CUPS is holding the device, restart it: sudo killall -USR1 cupsd"
+                "If CUPS is holding the device, restart it: sudo killall -USR1 cupsd",
+                code="usb_interface_claim_denied",
+                details={
+                    "suggested_backend": "cups",
+                    "recommended_backend": "cups",
+                    "operator_message": (
+                        "Bu yazıcı macOS tarafından tutuluyor. "
+                        "Adisyon için CUPS yolunu kullanmanız önerilir."
+                    ),
+                    "usb_claim_error": str(exc),
+                },
             ) from exc
 
         ep_out = usb.util.find_descriptor(

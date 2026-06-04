@@ -142,7 +142,8 @@ class PrintStationConsumer:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._recently_dispatched: dict[str, datetime] = {}
-        self._snapshot: dict[str, object] = {
+        self._recently_dispatched_keys: dict[str, datetime] = {}
+        self._snapshot: dict[str, Any] = {
             "enabled": False,
             "running": False,
             "status": "idle",
@@ -190,13 +191,75 @@ class PrintStationConsumer:
             for job_id, claimed_at in self._recently_dispatched.items()
             if claimed_at >= expiry
         }
+        self._recently_dispatched_keys = {
+            key: claimed_at
+            for key, claimed_at in self._recently_dispatched_keys.items()
+            if claimed_at >= expiry
+        }
 
-    def _is_duplicate_job(self, job_id: str) -> bool:
+    def _build_kitchen_idempotency_key(self, restaurant_id: str, job: dict[str, Any], payload: dict[str, Any]) -> str:
+        restaurant_id = str(job.get("restaurant_id") or restaurant_id).strip()
+        order_id = str(job.get("order_id") or payload.get("order_id") or "").strip()
+        station_id = str(job.get("station_id") or payload.get("station_id") or "").strip()
+        station_name = str(payload.get("station_name") or payload.get("kitchen_ticket_header") or "").strip().lower()
+        station_key = station_id if station_id else (station_name if station_name else "general")
+        
+        # Read positive int logic for revision
+        raw_revision = payload.get("revision") or job.get("revision") or payload.get("order_revision") or "1"
+        try:
+            revision = int(raw_revision)
+            if revision <= 0:
+                revision = 1
+        except (ValueError, TypeError):
+            revision = 1
+            
+        items = payload.get("items")
+        if not isinstance(items, list) or not items:
+            items_hash = "no_items"
+        else:
+            normalized_items = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                
+                # Read positive int logic for quantity
+                raw_qty = item.get("quantity") or 1
+                try:
+                    qty = int(raw_qty)
+                    if qty <= 0:
+                        qty = 1
+                except (ValueError, TypeError):
+                    qty = 1
+                    
+                normalized_items.append({
+                    "product_id": str(item.get("product_id") or "").strip(),
+                    "name": str(item.get("name") or "").strip(),
+                    "display_label": str(item.get("display_label") or "").strip(),
+                    "quantity": qty,
+                    "station_id": str(item.get("station_id") or "").strip(),
+                    "station_name": str(item.get("station_name") or "").strip(),
+                    "amount_label": str(item.get("amount_label") or "").strip(),
+                    "note": str(item.get("note") or "").strip(),
+                })
+            # Sort items by JSON representation
+            normalized_items.sort(key=lambda x: json.dumps(x, separators=(',', ':'), sort_keys=True))
+            items_hash = json.dumps(normalized_items, separators=(',', ':'), sort_keys=True)
+        
+        return f"{restaurant_id}|{order_id}|{station_key}|{revision}|{items_hash}"
+
+    def _is_duplicate_job(self, job_id: str, idempotency_key: str = "") -> bool:
         self._cleanup_recently_dispatched()
-        return job_id in self._recently_dispatched
+        if job_id in self._recently_dispatched:
+            return True
+        if idempotency_key and idempotency_key in self._recently_dispatched_keys:
+            return True
+        return False
 
-    def _record_dispatched_job(self, job_id: str) -> None:
-        self._recently_dispatched[job_id] = _utc_now()
+    def _record_dispatched_job(self, job_id: str, idempotency_key: str = "") -> None:
+        now = _utc_now()
+        self._recently_dispatched[job_id] = now
+        if idempotency_key:
+            self._recently_dispatched_keys[idempotency_key] = now
 
     def _run_loop(self) -> None:
         LOGGER.info("print-station consumer thread started")
@@ -311,10 +374,25 @@ class PrintStationConsumer:
         job_id = str(job.get("id") or "").strip()
         if not job_id:
             return
-        if self._is_duplicate_job(job_id):
+        payload = job.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        
+        printer_role = str(
+            job.get("printer_role")
+            or payload.get("printer_role")
+            or "mutfak"
+        ).strip().lower()
+        
+        idempotency_key = ""
+        if printer_role != "adisyon":
+            idempotency_key = self._build_kitchen_idempotency_key(config.restaurant_id, job, payload)
+        
+        if self._is_duplicate_job(job_id, idempotency_key):
             LOGGER.warning(
-                "duplicate print job suppressed: job_id=%s",
+                "duplicate print job suppressed: job_id=%s idempotency_key=%s",
                 job_id,
+                idempotency_key,
             )
             return
         claimed = self._claim_job(config, job_id)
@@ -375,7 +453,7 @@ class PrintStationConsumer:
                     selected_printer=selected_printer,
                 )
             completed_at = _utc_now_iso()
-            self._record_dispatched_job(job_id)
+            self._record_dispatched_job(job_id, idempotency_key)
             self._update_job(
                 config,
                 job_id,

@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config/runtime_config.dart';
 import '../models/seller_product.dart';
+import '../models/store_sub_category.dart';
 import '../models/sub_admin.dart';
 import '../utils/product_create_log.dart';
 import '../utils/product_edit_log.dart';
@@ -18,7 +19,10 @@ class StoreService {
   final SupabaseClient _supabase = Supabase.instance.client;
   static final Map<String, ({DateTime expiresAt, Map<String, dynamic> data})>
   _storePublicInfoCache = {};
+  static final Map<String, ({DateTime expiresAt, List<StoreSubCategory> items})>
+  _storeSubCategoryCache = {};
   static const Duration _storePublicInfoTtl = Duration(minutes: 10);
+  static const Duration _storeSubCategoryTtl = Duration(minutes: 5);
   static const Duration _tableOrderTimeout = Duration(seconds: 10);
 
   /// Session-level cache for the current seller's business name.
@@ -70,6 +74,56 @@ class StoreService {
     } catch (_) {
       return null;
     }
+  }
+
+  String _storeSubCategoryCacheKey({
+    required String sellerId,
+    required String mainCategory,
+  }) {
+    return '${sellerId.trim()}::${mainCategory.trim().toLowerCase()}';
+  }
+
+  List<StoreSubCategory>? _getCachedStoreSubCategories({
+    required String sellerId,
+    required String mainCategory,
+  }) {
+    final key = _storeSubCategoryCacheKey(
+      sellerId: sellerId,
+      mainCategory: mainCategory,
+    );
+    final cached = _storeSubCategoryCache[key];
+    if (cached == null) return null;
+    if (cached.expiresAt.isBefore(DateTime.now())) {
+      _storeSubCategoryCache.remove(key);
+      return null;
+    }
+    return List<StoreSubCategory>.from(cached.items, growable: false);
+  }
+
+  void _setCachedStoreSubCategories({
+    required String sellerId,
+    required String mainCategory,
+    required List<StoreSubCategory> items,
+  }) {
+    final key = _storeSubCategoryCacheKey(
+      sellerId: sellerId,
+      mainCategory: mainCategory,
+    );
+    _storeSubCategoryCache[key] = (
+      expiresAt: DateTime.now().add(_storeSubCategoryTtl),
+      items: List<StoreSubCategory>.from(items, growable: false),
+    );
+  }
+
+  void _invalidateStoreSubCategoryCache({
+    required String sellerId,
+    required String mainCategory,
+  }) {
+    final key = _storeSubCategoryCacheKey(
+      sellerId: sellerId,
+      mainCategory: mainCategory,
+    );
+    _storeSubCategoryCache.remove(key);
   }
 
   /// Mağaza adına göre logo, galeri ve duyuru banner'larını döndürür (harita popup, satıcı profili).
@@ -218,6 +272,146 @@ class StoreService {
     }
   }
 
+  Future<List<StoreSubCategory>> getStoreSubCategories({
+    required String sellerId,
+    required String mainCategory,
+    bool forceRefresh = false,
+  }) async {
+    final trimmedSellerId = sellerId.trim();
+    final trimmedMainCategory = mainCategory.trim();
+    if (trimmedSellerId.isEmpty || trimmedMainCategory.isEmpty) {
+      return const <StoreSubCategory>[];
+    }
+
+    if (!forceRefresh) {
+      final cached = _getCachedStoreSubCategories(
+        sellerId: trimmedSellerId,
+        mainCategory: trimmedMainCategory,
+      );
+      if (cached != null) return cached;
+    }
+
+    try {
+      final response = await _supabase
+          .from('store_sub_categories')
+          .select('id, seller_id, main_category, name, is_active, sort_order')
+          .eq('seller_id', trimmedSellerId)
+          .eq('main_category', trimmedMainCategory)
+          .eq('is_active', true)
+          .order('sort_order', ascending: true)
+          .order('name', ascending: true);
+      final items = List<Map<String, dynamic>>.from(
+        response as List,
+      ).map(StoreSubCategory.fromMap).toList(growable: false);
+      _setCachedStoreSubCategories(
+        sellerId: trimmedSellerId,
+        mainCategory: trimmedMainCategory,
+        items: items,
+      );
+      return items;
+    } catch (error) {
+      debugPrint('Error getting store sub categories: $error');
+      return const <StoreSubCategory>[];
+    }
+  }
+
+  Future<StoreSubCategory?> ensureStoreSubCategory({
+    required String sellerId,
+    required String mainCategory,
+    required String name,
+  }) async {
+    final trimmedSellerId = sellerId.trim();
+    final trimmedMainCategory = mainCategory.trim();
+    final trimmedName = name.trim();
+    if (trimmedSellerId.isEmpty ||
+        trimmedMainCategory.isEmpty ||
+        trimmedName.isEmpty) {
+      return null;
+    }
+
+    final existing = await getStoreSubCategories(
+      sellerId: trimmedSellerId,
+      mainCategory: trimmedMainCategory,
+    );
+    final normalizedName = trimmedName.toLowerCase();
+    for (final item in existing) {
+      if (item.normalizedName == normalizedName) {
+        return item;
+      }
+    }
+
+    try {
+      final nextSortOrder = existing.isEmpty
+          ? 0
+          : existing
+                    .map((item) => item.sortOrder)
+                    .reduce((left, right) => left > right ? left : right) +
+                1;
+      final response = await _supabase
+          .from('store_sub_categories')
+          .insert(<String, dynamic>{
+            'seller_id': trimmedSellerId,
+            'main_category': trimmedMainCategory,
+            'name': trimmedName,
+            'sort_order': nextSortOrder,
+            'is_active': true,
+          })
+          .select('id, seller_id, main_category, name, is_active, sort_order')
+          .single();
+      final created = StoreSubCategory.fromMap(
+        Map<String, dynamic>.from(response),
+      );
+      _setCachedStoreSubCategories(
+        sellerId: trimmedSellerId,
+        mainCategory: trimmedMainCategory,
+        items: <StoreSubCategory>[...existing, created],
+      );
+      return created;
+    } catch (error) {
+      debugPrint('Error ensuring store sub category: $error');
+      _invalidateStoreSubCategoryCache(
+        sellerId: trimmedSellerId,
+        mainCategory: trimmedMainCategory,
+      );
+      try {
+        final refreshed = await getStoreSubCategories(
+          sellerId: trimmedSellerId,
+          mainCategory: trimmedMainCategory,
+          forceRefresh: true,
+        );
+        for (final item in refreshed) {
+          if (item.normalizedName == normalizedName) {
+            return item;
+          }
+        }
+      } catch (_) {}
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> _prepareProductDbData(
+    SellerProduct product, {
+    required String sellerId,
+  }) async {
+    final trimmedMainCategory = product.mainCategory.trim();
+    final trimmedSubCategory = product.subCategory.trim();
+    StoreSubCategory? resolvedSubCategory;
+    if (trimmedMainCategory.isNotEmpty && trimmedSubCategory.isNotEmpty) {
+      resolvedSubCategory = await ensureStoreSubCategory(
+        sellerId: sellerId,
+        mainCategory: trimmedMainCategory,
+        name: trimmedSubCategory,
+      );
+    }
+
+    final productMap = <String, dynamic>{
+      ...product.toMap(),
+      'subCategoryId': resolvedSubCategory?.id ?? product.subCategoryId,
+      'subCategory': trimmedSubCategory,
+    };
+    return StoreServiceMappers.productToSnakeCase(productMap);
+  }
+
   Map<String, dynamic>? _getCachedStorePublicInfo(String businessName) {
     final key = businessName.trim().toLowerCase();
     final cached = _storePublicInfoCache[key];
@@ -277,9 +471,7 @@ class StoreService {
   Future<Map<String, dynamic>?> getStoreProfile() async {
     final userId = currentUserId;
     if (userId == null) {
-      debugPrint(
-        '[StoreService] getStoreProfile skipped: authUserId missing',
-      );
+      debugPrint('[StoreService] getStoreProfile skipped: authUserId missing');
       return null;
     }
 
@@ -288,11 +480,11 @@ class StoreService {
       query: <String, String>{
         'select':
             'business_name,website,description,slogan,phone,email,whatsapp,'
-                'support_phone,address,postal_code,tax_number,instagram,facebook,'
-                'twitter,city,district,business_type,working_hours,is_store_open,'
-                'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
-                'cover_url,gallery_images,banners,seller_videos,store_lat,'
-                'store_lng,category,rating,is_verified',
+            'support_phone,address,postal_code,tax_number,instagram,facebook,'
+            'twitter,city,district,business_type,working_hours,is_store_open,'
+            'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
+            'cover_url,gallery_images,banners,seller_videos,store_lat,'
+            'store_lng,category,rating,is_verified',
         'seller_id': 'eq.$userId',
       },
     );
@@ -445,8 +637,10 @@ class StoreService {
     try {
       productCreateLog('product_save_start', extra: {'name': product.name});
       // 1. Ürünü Veritabanına Ekle (Resimsiz Başlangıç)
-      Map<String, dynamic> productDbData =
-          StoreServiceMappers.productToSnakeCase(product.toMap());
+      Map<String, dynamic> productDbData = await _prepareProductDbData(
+        product,
+        sellerId: currentUserId!,
+      );
       productDbData['seller_id'] = currentUserId;
       productDbData['status'] = 'uploading';
       productDbData['image_urls'] = [];
@@ -520,9 +714,7 @@ class StoreService {
               },
             );
             debugPrint('Product image upload stack: $uploadStack');
-            throw Exception(
-              'Görsel yüklenemedi. Lütfen tekrar deneyin.',
-            );
+            throw Exception('Görsel yüklenemedi. Lütfen tekrar deneyin.');
           }
         }
       }
@@ -606,15 +798,11 @@ class StoreService {
     } catch (e, stack) {
       productCreateLog(
         'product_save_error',
-        extra: {
-          'errorType': e.runtimeType.toString(),
-          'message': e.toString(),
-        },
+        extra: {'errorType': e.runtimeType.toString(), 'message': e.toString()},
       );
       debugPrint('Add Product Error: $e');
       debugPrint('Add Product stack: $stack');
-      if (e is Exception &&
-          e.toString().contains('Görsel yüklenemedi')) {
+      if (e is Exception && e.toString().contains('Görsel yüklenemedi')) {
         rethrow;
       }
       throw Exception(
@@ -629,7 +817,9 @@ class StoreService {
     Function(String)? onProgress,
     String? previousStatus,
     List<dynamic>? variants,
-    @Deprecated('Yayın anında Aktif; parametre geriye uyumluluk için tutuluyor.')
+    @Deprecated(
+      'Yayın anında Aktif; parametre geriye uyumluluk için tutuluyor.',
+    )
     bool bypassApproval = false,
   }) async {
     if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
@@ -663,8 +853,9 @@ class StoreService {
         }
       }
 
-      Map<String, dynamic> updateData = StoreServiceMappers.productToSnakeCase(
-        product.toMap(),
+      Map<String, dynamic> updateData = await _prepareProductDbData(
+        product,
+        sellerId: currentUserId!,
       );
       updateData['image_urls'] = finalImageUrls;
       updateData['image_url'] = finalImageUrls.isNotEmpty
@@ -902,8 +1093,9 @@ class StoreService {
   }) async {
     if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
 
-    final productDbData = StoreServiceMappers.productToSnakeCase(
-      product.toMap(),
+    final productDbData = await _prepareProductDbData(
+      product,
+      sellerId: currentUserId!,
     );
     productDbData['seller_id'] = currentUserId;
     // Taslakta image_url ile image_urls tutarlı olsun (tek alan dolu kalmayı önle).
@@ -1168,7 +1360,10 @@ class StoreService {
     String? sellerId,
     bool onlyActive = true,
   }) {
-    return _tableService.getTableAreas(sellerId: sellerId, onlyActive: onlyActive);
+    return _tableService.getTableAreas(
+      sellerId: sellerId,
+      onlyActive: onlyActive,
+    );
   }
 
   Future<Map<String, dynamic>> addTableArea({
@@ -1182,7 +1377,10 @@ class StoreService {
     String? sellerId,
     String defaultName = 'Salon',
   }) {
-    return _tableService.ensureDefaultArea(sellerId: sellerId, defaultName: defaultName);
+    return _tableService.ensureDefaultArea(
+      sellerId: sellerId,
+      defaultName: defaultName,
+    );
   }
 
   Future<Map<String, dynamic>> addStoreTable({
@@ -1783,8 +1981,7 @@ class StoreService {
   ) async {
     const fullSelect =
         'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, specifications, product_type, pricing_type, pricing_mode, base_price, portion_price, price_per_kg, size_options, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, created_at, attributes, video_url, video_path, video_public_url, thumbnail_path, thumbnail_public_url, video_duration_seconds, video_size_bytes, thumbnail_size_bytes, video_status, variants, accessories, station_id, printer_routing_enabled';
-    const fullSelectWithStation =
-        '$fullSelect, stations(name, code)';
+    const fullSelectWithStation = '$fullSelect, stations(name, code)';
     const fallbackSelect =
         'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, price, specifications, product_type, pricing_type, pricing_mode, base_price, portion_price, price_per_kg, size_options, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, created_at, attributes, video_url, station_id, printer_routing_enabled';
     const fallbackSelectWithStation = '$fallbackSelect, stations(name, code)';

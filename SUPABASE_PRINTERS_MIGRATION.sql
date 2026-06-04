@@ -40,6 +40,11 @@ ALTER TABLE public.printers
   ADD CONSTRAINT printers_code_page_check
     CHECK (code_page IS NULL OR (code_page >= 0 AND code_page <= 255));
 
+-- Canonical 58mm / 80mm profile aliases introduced for Ethernet/UI flows.
+UPDATE public.printers
+SET printer_profile_id = 'pos80'
+WHERE printer_profile_id = 'generic_80mm_escpos';
+
 -- Printer profile ID: validate against known built-in profile keys.
 ALTER TABLE public.printers
   DROP CONSTRAINT IF EXISTS printers_printer_profile_id_check;
@@ -49,7 +54,8 @@ ALTER TABLE public.printers
     CHECK (printer_profile_id IS NULL
         OR printer_profile_id IN (
             'standard_58mm', 'standard_80mm', 'usb_pos58',
-            'network_escpos', 'receipt_80mm', 'kitchen_58mm'
+            'network_escpos', 'receipt_80mm', 'kitchen_58mm',
+            'pos58', 'pos80'
         ));
 
 -- Refresh the Supabase schema cache immediately

@@ -3,13 +3,20 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart'
-    show debugPrint, debugPrintStack, defaultTargetPlatform, kIsWeb, TargetPlatform;
+    show
+        debugPrint,
+        debugPrintStack,
+        defaultTargetPlatform,
+        kIsWeb,
+        TargetPlatform;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/desktop_printer_setup_models.dart';
 import '../models/mixed_service_order.dart';
 import '../models/printer_model.dart';
 import '../models/seller_product.dart';
+import '../models/station_printer_model.dart';
+import '../utils/kitchen_print_dedup.dart';
 import 'desktop_print_orchestrator.dart';
 import 'kitchen_daily_order_no_store.dart';
 import 'kitchen_order_number_fields.dart';
@@ -62,6 +69,11 @@ class OrderPrintJobDispatchResult {
     this.physicallyDispatched = false,
     this.bridgeRequestMs = 0,
     this.dispatchPath = '',
+    this.handoffToHub = false,
+    this.printerNotPrintedYet = false,
+    this.printPendingReason,
+    this.pendingForHubJobIds = const <String>[],
+    this.printFailureMessage,
   });
 
   final String? orderId;
@@ -84,6 +96,11 @@ class OrderPrintJobDispatchResult {
   final bool physicallyDispatched;
   final int bridgeRequestMs;
   final String dispatchPath;
+  final bool handoffToHub;
+  final bool printerNotPrintedYet;
+  final String? printPendingReason;
+  final List<String> pendingForHubJobIds;
+  final String? printFailureMessage;
 }
 
 class OrderPrintJobRecoveryResult {
@@ -163,6 +180,10 @@ class _KitchenPrintDispatchOutcome {
     this.physicallyDispatched = false,
     this.bridgeRequestMs = 0,
     this.dispatchPath = '',
+    this.handoffToHub = false,
+    this.printerNotPrintedYet = false,
+    this.pendingReason,
+    this.pendingForHubJobIds = const <String>[],
   });
 
   final int dispatchedJobCount;
@@ -171,6 +192,10 @@ class _KitchenPrintDispatchOutcome {
   final bool physicallyDispatched;
   final int bridgeRequestMs;
   final String dispatchPath;
+  final bool handoffToHub;
+  final bool printerNotPrintedYet;
+  final String? pendingReason;
+  final List<String> pendingForHubJobIds;
 
   bool get hasFailures => failureMessages.isNotEmpty;
 }
@@ -208,7 +233,7 @@ class OrderPrintJobService {
   static final Map<String, DateTime> _stationNamesMemoryCachedAt =
       <String, DateTime>{};
   static final Map<String, Map<String, ProductStationMapping>>
-      _productStationMappingsByRestaurant =
+  _productStationMappingsByRestaurant =
       <String, Map<String, ProductStationMapping>>{};
   static const Duration _stationNamesCacheTtl = Duration(minutes: 30);
 
@@ -218,6 +243,15 @@ class OrderPrintJobService {
 
   Map<String, String> cachedStationCodesForRestaurant(String restaurantId) {
     return Map<String, String>.from(_readCachedStationCodes(restaurantId));
+  }
+
+  void invalidateStationCaches(String restaurantId) {
+    final normalized = restaurantId.trim();
+    if (normalized.isEmpty) return;
+    _stationNamesMemoryCache.remove(normalized);
+    _stationCodesMemoryCache.remove(normalized);
+    _stationNamesMemoryCachedAt.remove(normalized);
+    _logKitchen('StationCache', 'invalidated restaurantId=$normalized');
   }
 
   Map<String, ProductStationMapping> cachedProductStationMappingsForRestaurant(
@@ -259,9 +293,10 @@ class OrderPrintJobService {
     for (final product in products) {
       final stationId = product.stationId?.trim() ?? '';
       if (stationId.isEmpty) continue;
-      var stationName = KitchenTicketHeaderResolver.sanitizeProductionStationName(
-        product.stationName?.trim() ?? '',
-      );
+      var stationName =
+          KitchenTicketHeaderResolver.sanitizeProductionStationName(
+            product.stationName?.trim() ?? '',
+          );
       if (stationName == kKitchenGeneralStationLabel) {
         stationName = stationNames[stationId] ?? kKitchenGeneralStationLabel;
       }
@@ -390,37 +425,6 @@ class OrderPrintJobService {
       'fallback_reason': fallbackReason.isEmpty ? 'none' : fallbackReason,
     };
     debugPrint('[GarsonKitchenFastPath][Decision] ${jsonEncode(body)}');
-  }
-
-  UnifiedPrinterModel? _kitchenPrinterFromHint(GarsonKitchenPrinterHint? hint) {
-    if (hint == null) return null;
-    final id = hint.id.trim();
-    if (id.isEmpty) return null;
-    final name = hint.name.trim().isNotEmpty ? hint.name.trim() : id;
-    final queue = hint.queue.trim().isNotEmpty ? hint.queue.trim() : name;
-    return UnifiedPrinterModel(
-      id: id,
-      displayName: name,
-      queueName: queue,
-      backend: DesktopPrinterBackend.fromValue(hint.backend.trim()),
-      os: defaultTargetPlatform == TargetPlatform.macOS
-          ? DesktopPrinterOs.macos
-          : DesktopPrinterOs.windows,
-      isAvailable: true,
-      canPrint: true,
-      raw: const <String, dynamic>{'source': 'garson_widget_cache'},
-    );
-  }
-
-  Future<UnifiedPrinterModel?> _resolveKitchenPrinterForGarsonImmediate({
-    required String restaurantId,
-    GarsonKitchenPrinterHint? printerHint,
-  }) async {
-    final fromHint = _kitchenPrinterFromHint(printerHint);
-    if (fromHint != null) {
-      return fromHint;
-    }
-    return _printOrchestrator.resolveKitchenPrinterForGarsonFast(restaurantId);
   }
 
   /// Mutfak fişini [items] üzerinden hemen basar; table_orders / print_jobs RPC beklemez.
@@ -581,53 +585,6 @@ class OrderPrintJobService {
       );
     }
 
-    final resolveWatch = Stopwatch()..start();
-    final kitchenPrinter = await _resolveKitchenPrinterForGarsonImmediate(
-      restaurantId: restaurantId,
-      printerHint: printerHint,
-    );
-    final printerCacheResolveMs = resolveWatch.elapsedMilliseconds;
-    final selectedPrinterId = kitchenPrinter?.id ?? '';
-    if (kitchenPrinter == null) {
-      final fastPathDecisionMs = decisionWatch.elapsedMilliseconds;
-      _logGarsonKitchenFastPathDecision(
-        tableNumber: tableNumber,
-        canUseLocalPrintFastPath: canUseLocalPrintFastPath,
-        bridgeAvailable: true,
-        cachedKitchenPrinterId: cachedId,
-        cachedKitchenPrinterName: cachedName,
-        selectedPrinterId: '',
-        fallbackReason: 'no_cached_kitchen_printer',
-      );
-      logKitchenDispatchPath(
-        path: 'legacy_rpc',
-        physicallyDispatched: false,
-        reason: 'no_cached_kitchen_printer',
-        itemCount: normalized.length,
-        traceId: traceId,
-      );
-      return GarsonKitchenImmediateResult(
-        traceId: traceId,
-        fastPathDecisionMs: fastPathDecisionMs,
-        printerCacheResolveMs: printerCacheResolveMs,
-        printerResolveMs: printerCacheResolveMs,
-        totalToBridgeMs: pipelineWatch.elapsedMilliseconds,
-        fallbackReason: 'no_cached_kitchen_printer',
-        dispatchPath: 'legacy',
-      );
-    }
-
-    PrinterEncodingProfile? encodingProfile;
-    var encodingLoadMs = 0;
-    if (!canUseLocalPrintFastPath) {
-      final encodingWatch = Stopwatch()..start();
-      encodingProfile = await _printOrchestrator.loadEncodingProfile(
-        restaurantId: restaurantId,
-        printerId: kitchenPrinter.id,
-      );
-      encodingLoadMs = encodingWatch.elapsedMilliseconds;
-    }
-
     final stationWatch = Stopwatch()..start();
     final stationResolve = await _resolveStationNamesForKitchenPrint(
       restaurantId: restaurantId,
@@ -635,10 +592,9 @@ class OrderPrintJobService {
       fastPath: canUseLocalPrintFastPath,
     );
     final stationResolveMs = stationWatch.elapsedMilliseconds;
-    final stationNamesById =
-        KitchenTicketHeaderResolver.sanitizeStationNameMap(
-          stationResolve.namesById,
-        );
+    final stationNamesById = KitchenTicketHeaderResolver.sanitizeStationNameMap(
+      stationResolve.namesById,
+    );
     final stationCodesById = cachedStationCodesForRestaurant(restaurantId);
     var stationFallbackReason = stationResolve.fallbackReason;
 
@@ -655,7 +611,9 @@ class OrderPrintJobService {
       productStationByProductId: productMappings,
     );
     for (final group in stationGroups) {
-      final groupKey = group.stationId.isEmpty ? '__general__' : group.stationId;
+      final groupKey = group.stationId.isEmpty
+          ? '__general__'
+          : group.stationId;
       final groupCode = group.stationId.isEmpty
           ? ''
           : (stationCodesById[group.stationId] ?? '');
@@ -676,7 +634,6 @@ class OrderPrintJobService {
       );
     }
     final payloadBuildMs = payloadWatch.elapsedMilliseconds;
-    final printerCacheResolveMsTotal = printerCacheResolveMs + encodingLoadMs;
     final directPrintStartedMs = pipelineWatch.elapsedMilliseconds;
     final fastPathDecisionMs = decisionWatch.elapsedMilliseconds;
     final dailyOrderNo = await KitchenDailyOrderNoStore.nextForRestaurant(
@@ -687,7 +644,19 @@ class OrderPrintJobService {
     try {
       var physicalOk = true;
       String? physicalError;
+      var totalPrinterResolveMs = 0;
+      var totalEncodingLoadMs = 0;
+      String? selectedPrinterId;
+      String? selectedPrinterName;
+      final encodingProfilesByPrinterId = <String, PrinterEncodingProfile?>{};
       for (final group in stationGroups) {
+        debugPrint('[KitchenPrintJob][create_start]');
+        debugPrint('documentType=kitchen');
+        debugPrint('role=mutfak');
+        debugPrint('stationName=${group.stationName}');
+        debugPrint(
+          'stationId=${group.stationId.isEmpty ? '-' : group.stationId}',
+        );
         kitchenRoutingLog(
           'station_group_created',
           extra: {
@@ -696,6 +665,46 @@ class OrderPrintJobService {
             'itemCount': group.items.length,
           },
         );
+        final printerResolveWatch = Stopwatch()..start();
+        final kitchenPrinter = await _printOrchestrator
+            .resolveKitchenPrinterForStationOrRole(
+              restaurantId: restaurantId,
+              stationId: group.stationId,
+              stationName: group.stationName,
+              tableId: tableNumber.toString(),
+              orderId: localOrderTrace,
+              flowName: 'kitchen_order',
+              source: 'order_print_job_service_garson_immediate',
+              minimalSnapshot: true,
+            );
+        totalPrinterResolveMs += printerResolveWatch.elapsedMilliseconds;
+        if (kitchenPrinter == null) {
+          physicalOk = false;
+          physicalError =
+              'Mutfak yazıcısı atanmadı veya Ethernet yazıcıya ulaşılamadı.';
+          break;
+        }
+        _logOrderPrintJobCreate(
+          stationName: group.stationName,
+          stationId: group.stationId,
+          printer: kitchenPrinter,
+        );
+        selectedPrinterId ??= kitchenPrinter.id;
+        selectedPrinterName ??= kitchenPrinter.displayName;
+        PrinterEncodingProfile? encodingProfile;
+        if (!canUseLocalPrintFastPath) {
+          if (encodingProfilesByPrinterId.containsKey(kitchenPrinter.id)) {
+            encodingProfile = encodingProfilesByPrinterId[kitchenPrinter.id];
+          } else {
+            final encodingWatch = Stopwatch()..start();
+            encodingProfile = await _printOrchestrator.loadEncodingProfile(
+              restaurantId: restaurantId,
+              printerId: kitchenPrinter.id,
+            );
+            totalEncodingLoadMs += encodingWatch.elapsedMilliseconds;
+            encodingProfilesByPrinterId[kitchenPrinter.id] = encodingProfile;
+          }
+        }
         final kitchenPayload = _buildKitchenPayload(
           job: <String, dynamic>{
             ...syntheticJob,
@@ -703,7 +712,8 @@ class OrderPrintJobService {
           },
           payload: <String, dynamic>{
             'table_number': tableNumber,
-            if (tableAreaName != null && tableAreaName.trim().isNotEmpty) ...<String, dynamic>{
+            if (tableAreaName != null &&
+                tableAreaName.trim().isNotEmpty) ...<String, dynamic>{
               'display_table_label': tableAreaName.trim(),
               'table_name': tableAreaName.trim(),
               'table_display_name': tableAreaName.trim(),
@@ -750,6 +760,18 @@ class OrderPrintJobService {
         kitchenPayload['document_type'] = 'kitchen';
         kitchenPayload['flow_type'] = 'kitchen_order';
         kitchenPayload['garson_immediate_trace'] = traceId;
+        _stampResolvedKitchenPrinterPayload(
+          kitchenPayload,
+          printer: kitchenPrinter,
+          stationName: group.stationName,
+        );
+        _printOrchestrator.stampDispatchProfileOnPayload(
+          kitchenPayload,
+          printer: kitchenPrinter,
+          documentType: 'kitchen',
+          role: 'mutfak',
+        );
+        _logOrderPrintJobPersistedPayload(kitchenPayload);
         logKitchenFinalBeforeBridge(
           path: 'direct_garson',
           payload: kitchenPayload,
@@ -767,6 +789,7 @@ class OrderPrintJobService {
           physicalOk = false;
           physicalError =
               physicalResult.technicalMessage ?? physicalResult.message;
+          break;
         }
       }
       final physicalResult = PrinterActionResult(
@@ -787,16 +810,16 @@ class OrderPrintJobService {
         bridgeAvailable: true,
         cachedKitchenPrinterId: cachedId,
         cachedKitchenPrinterName: cachedName,
-        selectedPrinterId: kitchenPrinter.id,
+        selectedPrinterId: selectedPrinterId ?? '',
         fallbackReason: combinedFallback,
       );
       _logKitchen(
         'Dispatch',
         'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber '
             'phase=garson_immediate_${ok ? 'success' : 'failed'} '
-            'printerId=${kitchenPrinter.id} printerName=${kitchenPrinter.displayName} '
+            'printerId=${selectedPrinterId ?? '-'} printerName=${selectedPrinterName ?? '-'} '
             'bridgeRequestMs=$bridgeRequestMs totalToBridgeMs=$totalToBridgeMs '
-            'printerCacheResolveMs=$printerCacheResolveMsTotal '
+            'printerCacheResolveMs=${totalPrinterResolveMs + totalEncodingLoadMs} '
             'stationResolveMs=$stationResolveMs payloadBuildMs=$payloadBuildMs',
       );
       logKitchenDispatchPath(
@@ -806,41 +829,37 @@ class OrderPrintJobService {
         itemCount: normalized.length,
         traceId: traceId,
       );
-      logPrintPerf(
-        'kitchen_order',
-        <String, Object?>{
-          'tap_at': DateTime.now().toIso8601String(),
-          'fast_path_decision_ms': fastPathDecisionMs,
-          'printer_resolve_ms': printerCacheResolveMs,
-          'printer_cache_resolve_ms': printerCacheResolveMsTotal,
-          'station_resolve_ms': stationResolveMs,
-          'payload_build_ms': payloadBuildMs,
-          'bridge_request_ms': bridgeRequestMs,
-          'total_to_bridge_ms': totalToBridgeMs,
-          'physicallyDispatched': ok,
-          'path': ok ? 'direct_garson' : 'direct_garson_failed',
-          'printerId': kitchenPrinter.id,
-          'printerName': kitchenPrinter.displayName,
-          'layer': 'order_print_job_service_immediate',
-          'ok': ok,
-          'fallback_reason': combinedFallback,
-          if (!ok)
-            'error':
-                physicalResult.technicalMessage ?? physicalResult.message,
-        },
-      );
+      logPrintPerf('kitchen_order', <String, Object?>{
+        'tap_at': DateTime.now().toIso8601String(),
+        'fast_path_decision_ms': fastPathDecisionMs,
+        'printer_resolve_ms': totalPrinterResolveMs,
+        'printer_cache_resolve_ms': totalPrinterResolveMs + totalEncodingLoadMs,
+        'station_resolve_ms': stationResolveMs,
+        'payload_build_ms': payloadBuildMs,
+        'bridge_request_ms': bridgeRequestMs,
+        'total_to_bridge_ms': totalToBridgeMs,
+        'physicallyDispatched': ok,
+        'path': ok ? 'direct_garson' : 'direct_garson_failed',
+        'printerId': selectedPrinterId,
+        'printerName': selectedPrinterName,
+        'layer': 'order_print_job_service_immediate',
+        'ok': ok,
+        'fallback_reason': combinedFallback,
+        if (!ok)
+          'error': physicalResult.technicalMessage ?? physicalResult.message,
+      });
       return GarsonKitchenImmediateResult(
         physicallyDispatched: ok,
         bridgeRequestMs: bridgeRequestMs,
         payloadBuildMs: payloadBuildMs,
-        printerResolveMs: printerCacheResolveMs,
-        printerCacheResolveMs: printerCacheResolveMsTotal,
+        printerResolveMs: totalPrinterResolveMs,
+        printerCacheResolveMs: totalPrinterResolveMs + totalEncodingLoadMs,
         stationResolveMs: stationResolveMs,
         fastPathDecisionMs: fastPathDecisionMs,
         directPrintStartedMs: directPrintStartedMs,
         directPrintDoneMs: directPrintDoneMs,
         totalToBridgeMs: totalToBridgeMs,
-        selectedPrinterId: kitchenPrinter.id,
+        selectedPrinterId: selectedPrinterId ?? '',
         dispatchPath: ok ? 'direct_garson' : 'direct_garson_failed',
         fallbackReason: ok ? stationFallbackReason : 'direct_bridge_error',
         error: ok
@@ -855,7 +874,7 @@ class OrderPrintJobService {
         bridgeAvailable: true,
         cachedKitchenPrinterId: cachedId,
         cachedKitchenPrinterName: cachedName,
-        selectedPrinterId: kitchenPrinter.id,
+        selectedPrinterId: '-',
         fallbackReason: 'direct_bridge_error',
       );
       _logKitchen(
@@ -875,13 +894,13 @@ class OrderPrintJobService {
       return GarsonKitchenImmediateResult(
         bridgeRequestMs: bridgeWatch.elapsedMilliseconds,
         payloadBuildMs: payloadBuildMs,
-        printerResolveMs: printerCacheResolveMsTotal,
-        printerCacheResolveMs: printerCacheResolveMsTotal,
+        printerResolveMs: 0,
+        printerCacheResolveMs: 0,
         fastPathDecisionMs: fastPathDecisionMs,
         directPrintStartedMs: directPrintStartedMs,
         directPrintDoneMs: pipelineWatch.elapsedMilliseconds,
         totalToBridgeMs: pipelineWatch.elapsedMilliseconds,
-        selectedPrinterId: kitchenPrinter.id,
+        selectedPrinterId: '',
         dispatchPath: 'legacy',
         fallbackReason: 'direct_bridge_error',
         error: _compactError(error),
@@ -903,8 +922,9 @@ class OrderPrintJobService {
     final traceId = _generateTraceId();
     final pipelineStartedAt = DateTime.now().toIso8601String();
     final pipelineWatch = Stopwatch()..start();
-    final productMappings =
-        mergedKitchenProductMappingsForRestaurant(restaurantId);
+    final productMappings = mergedKitchenProductMappingsForRestaurant(
+      restaurantId,
+    );
     final stationNamesById = KitchenTicketHeaderResolver.sanitizeStationNameMap(
       _readCachedStationNames(restaurantId),
     );
@@ -925,6 +945,15 @@ class OrderPrintJobService {
     if (normalized.isEmpty) {
       throw Exception('Print job oluşturmak için sipariş kalemi bulunamadı.');
     }
+
+    debugPrint('[GarsonPrint][send_order_start]');
+    debugPrint('table=$tableNumber');
+    debugPrint('orderId=-');
+    debugPrint('items=${normalized.length}');
+    await _debugGarsonPrintConfigSnapshot(
+      restaurantId: restaurantId,
+      normalizedItems: normalized,
+    );
 
     debugPrint(
       '[PrintPipeline] trace=$traceId stage=order_save_started '
@@ -958,6 +987,21 @@ class OrderPrintJobService {
               ? Map<String, dynamic>.from(response)
               : <String, dynamic>{});
     final printJobIds = _extractPrintJobIds(data['print_job_ids']);
+    final jobsForEventLog = printJobIds.isEmpty
+        ? const <Map<String, dynamic>>[]
+        : await _fetchPrintJobsByIds(printJobIds);
+    final jobsById = <String, Map<String, dynamic>>{
+      for (final job in jobsForEventLog)
+        _textValue(job['id'], fallback: ''): Map<String, dynamic>.from(job),
+    };
+    final filteredPrintJobIds = await _suppressDuplicateKitchenJobs(
+      restaurantId: restaurantId,
+      traceId: traceId,
+      tableNumber: tableNumber,
+      jobType: jobType,
+      printJobIds: printJobIds,
+      jobsById: jobsById,
+    );
     final orderSavedAt = _textValue(
       data['order_saved_at'],
       fallback: DateTime.now().toIso8601String(),
@@ -986,6 +1030,31 @@ class OrderPrintJobService {
           'rpcMs=$rpcMs',
     );
     for (final printJobId in printJobIds) {
+      final job = jobsById[printJobId] ?? const <String, dynamic>{};
+      final payload = job['payload'] is Map
+          ? Map<String, dynamic>.from(job['payload'] as Map)
+          : const <String, dynamic>{};
+      final stationId = _textValue(job['station_id'], fallback: '');
+      final stationName = _textValue(
+        payload['station_name'] ?? payload['kitchen_ticket_header'],
+        fallback: '',
+      );
+      final idempotencyKey = kitchenPrintIdempotencyKeyFromJob(
+        restaurantId: restaurantId,
+        job: job,
+        payload: payload,
+      );
+      debugPrint(
+        '[KITCHEN_JOB_CREATE_ATTEMPT] '
+        'order_id=${_textValue(job['order_id'], fallback: _textValue(data['order_id']))} '
+        'table_label=${_textValue(payload['display_table_label'] ?? payload['table_name'])} '
+        'station=${stationName.isEmpty ? '-' : stationName} '
+        'revision=${payload['revision'] ?? payload['order_revision'] ?? 1} '
+        'items_hash=${buildKitchenItemsHash(_payloadItems(payload))} '
+        'idempotency_key=$idempotencyKey '
+        'source=$jobType '
+        'existing_job_id=- will_create=true',
+      );
       _printerEventLogService
           .append(
             restaurantId: restaurantId,
@@ -997,9 +1066,39 @@ class OrderPrintJobService {
               'traceId': traceId,
               'tableNumber': tableNumber,
               'jobType': jobType,
+              'print_job_id': printJobId,
+              'station_id': stationId,
+              'station_name': stationName,
+              'idempotency_key': idempotencyKey,
             },
           )
           .ignore();
+      _printerEventLogService
+          .append(
+            restaurantId: restaurantId,
+            event: 'kitchen_print_job_created',
+            message: 'Mutfak print job oluşturuldu.',
+            jobId: printJobId,
+            role: 'mutfak',
+            details: <String, dynamic>{
+              'traceId': traceId,
+              'tableNumber': tableNumber,
+              'jobType': jobType,
+              'print_job_id': printJobId,
+              'station_id': stationId,
+              'station_name': stationName,
+              'status': 'created',
+              'idempotency_key': idempotencyKey,
+            },
+          )
+          .ignore();
+      debugPrint(
+        '[KITCHEN_JOB_CREATED] '
+        'job_id=$printJobId '
+        'idempotency_key=$idempotencyKey '
+        'station=${stationName.isEmpty ? '-' : stationName} '
+        'items_count=${_payloadItems(payload).length}',
+      );
       _printerEventLogService
           .append(
             restaurantId: restaurantId,
@@ -1011,6 +1110,68 @@ class OrderPrintJobService {
               'traceId': traceId,
               'tableNumber': tableNumber,
               'jobType': jobType,
+              'print_job_id': printJobId,
+              'station_id': stationId,
+              'station_name': stationName,
+              'resolution_source': _textValue(
+                payload['printer_resolution_source'],
+                fallback: '',
+              ),
+              'printer_source': _textValue(
+                payload['printer_resolution_source'],
+                fallback: '',
+              ),
+              'selected_printer_id': _textValue(
+                payload['selected_printer_id'] ??
+                    payload['printer_record_id'] ??
+                    payload['printer_id'],
+                fallback: '',
+              ),
+              'selected_printer_name': _textValue(
+                payload['selected_printer_name'] ?? payload['printer_name'],
+                fallback: '',
+              ),
+              'selected_printer_backend': _textValue(
+                payload['selected_printer_backend'] ??
+                    payload['printer_backend'] ??
+                    payload['backend'],
+                fallback: '',
+              ),
+              'selected_printer_host': _textValue(
+                payload['selected_printer_host'] ??
+                    payload['host'] ??
+                    payload['ip_address'] ??
+                    payload['ipAddress'],
+                fallback: '',
+              ),
+              'selected_printer_port': _textValue(
+                payload['selected_printer_port'] ?? payload['port'],
+                fallback: '',
+              ),
+              'status': 'queued',
+            },
+          )
+          .ignore();
+    }
+
+    final missingKitchenJobMessage =
+        normalized.isNotEmpty && printJobIds.isEmpty
+        ? 'Sipariş kaydoldu ama mutfak print job oluşturulmadı.'
+        : null;
+    if (missingKitchenJobMessage != null) {
+      _printerEventLogService
+          .append(
+            restaurantId: restaurantId,
+            event: 'kitchen_print_job_creation_failed',
+            message: missingKitchenJobMessage,
+            level: 'error',
+            role: 'mutfak',
+            details: <String, dynamic>{
+              'traceId': traceId,
+              'tableNumber': tableNumber,
+              'jobType': jobType,
+              'order_id': _textValue(data['order_id'], fallback: ''),
+              'order_number': _textValue(data['order_number'], fallback: ''),
             },
           )
           .ignore();
@@ -1025,8 +1186,8 @@ class OrderPrintJobService {
       // Do NOT broadcast jobs when printing is disabled; we want these to stay paused.
     } else if (!_canDirectDispatch && printJobIds.isNotEmpty) {
       // On mobile (iOS/Android), send a Supabase Realtime broadcast to
-    // notify the desktop hub INSTANTLY about new print jobs.
-    // This bypasses postgres_changes WAL latency (1-5s → <200ms).
+      // notify the desktop hub INSTANTLY about new print jobs.
+      // This bypasses postgres_changes WAL latency (1-5s → <200ms).
       _broadcastPrintJobsReady(restaurantId, printJobIds).ignore();
     }
 
@@ -1034,20 +1195,20 @@ class OrderPrintJobService {
         garsonDesktopFastKitchen &&
         _canDirectDispatch &&
         printSystemEnabled &&
-        printJobIds.isNotEmpty;
+        filteredPrintJobIds.isNotEmpty;
     final dispatchOutcome = useGarsonFastKitchen
         ? await _dispatchCreatedPrintJobsGarsonFast(
             restaurantId: restaurantId,
             tableNumber: tableNumber,
             orderId: data['order_id']?.toString(),
-            printJobIds: printJobIds,
+            printJobIds: filteredPrintJobIds,
             sourceItems: items,
           )
         : await _dispatchCreatedPrintJobs(
             restaurantId: restaurantId,
             tableNumber: tableNumber,
             orderId: data['order_id']?.toString(),
-            printJobIds: printJobIds,
+            printJobIds: filteredPrintJobIds,
             sourceItems: items,
           );
 
@@ -1060,17 +1221,38 @@ class OrderPrintJobService {
       itemCount: normalized.length,
       traceId: traceId,
     );
-
-    if (dispatchOutcome.hasFailures) {
-      throw Exception(dispatchOutcome.failureMessages.join(' | '));
+    if (dispatchOutcome.handoffToHub) {
+      _logKitchen(
+        'Dispatch',
+        'trace=$traceId restaurantId=$restaurantId tableNo=$tableNumber '
+            'handoff_to_hub=true printer_not_printed_yet=true '
+            'reason=${dispatchOutcome.pendingReason ?? '-'} '
+            'pendingJobIds=${dispatchOutcome.pendingForHubJobIds.join(",")}',
+      );
     }
+
+    final printFailureMessage =
+        missingKitchenJobMessage ??
+        (dispatchOutcome.hasFailures
+            ? dispatchOutcome.failureMessages.join(' | ')
+            : null);
+
+    final resultRaw = <String, dynamic>{
+      ...data,
+      'handoff_to_hub': dispatchOutcome.handoffToHub,
+      'printer_not_printed_yet': dispatchOutcome.printerNotPrintedYet,
+      'print_pending_reason': dispatchOutcome.pendingReason,
+      'pending_for_hub_job_ids': dispatchOutcome.pendingForHubJobIds,
+      if (printFailureMessage != null)
+        'print_failure_message': printFailureMessage,
+    };
 
     return OrderPrintJobDispatchResult(
       orderId: data['order_id']?.toString(),
       orderNumber: data['order_number']?.toString(),
       printJobCount: (data['print_job_count'] as num?)?.toInt() ?? 0,
       printJobIds: printJobIds,
-      raw: data,
+      raw: resultRaw,
       orderSavedAt: orderSavedAt,
       printJobCreatedAt: printJobCreatedAt,
       dispatchedJobCount: dispatchOutcome.dispatchedJobCount,
@@ -1078,11 +1260,17 @@ class OrderPrintJobService {
       traceId: traceId,
       pipelineStartedAt: pipelineStartedAt,
       printSystemEnabled: printSystemEnabled,
-      printSuppressedReason:
-          printSystemEnabled ? null : 'print_system_disabled',
+      printSuppressedReason: printSystemEnabled
+          ? null
+          : 'print_system_disabled',
       physicallyDispatched: dispatchOutcome.physicallyDispatched,
       bridgeRequestMs: dispatchOutcome.bridgeRequestMs,
       dispatchPath: dispatchOutcome.dispatchPath,
+      handoffToHub: dispatchOutcome.handoffToHub,
+      printerNotPrintedYet: dispatchOutcome.printerNotPrintedYet,
+      printPendingReason: dispatchOutcome.pendingReason,
+      pendingForHubJobIds: dispatchOutcome.pendingForHubJobIds,
+      printFailureMessage: printFailureMessage,
     );
   }
 
@@ -1111,10 +1299,7 @@ class OrderPrintJobService {
     try {
       await _client
           .from('print_jobs')
-          .update({
-            'status': 'paused_by_operator',
-            'last_error': reason,
-          })
+          .update({'status': 'paused_by_operator', 'last_error': reason})
           .inFilter('id', jobIds)
           .eq('status', 'pending');
     } catch (_) {
@@ -1219,6 +1404,11 @@ class OrderPrintJobService {
           )
         : <Map<String, dynamic>>[];
 
+    debugPrint('[GarsonPrint][send_order_start]');
+    debugPrint('table=$tableNumber');
+    debugPrint('orderId=$tableOrderId');
+    debugPrint('items=${rawItems.length}');
+
     if (sellerId.isEmpty || tableNumber <= 0) {
       throw Exception('table_orders kaydı print routing için uygun değil.');
     }
@@ -1228,6 +1418,7 @@ class OrderPrintJobService {
       tableNumber: tableNumber,
       items: rawItems,
       waiterName: waiterName,
+      garsonDesktopFastKitchen: true,
     );
   }
 
@@ -1330,8 +1521,9 @@ class OrderPrintJobService {
           'p_restaurant_id': restaurantId,
           'p_table_number': tableNumber,
           'p_items': normalized,
-          'p_waiter_id':
-              (waiterId == null || waiterId.isEmpty) ? null : waiterId,
+          'p_waiter_id': (waiterId == null || waiterId.isEmpty)
+              ? null
+              : waiterId,
           'p_waiter_name': waiterName,
           'p_notes':
               '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}',
@@ -1348,13 +1540,17 @@ class OrderPrintJobService {
     final details =
         '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
             .toLowerCase();
-    if (details.contains('column "table_number" of relation "orders" does not exist') ||
-        details.contains('orders') && details.contains('table_number') && details.contains('does not exist')) {
+    if (details.contains(
+          'column "table_number" of relation "orders" does not exist',
+        ) ||
+        details.contains('orders') &&
+            details.contains('table_number') &&
+            details.contains('does not exist')) {
       return 'Mutfak fişi oluşturulamadı. Supabase orders tablosunda table_number kolonu yok '
           'ama mutfak print RPC onu yazmaya çalışıyor. SQL patch uygulanmalı '
           '(create_table_order_with_print_jobs_impl).';
     }
-    if (details.contains('missing from-clause entry for table \"v_item\"') ||
+    if (details.contains('missing from-clause entry for table "v_item"') ||
         details.contains('missing from-clause entry for table "v_item"')) {
       return 'Mutfak fişi oluşturulamadı. SQL mutfak payload fonksiyonunda v_item '
           'alias hatası var. (Supabase RPC: create_table_order_with_print_jobs)';
@@ -1404,48 +1600,30 @@ class OrderPrintJobService {
       );
     }
 
-    final resolveWatch = Stopwatch()..start();
-    final kitchenPrinter = await _printOrchestrator.resolveKitchenPrinterForGarsonFast(
+    final jobs = await _fetchPrintJobsByIds(printJobIds);
+    final productMappings = mergedKitchenProductMappingsForRestaurant(
       restaurantId,
     );
-    final printerResolveMs = resolveWatch.elapsedMilliseconds;
-    if (kitchenPrinter == null) {
-      return const _KitchenPrintDispatchOutcome(
-        dispatchedJobCount: 0,
-        failedJobCount: 1,
-        failureMessages: <String>['mutfak_yazicisi_bulunamadi'],
-        dispatchPath: 'direct_garson_printer_missing',
-      );
-    }
-
-    final encodingProfile = await _printOrchestrator.loadEncodingProfile(
-      restaurantId: restaurantId,
-      printerId: kitchenPrinter.id,
+    final stationNamesById = KitchenTicketHeaderResolver.sanitizeStationNameMap(
+      _readCachedStationNames(restaurantId),
     );
-
-    final jobs = await _fetchPrintJobsByIds(printJobIds);
-    final productMappings =
-        mergedKitchenProductMappingsForRestaurant(restaurantId);
-    final stationNamesById =
-        KitchenTicketHeaderResolver.sanitizeStationNameMap(
-          _readCachedStationNames(restaurantId),
-        );
     final stationCodesById = cachedStationCodesForRestaurant(restaurantId);
-    final enrichedSource =
-        sourceItems != null && sourceItems.isNotEmpty
-            ? KitchenTicketHeaderResolver.enrichItemsWithProductionStations(
-                items: sourceItems,
-                stationNamesById: stationNamesById,
-                stationCodesById: stationCodesById,
-                productStationByProductId: productMappings,
-                restaurantId: restaurantId,
-              )
-            : sourceItems;
+    final enrichedSource = sourceItems != null && sourceItems.isNotEmpty
+        ? KitchenTicketHeaderResolver.enrichItemsWithProductionStations(
+            items: sourceItems,
+            stationNamesById: stationNamesById,
+            stationCodesById: stationCodesById,
+            productStationByProductId: productMappings,
+            restaurantId: restaurantId,
+          )
+        : sourceItems;
     var dispatchedJobCount = 0;
     var failedJobCount = 0;
     final failureMessages = <String>[];
     var maxBridgeRequestMs = 0;
     var physicallyDispatched = false;
+    var totalPrinterResolveMs = 0;
+    final encodingProfilesByPrinterId = <String, PrinterEncodingProfile?>{};
 
     for (final job in jobs) {
       final printJobId = job['id']?.toString() ?? '';
@@ -1463,13 +1641,54 @@ class OrderPrintJobService {
       );
       final headerOverride = jobStationId.isNotEmpty
           ? KitchenTicketHeaderResolver.productionHeaderLabel(
-              stationName: stationNamesById[jobStationId] ??
+              stationName:
+                  stationNamesById[jobStationId] ??
                   _textValue(safePayload['station_name']),
               stationCode:
                   stationCodesById[jobStationId] ??
                   _textValue(safePayload['station_code']),
             )
           : null;
+      final printerResolveWatch = Stopwatch()..start();
+      debugPrint('[KitchenPrintJob][create_start]');
+      debugPrint('documentType=kitchen');
+      debugPrint('role=mutfak');
+      debugPrint(
+        'stationName=${stationNamesById[jobStationId] ?? _textValue(safePayload['station_name'])}',
+      );
+      debugPrint('stationId=${jobStationId.isEmpty ? '-' : jobStationId}');
+      final kitchenPrinter = await _printOrchestrator
+          .resolveKitchenPrinterForStationOrRole(
+            restaurantId: restaurantId,
+            stationId: jobStationId,
+            stationName:
+                stationNamesById[jobStationId] ??
+                _textValue(safePayload['station_name']),
+            tableId: tableNumber.toString(),
+            orderId: _logValue(job['order_id']),
+            printJobId: printJobId,
+            flowName: 'kitchen_order',
+            source: 'order_print_job_service_garson_fast',
+            minimalSnapshot: true,
+          );
+      totalPrinterResolveMs += printerResolveWatch.elapsedMilliseconds;
+      if (kitchenPrinter == null) {
+        failedJobCount += 1;
+        failureMessages.add(
+          'Mutfak yazıcısı atanmadı veya Ethernet yazıcıya ulaşılamadı.',
+        );
+        await _markPrintJobFailed(
+          printJobId,
+          requestUrl: 'http://127.0.0.1:3001/print/kitchen',
+          error: 'Mutfak yazıcısı atanmadı veya Ethernet yazıcıya ulaşılamadı.',
+        );
+        continue;
+      }
+      _logOrderPrintJobCreate(
+        stationName: headerOverride ?? '',
+        stationId: jobStationId,
+        printer: kitchenPrinter,
+      );
       final kitchenPayload = _buildKitchenPayload(
         job: job,
         payload: safePayload,
@@ -1480,13 +1699,25 @@ class OrderPrintJobService {
         productStationByProductId: productMappings,
         kitchenTicketHeaderOverride: headerOverride,
       );
+      PrinterEncodingProfile? encodingProfile;
+      if (encodingProfilesByPrinterId.containsKey(kitchenPrinter.id)) {
+        encodingProfile = encodingProfilesByPrinterId[kitchenPrinter.id];
+      } else {
+        encodingProfile = await _printOrchestrator.loadEncodingProfile(
+          restaurantId: restaurantId,
+          printerId: kitchenPrinter.id,
+        );
+        encodingProfilesByPrinterId[kitchenPrinter.id] = encodingProfile;
+      }
       if (encodingProfile != null) {
         _printOrchestrator.stampEncodingProfileOnPayload(
           kitchenPayload,
           encodingProfile,
         );
       } else {
-        _printOrchestrator.stampDefaultTurkishGuaranteeOnPayload(kitchenPayload);
+        _printOrchestrator.stampDefaultTurkishGuaranteeOnPayload(
+          kitchenPayload,
+        );
       }
       kitchenPayload['printer_id'] = kitchenPrinter.id;
       kitchenPayload['printer_name'] = kitchenPrinter.displayName;
@@ -1494,13 +1725,43 @@ class OrderPrintJobService {
       kitchenPayload['printer_backend'] = kitchenPrinter.backend.value;
       kitchenPayload['document_type'] = 'kitchen';
       kitchenPayload['flow_type'] = 'kitchen_order';
+      _stampResolvedKitchenPrinterPayload(
+        kitchenPayload,
+        printer: kitchenPrinter,
+        stationName: headerOverride ?? '',
+      );
+      _printOrchestrator.stampDispatchProfileOnPayload(
+        kitchenPayload,
+        printer: kitchenPrinter,
+        documentType: 'kitchen',
+        role: 'mutfak',
+      );
+      _logOrderPrintJobPersistedPayload(kitchenPayload);
 
       final tapAt = DateTime.now().toIso8601String();
       final watch = Stopwatch()..start();
+      final idempotencyKey = kitchenPrintIdempotencyKeyFromJob(
+        restaurantId: restaurantId,
+        job: job,
+        payload: kitchenPayload,
+      );
       try {
+        debugPrint(
+          '[KITCHEN_PHYSICAL_DISPATCH_ATTEMPT] '
+          'job_id=$printJobId '
+          'order_id=${_logValue(job['order_id'])} '
+          'station=${headerOverride ?? '-'} '
+          'idempotency_key=$idempotencyKey '
+          'dispatch_source=immediate '
+          'printer=${kitchenPrinter.displayName} '
+          'backend=${kitchenPrinter.backend.value} '
+          'host=${kitchenPrinter.raw['host'] ?? kitchenPrinter.raw['ip_address'] ?? '-'} '
+          'port=${kitchenPrinter.raw['port'] ?? '-'}',
+        );
         await _markPrintJobPrinting(
           printJobId,
           dispatchStartedAt: DateTime.now(),
+          payload: kitchenPayload,
         );
         final bridgeWatch = Stopwatch()..start();
         logKitchenFinalBeforeBridge(
@@ -1522,27 +1783,23 @@ class OrderPrintJobService {
           maxBridgeRequestMs = bridgeRequestMs;
         }
         final jobPayloadBuildMs = watch.elapsedMilliseconds - bridgeRequestMs;
-        logPrintPerf(
-          'kitchen_order',
-          <String, Object?>{
-            'tap_at': tapAt,
-            'printer_cache_resolve_ms': printerResolveMs,
-            'payload_build_ms': jobPayloadBuildMs < 0 ? 0 : jobPayloadBuildMs,
-            'bridge_request_ms': bridgeRequestMs,
-            'total_to_bridge_ms': watch.elapsedMilliseconds,
-            'total_submit_to_print_ms': watch.elapsedMilliseconds,
-            'physicallyDispatched': physicalResult.ok,
-            'path': 'direct_garson',
-            'printerId': kitchenPrinter.id,
-            'printerName': kitchenPrinter.displayName,
-            'print_job_id': printJobId,
-            'layer': 'order_print_job_service_garson_fast',
-            'ok': physicalResult.ok,
-            if (!physicalResult.ok)
-              'error':
-                  physicalResult.technicalMessage ?? physicalResult.message,
-          },
-        );
+        logPrintPerf('kitchen_order', <String, Object?>{
+          'tap_at': tapAt,
+          'printer_cache_resolve_ms': totalPrinterResolveMs,
+          'payload_build_ms': jobPayloadBuildMs < 0 ? 0 : jobPayloadBuildMs,
+          'bridge_request_ms': bridgeRequestMs,
+          'total_to_bridge_ms': watch.elapsedMilliseconds,
+          'total_submit_to_print_ms': watch.elapsedMilliseconds,
+          'physicallyDispatched': physicalResult.ok,
+          'path': 'direct_garson',
+          'printerId': kitchenPrinter.id,
+          'printerName': kitchenPrinter.displayName,
+          'print_job_id': printJobId,
+          'layer': 'order_print_job_service_garson_fast',
+          'ok': physicalResult.ok,
+          if (!physicalResult.ok)
+            'error': physicalResult.technicalMessage ?? physicalResult.message,
+        });
         if (!physicalResult.ok) {
           failedJobCount += 1;
           failureMessages.add(physicalResult.message);
@@ -1557,6 +1814,13 @@ class OrderPrintJobService {
           printJobId,
           completedAt: DateTime.now(),
           bridgeResult: physicalResult.raw,
+          payload: kitchenPayload,
+        );
+        debugPrint(
+          '[KITCHEN_PHYSICAL_DISPATCH_COMPLETED] '
+          'job_id=$printJobId '
+          'idempotency_key=$idempotencyKey '
+          'completed_at=${DateTime.now().toIso8601String()}',
         );
         dispatchedJobCount += 1;
         physicallyDispatched = true;
@@ -1590,7 +1854,9 @@ class OrderPrintJobService {
       failureMessages: failureMessages,
       physicallyDispatched: physicallyDispatched,
       bridgeRequestMs: maxBridgeRequestMs,
-      dispatchPath: physicallyDispatched ? 'direct_garson' : 'direct_garson_failed',
+      dispatchPath: physicallyDispatched
+          ? 'direct_garson'
+          : 'direct_garson_failed',
     );
   }
 
@@ -1606,6 +1872,10 @@ class OrderPrintJobService {
         dispatchedJobCount: 0,
         failedJobCount: 0,
         failureMessages: <String>[],
+        handoffToHub: true,
+        printerNotPrintedYet: true,
+        pendingReason: 'bridge_unavailable',
+        dispatchPath: 'pending_for_hub',
       );
     }
 
@@ -1641,6 +1911,7 @@ class OrderPrintJobService {
     var dispatchedJobCount = 0;
     var failedJobCount = 0;
     final failureMessages = <String>[];
+    final pendingForHubJobIds = <String>[];
 
     for (final printJobId in printJobIds) {
       final job = jobsById[printJobId];
@@ -1677,9 +1948,11 @@ class OrderPrintJobService {
       );
       final headerOverride = jobStationId.isNotEmpty
           ? KitchenTicketHeaderResolver.productionHeaderLabel(
-              stationName: stationNamesById[jobStationId] ??
+              stationName:
+                  stationNamesById[jobStationId] ??
                   _textValue(safePayload['station_name']),
-              stationCode: stationCodesById[jobStationId] ??
+              stationCode:
+                  stationCodesById[jobStationId] ??
                   _textValue(safePayload['station_code']),
             )
           : KitchenTicketHeaderResolver.productionHeaderLabel(
@@ -1750,6 +2023,9 @@ class OrderPrintJobService {
       var printDispatchMs = 0;
       var bridgeRequestMs = 0;
       var requestUrl = 'http://127.0.0.1:3001/print/kitchen';
+      UnifiedPrinterModel? resolvedPrinterForAttempt;
+      Map<String, dynamic>? resolvedPayloadForAttempt;
+      var resolutionSourceForAttempt = '';
       try {
         final kitchenPayload = _buildKitchenPayload(
           job: job,
@@ -1761,59 +2037,220 @@ class OrderPrintJobService {
           productStationByProductId: productMappings,
           kitchenTicketHeaderOverride: headerOverride,
         );
-        final preparedPayload = await _printOrchestrator.prepareQueuedPrintPayload(
-          restaurantId: restaurantId,
-          jobRecord: job,
-          payload: kitchenPayload,
-        );
+        final preparedPayload = await _printOrchestrator
+            .prepareQueuedPrintPayload(
+              restaurantId: restaurantId,
+              jobRecord: job,
+              payload: kitchenPayload,
+            );
         kitchenPayloadBuildMs = watch.elapsedMilliseconds;
-        final resolvedPrinter = preparedPayload.printer;
-        final resolvedPayload = preparedPayload.payload;
-        final requestPath = _resolvePrinterRoute(resolvedPayload);
-        final baseUri = _resolvePrinterBaseUri(resolvedPayload);
-        requestUrl = baseUri.replace(path: requestPath).toString();
+        final resolvedPrinterCandidate = preparedPayload.printer;
+        var resolvedPayload = Map<String, dynamic>.from(
+          preparedPayload.payload,
+        );
+        resolvedPrinterForAttempt = resolvedPrinterCandidate;
+        resolvedPayloadForAttempt = resolvedPayload;
+        resolutionSourceForAttempt = preparedPayload.resolutionSource;
+        _logOrderPrintJobDispatchLoaded(resolvedPayload);
         final builtItemCount = (kitchenPayload['items'] as List?)?.length ?? 0;
         _logKitchen(
           'Dispatch',
-          'route=$requestPath orderId=${_logValue(job['order_id'])} tableNo=$tableNo area=$area '
+          'route=${_resolvePrinterRoute(resolvedPayload)} orderId=${_logValue(job['order_id'])} tableNo=$tableNo area=$area '
               'payloadItemCount=$builtItemCount '
               'sourceItemCount=${sourceItems?.length ?? 0} '
               'payloadJobItemCount=${_payloadItems(payload).length} '
               '${builtItemCount == 0 ? 'WARN=EMPTY_ITEMS_PAYLOAD' : 'items_ok'} '
               'phase=payload_built '
               'resolutionSource=${preparedPayload.resolutionSource} '
-              'resolvedPrinter=${resolvedPrinter?.id ?? '-'} '
-              'resolvedRecordId=${resolvedPrinter?.printerRecordId ?? '-'}',
+              'resolvedPrinter=${resolvedPrinterCandidate?.id ?? '-'} '
+              'resolvedRecordId=${resolvedPrinterCandidate?.printerRecordId ?? '-'}',
         );
-        if (resolvedPrinter == null) {
+        var resolvedPrinterForDispatch = resolvedPrinterCandidate;
+        var resolutionSourceForDispatch = preparedPayload.resolutionSource;
+        final canonicalStationName = _textValue(
+          resolvedPayload['station_name'] ?? area,
+          fallback: area,
+        );
+        final expectedKitchenPrinter = await _printerRepository
+            .resolveExpectedKitchenPrinter(
+              restaurantId: restaurantId,
+              stationId: jobStationId,
+              stationName: canonicalStationName,
+            );
+
+        if (expectedKitchenPrinter != null &&
+            expectedKitchenPrinter.isTcp &&
+            (resolvedPrinterForDispatch == null ||
+                !_matchesExpectedKitchenResolution(
+                  resolvedPrinterForDispatch,
+                  expectedKitchenPrinter,
+                ))) {
+          final wrongPrinter = resolvedPrinterForDispatch;
+          if (wrongPrinter != null) {
+            _printerEventLogService
+                .append(
+                  restaurantId: restaurantId,
+                  event: 'kitchen_wrong_printer_selected',
+                  message:
+                      'Mutfak işi için yanlış yazıcı son güvenlik kilidinde yakalandı.',
+                  level: 'warning',
+                  jobId: printJobId,
+                  role: 'mutfak',
+                  details: <String, dynamic>{
+                    'actual_printer': wrongPrinter.displayName,
+                    'actual_backend': wrongPrinter.backend.value,
+                    'expected_printer': expectedKitchenPrinter.printer.name,
+                    'expected_backend': expectedKitchenPrinter.backend,
+                    'expected_host': expectedKitchenPrinter.host,
+                    'expected_port': expectedKitchenPrinter.port,
+                    'reason': _isBlockedKitchenDispatchPrinter(wrongPrinter)
+                        ? 'stale_local_config_or_persisted_payload'
+                        : 'resolved_printer_mismatch',
+                  },
+                )
+                .ignore();
+          }
+          final correctedPrinter = await _printOrchestrator
+              .resolveKitchenPrinterForStationOrRole(
+                restaurantId: restaurantId,
+                stationId: jobStationId,
+                stationName: canonicalStationName,
+                tableId: tableNo,
+                orderId: _textValue(job['order_id'], fallback: printJobId),
+                printJobId: printJobId,
+                flowName: 'kitchen_order',
+                source: 'order_print_job_service_final_guard',
+                minimalSnapshot: true,
+              );
+          if (correctedPrinter != null &&
+              _matchesExpectedKitchenResolution(
+                correctedPrinter,
+                expectedKitchenPrinter,
+              )) {
+            resolvedPrinterForDispatch = correctedPrinter;
+            resolutionSourceForDispatch = 'kitchen_wrong_printer_corrected';
+            resolvedPayload = Map<String, dynamic>.from(resolvedPayload);
+            _stampResolvedKitchenPrinterPayload(
+              resolvedPayload,
+              printer: correctedPrinter,
+              stationName: canonicalStationName,
+            );
+            resolvedPayload['selected_printer_id'] =
+                correctedPrinter.printerRecordId ?? correctedPrinter.id;
+            resolvedPayload['selected_printer_name'] =
+                correctedPrinter.displayName;
+            resolvedPayload['selected_printer_host'] =
+                expectedKitchenPrinter.host;
+            resolvedPayload['selected_printer_port'] =
+                expectedKitchenPrinter.port;
+            resolvedPayload['selected_printer_backend'] =
+                correctedPrinter.backend.value;
+            _printerEventLogService
+                .append(
+                  restaurantId: restaurantId,
+                  event: 'kitchen_wrong_printer_corrected',
+                  message:
+                      'Mutfak işi DB Ethernet yazıcısına son güvenlik kilidinde düzeltildi.',
+                  level: 'warning',
+                  jobId: printJobId,
+                  role: 'mutfak',
+                  details: <String, dynamic>{
+                    'new_printer': correctedPrinter.displayName,
+                    'backend': correctedPrinter.backend.value,
+                    'host': expectedKitchenPrinter.host,
+                    'port': expectedKitchenPrinter.port,
+                  },
+                )
+                .ignore();
+          } else {
+            resolvedPrinterForDispatch = null;
+            resolutionSourceForDispatch = 'kitchen_runtime_guard_failed';
+          }
+        }
+        resolvedPrinterForAttempt = resolvedPrinterForDispatch;
+        resolvedPayloadForAttempt = resolvedPayload;
+        resolutionSourceForAttempt = resolutionSourceForDispatch;
+
+        final requestPath = _resolvePrinterRoute(resolvedPayload);
+        final baseUri = _resolvePrinterBaseUri(resolvedPayload);
+        requestUrl = baseUri.replace(path: requestPath).toString();
+
+        if (resolvedPrinterForDispatch == null) {
+          _printerEventLogService
+              .append(
+                restaurantId: restaurantId,
+                event: 'printer_resolution_failed',
+                message: expectedKitchenPrinter?.isTcp == true
+                    ? 'Mutfak fişi yazdırılamadı: mutfak yazıcısı Ethernet olarak atanmış ama runtime çözümleme başarısız.'
+                    : 'Mutfak fişi yazdırılamadı: yazıcı çözümlenemedi.',
+                level: 'error',
+                jobId: printJobId,
+                role: 'mutfak',
+                details: <String, dynamic>{
+                  'printer_resolution_failed': true,
+                  'print_job_id': printJobId,
+                  'job_type': _textValue(
+                    job['job_type'] ?? payload['job_type'],
+                    fallback: '',
+                  ),
+                  'station_id': jobStationId,
+                  'station_name': canonicalStationName,
+                  'requested_printer_id': printerId,
+                  'resolution_source': resolutionSourceForDispatch,
+                  'expected_printer': expectedKitchenPrinter?.printer.name,
+                  'expected_backend': expectedKitchenPrinter?.backend,
+                  'expected_host': expectedKitchenPrinter?.host,
+                  'expected_port': expectedKitchenPrinter?.port,
+                  'status': 'failed',
+                },
+              )
+              .ignore();
           failedJobCount += 1;
           failureMessages.add('$area/$printerName: printer_not_found');
           await _markPrintJobFailed(
             printJobId,
             requestUrl: requestUrl,
-            error: 'printer_not_found',
+            error: expectedKitchenPrinter?.isTcp == true
+                ? 'kitchen_runtime_guard_failed'
+                : 'printer_not_found',
           );
-          logPrintPerf(
-            'kitchen_order',
-            <String, Object?>{
-              'tap_at': tapAt,
-              'kitchen_payload_build_ms': kitchenPayloadBuildMs,
-              'print_dispatch_ms': watch.elapsedMilliseconds,
-              'bridge_request_ms': bridgeRequestMs,
-              'total_ms': watch.elapsedMilliseconds,
-              'total_submit_to_print_ms': watch.elapsedMilliseconds,
-              'print_job_id': printJobId,
-              'layer': 'order_print_job_service',
-              'ok': false,
-              'error': 'printer_not_found',
-            },
-          );
+          logPrintPerf('kitchen_order', <String, Object?>{
+            'tap_at': tapAt,
+            'kitchen_payload_build_ms': kitchenPayloadBuildMs,
+            'print_dispatch_ms': watch.elapsedMilliseconds,
+            'bridge_request_ms': bridgeRequestMs,
+            'total_ms': watch.elapsedMilliseconds,
+            'total_submit_to_print_ms': watch.elapsedMilliseconds,
+            'print_job_id': printJobId,
+            'layer': 'order_print_job_service',
+            'ok': false,
+            'error': 'printer_not_found',
+          });
           continue;
         }
+        final printer = resolvedPrinterForDispatch;
         final dispatchStartedAt = DateTime.now();
+        final idempotencyKey = kitchenPrintIdempotencyKeyFromJob(
+          restaurantId: restaurantId,
+          job: job,
+          payload: resolvedPayload,
+        );
         await _markPrintJobPrinting(
           printJobId,
           dispatchStartedAt: dispatchStartedAt,
+          payload: resolvedPayload,
+        );
+        debugPrint(
+          '[KITCHEN_PHYSICAL_DISPATCH_ATTEMPT] '
+          'job_id=$printJobId '
+          'order_id=${_logValue(job['order_id'])} '
+          'station=$canonicalStationName '
+          'idempotency_key=$idempotencyKey '
+          'dispatch_source=immediate '
+          'printer=${printer.displayName} '
+          'backend=${printer.backend.value} '
+          'host=${resolvedPayload['selected_printer_host'] ?? resolvedPayload['host'] ?? resolvedPayload['ip_address'] ?? '-'} '
+          'port=${resolvedPayload['selected_printer_port'] ?? resolvedPayload['port'] ?? '-'}',
         );
         final bridgeWatch = Stopwatch()..start();
         logKitchenFinalBeforeBridge(
@@ -1821,7 +2258,7 @@ class OrderPrintJobService {
           payload: resolvedPayload,
         );
         final physicalResult = await _printOrchestrator.printPhysicalToPrinter(
-          resolvedPrinter,
+          printer,
           PrintPayload.fromQueuedJob(resolvedPayload),
           restaurantId: restaurantId,
           flowName: 'kitchen_order',
@@ -1834,27 +2271,23 @@ class OrderPrintJobService {
         );
         bridgeRequestMs = bridgeWatch.elapsedMilliseconds;
         printDispatchMs = watch.elapsedMilliseconds;
-        logPrintPerf(
-          'kitchen_order',
-          <String, Object?>{
-            'tap_at': tapAt,
-            'kitchen_payload_build_ms': kitchenPayloadBuildMs,
-            'print_dispatch_ms': printDispatchMs,
-            'bridge_request_ms': bridgeRequestMs,
-            'total_ms': watch.elapsedMilliseconds,
-            'total_submit_to_print_ms': watch.elapsedMilliseconds,
-            'print_job_id': printJobId,
-            'layer': 'order_print_job_service',
-            'ok': physicalResult.ok,
-            if (!physicalResult.ok)
-              'error':
-                  physicalResult.technicalMessage ?? physicalResult.message,
-          },
-        );
+        logPrintPerf('kitchen_order', <String, Object?>{
+          'tap_at': tapAt,
+          'kitchen_payload_build_ms': kitchenPayloadBuildMs,
+          'print_dispatch_ms': printDispatchMs,
+          'bridge_request_ms': bridgeRequestMs,
+          'total_ms': watch.elapsedMilliseconds,
+          'total_submit_to_print_ms': watch.elapsedMilliseconds,
+          'print_job_id': printJobId,
+          'layer': 'order_print_job_service',
+          'ok': physicalResult.ok,
+          if (!physicalResult.ok)
+            'error': physicalResult.technicalMessage ?? physicalResult.message,
+        });
         _logKitchen(
           'Dispatch',
           'orderId=${_logValue(job['order_id'])} tableNo=$tableNo area=$area '
-              'printerId=${resolvedPrinter.id} durationMs=${watch.elapsedMilliseconds} '
+              'printerId=${printer.id} durationMs=${watch.elapsedMilliseconds} '
               'encoding=${resolvedPayload['encoding'] ?? '-'} '
               'esc_t=${resolvedPayload['esc_t_value'] ?? resolvedPayload['codepage'] ?? '-'} '
               'esc_r=${resolvedPayload['esc_r_value'] ?? '-'} '
@@ -1863,9 +2296,93 @@ class OrderPrintJobService {
         if (!physicalResult.ok) {
           final failureMessage =
               physicalResult.technicalMessage ?? physicalResult.message;
+          _printerEventLogService
+              .append(
+                restaurantId: restaurantId,
+                event: 'kitchen_physical_print_failed',
+                message: 'Ethernet mutfak fişi yazdırılamadı.',
+                level: 'error',
+                jobId: printJobId,
+                role: 'mutfak',
+                printerId: printer.printerRecordId ?? printer.id,
+                queueName: printer.queueName,
+                backend: printer.backend.value,
+                details: <String, dynamic>{
+                  'print_job_id': printJobId,
+                  'station_id': jobStationId,
+                  'station_name': canonicalStationName,
+                  'selected_printer_id': printer.printerRecordId ?? printer.id,
+                  'selected_printer_name': printer.displayName,
+                  'backend': printer.backend.value,
+                  'host': _textValue(
+                    resolvedPayload['host'] ??
+                        resolvedPayload['ip_address'] ??
+                        resolvedPayload['ipAddress'],
+                  ),
+                  'port': _textValue(resolvedPayload['port']),
+                  'error': failureMessage,
+                  'bridge_status': physicalResult.status,
+                  'bridge_response': physicalResult.raw,
+                  'reason': 'printPhysicalToPrinter_returned_not_ok',
+                },
+              )
+              .ignore();
           if (_isConnectionError(
-            Exception(physicalResult.technicalMessage ?? physicalResult.message),
+            Exception(
+              physicalResult.technicalMessage ?? physicalResult.message,
+            ),
           )) {
+            if (_shouldFailTcpKitchenAfterDirectRetry(job, printer)) {
+              failedJobCount += 1;
+              failureMessages.add(
+                '$area/$printerName: Ethernet mutfak fişi yazdırılamadı. /print/kitchen bridge hatası.',
+              );
+              await _markPrintJobFailed(
+                printJobId,
+                requestUrl: requestUrl,
+                error:
+                    'Ethernet mutfak fişi yazdırılamadı. /print/kitchen bridge hatası. $failureMessage',
+              );
+              continue;
+            }
+            pendingForHubJobIds.add(printJobId);
+            _printerEventLogService
+                .append(
+                  restaurantId: restaurantId,
+                  event: 'kitchen_job_pending_for_hub',
+                  message:
+                      'Mutfak fişi hub\'a devredildi; fiziksel baskı henüz tamamlanmadı.',
+                  jobId: printJobId,
+                  role: 'mutfak',
+                  printerId: printer.printerRecordId ?? printer.id,
+                  queueName: printer.queueName,
+                  backend: printer.backend.value,
+                  details: <String, dynamic>{
+                    'handoff_to_hub': true,
+                    'printer_not_printed_yet': true,
+                    'print_pending_reason': failureMessage,
+                    'print_job_id': printJobId,
+                    'station_id': jobStationId,
+                    'station_name': _textValue(
+                      resolvedPayload['station_name'] ?? area,
+                      fallback: area,
+                    ),
+                    'resolution_source': preparedPayload.resolutionSource,
+                    'selected_printer_id':
+                        printer.printerRecordId ?? printer.id,
+                    'selected_printer_name': printer.displayName,
+                    'backend': printer.backend.value,
+                    'host': _textValue(
+                      resolvedPayload['host'] ??
+                          resolvedPayload['ip_address'] ??
+                          resolvedPayload['ipAddress'],
+                    ),
+                    'port': _textValue(resolvedPayload['port']),
+                    'status': 'pending_for_hub',
+                    'reason': failureMessage,
+                  },
+                )
+                .ignore();
             await _resetPrintJobToPending(
               printJobId,
               requestUrl: requestUrl,
@@ -1875,7 +2392,7 @@ class OrderPrintJobService {
             _logKitchen(
               'Dispatch',
               'orderId=${_logValue(job['order_id'])} tableNo=$tableNo area=$area '
-                  'printerId=${resolvedPrinter.id} printerName=${resolvedPrinter.displayName} '
+                  'printerId=${printer.id} printerName=${printer.displayName} '
                   'durationMs=${watch.elapsedMilliseconds} requestUrl=$requestUrl '
                   'phase=reset_pending_for_hub error=$failureMessage',
             );
@@ -1891,7 +2408,7 @@ class OrderPrintJobService {
           _logKitchen(
             'Error',
             'orderId=${_logValue(job['order_id'])} tableNo=$tableNo area=$area '
-                'printerId=${resolvedPrinter.id} printerName=${resolvedPrinter.displayName} itemCount=$itemCount '
+                'printerId=${printer.id} printerName=${printer.displayName} itemCount=$itemCount '
                 'durationMs=${watch.elapsedMilliseconds} requestUrl=$requestUrl '
                 'resolutionSource=${preparedPayload.resolutionSource}',
             error: Exception(failureMessage),
@@ -1903,6 +2420,13 @@ class OrderPrintJobService {
           printJobId,
           completedAt: DateTime.now(),
           bridgeResult: bridgeResult,
+          payload: resolvedPayload,
+        );
+        debugPrint(
+          '[KITCHEN_PHYSICAL_DISPATCH_COMPLETED] '
+          'job_id=$printJobId '
+          'idempotency_key=$idempotencyKey '
+          'completed_at=${DateTime.now().toIso8601String()}',
         );
         dispatchedJobCount += 1;
         _logKitchen(
@@ -1914,6 +2438,93 @@ class OrderPrintJobService {
       } catch (error, stackTrace) {
         final failureMessage = _compactError(error);
         if (_isConnectionError(error)) {
+          _printerEventLogService
+              .append(
+                restaurantId: restaurantId,
+                event: 'kitchen_physical_print_failed',
+                message: 'Ethernet mutfak fişi yazdırılamadı.',
+                level: 'error',
+                jobId: printJobId,
+                role: 'mutfak',
+                details: <String, dynamic>{
+                  'print_job_id': printJobId,
+                  'station_id': jobStationId,
+                  'station_name': area,
+                  'selected_printer_id': printerId,
+                  'selected_printer_name': printerName,
+                  'error': failureMessage,
+                  'reason': 'printPhysicalToPrinter_exception',
+                },
+              )
+              .ignore();
+          final retryPrinter = resolvedPrinterForAttempt;
+          if (retryPrinter == null) {
+            failedJobCount += 1;
+            failureMessages.add(
+              '$area/$printerName: Ethernet mutfak fişi yazdırılamadı. /print/kitchen bridge hatası.',
+            );
+            await _markPrintJobFailed(
+              printJobId,
+              requestUrl: requestUrl,
+              error:
+                  'Ethernet mutfak fişi yazdırılamadı. /print/kitchen bridge hatası. $failureMessage',
+            );
+            continue;
+          }
+          if (_shouldFailTcpKitchenAfterDirectRetry(job, retryPrinter)) {
+            failedJobCount += 1;
+            failureMessages.add(
+              '$area/$printerName: Ethernet mutfak fişi yazdırılamadı. /print/kitchen bridge hatası.',
+            );
+            await _markPrintJobFailed(
+              printJobId,
+              requestUrl: requestUrl,
+              error:
+                  'Ethernet mutfak fişi yazdırılamadı. /print/kitchen bridge hatası. $failureMessage',
+            );
+            logPrintPerf('kitchen_order', <String, Object?>{
+              'tap_at': tapAt,
+              'kitchen_payload_build_ms': kitchenPayloadBuildMs,
+              'print_dispatch_ms': watch.elapsedMilliseconds,
+              'bridge_request_ms': bridgeRequestMs,
+              'total_ms': watch.elapsedMilliseconds,
+              'total_submit_to_print_ms': watch.elapsedMilliseconds,
+              'print_job_id': printJobId,
+              'layer': 'order_print_job_service',
+              'ok': false,
+              'error': failureMessage,
+            });
+            continue;
+          }
+          pendingForHubJobIds.add(printJobId);
+          _printerEventLogService
+              .append(
+                restaurantId: restaurantId,
+                event: 'kitchen_job_pending_for_hub',
+                message:
+                    'Mutfak fişi hub\'a devredildi; fiziksel baskı henüz tamamlanmadı.',
+                jobId: printJobId,
+                role: 'mutfak',
+                details: <String, dynamic>{
+                  'handoff_to_hub': true,
+                  'printer_not_printed_yet': true,
+                  'print_pending_reason': failureMessage,
+                  'print_job_id': printJobId,
+                  'station_id': jobStationId,
+                  'station_name': area,
+                  'resolution_source': resolutionSourceForAttempt,
+                  'backend': retryPrinter.backend.value,
+                  'host': _textValue(
+                    resolvedPayloadForAttempt?['host'] ??
+                        resolvedPayloadForAttempt?['ip_address'] ??
+                        resolvedPayloadForAttempt?['ipAddress'],
+                  ),
+                  'port': _textValue(resolvedPayloadForAttempt?['port']),
+                  'status': 'pending_for_hub',
+                  'reason': failureMessage,
+                },
+              )
+              .ignore();
           // Bridge unreachable from this device (e.g. garson on a tablet,
           // bridge running on the restaurant’s desktop). Reset to 'pending'
           // so DesktopPrintHub can dispatch it when the UPDATE listener fires.
@@ -1948,21 +2559,18 @@ class OrderPrintJobService {
             stackTrace: stackTrace,
           );
         }
-        logPrintPerf(
-          'kitchen_order',
-          <String, Object?>{
-            'tap_at': tapAt,
-            'kitchen_payload_build_ms': kitchenPayloadBuildMs,
-            'print_dispatch_ms': watch.elapsedMilliseconds,
-            'bridge_request_ms': bridgeRequestMs,
-            'total_ms': watch.elapsedMilliseconds,
-            'total_submit_to_print_ms': watch.elapsedMilliseconds,
-            'print_job_id': printJobId,
-            'layer': 'order_print_job_service',
-            'ok': false,
-            'error': failureMessage,
-          },
-        );
+        logPrintPerf('kitchen_order', <String, Object?>{
+          'tap_at': tapAt,
+          'kitchen_payload_build_ms': kitchenPayloadBuildMs,
+          'print_dispatch_ms': watch.elapsedMilliseconds,
+          'bridge_request_ms': bridgeRequestMs,
+          'total_ms': watch.elapsedMilliseconds,
+          'total_submit_to_print_ms': watch.elapsedMilliseconds,
+          'print_job_id': printJobId,
+          'layer': 'order_print_job_service',
+          'ok': false,
+          'error': failureMessage,
+        });
       }
     }
 
@@ -1970,6 +2578,13 @@ class OrderPrintJobService {
       dispatchedJobCount: dispatchedJobCount,
       failedJobCount: failedJobCount,
       failureMessages: failureMessages,
+      handoffToHub: pendingForHubJobIds.isNotEmpty,
+      printerNotPrintedYet: pendingForHubJobIds.isNotEmpty,
+      pendingReason: pendingForHubJobIds.isNotEmpty
+          ? 'reset_pending_for_hub'
+          : null,
+      pendingForHubJobIds: pendingForHubJobIds,
+      dispatchPath: pendingForHubJobIds.isNotEmpty ? 'pending_for_hub' : '',
     );
   }
 
@@ -1980,7 +2595,7 @@ class OrderPrintJobService {
     final rows = await _client
         .from('print_jobs')
         .select(
-          'id, restaurant_id, order_id, station_id, printer_id, job_type, payload, status',
+          'id, restaurant_id, order_id, station_id, printer_id, job_type, payload, status, last_error',
         )
         .inFilter('id', printJobIds);
     return List<Map<String, dynamic>>.from(
@@ -1991,6 +2606,7 @@ class OrderPrintJobService {
   Future<void> _markPrintJobPrinting(
     String printJobId, {
     required DateTime dispatchStartedAt,
+    Map<String, dynamic>? payload,
   }) async {
     await _client
         .from('print_jobs')
@@ -1998,6 +2614,9 @@ class OrderPrintJobService {
           'status': 'printing',
           'last_error': null,
           'dispatch_started_at': dispatchStartedAt.toIso8601String(),
+          if (payload?['printer_record_id'] != null)
+            'printer_id': payload!['printer_record_id'],
+          ...?payload == null ? null : <String, dynamic>{'payload': payload},
         })
         .eq('id', printJobId)
         .inFilter('status', ['claimed', 'pending']);
@@ -2007,6 +2626,7 @@ class OrderPrintJobService {
     String printJobId, {
     required DateTime completedAt,
     Map<String, dynamic>? bridgeResult,
+    Map<String, dynamic>? payload,
   }) async {
     await _client
         .from('print_jobs')
@@ -2015,6 +2635,9 @@ class OrderPrintJobService {
           'last_error': null,
           'printed_at': completedAt.toIso8601String(),
           'completed_at': completedAt.toIso8601String(),
+          if (payload?['printer_record_id'] != null)
+            'printer_id': payload!['printer_record_id'],
+          ...?payload == null ? null : <String, dynamic>{'payload': payload},
           'printer_write_started_at': bridgeResult?['printer_write_started_at'],
           'printer_write_completed_at':
               bridgeResult?['printer_write_completed_at'],
@@ -2035,6 +2658,84 @@ class OrderPrintJobService {
           'printed_at': null,
         })
         .eq('id', printJobId);
+  }
+
+  Future<void> _markPrintJobDedupSkipped(
+    String printJobId, {
+    required String existingJobId,
+    required String idempotencyKey,
+  }) async {
+    await _client
+        .from('print_jobs')
+        .update({
+          'status': 'completed',
+          'last_error':
+              'duplicate_same_order_station_revision existing_job_id=$existingJobId '
+              'idempotency_key=$idempotencyKey',
+          'completed_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', printJobId);
+  }
+
+  Future<List<String>> _suppressDuplicateKitchenJobs({
+    required String restaurantId,
+    required String traceId,
+    required int tableNumber,
+    required String jobType,
+    required List<String> printJobIds,
+    required Map<String, Map<String, dynamic>> jobsById,
+  }) async {
+    if (printJobIds.length <= 1) return printJobIds;
+    final keysByJobId = <String, String>{};
+    for (final printJobId in printJobIds) {
+      final job = jobsById[printJobId];
+      if (job == null) continue;
+      final payload = job['payload'] is Map
+          ? Map<String, dynamic>.from(job['payload'] as Map)
+          : const <String, dynamic>{};
+      keysByJobId[printJobId] = kitchenPrintIdempotencyKeyFromJob(
+        restaurantId: restaurantId,
+        job: job,
+        payload: payload,
+      );
+    }
+    final deduped = dedupeKitchenJobIdsByKey(keysByJobId);
+    if (deduped.duplicateOfByJobId.isEmpty) return printJobIds;
+    for (final entry in deduped.duplicateOfByJobId.entries) {
+      final duplicateJobId = entry.key;
+      final existingJobId = entry.value;
+      final idempotencyKey = keysByJobId[duplicateJobId] ?? '';
+      debugPrint(
+        '[KITCHEN_JOB_DEDUP_SKIPPED] '
+        'existing_job_id=$existingJobId '
+        'idempotency_key=$idempotencyKey '
+        'reason=duplicate_same_order_station_revision',
+      );
+      _printerEventLogService
+          .append(
+            restaurantId: restaurantId,
+            event: 'kitchen_job_dedup_skipped',
+            message:
+                'Aynı mutfak fişi tekrar gönderilmek üzereydi, sistem engelledi.',
+            jobId: duplicateJobId,
+            role: 'mutfak',
+            details: <String, dynamic>{
+              'traceId': traceId,
+              'tableNumber': tableNumber,
+              'jobType': jobType,
+              'existing_job_id': existingJobId,
+              'idempotency_key': idempotencyKey,
+              'reason': 'duplicate_same_order_station_revision',
+            },
+          )
+          .ignore();
+      await _markPrintJobDedupSkipped(
+        duplicateJobId,
+        existingJobId: existingJobId,
+        idempotencyKey: idempotencyKey,
+      );
+    }
+    return deduped.primaryJobIds;
   }
 
   /// Atomically claim a print job for direct HTTP dispatch.
@@ -2087,6 +2788,15 @@ class OrderPrintJobService {
         raw.contains('socketexception') ||
         raw.contains('failed host lookup') ||
         raw.contains('timeout');
+  }
+
+  bool _shouldFailTcpKitchenAfterDirectRetry(
+    Map<String, dynamic> job,
+    UnifiedPrinterModel resolvedPrinter,
+  ) {
+    if (resolvedPrinter.backend != DesktopPrinterBackend.tcp) return false;
+    final lastError = _textValue(job['last_error'], fallback: '').toLowerCase();
+    return lastError.contains('direct_dispatch_failed');
   }
 
   /// Reset a print job back to `pending` after a connection-level failure so
@@ -2194,16 +2904,17 @@ class OrderPrintJobService {
     }
 
     final originalItemCount = rawItems.length;
-    final stationHeader = KitchenTicketHeaderResolver.finalizeKitchenTicketHeader(
-      overrideHeader: kitchenTicketHeaderOverride,
-      rawItems: rawItems,
-      payload: payload,
-      stationId: stationId,
-      stationNamesById: stationNamesById,
-      stationCodesById: stationCodesById,
-      productStationByProductId: productStationByProductId,
-      tableAreaName: tableAreaName ?? diningArea,
-    );
+    final stationHeader =
+        KitchenTicketHeaderResolver.finalizeKitchenTicketHeader(
+          overrideHeader: kitchenTicketHeaderOverride,
+          rawItems: rawItems,
+          payload: payload,
+          stationId: stationId,
+          stationNamesById: stationNamesById,
+          stationCodesById: stationCodesById,
+          productStationByProductId: productStationByProductId,
+          tableAreaName: tableAreaName ?? diningArea,
+        );
     var fallbackReason = 'resolved';
     if (stationHeader == kKitchenGeneralStationLabel) {
       fallbackReason = stationId.isEmpty
@@ -2349,7 +3060,7 @@ class OrderPrintJobService {
         _logKitchen(
           'Payload',
           'missingItems orderId=$orderId tableNo=$tableNo area=$stationHeader '
-                'itemId=$itemId itemName=$itemName reason=empty_after_filter '
+              'itemId=$itemId itemName=$itemName reason=empty_after_filter '
               'itemSource=$itemSourceLabel',
         );
         continue;
@@ -2594,7 +3305,9 @@ class OrderPrintJobService {
     if (baseName.isNotEmpty && baseName != printLabel) {
       kitchenItem['product_name'] = baseName;
     }
-    final amountLabel = GarsonProductSelection.resolvePrintItemAmountLabel(item);
+    final amountLabel = GarsonProductSelection.resolvePrintItemAmountLabel(
+      item,
+    );
     final pricingMode = item['pricing_mode']?.toString().trim() ?? '';
     if (pricingMode.isNotEmpty) {
       kitchenItem['pricing_mode'] = pricingMode;
@@ -2721,7 +3434,9 @@ class OrderPrintJobService {
     if (baseName.isNotEmpty && baseName != printLabel) {
       payload['product_name'] = baseName;
     }
-    final amountLabel = GarsonProductSelection.resolvePrintItemAmountLabel(child);
+    final amountLabel = GarsonProductSelection.resolvePrintItemAmountLabel(
+      child,
+    );
     final note = _textValue(child['note'] ?? child['notes'], fallback: '');
     final stationId = _textValue(child['station_id'], fallback: '');
     if (amountLabel.isNotEmpty) {
@@ -3015,6 +3730,146 @@ class OrderPrintJobService {
         .toList(growable: false);
   }
 
+  void _stampResolvedKitchenPrinterPayload(
+    Map<String, dynamic> payload, {
+    required UnifiedPrinterModel printer,
+    required String stationName,
+  }) {
+    final printerPayload = _printOrchestrator.buildDispatchPrinterPayload(
+      printer,
+    );
+    payload['printer'] = printerPayload;
+    payload['printer_role'] = 'mutfak';
+    payload['printer_id'] = printer.id;
+    payload['printer_name'] = printer.displayName;
+    payload['printer_queue'] = printer.queueName;
+    payload['printer_backend'] = printer.backend.value;
+    payload['backend'] = printer.backend.value;
+    payload['transportType'] =
+        printerPayload['transportType'] ?? printer.backend.value;
+    payload['transport_type'] =
+        printerPayload['transport_type'] ??
+        payload['transportType'] ??
+        printer.backend.value;
+    payload['printer_record_id'] =
+        printer.printerRecordId ??
+        printerPayload['printer_record_id'] ??
+        payload['printer_record_id'];
+    payload['station_name'] = stationName;
+    if (printer.backend == DesktopPrinterBackend.tcp) {
+      final host =
+          (printerPayload['host'] ??
+                  printerPayload['ip_address'] ??
+                  printerPayload['ipAddress'])
+              ?.toString() ??
+          '';
+      final port = printerPayload['port'];
+      if (host.isNotEmpty) {
+        payload['host'] = host;
+        payload['ip_address'] = host;
+        payload['ipAddress'] = host;
+      }
+      payload['port'] = port;
+      payload['paper_width_mm'] =
+          printerPayload['paper_width_mm'] ?? payload['paper_width_mm'] ?? 80;
+      payload['auto_cut'] =
+          printerPayload['auto_cut'] ?? payload['auto_cut'] ?? true;
+    }
+  }
+
+  String? _printerHostForPayload(UnifiedPrinterModel printer) {
+    final raw = printer.raw;
+    return (raw['host'] ?? raw['ip_address'] ?? raw['ipAddress'])?.toString();
+  }
+
+  int? _printerPortForPayload(UnifiedPrinterModel printer) {
+    final rawPort = printer.raw['port'] ?? printer.raw['tcp_port'];
+    if (rawPort is int) return rawPort;
+    return int.tryParse(rawPort?.toString() ?? '');
+  }
+
+  void _logOrderPrintJobCreate({
+    required String stationName,
+    required String stationId,
+    required UnifiedPrinterModel printer,
+  }) {
+    debugPrint('[PrinterMapping][current_before_order]');
+    debugPrint('receipt=-');
+    debugPrint(
+      'kitchen=${printer.displayName} backend=${printer.backend.value}',
+    );
+    debugPrint('[OrderPrintJob][create]');
+    debugPrint('documentType=kitchen');
+    debugPrint('printerRole=mutfak');
+    debugPrint('stationName=${stationName.isEmpty ? '-' : stationName}');
+    debugPrint('stationId=${stationId.isEmpty ? '-' : stationId}');
+    debugPrint('resolvedPrinterId=${printer.id}');
+    debugPrint('backend=${printer.backend.value}');
+    debugPrint('host=${_printerHostForPayload(printer) ?? '-'}');
+    debugPrint('port=${_printerPortForPayload(printer)?.toString() ?? '-'}');
+  }
+
+  void _logOrderPrintJobPersistedPayload(Map<String, dynamic> payload) {
+    debugPrint('[KitchenPrintJob][persisted_payload]');
+    debugPrint('documentType=${payload['document_type'] ?? 'kitchen'}');
+    debugPrint('printerRole=${payload['printer_role'] ?? 'mutfak'}');
+    debugPrint('printer_id=${payload['printer_id'] ?? '-'}');
+    debugPrint(
+      'backend=${payload['backend'] ?? payload['printer_backend'] ?? '-'}',
+    );
+    debugPrint(
+      'host=${payload['host'] ?? payload['ip_address'] ?? payload['ipAddress'] ?? '-'}',
+    );
+    debugPrint('port=${payload['port'] ?? '-'}');
+    debugPrint('paperWidthMm=${payload['paper_width_mm'] ?? '-'}');
+    debugPrint(
+      'printerProfile=${payload['printer_profile'] ?? payload['printer_profile_id'] ?? '-'}',
+    );
+    debugPrint('renderMode=${payload['render_mode'] ?? '-'}');
+  }
+
+  void _logOrderPrintJobDispatchLoaded(Map<String, dynamic> payload) {
+    debugPrint('[DesktopPrintHub][loaded_job]');
+    debugPrint('documentType=${payload['document_type'] ?? '-'}');
+    debugPrint('printer_id=${payload['printer_id'] ?? '-'}');
+    debugPrint(
+      'backend=${payload['backend'] ?? payload['printer_backend'] ?? '-'}',
+    );
+    debugPrint(
+      'host=${payload['host'] ?? payload['ip_address'] ?? payload['ipAddress'] ?? payload['target_host'] ?? '-'}',
+    );
+    debugPrint('port=${payload['port'] ?? payload['target_port'] ?? '-'}');
+  }
+
+  bool _isBlockedKitchenDispatchPrinter(UnifiedPrinterModel printer) {
+    if (printer.backend == DesktopPrinterBackend.cups ||
+        printer.backend == DesktopPrinterBackend.usbDirect) {
+      return true;
+    }
+    final text = '${printer.id} ${printer.queueName} ${printer.displayName}'
+        .toLowerCase();
+    return text.contains('pos58') || text.contains('stmicroelectronics');
+  }
+
+  bool _matchesExpectedKitchenResolution(
+    UnifiedPrinterModel? printer,
+    ExpectedKitchenPrinterResolution expected,
+  ) {
+    if (printer == null) {
+      return false;
+    }
+    final recordId = printer.printerRecordId?.trim() ?? '';
+    if (recordId.isNotEmpty && recordId == expected.printer.id) {
+      return true;
+    }
+    if (expected.isTcp) {
+      return _printerHostForPayload(printer) == expected.host &&
+          _printerPortForPayload(printer) == expected.port;
+    }
+    return printer.queueName.trim().toLowerCase() ==
+        expected.queue.trim().toLowerCase();
+  }
+
   Map<String, dynamic> _jobPayload(Map<String, dynamic> row) {
     final rawPayload = row['payload'];
     if (rawPayload is Map<String, dynamic>) {
@@ -3030,8 +3885,11 @@ class OrderPrintJobService {
     Map<String, dynamic> row,
   ) async {
     final payload = Map<String, dynamic>.from(_jobPayload(row));
+    _synthesizeTcpPayloadMetadata(payload);
     final printerId = _textValue(
-      row['printer_id'] ?? payload['printer_id'],
+      payload['printer_record_id'] ??
+          row['printer_id'] ??
+          payload['printer_id'],
       fallback: '',
     );
     if (_hasPrinterEncoding(payload) && _hasPrinterRoles(payload)) {
@@ -3159,13 +4017,134 @@ class OrderPrintJobService {
     return rendered.isEmpty ? fallback : rendered;
   }
 
+  Future<void> _debugGarsonPrintConfigSnapshot({
+    required String restaurantId,
+    required List<Map<String, dynamic>> normalizedItems,
+  }) async {
+    try {
+      final snapshot = await _printOrchestrator.loadSetupSnapshot(
+        restaurantId: restaurantId,
+        minimal: true,
+        flowName: 'garson_submit_snapshot',
+        source: 'order_print_job_service',
+      );
+      final receiptPrinter = snapshot.localConfig?.receiptSelection?.printer;
+      final kitchenPrinter = snapshot.localConfig?.kitchenSelection?.printer;
+      debugPrint('[GarsonPrint][role_config_snapshot]');
+      debugPrint('receiptPrinterId=${receiptPrinter?.id ?? '-'}');
+      debugPrint('receiptName=${receiptPrinter?.displayName ?? '-'}');
+      debugPrint('receiptBackend=${receiptPrinter?.backend.value ?? '-'}');
+      debugPrint(
+        'receiptHost=${receiptPrinter == null ? '-' : _printerHostForPayload(receiptPrinter) ?? '-'}',
+      );
+      debugPrint(
+        'receiptPort=${receiptPrinter == null ? '-' : _printerPortForPayload(receiptPrinter)?.toString() ?? '-'}',
+      );
+      debugPrint('kitchenPrinterId=${kitchenPrinter?.id ?? '-'}');
+      debugPrint('kitchenName=${kitchenPrinter?.displayName ?? '-'}');
+      debugPrint('kitchenBackend=${kitchenPrinter?.backend.value ?? '-'}');
+      debugPrint(
+        'kitchenHost=${kitchenPrinter == null ? '-' : _printerHostForPayload(kitchenPrinter) ?? '-'}',
+      );
+      debugPrint(
+        'kitchenPort=${kitchenPrinter == null ? '-' : _printerPortForPayload(kitchenPrinter)?.toString() ?? '-'}',
+      );
+
+      final stationNames = _readCachedStationNames(restaurantId);
+      final stationCodes = _readCachedStationCodes(restaurantId);
+      final mappings = (await _printerRepository.fetchStationPrinterMappings(
+        restaurantId,
+      )).whereType<StationPrinterModel>().toList(growable: false);
+      final stationsById = <String>{};
+      for (final item in normalizedItems) {
+        final stationId = _textValue(item['station_id']);
+        if (stationId.isNotEmpty) {
+          stationsById.add(stationId);
+        }
+      }
+      debugPrint('[GarsonPrint][station_config_snapshot]');
+      for (final stationId in stationsById) {
+        final stationMappings =
+            mappings
+                .where((entry) => entry.stationId == stationId)
+                .toList(growable: false)
+              ..sort((a, b) {
+                if (a.isPrimary != b.isPrimary) {
+                  return a.isPrimary ? -1 : 1;
+                }
+                return a.createdAt.compareTo(b.createdAt);
+              });
+        final mapping = stationMappings.isEmpty ? null : stationMappings.first;
+        final legacyPrinter = mapping == null
+            ? null
+            : await _printerRepository.getPrinterByRecordId(mapping.printerId);
+        final stationName =
+            stationNames[stationId] ??
+            mapping?.stationName ??
+            stationCodes[stationId] ??
+            stationId;
+        debugPrint(
+          'station=$stationName printerId=${legacyPrinter?.code ?? legacyPrinter?.id ?? '-'} backend=${legacyPrinter?.connectionType ?? '-'} host=${legacyPrinter?.ipAddress ?? '-'} port=${legacyPrinter?.port?.toString() ?? '-'}',
+        );
+      }
+    } catch (error, stackTrace) {
+      _logKitchen(
+        'ConfigSnapshot',
+        'restaurantId=$restaurantId phase=failed error=$error',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  void _synthesizeTcpPayloadMetadata(Map<String, dynamic> payload) {
+    final printerId = _textValue(payload['printer_id']);
+    final host = _textValue(
+      payload['host'] ??
+          payload['ip_address'] ??
+          payload['ipAddress'] ??
+          payload['target_host'],
+    );
+    final portRaw = payload['port'] ?? payload['target_port'];
+    var port = portRaw is int
+        ? portRaw
+        : int.tryParse(portRaw?.toString() ?? '');
+    if (printerId.toLowerCase().startsWith('tcp:')) {
+      final parts = printerId.split(':');
+      if (parts.length >= 3) {
+        if (host.isEmpty) {
+          payload['host'] = parts[1].trim();
+          payload['ip_address'] = parts[1].trim();
+          payload['ipAddress'] = parts[1].trim();
+        }
+        port ??= int.tryParse(parts[2].trim());
+      }
+    }
+    final effectiveHost = _textValue(
+      payload['host'] ?? payload['ip_address'] ?? payload['ipAddress'],
+    );
+    if (!printerId.toLowerCase().startsWith('tcp:') ||
+        effectiveHost.isEmpty ||
+        (port ?? 0) <= 0) {
+      return;
+    }
+    payload['printer_backend'] = 'tcp';
+    payload['backend'] = 'tcp';
+    payload['transportType'] = 'ethernet';
+    payload['transport_type'] = 'ethernet';
+    payload['port'] = port;
+    payload['paper_width_mm'] = payload['paper_width_mm'] ?? 80;
+    payload['auto_cut'] = payload['auto_cut'] ?? true;
+  }
+
   Map<String, String> _stationNamesFromItems(List<Map<String, dynamic>> items) {
     final map = <String, String>{};
     for (final item in items) {
       final stationId = item['station_id']?.toString().trim() ?? '';
-      final stationName = KitchenTicketHeaderResolver.sanitizeProductionStationName(
-        item['station_name']?.toString() ?? '',
-      );
+      final stationName =
+          KitchenTicketHeaderResolver.sanitizeProductionStationName(
+            item['station_name']?.toString() ?? '',
+          );
       if (stationId.isNotEmpty &&
           stationName.isNotEmpty &&
           stationName != kKitchenGeneralStationLabel) {
@@ -3195,13 +4174,17 @@ class OrderPrintJobService {
     return Map<String, String>.from(cached);
   }
 
-  Future<_KitchenStationNamesResolveResult> _resolveStationNamesForKitchenPrint({
+  Future<_KitchenStationNamesResolveResult>
+  _resolveStationNamesForKitchenPrint({
     required String restaurantId,
     required List<Map<String, dynamic>> items,
     required bool fastPath,
   }) async {
     final fromItems = _stationNamesFromItems(items);
-    final merged = <String, String>{..._readCachedStationNames(restaurantId), ...fromItems};
+    final merged = <String, String>{
+      ..._readCachedStationNames(restaurantId),
+      ...fromItems,
+    };
     var fallbackReason = '';
 
     final missingIds = <String>{};
@@ -3209,9 +4192,10 @@ class OrderPrintJobService {
       final stationId = item['station_id']?.toString().trim() ?? '';
       if (stationId.isEmpty) continue;
       final hasName = merged[stationId]?.trim().isNotEmpty == true;
-      final itemName = KitchenTicketHeaderResolver.sanitizeProductionStationName(
-        item['station_name']?.toString() ?? '',
-      );
+      final itemName =
+          KitchenTicketHeaderResolver.sanitizeProductionStationName(
+            item['station_name']?.toString() ?? '',
+          );
       if (!hasName &&
           (itemName.isEmpty || itemName == kKitchenGeneralStationLabel)) {
         missingIds.add(stationId);
@@ -3248,7 +4232,9 @@ class OrderPrintJobService {
     );
   }
 
-  Future<Map<String, String>> _fetchStationNamesById(String restaurantId) async {
+  Future<Map<String, String>> _fetchStationNamesById(
+    String restaurantId,
+  ) async {
     try {
       final rows = await _client
           .from('stations')
@@ -3300,9 +4286,12 @@ class OrderPrintJobService {
       logKitchenRoutingGroupInput(item);
       var stationId = item['station_id']?.toString().trim() ?? '';
       final productId = item['product_id']?.toString().trim() ?? '';
-      final mapping =
-          productId.isEmpty ? null : productStationByProductId?[productId];
-      if (stationId.isEmpty && mapping != null && mapping.stationId.isNotEmpty) {
+      final mapping = productId.isEmpty
+          ? null
+          : productStationByProductId?[productId];
+      if (stationId.isEmpty &&
+          mapping != null &&
+          mapping.stationId.isNotEmpty) {
         stationId = mapping.stationId;
         item['station_id'] = stationId;
       }
@@ -3313,20 +4302,24 @@ class OrderPrintJobService {
         item['station_code'] = stationCodesById![stationId]!;
       }
       final key = stationId.isEmpty ? '__general__' : stationId;
-      final stationName = KitchenTicketHeaderResolver.resolveProductionHeaderForItem(
-        item: item,
-        stationNamesById: stationNamesById,
-        stationCodesById: stationCodesById,
-        productStationByProductId: productStationByProductId,
-      );
-      grouped.putIfAbsent(
-        key,
-        () => _KitchenStationPrintGroup(
-          stationId: stationId,
-          stationName: stationName,
-          items: <Map<String, dynamic>>[],
-        ),
-      ).items.add(item);
+      final stationName =
+          KitchenTicketHeaderResolver.resolveProductionHeaderForItem(
+            item: item,
+            stationNamesById: stationNamesById,
+            stationCodesById: stationCodesById,
+            productStationByProductId: productStationByProductId,
+          );
+      grouped
+          .putIfAbsent(
+            key,
+            () => _KitchenStationPrintGroup(
+              stationId: stationId,
+              stationName: stationName,
+              items: <Map<String, dynamic>>[],
+            ),
+          )
+          .items
+          .add(item);
       logKitchenRoutingGroupCreated(
         groupKey: key,
         stationId: stationId,

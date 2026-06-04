@@ -5,11 +5,16 @@ import 'windows_printer_classification.dart';
 enum DesktopPrinterBackend {
   usbDirect('usb-direct'),
   cups('cups'),
-  windowsSpool('windows-spool');
+  windowsSpool('windows-spool'),
+  tcp('tcp');
 
   const DesktopPrinterBackend(this.value);
 
   final String value;
+
+  /// True for Ethernet / Wi-Fi raw TCP printers (e.g. NETUM ZJ-8360 Ethernet
+  /// configured on port 9100). The bridge bypasses CUPS/USB for this backend.
+  bool get isNetwork => this == DesktopPrinterBackend.tcp;
 
   static DesktopPrinterBackend fromValue(String? raw) {
     switch ((raw ?? '').trim().toLowerCase()) {
@@ -19,6 +24,11 @@ enum DesktopPrinterBackend {
       case 'windows':
       case 'windows-spool':
         return DesktopPrinterBackend.windowsSpool;
+      case 'tcp':
+      case 'network-tcp':
+      case 'ethernet':
+      case 'network':
+        return DesktopPrinterBackend.tcp;
       case 'cups':
       default:
         return DesktopPrinterBackend.cups;
@@ -63,6 +73,50 @@ enum PrinterSetupRole {
   }
 }
 
+class PrinterDispatchTarget {
+  const PrinterDispatchTarget({
+    required this.printerId,
+    required this.name,
+    required this.backend,
+    required this.transportType,
+    required this.documentType,
+    required this.role,
+    this.host,
+    this.port,
+    this.printerRecordId,
+    this.queueName,
+  });
+
+  final String printerId;
+  final String name;
+  final String backend;
+  final String transportType;
+  final String documentType;
+  final String role;
+  final String? host;
+  final int? port;
+  final String? printerRecordId;
+  final String? queueName;
+
+  Map<String, dynamic> toBridgePayload() {
+    return <String, dynamic>{
+      'printer_id': printerId,
+      'printer_name': name,
+      'backend': backend,
+      'transportType': transportType,
+      'transport_type': transportType,
+      if (host != null && host!.trim().isNotEmpty) 'target_host': host,
+      if (port != null) 'target_port': port,
+      if (queueName != null && queueName!.trim().isNotEmpty)
+        'printer_queue': queueName,
+      if (printerRecordId != null && printerRecordId!.trim().isNotEmpty)
+        'printer_record_id': printerRecordId,
+      'document_type': documentType,
+      'printer_role': role,
+    };
+  }
+}
+
 class UnifiedPrinterModel {
   const UnifiedPrinterModel({
     required this.id,
@@ -99,6 +153,10 @@ class UnifiedPrinterModel {
   final Map<String, dynamic> raw;
 
   bool get prefersUsbDirect => backend == DesktopPrinterBackend.usbDirect;
+  bool get isDuplicatePhysicalPrinter => raw['duplicatePhysicalPrinter'] == true;
+  bool get isRecommendedBackend => raw['recommended'] == true;
+  String? get recommendedBackend => raw['recommendedBackend']?.toString();
+  String? get backendStatusLabel => raw['backendStatusLabel']?.toString();
 
   /// True when the printer came from a live bridge scan (/printers or /discover).
   bool get isLiveDiscovery => raw['source']?.toString() != 'saved_record';

@@ -526,4 +526,27 @@ void main() {
       },
     );
   });
+
+  group('shouldBlockGarsonBackgroundPublish', () {
+    test('submit and local table mutation sources are never blocked', () {
+      for (final source in const <String>[
+        'garson_order_submit',
+        'garson_table_route_popped',
+        'garson_local_table_action',
+      ]) {
+        expect(
+          shouldBlockGarsonBackgroundPublish(
+            selectedModule: SellerModule.garson,
+            manualRefreshInProgress: false,
+            hasPublishedData: true,
+            source: source,
+          ),
+          isFalse,
+          reason:
+              'source=$source must publish immediately so the Garson grid '
+              'reflects a freshly submitted order when the table flow closes',
+        );
+      }
+    });
+  });
 }

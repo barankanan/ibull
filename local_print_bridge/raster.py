@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Iterable
 
-from .config import BridgeSettings
+from .config import BridgeSettings, default_raster_width_px
 from .models import KitchenItem, KitchenPayload, ReceiptItem, ReceiptPayload, _parse_datetime
 from .pillow_probe import probe_pillow
 from .receipt import _cut, _feed, _init_printer, resolve_receipt_table_label_lines
@@ -287,6 +287,20 @@ class RasterizedDocument:
     width_px: int
     height_px: int
     chunk_count: int
+    chunk_heights: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class RasterChunk:
+    index: int
+    total: int
+    width_px: int
+    height_px: int
+    source_height_px: int
+    bytes_per_row: int
+    data_len: int
+    command_len: int
+    command: str
 
 
 @dataclass(frozen=True)
@@ -303,7 +317,8 @@ class _TextBlock:
 class _BitmapRendererBase:
     def __init__(self, settings: BridgeSettings) -> None:
         self.settings = settings
-        self.width_px = _paper_width_px(settings.paper_width_mm)
+        configured_width = getattr(settings, "raster_width_px", None)
+        self.width_px = configured_width or _paper_width_px(settings.paper_width_mm)
         self.margin_x = 12 if self.width_px <= 384 else 16
         self.top_padding = 8
         self.bottom_padding = 8
@@ -602,7 +617,16 @@ class ReceiptBitmapRenderer(_BitmapRendererBase):
                     spacing_after=0,
                 )
             )
-        return self._build_image(blocks)
+        image = self._build_image(blocks)
+        LOGGER.info(
+            "[ReceiptLayout][summary] items=%d blocks=%d estimatedHeight=%d paperWidthPx=%d charsPerLine=%d",
+            len(payload.items),
+            len(blocks),
+            image.size[1],
+            self.width_px,
+            self.settings.chars_per_line,
+        )
+        return image
 
     def _item_blocks(self, item: ReceiptItem, currency: str) -> list[_TextBlock]:
         blocks = [
@@ -611,22 +635,13 @@ class ReceiptBitmapRenderer(_BitmapRendererBase):
                 f"{self._format_quantity(item.quantity)} x {item.name}",
                 right_text=self._format_money(item.line_total, currency),
                 size=22,
-                spacing_after=2,
+                spacing_after=1,
             )
         ]
         if item.note:
             blocks.append(_TextBlock("text", f"Not: {item.note}", size=20, spacing_after=2))
-        if item.unit_price is not None:
-            blocks.append(
-                _TextBlock(
-                    "text",
-                    f"Birim: {self._format_money(item.unit_price, currency)}",
-                    size=20,
-                    spacing_after=6,
-                )
-            )
         else:
-            blocks.append(_TextBlock("space", spacing_after=6))
+            blocks.append(_TextBlock("space", spacing_after=3))
         return blocks
 
 
@@ -690,7 +705,16 @@ class KitchenBitmapRenderer(_BitmapRendererBase):
         blocks.append(_TextBlock("rule", spacing_after=4))
         for item in payload.items:
             blocks.extend(self._item_blocks(item))
-        return self._build_image(blocks)
+        image = self._build_image(blocks)
+        LOGGER.info(
+            "[KitchenLayout][summary] items=%d blocks=%d estimatedHeight=%d paperWidthPx=%d charsPerLine=%d",
+            len(payload.items),
+            len(blocks),
+            image.size[1],
+            self.width_px,
+            self.settings.chars_per_line,
+        )
+        return image
 
     def _debug_header_lines(
         self,
@@ -761,19 +785,36 @@ class RasterEscPosEncoder:
 
     def encode(self, image: "Image.Image") -> RasterizedDocument:
         _require_pillow()
-        if image.mode != "1":
-            grayscale = image.convert("L")
-            image = grayscale.point(lambda value: 0 if value < 180 else 255, mode="1")
+        image = self._normalize_image(image)
         width_px, height_px = image.size
-        # Use large chunk height to minimise the number of GS v0 commands and
-        # USB round-trips.  Ideally the entire image fits in a single chunk.
-        chunk_height = max(256, self.settings.raster_chunk_height)
         chunks: list[bytes] = [_init_printer()]
         chunk_count = 0
-        for top in range(0, height_px, chunk_height):
-            bottom = min(top + chunk_height, height_px)
+        chunk_heights: list[int] = []
+        raster_mode = str(getattr(self.settings, "raster_mode", "gs_v_0") or "gs_v_0").strip().lower()
+        chunk_plan = self._chunk_plan_for_mode(height_px, raster_mode)
+        total_chunks = len(chunk_plan)
+        for index, (top, bottom) in enumerate(chunk_plan, start=1):
             chunk = image.crop((0, top, width_px, bottom))
-            chunks.append(self._encode_chunk(chunk))
+            command, meta = self._encode_chunk(
+                chunk,
+                raster_mode=raster_mode,
+                index=index,
+                total=total_chunks,
+            )
+            chunk_heights.append(meta.source_height_px)
+            LOGGER.info(
+                "[PrintRender][raster_chunk] index=%d total=%d widthPx=%d heightPx=%d sourceHeightPx=%d bytesPerRow=%d dataLen=%d commandLen=%d command=%s",
+                meta.index,
+                meta.total,
+                meta.width_px,
+                meta.height_px,
+                meta.source_height_px,
+                meta.bytes_per_row,
+                meta.data_len,
+                meta.command_len,
+                meta.command,
+            )
+            chunks.append(command)
             chunk_count += 1
         chunks.append(_feed(3))
         chunks.append(_cut(self.settings.cut_mode))
@@ -782,25 +823,61 @@ class RasterEscPosEncoder:
             width_px=width_px,
             height_px=height_px,
             chunk_count=chunk_count,
+            chunk_heights=tuple(chunk_heights),
         )
 
-    def _encode_chunk(self, image: "Image.Image") -> bytes:
-        """Encode a 1-bit image chunk as ESC/POS raster data.
+    def build_gs_v0_raster(self, image: "Image.Image") -> bytes:
+        return self._build_gs_v0_command(self._normalize_image(image))[0]
 
-        Uses Pillow's tobytes() for bulk bit-packing instead of pixel-by-pixel
-        Python loops.  This is 20-50x faster for typical ticket sizes.
-        """
+    def build_esc_star_raster(self, image: "Image.Image") -> bytes:
+        return self._build_esc_star_command(self._normalize_image(image))[0]
+
+    def _normalize_image(self, image: "Image.Image") -> "Image.Image":
+        if image.mode != "1":
+            grayscale = image.convert("L")
+            image = grayscale.point(lambda value: 0 if value < 180 else 255, mode="1")
+        width_px, height_px = image.size
+        padded_width = ((width_px + 7) // 8) * 8
+        if padded_width == width_px:
+            return image
+        padded = Image.new("1", (padded_width, height_px), color=1)
+        padded.paste(image, (0, 0))
+        return padded
+
+    def _chunk_plan_for_mode(self, height_px: int, raster_mode: str) -> list[tuple[int, int]]:
+        if raster_mode == "esc_star":
+            chunk_height = 24
+        else:
+            chunk_height = max(256, self.settings.raster_chunk_height)
+        return [
+            (top, min(top + chunk_height, height_px))
+            for top in range(0, height_px, chunk_height)
+        ]
+
+    def _encode_chunk(
+        self,
+        image: "Image.Image",
+        *,
+        raster_mode: str,
+        index: int,
+        total: int,
+    ) -> tuple[bytes, RasterChunk]:
+        if raster_mode == "esc_star":
+            return self._build_esc_star_command(image, index=index, total=total)
+        return self._build_gs_v0_command(image, index=index, total=total)
+
+    def _build_gs_v0_command(
+        self,
+        image: "Image.Image",
+        *,
+        index: int = 1,
+        total: int = 1,
+    ) -> tuple[bytes, RasterChunk]:
         width_px, height_px = image.size
         width_bytes = (width_px + 7) // 8
 
-        # Pillow 1-bit "raw" mode "1": MSB first, rows padded to byte boundary.
-        # Pillow: white=1, black=0.  ESC/POS: black=1, white=0.  → XOR 0xFF.
         raw = image.tobytes("raw", "1")
-
-        # Fast XOR inversion using pre-computed translate table.
         packed = raw.translate(_XOR_TABLE)
-
-        # Safety: if Pillow stride != expected width_bytes, rebuild row-by-row.
         pillow_stride = len(raw) // height_px if height_px else width_bytes
         if pillow_stride != width_bytes:
             rows = bytearray()
@@ -811,8 +888,13 @@ class RasterEscPosEncoder:
                     row += b"\x00" * (width_bytes - len(row))
                 rows.extend(row)
             packed = bytes(rows).translate(_XOR_TABLE)
-
-        return (
+        data_len = len(packed)
+        expected_data_len = width_bytes * height_px
+        if data_len != expected_data_len:
+            raise ValueError(
+                f"GS v 0 data length mismatch: expected={expected_data_len} actual={data_len}"
+            )
+        command = (
             GS
             + b"v0"
             + bytes(
@@ -826,3 +908,87 @@ class RasterEscPosEncoder:
             )
             + packed
         )
+        meta = RasterChunk(
+            index=index,
+            total=total,
+            width_px=width_px,
+            height_px=height_px,
+            source_height_px=height_px,
+            bytes_per_row=width_bytes,
+            data_len=data_len,
+            command_len=len(command),
+            command="GSv0",
+        )
+        self._validate_chunk(meta)
+        return command, meta
+
+    def _build_esc_star_command(
+        self,
+        image: "Image.Image",
+        *,
+        index: int = 1,
+        total: int = 1,
+    ) -> tuple[bytes, RasterChunk]:
+        width_px, source_height_px = image.size
+        width_bytes = width_px // 8
+        padded_height = 24
+        if source_height_px < padded_height:
+            padded = Image.new("1", (width_px, padded_height), color=1)
+            padded.paste(image, (0, 0))
+            image = padded
+        elif source_height_px > padded_height:
+            raise ValueError(f"ESC * chunk height must be <=24, got {source_height_px}")
+
+        pixels = image.load()
+        data = bytearray()
+        for x in range(width_px):
+            for band in range(3):
+                value = 0
+                for bit in range(8):
+                    y = band * 8 + bit
+                    pixel = pixels[x, y]
+                    is_black = pixel == 0
+                    if is_black:
+                        value |= 1 << (7 - bit)
+                data.append(value)
+
+        data_len = len(data)
+        expected_data_len = width_bytes * padded_height
+        if data_len != expected_data_len:
+            raise ValueError(
+                f"ESC * data length mismatch: expected={expected_data_len} actual={data_len}"
+            )
+        command = (
+            ESC
+            + b"*"
+            + bytes([33, width_px & 0xFF, (width_px >> 8) & 0xFF])
+            + bytes(data)
+            + b"\n"
+        )
+        meta = RasterChunk(
+            index=index,
+            total=total,
+            width_px=width_px,
+            height_px=padded_height,
+            source_height_px=source_height_px,
+            bytes_per_row=width_bytes,
+            data_len=data_len,
+            command_len=len(command),
+            command="ESC*",
+        )
+        self._validate_chunk(meta)
+        return command, meta
+
+    def _validate_chunk(self, meta: RasterChunk) -> None:
+        if meta.width_px % 8 != 0:
+            raise ValueError(f"Raster width must be padded to /8, got {meta.width_px}")
+        expected_data_len = meta.bytes_per_row * meta.height_px
+        if meta.data_len != expected_data_len:
+            raise ValueError(
+                f"Raster chunk data length mismatch: expected={expected_data_len} actual={meta.data_len}"
+            )
+        header_len = 8 if meta.command == "GSv0" else 6
+        if meta.command_len != header_len + meta.data_len:
+            raise ValueError(
+                f"Raster command length mismatch: expected={header_len + meta.data_len} actual={meta.command_len}"
+            )

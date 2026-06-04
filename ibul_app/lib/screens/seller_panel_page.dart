@@ -36,8 +36,6 @@ import '../services/support_service.dart';
 import '../services/campaign_service.dart';
 import '../services/order_service.dart';
 import '../services/kitchen_print_trace_log.dart';
-import '../services/kitchen_product_mapping_cache_store.dart';
-import '../services/kitchen_routing_service.dart';
 import '../services/order_print_job_service.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
@@ -8802,8 +8800,34 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     Map<String, dynamic> submittedOrder,
   ) {
     if (!mounted) return;
+    final enrichedOrder = _enrichGarsonSubmittedOrderForGrid(
+      tableNumber: tableNumber,
+      submittedOrder: submittedOrder,
+      items: items,
+    );
+    debugPrint(
+      '[GARSON_ORDER_SUBMIT_RESULT] '
+      'table_id=${enrichedOrder['table_id'] ?? enrichedOrder['store_table_id'] ?? '-'} '
+      'table_number=${enrichedOrder['table_number'] ?? tableNumber} '
+      'display_table_label=${enrichedOrder['display_table_label'] ?? enrichedOrder['table_display_name'] ?? enrichedOrder['table_name'] ?? '-'} '
+      'area_name=${enrichedOrder['area_name'] ?? enrichedOrder['table_area_name'] ?? '-'} '
+      'area_table_number=${enrichedOrder['area_table_number'] ?? '-'} '
+      'order_id=${enrichedOrder['id'] ?? '-'} '
+      'active_order_id=${enrichedOrder['id'] ?? '-'} '
+      'items_count=${items.length} '
+      'total=${_garsonOrdersTotal(<Map<String, dynamic>>[enrichedOrder])} '
+      'submit_ok=true',
+    );
     setState(() {
       _invalidateSellerTableOrdersFallbackFuture();
+      _garsonManualTableOrders = _mergeGarsonSubmittedOrderIntoParentState(
+        submittedOrder: enrichedOrder,
+      );
+      _garsonManualTableOrdersSellerId = _resolveGarsonSellerId().trim();
+      _garsonManualTableOrdersSignature = tableOrdersListSignature(
+        _garsonManualTableOrders,
+      );
+      _hasLoadedGarsonTableOrdersData = true;
       _mobileGarsonDraftItemsByTable.remove(tableNumber);
       _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
       _mobileGarsonOptimisticSentAtByTable[tableNumber] = DateTime.now();
@@ -8811,6 +8835,96 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         items,
       );
     });
+    _publishGarsonVisibleOrders(_garsonManualTableOrders);
+    unawaited(_refreshGarsonGridAfterOrderSubmit(tableNumber: tableNumber));
+  }
+
+  Map<String, dynamic> _enrichGarsonSubmittedOrderForGrid({
+    required int tableNumber,
+    required Map<String, dynamic> submittedOrder,
+    required List<Map<String, dynamic>> items,
+  }) {
+    final tableRow = _storeTableRowByNumber(tableNumber);
+    final tableId = tableRow?['id'];
+    final sellerId = tableRow?['seller_id'];
+    final tableFields = resolvePrintableTablePayloadFields(
+      tableRow: tableRow,
+      tableNumber: tableNumber,
+    );
+    return <String, dynamic>{
+      ...submittedOrder,
+      ...tableFields,
+      'items': _cloneGarsonItems(items),
+      if (tableId != null) 'table_id': tableId,
+      if (tableId != null) 'store_table_id': tableId,
+      if (sellerId != null) 'seller_id': sellerId,
+    };
+  }
+
+  List<Map<String, dynamic>> _mergeGarsonSubmittedOrderIntoParentState({
+    required Map<String, dynamic> submittedOrder,
+  }) {
+    final current = _garsonManualTableOrders.isNotEmpty
+        ? _garsonManualTableOrders
+        : _garsonOrdersSnapshotForUi();
+    final merged = mergeGarsonTableOrders(<Map<String, dynamic>>[
+      ...current,
+      Map<String, dynamic>.from(submittedOrder),
+    ], fallbackTableNumber: _garsonTableNumberFromOrder(submittedOrder));
+    return merged;
+  }
+
+  Future<void> _refreshGarsonGridAfterOrderSubmit({
+    required int tableNumber,
+  }) async {
+    final refreshed = await _loadGarsonTableOrdersSnapshot(
+      source: 'garson_order_submit',
+      showError: false,
+    );
+    if (!mounted) return;
+    final currentOrders = _resolveGarsonTableOrdersForUi(
+      _garsonOrdersSnapshotForUi(),
+    );
+    final matchedOrder = currentOrders
+        .where((order) => _garsonTableNumberFromOrder(order) == tableNumber)
+        .cast<Map<String, dynamic>?>()
+        .firstWhere(
+          (order) =>
+              order != null &&
+              !_isGarsonCompletedStatus(order['status']?.toString()),
+          orElse: () => currentOrders
+              .where(
+                (order) => _garsonTableNumberFromOrder(order) == tableNumber,
+              )
+              .cast<Map<String, dynamic>?>()
+              .firstWhere((_) => true, orElse: () => null),
+        );
+    final tableRow = _storeTableRowByNumber(tableNumber);
+    final cardStatus = _mobileGarsonStatusLabel(
+      matchedOrder?['status']?.toString(),
+      hasOrder: matchedOrder != null,
+    );
+    debugPrint(
+      '[GARSON_TABLE_REFRESH_AFTER_SUBMIT] '
+      'table_count=${_storeTables.length} '
+      'active_orders_count=${currentOrders.where((order) => !_isGarsonCompletedStatus(order['status']?.toString())).length} '
+      'matched_table_id=${tableRow?['id'] ?? matchedOrder?['table_id'] ?? matchedOrder?['store_table_id'] ?? '-'} '
+      'matched_table_number=$tableNumber '
+      'matched_display_label=${tableRow == null ? '-' : _tableDisplayLabelFromRow(tableRow)} '
+      'matched_order_id=${matchedOrder?['id'] ?? '-'} '
+      'card_status=$cardStatus '
+      'refreshed=$refreshed',
+    );
+    if (!refreshed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sipariş kaydedildi ama masa durumu yenilenemedi. Yenile butonuna basın.',
+          ),
+          duration: Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
   Widget _buildMobileGarsonModule() {
@@ -8913,6 +9027,25 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         orElse: () => entry.value.first,
                       );
                       selectedOrderByTable[entry.key] = preferred;
+                    }
+                    
+                    // Include optimistic/draft items in selected orders map
+                    final currentTime = DateTime.now();
+                    for (final tableNumber in _mobileGarsonOptimisticSentAtByTable.keys) {
+                      final optimisticAt = _mobileGarsonOptimisticSentAtByTable[tableNumber];
+                      if (optimisticAt != null &&
+                          currentTime.difference(optimisticAt) <= const Duration(seconds: 45)) {
+                        final optimisticItems = _mobileGarsonOptimisticItemsByTable[tableNumber];
+                        if (optimisticItems != null && optimisticItems.isNotEmpty && !selectedOrderByTable.containsKey(tableNumber)) {
+                          selectedOrderByTable[tableNumber] = <String, dynamic>{
+                            'status': 'sent',
+                            'created_at': optimisticAt.toIso8601String(),
+                            'items': optimisticItems,
+                            'table_number': tableNumber,
+                            '_is_optimistic': true,
+                          };
+                        }
+                      }
                     }
 
                     final draftTableNumbers = _mobileGarsonDraftItemsByTable
@@ -9077,10 +9210,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 ordersByTable[tableNumber] ??
                                 const <Map<String, dynamic>>[];
                             final order = selectedOrderByTable[tableNumber];
+                            // Check for optimistic items (submitted but not yet DB-confirmed)
+                            final optimisticItems = _mobileGarsonOptimisticItemsByTable[tableNumber];
+                            final hasOptimistic = _mobileGarsonOptimisticSentAtByTable[tableNumber] != null &&
+                                now.difference(_mobileGarsonOptimisticSentAtByTable[tableNumber]!) <=
+                                    const Duration(seconds: 45);
                             return _buildMobileGarsonTableCard(
                               tableNumber: tableNumber,
                               order: order,
                               orderCount: tableOrders.length,
+                              optimisticItems: hasOptimistic ? optimisticItems : null,
                             );
                           },
                         ),
@@ -9356,6 +9495,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   int _garsonTableNumberFromOrder(Map<String, dynamic> order) {
+    // 1. Try to match by table_id or store_table_id (most reliable in area system)
+    final tableId = order['table_id']?.toString() ?? order['store_table_id']?.toString();
+    if (tableId != null && tableId.isNotEmpty) {
+      for (final row in _storeTables) {
+        if (row['id']?.toString() == tableId) {
+          final matched = _tableNumberFromRow(row);
+          if (matched > 0) return matched;
+        }
+      }
+    }
+    
+    // 2. Fallback to table_number on order
     final raw = order['table_number'];
     if (raw is int) return raw;
     if (raw is num) return raw.toInt();
@@ -9497,6 +9648,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         var printDispatchMs = 0;
         try {
           if (_garsonOrderHasKitchenPrintItems(order)) {
+            debugPrint('[GarsonPrint][send_order_start]');
+            debugPrint('table=$tableNumber');
+            debugPrint('orderId=$id');
             final dispatchWatch = Stopwatch()..start();
             await _sellerPrintJobService.dispatchNewOrderFromTableOrder(
               tableOrderId: id,
@@ -10921,6 +11075,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           );
           return;
         }
+        debugPrint('[ReceiptPrintJob][create_start]');
+        debugPrint('documentType=receipt');
+        debugPrint('expectedPrinter=${receiptPrinter.displayName}');
+        debugPrint('expectedBackend=${receiptPrinter.backend.value}');
+        debugPrint('printerId=${receiptPrinter.id}');
         final payload =
             _enrichQueuedReceiptPayloadWithPrinterRouting(
                 basePayload,
@@ -10928,6 +11087,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               )
               ..['printer_id'] = receiptPrinter.id
               ..['printer_name'] = receiptPrinter.displayName;
+        _printOrchestrator.stampDispatchProfileOnPayload(
+          payload,
+          printer: receiptPrinter,
+          documentType: 'receipt',
+          role: 'adisyon',
+        );
+        debugPrint('[ReceiptPrintJob][persisted_payload]');
+        debugPrint('documentType=receipt');
+        debugPrint('printerRole=adisyon');
+        debugPrint('printer_id=${payload['printer_id'] ?? '-'}');
+        debugPrint(
+          'backend=${payload['backend'] ?? payload['printer_backend'] ?? receiptPrinter.backend.value}',
+        );
+        debugPrint('paperWidthMm=${payload['paper_width_mm'] ?? '-'}');
+        debugPrint(
+          'printerProfile=${payload['printer_profile'] ?? payload['printer_profile_id'] ?? '-'}',
+        );
+        debugPrint('renderMode=${payload['render_mode'] ?? '-'}');
         if (_garsonCachedReceiptEncodingProfile != null) {
           _printOrchestrator.stampEncodingProfileOnPayload(
             payload,
@@ -10987,6 +11164,38 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         basePayload,
         stationConfig: stationConfig ?? const <String, dynamic>{},
       );
+      final queuedReceiptPrinter = await _garsonReceiptPrinterForDirectDispatch(
+        sellerId,
+      );
+      if (queuedReceiptPrinter != null) {
+        _printOrchestrator.stampDispatchProfileOnPayload(
+          payload,
+          printer: queuedReceiptPrinter,
+          documentType: 'receipt',
+          role: 'adisyon',
+        );
+      }
+      debugPrint('[ReceiptPrintJob][create_start]');
+      debugPrint('documentType=receipt');
+      debugPrint(
+        'expectedPrinter=${payload['printer_name'] ?? stationConfig?['adisyon_printer_name'] ?? '-'}',
+      );
+      debugPrint(
+        'expectedBackend=${payload['backend'] ?? payload['printer_backend'] ?? '-'}',
+      );
+      debugPrint('printerId=${payload['printer_id'] ?? '-'}');
+      debugPrint('[ReceiptPrintJob][persisted_payload]');
+      debugPrint('documentType=receipt');
+      debugPrint('printerRole=adisyon');
+      debugPrint('printer_id=${payload['printer_id'] ?? '-'}');
+      debugPrint(
+        'backend=${payload['backend'] ?? payload['printer_backend'] ?? '-'}',
+      );
+      debugPrint('paperWidthMm=${payload['paper_width_mm'] ?? '-'}');
+      debugPrint(
+        'printerProfile=${payload['printer_profile'] ?? payload['printer_profile_id'] ?? '-'}',
+      );
+      debugPrint('renderMode=${payload['render_mode'] ?? '-'}');
 
       if (!_hasConfiguredAdisyonPrinter(stationConfig)) {
         _showPrinterWorkflowSnackBar(
@@ -11590,8 +11799,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
-  String _mobileGarsonStatusLabel(String? status, {required bool hasOrder}) {
+  String _mobileGarsonStatusLabel(String? status, {required bool hasOrder, bool isOptimistic = false}) {
     if (!hasOrder) return 'Boş Masa';
+    if (isOptimistic) return 'Gönderiliyor...';
     switch ((status ?? '').toLowerCase()) {
       case 'call_waiter':
         return '🔔 Garson Çağrıldı!';
@@ -11616,15 +11826,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required int tableNumber,
     required Map<String, dynamic>? order,
     required int orderCount,
+    List<Map<String, dynamic>>? optimisticItems,
   }) {
+    // Prefer order from DB, but fall back to optimistic items if order is null
     final effectiveOrder = order;
-    final hasOrder = effectiveOrder != null;
+    final hasOrderInDb = effectiveOrder != null;
+    final hasOptimisticItems = optimisticItems != null && optimisticItems.isNotEmpty;
+    final hasOrder = hasOrderInDb || hasOptimisticItems;
+    
     final status = effectiveOrder?['status']?.toString();
+    final isOptimistic = hasOptimisticItems && !hasOrderInDb;
     final color = _mobileGarsonStatusColor(status, hasOrder: hasOrder);
-    final statusLabel = _mobileGarsonStatusLabel(status, hasOrder: hasOrder);
-    final previewItems = effectiveOrder == null
-        ? const <Map<String, dynamic>>[]
-        : _garsonExtractItems(effectiveOrder);
+    final statusLabel = _mobileGarsonStatusLabel(status, hasOrder: hasOrder, isOptimistic: isOptimistic);
+    
+    // Use DB order items first, then fall back to optimistic items
+    final previewItems = hasOrderInDb
+        ? _garsonExtractItems(effectiveOrder!)
+        : (optimisticItems ?? const <Map<String, dynamic>>[]);
+    
     final sortedPreviewItems = List<Map<String, dynamic>>.from(previewItems)
       ..sort((a, b) {
         final left = (a['name']?.toString() ?? '').toLowerCase();
@@ -11646,6 +11865,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final tableTitle = tableRow == null
         ? 'Masa $tableNumber'
         : _tableDisplayLabelFromRow(tableRow);
+    
+    final orderIdForDebug = effectiveOrder?['id'] ?? 'optimistic-${DateTime.now().millisecondsSinceEpoch}';
+    final totalForDebug = hasOrderInDb
+        ? _garsonOrdersTotal(<Map<String, dynamic>>[effectiveOrder!])
+        : (optimisticItems?.isEmpty ?? true ? 0 : optimisticItems!.fold<num>(0, (sum, item) => sum + ((item['line_total'] as num?) ?? 0)));
+    
+    debugPrint(
+      '[GARSON_TABLE_CARD_BIND] '
+      'table_id=${tableRow?['id'] ?? order?['table_id'] ?? order?['store_table_id'] ?? '-'} '
+      'table_number=$tableNumber '
+      'display_label=$tableTitle '
+      'active_order_found=$hasOrder '
+      'from_db=$hasOrderInDb '
+      'from_optimistic=$hasOptimisticItems '
+      'order_id=$orderIdForDebug '
+      'items_count=${previewItems.length} '
+      'total=$totalForDebug',
+    );
 
     return Material(
       color: Colors.transparent,
@@ -22687,6 +22924,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final tableTitle = tableRow == null
         ? 'Masa $tableNumber'
         : _tableDisplayLabelFromRow(tableRow);
+    debugPrint(
+      '[GARSON_TABLE_CARD_BIND] '
+      'table_id=${tableRow?['id'] ?? order?['table_id'] ?? order?['store_table_id'] ?? '-'} '
+      'table_number=$tableNumber '
+      'display_label=$tableTitle '
+      'active_order_found=${hasOrder} '
+      'order_id=${order?['id'] ?? '-'} '
+      'items_count=${cardItems.length} '
+      'total=$tableTotal',
+    );
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -31337,84 +31584,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   OrderPrintJobService get _orderPrintJobService =>
       _orderPrintJobServiceInstance ??= OrderPrintJobService();
 
-  Map<String, String> _productStationIdByProductId() {
-    final map = <String, String>{};
-    for (final product in <SellerProduct>[
-      ...widget.products,
-      ..._queriedProducts,
-    ]) {
-      final stationId = product.stationId?.trim() ?? '';
-      if (stationId.isEmpty) continue;
-      map[product.id] = stationId;
-    }
-    return map;
-  }
-
-  Map<String, ProductStationMapping> _productStationMappingByProductId() {
-    KitchenProductMappingCacheStore.applyMemoryToResolver(widget.sellerId);
-    final stationNames = _orderPrintJobService.cachedStationNamesForRestaurant(
-      widget.sellerId,
-    );
-    final stationCodes = _orderPrintJobService.cachedStationCodesForRestaurant(
-      widget.sellerId,
-    );
-    final map = <String, ProductStationMapping>{
-      ..._orderPrintJobService.mergedKitchenProductMappingsForRestaurant(
-        widget.sellerId,
-      ),
-    };
-    for (final product in <SellerProduct>[
-      ...widget.products,
-      ..._queriedProducts,
-    ]) {
-      final stationId = product.stationId?.trim() ?? '';
-      if (stationId.isEmpty) continue;
-      final stationName =
-          KitchenTicketHeaderResolver.sanitizeProductionStationName(
-            product.stationName?.trim().isNotEmpty == true
-                ? product.stationName!.trim()
-                : (stationNames[stationId] ?? ''),
-          );
-      final stationCode = product.stationCode?.trim().isNotEmpty == true
-          ? product.stationCode!.trim().toUpperCase()
-          : (stationCodes[stationId] ?? '');
-      map[product.id] = ProductStationMapping(
-        stationId: stationId,
-        stationName: stationName,
-        stationCode: stationCode,
-      );
-      logGarsonProductStationFields(
-        productId: product.id,
-        productName: product.name,
-        stationId: stationId,
-        stationName: stationName,
-        stationCode: stationCode,
-      );
-      logProductStationMappingLoaded(
-        productId: product.id,
-        productName: product.name,
-        stationId: stationId,
-        stationName: stationName,
-        stationCode: stationCode,
-        source: product.stationName?.trim().isNotEmpty == true
-            ? 'products.station_id/stations join'
-            : 'station_cache',
-      );
-    }
-    _orderPrintJobService.registerKitchenProductStationMappingsFromMap(
-      restaurantId: widget.sellerId,
-      mappings: map,
-      productNamesByProductId: <String, String>{
-        for (final product in <SellerProduct>[
-          ...widget.products,
-          ..._queriedProducts,
-        ])
-          if (map.containsKey(product.id)) product.id: product.name,
-      },
-    );
-    return map;
-  }
-
   bool get _debugPrintSystemEnabled =>
       widget.debugPrintSystemEnabledOverride ?? true;
 
@@ -31839,20 +32008,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return _orderPrintJobService.safeUserDisplayName(_currentSupabaseUser());
   }
 
-  GarsonKitchenPrinterHint? _kitchenPrinterHintFromWidget() {
-    final id = widget.cachedKitchenPrinterId?.trim() ?? '';
-    if (id.isEmpty) return null;
-    final name = widget.cachedKitchenPrinterName?.trim() ?? '';
-    final queue = widget.cachedKitchenPrinterQueue?.trim() ?? '';
-    final backend = widget.cachedKitchenPrinterBackend?.trim() ?? '';
-    return GarsonKitchenPrinterHint(
-      id: id,
-      name: name.isNotEmpty ? name : id,
-      backend: backend.isNotEmpty ? backend : 'windows-spool',
-      queue: queue.isNotEmpty ? queue : (name.isNotEmpty ? name : id),
-    );
-  }
-
   Future<bool> _resolveCanUseGarsonKitchenFastPath() async {
     if (widget.effectiveCanUseLocalPrintFastPath) return true;
     if (!widget.supportsDirectLocalPrintBridge) return false;
@@ -31900,59 +32055,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     };
   }
 
-  _KitchenDispatchFeedback _feedbackFromImmediateResult(
-    GarsonKitchenImmediateResult result,
-  ) {
-    if (result.fallbackReason == 'print_system_disabled') {
-      return _KitchenDispatchFeedback(
-        notice:
-            'Sipariş kaydedildi. Baskı sistemi kapalı olduğu için mutfak fişi yazdırılmadı.',
-        dispatchPath: 'skipped',
-        fallbackReason: result.fallbackReason,
-      );
-    }
-    if (result.physicallyDispatched) {
-      return _KitchenDispatchFeedback(
-        physicallyDispatched: true,
-        bridgeRequestMs: result.bridgeRequestMs,
-        dispatchPath: result.dispatchPath,
-        payloadBuildMs: result.payloadBuildMs,
-        printerResolveMs: result.printerResolveMs,
-        printerCacheResolveMs: result.printerCacheResolveMs,
-        stationResolveMs: result.stationResolveMs,
-        fastPathDecisionMs: result.fastPathDecisionMs,
-        totalToBridgeMs: result.totalToBridgeMs,
-        directPrintStartedMs: result.directPrintStartedMs,
-        directPrintDoneMs: result.directPrintDoneMs,
-        selectedPrinterId: result.selectedPrinterId,
-      );
-    }
-    if (result.error != null && result.error!.trim().isNotEmpty) {
-      return _KitchenDispatchFeedback(
-        error: result.error,
-        dispatchPath: result.dispatchPath.isEmpty
-            ? 'legacy'
-            : result.dispatchPath,
-        fallbackReason: result.fallbackReason,
-        bridgeRequestMs: result.bridgeRequestMs,
-        payloadBuildMs: result.payloadBuildMs,
-        printerResolveMs: result.printerResolveMs,
-        totalToBridgeMs: result.totalToBridgeMs,
-      );
-    }
-    return _KitchenDispatchFeedback(
-      queuedOnly: result.shouldFallbackLegacy,
-      dispatchPath: result.dispatchPath.isEmpty
-          ? 'legacy'
-          : result.dispatchPath,
-      fallbackReason: result.fallbackReason,
-      bridgeRequestMs: result.bridgeRequestMs,
-      payloadBuildMs: result.payloadBuildMs,
-      printerResolveMs: result.printerResolveMs,
-      totalToBridgeMs: result.totalToBridgeMs,
-    );
-  }
-
   _KitchenDispatchFeedback _feedbackFromDispatchResult(
     OrderPrintJobDispatchResult result,
   ) {
@@ -31968,8 +32070,35 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     // Some older/edge RPC responses may return print_job_count=0 while still
     // returning job IDs.  Treat "no jobs" as "no job IDs".
     if (result.printJobIds.isEmpty) {
-      return const _KitchenDispatchFeedback(
-        error: 'Mutfak yazdırma için eşleşen yazıcı/istasyon bulunamadı.',
+      return _KitchenDispatchFeedback(
+        error:
+            result.printFailureMessage ??
+            'Mutfak yazdırma için eşleşen yazıcı/istasyon bulunamadı.',
+        orderId: result.orderId,
+        payloadBuildMs: 0,
+        printerResolveMs: 0,
+        directPrintStartedMs: 0,
+        directPrintDoneMs: 0,
+        fastPathDecisionMs: 0,
+        printerCacheResolveMs: 0,
+        stationResolveMs: 0,
+        selectedPrinterId: '',
+      );
+    }
+    if (result.printFailureMessage?.trim().isNotEmpty == true) {
+      return _KitchenDispatchFeedback(
+        error: result.printFailureMessage,
+        orderId: result.orderId,
+        printJobIds: result.printJobIds,
+        dispatchPath: result.dispatchPath,
+        payloadBuildMs: 0,
+        printerResolveMs: 0,
+        directPrintStartedMs: 0,
+        directPrintDoneMs: 0,
+        fastPathDecisionMs: 0,
+        printerCacheResolveMs: 0,
+        stationResolveMs: 0,
+        selectedPrinterId: '',
       );
     }
     if (result.physicallyDispatched || result.dispatchedJobCount > 0) {
@@ -31980,6 +32109,14 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         bridgeRequestMs: result.bridgeRequestMs,
         dispatchPath: result.dispatchPath,
         totalToBridgeMs: result.bridgeRequestMs,
+        payloadBuildMs: 0,
+        printerResolveMs: 0,
+        directPrintStartedMs: 0,
+        directPrintDoneMs: result.bridgeRequestMs,
+        fastPathDecisionMs: 0,
+        printerCacheResolveMs: 0,
+        stationResolveMs: 0,
+        selectedPrinterId: '',
       );
     }
     return _KitchenDispatchFeedback(
@@ -31994,6 +32131,14 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           : (result.dispatchPath.contains('hub')
                 ? 'hub_claimed'
                 : 'legacy_queue'),
+      payloadBuildMs: 0,
+      printerResolveMs: 0,
+      directPrintStartedMs: 0,
+      directPrintDoneMs: 0,
+      fastPathDecisionMs: 0,
+      printerCacheResolveMs: 0,
+      stationResolveMs: 0,
+      selectedPrinterId: '',
     );
   }
 
@@ -32320,10 +32465,10 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     if (MixedServiceOrder.isTemplateProduct(product)) {
       return MixedServiceOrder.templateTypeLabelFromProduct(product);
     }
-    final main = product.mainCategory.trim();
-    if (main.isNotEmpty) return main;
     final sub = product.subCategory.trim();
     if (sub.isNotEmpty) return sub;
+    final main = product.mainCategory.trim();
+    if (main.isNotEmpty) return main;
     return 'Diğer';
   }
 
@@ -34220,6 +34365,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   Future<void> _submitDraft(
     List<Map<String, dynamic>> existingTableOrders,
   ) async {
+    if (_isSubmitting) return;
     if (!_canSubmitDraft()) return;
     setState(() => _isSubmitting = true);
     final pipelineWatch = Stopwatch()..start();
@@ -34487,163 +34633,38 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           'canFastKitchen=$canFastKitchen',
         );
 
-        if (canFastKitchen) {
-          final productStationIds = _productStationIdByProductId();
-          final productStationMappings = _productStationMappingByProductId();
-          final tableLabel = widget.tableTitleOverride?.trim();
-          logKitchenDispatchPath(
-            path: 'direct_garson_attempt',
-            physicallyDispatched: false,
-            reason: 'submit_started canFastKitchen=true',
-            itemCount: items.length,
-          );
-          var immediate = await _orderPrintJobService
-              .dispatchGarsonKitchenImmediateFromItems(
-                restaurantId: widget.sellerId,
-                tableNumber: widget.tableNumber,
-                items: items,
-                waiterId: _currentWaiterId(),
-                waiterName: _currentWaiterName(),
-                printerHint: _kitchenPrinterHintFromWidget(),
-                canUseLocalPrintFastPath:
-                    widget.effectiveCanUseLocalPrintFastPath,
-                productStationIdByProductId: productStationIds,
-                productStationByProductId: productStationMappings,
-                tableAreaName: tableLabel,
-              );
-          if (!immediate.physicallyDispatched &&
-              immediate.fallbackReason == 'no_cached_kitchen_printer') {
-            immediate = await _orderPrintJobService
-                .dispatchGarsonKitchenImmediateFromItems(
-                  restaurantId: widget.sellerId,
-                  tableNumber: widget.tableNumber,
-                  items: items,
-                  waiterId: _currentWaiterId(),
-                  waiterName: _currentWaiterName(),
-                  printerHint: _kitchenPrinterHintFromWidget(),
-                  canUseLocalPrintFastPath:
-                      widget.effectiveCanUseLocalPrintFastPath,
-                  productStationIdByProductId: productStationIds,
-                  productStationByProductId: productStationMappings,
-                  tableAreaName: tableLabel,
-                );
-          }
-          parallelDispatchFeedback = _feedbackFromImmediateResult(immediate);
-
-          if (immediate.physicallyDispatched && mounted) {
-            _setSubmitFeedback(
-              'Mutfak fişi yazıcıya gönderildi',
-              tone: _GarsonSubmitFeedbackTone.success,
-              autoHideAfter: const Duration(seconds: 4),
-            );
-          }
-
-          final dbWatch = Stopwatch()..start();
-          if (immediate.physicallyDispatched) {
-            try {
-              submittedOrder = await _storeService.submitTableOrder(
-                sellerId: widget.sellerId,
-                tableNumber: widget.tableNumber,
-                items: items,
-                status: nextStatus,
-                placementSource: 'waiter',
-              );
-            } catch (dbError) {
-              debugPrint(
-                '[GarsonPerf][kitchen_order] edge=print_ok_db_failed '
-                'table=${widget.tableNumber} error=$dbError',
-              );
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Mutfak fişi yazdırıldı ancak sipariş kaydı güncellenemedi. '
-                      'Lütfen bağlantıyı kontrol edin.',
-                    ),
-                  ),
-                );
-              }
-              rethrow;
-            }
-          } else if (immediate.shouldFallbackLegacy &&
-              (immediate.fallbackReason == 'bridge_unavailable' ||
-                  immediate.fallbackReason == 'no_cached_kitchen_printer')) {
-            debugPrint(
-              '[GarsonPerf][kitchen_order] fallback_reason=${immediate.fallbackReason} '
-              'path=legacy table=${widget.tableNumber}',
-            );
-            logKitchenDispatchPath(
-              path: 'legacy_rpc',
-              physicallyDispatched: false,
-              reason:
-                  'immediate_fallback_${immediate.fallbackReason ?? 'unknown'}',
-              itemCount: items.length,
-            );
-            final legacyResult = await _orderPrintJobService.dispatchNewOrder(
-              restaurantId: widget.sellerId,
-              tableNumber: widget.tableNumber,
-              items: items,
-              waiterId: _currentWaiterId(),
-              waiterName: _currentWaiterName(),
-              jobType: 'new_order',
-              garsonDesktopFastKitchen: true,
-            );
-            _orderPrintJobService.debugLogResult(legacyResult);
-            parallelDispatchFeedback = _feedbackFromDispatchResult(
-              legacyResult,
-            );
-            submittedOrder = _tableOrderFromPrintDispatch(
-              legacyResult,
-              items: items,
-              status: nextStatus,
-              revision: nextRevision,
-              updatedAt: updatedAt,
-            );
-          } else {
-            submittedOrder = await _storeService.submitTableOrder(
-              sellerId: widget.sellerId,
-              tableNumber: widget.tableNumber,
-              items: items,
-              status: nextStatus,
-              placementSource: 'waiter',
-            );
-          }
-          kitchenPerfDbSaveMs = dbWatch.elapsedMilliseconds;
-          debugPrint(
-            '[PrintPipeline] table_order_saved_at=${DateTime.now().toIso8601String()} '
-            'table=${widget.tableNumber} db_save_ms=$kitchenPerfDbSaveMs',
-          );
-        } else {
-          logKitchenDispatchPath(
-            path: 'legacy_rpc',
-            physicallyDispatched: false,
-            reason: 'canFastKitchen=false parallel_save',
-            itemCount: items.length,
-          );
-          final orderSaveWatch = Stopwatch()..start();
-          final results = await Future.wait<dynamic>([
-            _storeService.submitTableOrder(
-              sellerId: widget.sellerId,
-              tableNumber: widget.tableNumber,
-              items: items,
-              status: nextStatus,
-              placementSource: 'waiter',
-            ),
-            _dispatchKitchenPrintJobs(items),
-          ]);
-          debugPrint(
-            '[PrintPipeline] parallel_save_ms=${orderSaveWatch.elapsedMilliseconds} '
-            'table=${widget.tableNumber} '
-            'table_order_saved_at=${DateTime.now().toIso8601String()}',
-          );
-          submittedOrder = results[0] as Map<String, dynamic>;
-          parallelDispatchFeedback = results[1] as _KitchenDispatchFeedback;
-          debugPrint(
-            '[GarsonPerf] db_save_ms=${orderSaveWatch.elapsedMilliseconds} '
-            'legacy_parallel_ms=${orderSaveWatch.elapsedMilliseconds} '
-            'table=${widget.tableNumber}',
-          );
-        }
+        logKitchenDispatchPath(
+          path: canFastKitchen ? 'print_jobs_garson_fast' : 'legacy_rpc',
+          physicallyDispatched: false,
+          reason: 'new_order_dispatch_started',
+          itemCount: items.length,
+        );
+        final orderDispatchWatch = Stopwatch()..start();
+        final dispatchResult = await _orderPrintJobService.dispatchNewOrder(
+          restaurantId: widget.sellerId,
+          tableNumber: widget.tableNumber,
+          items: items,
+          waiterId: _currentWaiterId(),
+          waiterName: _currentWaiterName(),
+          jobType: 'new_order',
+          garsonDesktopFastKitchen: canFastKitchen,
+        );
+        kitchenPerfDbSaveMs = orderDispatchWatch.elapsedMilliseconds;
+        _orderPrintJobService.debugLogResult(dispatchResult);
+        parallelDispatchFeedback = _feedbackFromDispatchResult(dispatchResult);
+        submittedOrder = _tableOrderFromPrintDispatch(
+          dispatchResult,
+          items: items,
+          status: nextStatus,
+          revision: nextRevision,
+          updatedAt: updatedAt,
+        );
+        debugPrint(
+          '[PrintPipeline] table_order_saved_at=${DateTime.now().toIso8601String()} '
+          'table=${widget.tableNumber} db_save_ms=$kitchenPerfDbSaveMs '
+          'print_jobs=${dispatchResult.printJobIds.length} '
+          'print_failed=${dispatchResult.printFailureMessage ?? '-'}',
+        );
       }
       final dispatchFeedback = widget.debugUseLocalSubmit
           ? (parallelDispatchFeedback ?? _KitchenDispatchFeedback.none)

@@ -19,7 +19,9 @@ import 'package:flutter/services.dart';
 
 import '../../models/desktop_printer_setup_models.dart';
 import '../../models/printer_model.dart';
+import '../../models/printer_profile.dart';
 import '../../services/desktop_print_orchestrator.dart';
+import '../../services/local_print_service.dart';
 import '../../services/printer_repository.dart';
 
 /// Opens the Ethernet printer dialog and returns the saved [PrinterModel]
@@ -83,6 +85,7 @@ class AddEthernetPrinterScreen extends StatefulWidget {
 class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   late final DesktopPrintOrchestrator _orchestrator =
       widget.orchestrator ?? DesktopPrintOrchestrator();
+  final LocalPrintService _localPrintService = LocalPrintService();
 
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _ipCtrl = TextEditingController();
@@ -106,6 +109,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   String? _formError;
   String? _ipError;
   String? _portError;
+
+  PrinterProfile get _selectedPrinterProfile =>
+      _paperWidth <= 58 ? PrinterProfile.pos58 : PrinterProfile.pos80;
 
   @override
   void initState() {
@@ -133,6 +139,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     _nameCtrl.dispose();
     _ipCtrl.dispose();
     _portCtrl.dispose();
+    _localPrintService.dispose();
     super.dispose();
   }
 
@@ -217,8 +224,14 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         'port': form.port,
         'paper_width_mm': _paperWidth,
         'paperWidthMm': _paperWidth,
+        'chars_per_line': _selectedPrinterProfile.charsPerLine,
+        'raster_width_px': _selectedPrinterProfile.rasterWidthPx,
         'auto_cut': _autoCut,
         'autoCut': _autoCut,
+        'printer_profile': _selectedPrinterProfile.id,
+        'printer_profile_id': _selectedPrinterProfile.id,
+        'render_mode': 'image',
+        'turkish_guarantee_mode': true,
         'source': 'ethernet_dialog_form',
       },
     );
@@ -242,7 +255,13 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       'printer_name': form.name,
       'displayName': form.name,
       'paper_width_mm': _paperWidth,
+      'chars_per_line': _selectedPrinterProfile.charsPerLine,
+      'raster_width_px': _selectedPrinterProfile.rasterWidthPx,
       'auto_cut': _autoCut,
+      'printer_profile': _selectedPrinterProfile.id,
+      'printer_profile_id': _selectedPrinterProfile.id,
+      'render_mode': 'image',
+      'turkish_guarantee_mode': true,
       'document_type': 'test',
       'printer_role': switch (_role) {
         EthernetPrinterRole.mutfak => 'mutfak',
@@ -272,7 +291,6 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       });
       return;
     }
-    final syntheticPrinter = _buildSyntheticEthernetPrinter(form);
     final payload = _buildEthernetDispatchPayload(form);
     setState(() {
       _connectionTesting = true;
@@ -296,40 +314,39 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       '[EthernetPrinter][connection_test_start] host=$host port=$port',
     );
     try {
-      final result = await _orchestrator
-          .printBridgeTest(
-            restaurantId: widget.restaurantId,
-            printerId: syntheticPrinter.id,
-            printerName: form.name,
-            explicitPrinter: syntheticPrinter,
-            skipSetupSnapshot: true,
-            targetHost: host,
-            targetPort: port,
-            extraBody: payload,
-            renderMode: 'text',
-            testMode: 'ethernet_connection',
-            flowName: 'ethernet_connection_test',
-            source: 'ethernet_dialog',
-          )
+      final result = await _localPrintService
+          .probeTcpPrinter(host: host, port: port, printer: payload)
           .timeout(const Duration(seconds: 8));
       if (!mounted) return;
+      final ok = result?['ok'] == true;
+      final suggestedMessage =
+          result?['suggested_message']?.toString().trim() ?? '';
       setState(() {
-        _connectionOk = result.ok;
-        _connectionMessage = result.ok
-            ? 'Ethernet yazıcıya bağlantı başarılı.'
-            : 'Bağlantı başarısız: ${result.message}';
+        _connectionOk = ok;
+        _connectionMessage = ok
+            ? (suggestedMessage.isNotEmpty
+                  ? suggestedMessage
+                  : 'Ethernet yazıcıya bağlantı başarılı.')
+            : (suggestedMessage.isNotEmpty
+                  ? suggestedMessage
+                  : 'Bağlantı başarısız: ${result?['error'] ?? 'Bilinmeyen hata'}');
       });
       debugPrint(
-        result.ok
+        ok
             ? '[EthernetPrinter][connection_test_success] host=$host port=$port'
             : '[EthernetPrinter][connection_test_error] '
-                  'code=${result.raw?['errorCode'] ?? 'unknown'}',
+                  'code=${result?['errorCode'] ?? 'unknown'}',
       );
     } catch (e) {
       if (!mounted) return;
+      final rawMessage = e.toString();
+      final friendlyMessage =
+          rawMessage.contains('Not found') || rawMessage.contains('404')
+          ? 'Baglanti dogrulanamadi. Bridge bu surumde TCP probe endpointini desteklemiyor olabilir. Test fisi hattini kullanarak tekrar deneyin.'
+          : 'Baglanti basarisiz: $e';
       setState(() {
         _connectionOk = false;
-        _connectionMessage = 'Bağlantı başarısız: $e';
+        _connectionMessage = friendlyMessage;
       });
       debugPrint('[EthernetPrinter][connection_test_error] code=exception');
     } finally {
@@ -444,6 +461,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         supportsCut: _autoCut,
         isActive: true,
         assignedRoles: _role.assignedRoles,
+        printerProfileId: _selectedPrinterProfile.id,
       );
       if (_printOk) {
         await repo.recordTestPrintResult(printerId: saved.id, success: true);
@@ -452,8 +470,12 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       Navigator.of(context).pop(saved);
     } catch (e) {
       if (!mounted) return;
+      final message = e.toString().replaceAll(
+        'generic_80mm_escpos',
+        _selectedPrinterProfile.id,
+      );
       setState(() {
-        _formError = 'Kaydedilemedi: $e';
+        _formError = 'Kaydedilemedi: $message';
       });
     } finally {
       if (mounted) {

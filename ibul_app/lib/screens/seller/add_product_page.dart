@@ -11,6 +11,7 @@ import '../../models/product_pricing.dart';
 import '../../core/providers/category_attribute_form_provider.dart';
 import '../../models/seller_product.dart';
 import '../../services/category_attribute_service.dart';
+import '../../models/store_sub_category.dart';
 import '../../services/media/media_picker_service.dart';
 import '../../services/media/product_media_repository.dart';
 import '../../services/media/product_media_types.dart';
@@ -91,6 +92,7 @@ class _AddProductPageState extends State<AddProductPage> {
   // Selected Values
   String? _selectedMainCategory;
   String? _selectedSubCategory;
+  String? _selectedSubCategoryId;
   ProductPricingType _selectedPricingType = ProductPricingType.portion;
   ProductServiceControlType _selectedServiceControlType =
       ProductServiceControlType.none;
@@ -108,6 +110,8 @@ class _AddProductPageState extends State<AddProductPage> {
   /// Mağazanın başvuruda seçtiği kategori; sadece bu kategoride ürün eklenebilir. Null ise henüz yüklenmedi veya kısıtlama yok.
   String? _storeMainCategory;
   bool _storeCategoryLocked = false;
+  List<StoreSubCategory> _storeSubCategoryOptions = const <StoreSubCategory>[];
+  bool _isLoadingStoreSubCategories = false;
 
   // Ürün Görselleri
   final List<XFile?> _productImages = List.filled(8, null);
@@ -742,6 +746,7 @@ class _AddProductPageState extends State<AddProductPage> {
           'servis_zamani',
         ]);
         // _selectedSubCategory'i güncelle
+        _selectedSubCategoryId = product.subCategoryId;
         _selectedSubCategory = product.subCategory.isEmpty
             ? null
             : product.subCategory;
@@ -840,6 +845,7 @@ class _AddProductPageState extends State<AddProductPage> {
           attributeLines: product.attributes,
         ),
       );
+      await _loadStoreSubCategories(mainCategory: product.mainCategory);
     } catch (e) {
       debugPrint('Error loading product: $e');
     } finally {
@@ -956,13 +962,18 @@ class _AddProductPageState extends State<AddProductPage> {
           if (shouldInitializeCategory) {
             _selectedMainCategory = mainCat;
             _selectedSubCategory = null;
+            _selectedSubCategoryId = null;
             _subCategoryController.clear();
+            _storeSubCategoryOptions = const <StoreSubCategory>[];
             _resetNonFoodAttributeRowsForCategory();
           }
         });
         if (shouldInitializeCategory) {
           await _refreshDynamicAttributeDefinitions();
         }
+        await _loadStoreSubCategories(
+          mainCategory: _selectedMainCategory ?? _storeMainCategory,
+        );
       }
     } catch (_) {}
   }
@@ -1379,14 +1390,20 @@ class _AddProductPageState extends State<AddProductPage> {
                               label: 'Ana Kategori',
                               value: _selectedMainCategory,
                               items: _allMainCategories,
-                              onChanged: (value) {
+                              onChanged: (value) async {
                                 setState(() {
                                   _selectedMainCategory = value;
                                   _selectedSubCategory = null;
+                                  _selectedSubCategoryId = null;
                                   _subCategoryController.clear();
+                                  _storeSubCategoryOptions =
+                                      const <StoreSubCategory>[];
                                   _resetNonFoodAttributeRowsForCategory();
                                 });
                                 _attributeFormProvider.clear();
+                                await _loadStoreSubCategories(
+                                  mainCategory: value,
+                                );
                               },
                               required: true,
                             ),
@@ -2398,6 +2415,7 @@ class _AddProductPageState extends State<AddProductPage> {
               : _productNameController.text,
           brand: _brandController.text,
           mainCategory: _selectedMainCategory ?? '',
+          subCategoryId: _selectedSubCategoryId,
           subCategory: _selectedSubCategory ?? '',
           price: _activePriceValue,
           pricingMode: _pricingModeForSave.storageValue,
@@ -4380,8 +4398,10 @@ class _AddProductPageState extends State<AddProductPage> {
           controller: _subCategoryController,
           enabled: _selectedMainCategory != null,
           onChanged: (v) async {
+            final trimmed = v.trim();
             setState(() {
-              _selectedSubCategory = v.trim().isEmpty ? null : v.trim();
+              _selectedSubCategory = trimmed.isEmpty ? null : trimmed;
+              _selectedSubCategoryId = _resolveStoredSubCategoryId(trimmed);
               _resetNonFoodAttributeRowsForCategory();
             });
             await _refreshDynamicAttributeDefinitions(
@@ -4417,7 +4437,16 @@ class _AddProductPageState extends State<AddProductPage> {
               horizontal: 14,
               vertical: 12,
             ),
-            suffixIcon: suggestions.isNotEmpty
+            suffixIcon: _isLoadingStoreSubCategories
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : suggestions.isNotEmpty
                 ? PopupMenuButton<String>(
                     icon: Icon(
                       Icons.arrow_drop_down,
@@ -4427,6 +4456,7 @@ class _AddProductPageState extends State<AddProductPage> {
                       setState(() {
                         _subCategoryController.text = v;
                         _selectedSubCategory = v;
+                        _selectedSubCategoryId = _resolveStoredSubCategoryId(v);
                         _resetNonFoodAttributeRowsForCategory();
                       });
                       _refreshDynamicAttributeDefinitions(
@@ -5559,10 +5589,10 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   // Helper Methods
-  List<String> _getSubCategories(String? mainCategory) {
-    if (mainCategory == null) return [];
+  List<String> _legacySubCategories(String? mainCategory) {
+    if (mainCategory == null) return const <String>[];
 
-    final Map<String, List<String>> subCategories = {
+    const Map<String, List<String>> subCategories = <String, List<String>>{
       'Elektronik': [
         'Telefonlar',
         'Laptop & Tablet',
@@ -5644,7 +5674,82 @@ class _AddProductPageState extends State<AddProductPage> {
         'Diğer',
       ],
     };
-    return subCategories[mainCategory] ?? [];
+    return subCategories[mainCategory] ?? const <String>[];
+  }
+
+  String _normalizeSubCategoryName(String value) {
+    return value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+  }
+
+  String? _resolveStoredSubCategoryId(String? rawName) {
+    final normalized = _normalizeSubCategoryName(rawName ?? '');
+    if (normalized.isEmpty) return null;
+    for (final item in _storeSubCategoryOptions) {
+      if (_normalizeSubCategoryName(item.name) == normalized) {
+        return item.id;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _loadStoreSubCategories({String? mainCategory}) async {
+    final sellerId = _storeService.currentUserId;
+    final resolvedMainCategory =
+        (mainCategory ?? _selectedMainCategory ?? _storeMainCategory ?? '')
+            .trim();
+    if (sellerId == null || resolvedMainCategory.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _storeSubCategoryOptions = const <StoreSubCategory>[];
+        _isLoadingStoreSubCategories = false;
+      });
+      return;
+    }
+
+    if (mounted) {
+      setState(() => _isLoadingStoreSubCategories = true);
+    }
+    try {
+      final items = await _storeService.getStoreSubCategories(
+        sellerId: sellerId,
+        mainCategory: resolvedMainCategory,
+      );
+      if (!mounted) return;
+      final currentSubCategory =
+          _selectedSubCategory ?? _subCategoryController.text;
+      setState(() {
+        _storeSubCategoryOptions = items;
+        _selectedSubCategoryId = _resolveStoredSubCategoryId(
+          currentSubCategory,
+        );
+      });
+    } catch (error) {
+      debugPrint('Error loading reusable sub categories: $error');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingStoreSubCategories = false);
+      }
+    }
+  }
+
+  List<String> _getSubCategories(String? mainCategory) {
+    final merged = <String>[];
+    final seen = <String>{};
+
+    void addValues(Iterable<String> values) {
+      for (final value in values) {
+        final trimmed = value.trim();
+        if (trimmed.isEmpty) continue;
+        final key = _normalizeSubCategoryName(trimmed);
+        if (seen.add(key)) {
+          merged.add(trimmed);
+        }
+      }
+    }
+
+    addValues(_storeSubCategoryOptions.map((item) => item.name));
+    addValues(_legacySubCategories(mainCategory));
+    return merged;
   }
 
   String _calculateDiscountRate() {
@@ -6101,6 +6206,7 @@ class _AddProductPageState extends State<AddProductPage> {
           : _productNameController.text,
       brand: _brandController.text,
       mainCategory: mainCategory,
+      subCategoryId: _selectedSubCategoryId,
       subCategory: subCategory,
       price: _activePriceValue,
       pricingMode: _pricingModeForSave.storageValue,
@@ -6514,6 +6620,7 @@ class _AddProductPageState extends State<AddProductPage> {
       name: _productNameController.text,
       brand: _brandController.text,
       mainCategory: _selectedMainCategory ?? '',
+      subCategoryId: _selectedSubCategoryId,
       subCategory: _selectedSubCategory ?? '',
       price: _activePriceValue,
       pricingMode: _pricingModeForSave.storageValue,
@@ -6628,10 +6735,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
       await _persistStructuredProductAttributes(productId);
 
-      productCreateLog(
-        'product_save_success',
-        extra: {'productId': productId},
-      );
+      productCreateLog('product_save_success', extra: {'productId': productId});
 
       setState(() {
         _existingVideoUrl = uploadedVideoUrl;
@@ -6673,10 +6777,7 @@ class _AddProductPageState extends State<AddProductPage> {
     } catch (e, stack) {
       productCreateLog(
         'product_save_error',
-        extra: {
-          'errorType': e.runtimeType.toString(),
-          'message': e.toString(),
-        },
+        extra: {'errorType': e.runtimeType.toString(), 'message': e.toString()},
       );
       debugPrint('Publish product stack: $stack');
       if (mounted) {

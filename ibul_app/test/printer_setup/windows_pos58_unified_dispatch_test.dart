@@ -275,6 +275,13 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
   Future<List<PrinterModel>> fetchPrinters(String restaurantId) async => saved;
 
   @override
+  Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
+    required String restaurantId,
+    String? stationId,
+    String? stationName,
+  }) async => null;
+
+  @override
   Future<PrinterModel?> fetchPrinterById(String printerId) async => null;
 
   @override
@@ -298,8 +305,27 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
     int? codePage,
     List<PrinterRole> assignedRoles = const [],
     String? printerProfileId,
-  }) {
-    throw UnimplementedError();
+  }) async {
+    final newPrinter = PrinterModel(
+      id: printerId ?? 'mock_printer_${DateTime.now().millisecondsSinceEpoch}',
+      restaurantId: restaurantId,
+      name: name,
+      code: code,
+      connectionType: connectionType,
+      ipAddress: ipAddress,
+      port: port,
+      deviceIdentifier: deviceIdentifier,
+      paperWidthMm: paperWidthMm,
+      isActive: isActive,
+      supportsCut: supportsCut,
+      charset: charset,
+      codePage: codePage,
+      assignedRoles: assignedRoles,
+      printerProfileId: printerProfileId,
+      createdAt: DateTime.now(),
+    );
+    saved.add(newPrinter);
+    return newPrinter;
   }
 
   @override
@@ -333,12 +359,25 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
     required bool success,
     String? error,
   }) async {}
+
+  @override
+  Future<void> updatePrinterStatus({required String printerId, required bool isActive}) async {}
 }
 
 class _FakeStationService implements PrintStationServicePort {
   @override
   Future<Map<String, dynamic>?> fetchStationConfig(String restaurantId) async =>
-      null;
+      <String, dynamic>{};
+
+  @override
+  Future<String> invalidateRoleMappingCacheState({
+    required String restaurantId,
+    Map<String, dynamic>? roleMappings,
+    String source = 'print_station_service',
+  }) async => 'test_token';
+
+  @override
+  Future<String?> readRoleMappingCacheToken(String restaurantId) async => 'test_token';
 
   @override
   Future<bool> isThisDevicePrintStation() async => false;

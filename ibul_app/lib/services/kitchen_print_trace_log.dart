@@ -5,11 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'kitchen_routing_service.dart';
 
 /// Mutfak fişi payload zinciri — gerçek baskı debug (kDebugMode'dan bağımsız).
-void kitchenTraceJsonLog(
-  String tag,
-  String stage,
-  Map<String, Object?> data,
-) {
+void kitchenTraceJsonLog(String tag, String stage, Map<String, Object?> data) {
   try {
     debugPrint('[$tag][$stage] ${jsonEncode(data)}');
   } catch (_) {
@@ -45,29 +41,40 @@ void logProductStationMappingCacheHydrate({
   required bool fromDisk,
   String? error,
 }) {
-  kitchenTraceJsonLog('ProductStationMapping', 'CacheHydrate', <String, Object?>{
-    'restaurantId': restaurantId,
-    'mappingCount': mappingCount,
-    'productNameKeys': productNameKeys,
-    'productIdKeys': productIdKeys,
-    'fromDisk': fromDisk,
-    if (error != null) 'error': error,
-  });
+  kitchenTraceJsonLog(
+    'ProductStationMapping',
+    'CacheHydrate',
+    <String, Object?>{
+      'restaurantId': restaurantId,
+      'mappingCount': mappingCount,
+      'productNameKeys': productNameKeys,
+      'productIdKeys': productIdKeys,
+      'fromDisk': fromDisk,
+      if (error != null) 'error': error,
+    },
+  );
 }
 
 void logKitchenOrderNumberFields({
   required Map<String, dynamic> payload,
   String? printedOrderNo,
 }) {
-  kitchenTraceJsonLog('KitchenPrintPayload', 'OrderNumberFields', <String, Object?>{
-    'daily_order_no': payload['daily_order_no'] ?? '',
-    'kitchen_order_no': payload['kitchen_order_no'] ?? '',
-    'order_number': payload['order_number'] ?? '',
-    'order_no': payload['order_no'] ?? '',
-    'waiter_name': payload['waiter_name'] ?? '',
-    'printed_order_no':
-        printedOrderNo ?? payload['printed_order_no'] ?? payload['order_no'] ?? '',
-  });
+  kitchenTraceJsonLog(
+    'KitchenPrintPayload',
+    'OrderNumberFields',
+    <String, Object?>{
+      'daily_order_no': payload['daily_order_no'] ?? '',
+      'kitchen_order_no': payload['kitchen_order_no'] ?? '',
+      'order_number': payload['order_number'] ?? '',
+      'order_no': payload['order_no'] ?? '',
+      'waiter_name': payload['waiter_name'] ?? '',
+      'printed_order_no':
+          printedOrderNo ??
+          payload['printed_order_no'] ??
+          payload['order_no'] ??
+          '',
+    },
+  );
 }
 
 void logHubStationResolveAttempt({
@@ -78,14 +85,18 @@ void logHubStationResolveAttempt({
   required bool foundByProductName,
   required List<String> cacheProductNameKeys,
 }) {
-  kitchenTraceJsonLog('KitchenPrintPayload', 'HubStationResolveAttempt', <String, Object?>{
-    'rawName': rawName,
-    'normalizedName': normalizedName,
-    'hasProductId': hasProductId,
-    'foundByProductId': foundByProductId,
-    'foundByProductName': foundByProductName,
-    'cacheProductNameKeys': cacheProductNameKeys,
-  });
+  kitchenTraceJsonLog(
+    'KitchenPrintPayload',
+    'HubStationResolveAttempt',
+    <String, Object?>{
+      'rawName': rawName,
+      'normalizedName': normalizedName,
+      'hasProductId': hasProductId,
+      'foundByProductId': foundByProductId,
+      'foundByProductName': foundByProductName,
+      'cacheProductNameKeys': cacheProductNameKeys,
+    },
+  );
 }
 
 void logProductStationMappingLoaded({
@@ -150,6 +161,25 @@ void logKitchenDispatchPath({
   });
 }
 
+void logKitchenWrongPrinterSelected({
+  required String event,
+  required String reason,
+  required String expectedPrinter,
+  required String actualPrinter,
+  String? backend,
+  String? host,
+  Object? port,
+}) {
+  kitchenTraceJsonLog('KitchenPrinterResolve', event, <String, Object?>{
+    'reason': reason,
+    'expectedPrinter': expectedPrinter,
+    'actualPrinter': actualPrinter,
+    if (backend != null) 'backend': backend,
+    if (host != null) 'host': host,
+    if (port != null) 'port': port,
+  });
+}
+
 void logKitchenRoutingGroupInput(Map<String, dynamic> item) {
   kitchenTraceJsonLog('KitchenRouting', 'GroupInput', <String, Object?>{
     'productId': item['product_id'] ?? '',
@@ -194,10 +224,11 @@ void logReceiptFinalBeforeBridge({
       });
     }
   }
-  kitchenTraceJsonLog('ReceiptPrintPayload', 'FinalBeforeBridge', <String, Object?>{
-    'path': path,
-    'items': itemSnapshots,
-  });
+  kitchenTraceJsonLog(
+    'ReceiptPrintPayload',
+    'FinalBeforeBridge',
+    <String, Object?>{'path': path, 'items': itemSnapshots},
+  );
 }
 
 void logKitchenFinalBeforeBridge({
@@ -223,16 +254,20 @@ void logKitchenFinalBeforeBridge({
       });
     }
   }
-  kitchenTraceJsonLog('KitchenPrintPayload', 'FinalBeforeBridge', <String, Object?>{
-    'path': path,
-    'title': payload['title'] ?? '',
-    'area_name': payload['area_name'] ?? '',
-    'station_name': payload['station_name'] ?? '',
-    'station_code': payload['station_code'] ?? '',
-    'kitchen_ticket_header': payload['kitchen_ticket_header'] ?? '',
-    'table_area_name': payload['table_area_name'] ?? '',
-    'items': itemSnapshots,
-  });
+  kitchenTraceJsonLog(
+    'KitchenPrintPayload',
+    'FinalBeforeBridge',
+    <String, Object?>{
+      'path': path,
+      'title': payload['title'] ?? '',
+      'area_name': payload['area_name'] ?? '',
+      'station_name': payload['station_name'] ?? '',
+      'station_code': payload['station_code'] ?? '',
+      'kitchen_ticket_header': payload['kitchen_ticket_header'] ?? '',
+      'table_area_name': payload['table_area_name'] ?? '',
+      'items': itemSnapshots,
+    },
+  );
   detectTableAreaUsedAsHeader(payload, where: 'logKitchenFinalBeforeBridge');
 }
 
@@ -241,8 +276,7 @@ void detectTableAreaUsedAsHeader(
   Map<String, dynamic> payload, {
   required String where,
 }) {
-  final tableArea =
-      payload['table_area_name']?.toString().trim() ?? '';
+  final tableArea = payload['table_area_name']?.toString().trim() ?? '';
   if (tableArea.isEmpty) return;
 
   final headerCandidates = <String, String>{
@@ -297,7 +331,8 @@ String productionHeaderFromItem(
 }) {
   return KitchenTicketHeaderResolver.productionHeaderLabel(
     stationName: item['station_name']?.toString() ?? '',
-    stationCode: item['station_code']?.toString() ??
+    stationCode:
+        item['station_code']?.toString() ??
         (stationCodesById?[item['station_id']?.toString() ?? ''] ?? ''),
   );
 }

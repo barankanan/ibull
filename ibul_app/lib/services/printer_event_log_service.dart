@@ -71,8 +71,16 @@ class PrinterEventLogEntry {
 class PrinterEventLogService {
   static const String _storageKey = 'ibul_printer_event_log_v1';
   static const int _maxEntries = 200;
-  static final StreamController<void> _changes =
-      StreamController<void>.broadcast();
+  static int _refreshTick = 0;
+  static final StreamController<int> _changes =
+      StreamController<int>.broadcast();
+
+  void _emitRefresh() {
+    _refreshTick += 1;
+    if (!_changes.isClosed) {
+      _changes.add(_refreshTick);
+    }
+  }
 
   Future<void> appendRuntime({
     required String restaurantId,
@@ -218,9 +226,11 @@ class PrinterEventLogService {
           : current.sublist(current.length - _maxEntries);
       await prefs.setString(
         _storageKey,
-        jsonEncode(trimmed.map((item) => item.toJson()).toList(growable: false)),
+        jsonEncode(
+          trimmed.map((item) => item.toJson()).toList(growable: false),
+        ),
       );
-      _changes.add(null);
+      _emitRefresh();
     } catch (error, stackTrace) {
       debugPrint(
         '[PrinterEventLogService] append failed '
@@ -256,6 +266,24 @@ class PrinterEventLogService {
     yield* _changes.stream.asyncMap(
       (_) => readRecent(restaurantId, limit: limit),
     );
+  }
+
+  Future<void> clearRestaurantLogs(String restaurantId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final entries = await _readAll(prefs);
+    final beforeCount = entries.length;
+    entries.removeWhere((entry) => entry.restaurantId == restaurantId.trim());
+    await prefs.setString(
+      _storageKey,
+      jsonEncode(entries.map((item) => item.toJson()).toList(growable: false)),
+    );
+    debugPrint(
+      '[PrinterEventLogService] Cleared restaurant logs: '
+      'restaurantId=$restaurantId beforeCount=$beforeCount afterCount=${entries.length}',
+    );
+    _emitRefresh();
+    await Future<void>.delayed(Duration.zero);
+    _emitRefresh();
   }
 
   Future<List<PrinterEventLogEntry>> _readAll(SharedPreferences prefs) async {

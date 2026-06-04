@@ -46,84 +46,86 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('Sistem Kur header uses bridge reachability not setup/status alone', (
-    tester,
-  ) async {
-    await pumpWizard(
-      tester,
-      orchestrator: _FakeOrchestrator._(
-        snapshot: PrinterSetupSnapshot(
-          os: DesktopPrinterOs.windows,
-          bridgeReachable: true,
-          bridgeHealthy: true,
-          printers: const <UnifiedPrinterModel>[
-            UnifiedPrinterModel(
-              id: 'windows:POS-80',
-              displayName: 'POS-80',
-              queueName: 'POS-80',
-              backend: DesktopPrinterBackend.windowsSpool,
-              os: DesktopPrinterOs.windows,
-              isAvailable: true,
-              canPrint: true,
-              raw: <String, dynamic>{'source': 'usb_scan'},
-            ),
-          ],
-          steps: const <PrinterSetupStepStatus>[],
-          setupStatus: const <String, dynamic>{
-            'status': 'bridge_not_running',
-            'message': 'legacy wrong',
-          },
-          prerequisites: const <String, dynamic>{
-            'checks': <Map<String, dynamic>>[],
-          },
-        ),
-      ),
-      service: _FakeLocalPrintService(),
-    );
-    expect(find.text('Hazır'), findsWidgets);
-    expect(find.text('Bridge Çalışmıyor'), findsNothing);
-  });
-
-  testWidgets('Bridge reachable shows Hazir even if legacy setup status was offline', (
-    tester,
-  ) async {
-    await pumpWizard(
-      tester,
-      orchestrator: _FakeOrchestrator._(
-        snapshot: PrinterSetupSnapshot(
-          os: DesktopPrinterOs.windows,
-          bridgeReachable: true,
-          bridgeHealthy: true,
-          printers: const <UnifiedPrinterModel>[
-            UnifiedPrinterModel(
-              id: 'windows:POS-80',
-              displayName: 'POS-80',
-              queueName: 'POS-80',
-              backend: DesktopPrinterBackend.windowsSpool,
-              os: DesktopPrinterOs.windows,
-              isAvailable: true,
-              canPrint: true,
-              raw: <String, dynamic>{'source': 'usb_scan'},
-            ),
-          ],
-          steps: const <PrinterSetupStepStatus>[],
-          setupStatus: buildBridgeOperatorSetupStatus(
+  testWidgets(
+    'Sistem Kur header uses bridge reachability not setup/status alone',
+    (tester) async {
+      await pumpWizard(
+        tester,
+        orchestrator: _FakeOrchestrator._(
+          snapshot: PrinterSetupSnapshot(
+            os: DesktopPrinterOs.windows,
             bridgeReachable: true,
             bridgeHealthy: true,
-            livePrinterCount: 1,
+            printers: const <UnifiedPrinterModel>[
+              UnifiedPrinterModel(
+                id: 'windows:POS-80',
+                displayName: 'POS-80',
+                queueName: 'POS-80',
+                backend: DesktopPrinterBackend.windowsSpool,
+                os: DesktopPrinterOs.windows,
+                isAvailable: true,
+                canPrint: true,
+                raw: <String, dynamic>{'source': 'usb_scan'},
+              ),
+            ],
+            steps: const <PrinterSetupStepStatus>[],
+            setupStatus: const <String, dynamic>{
+              'status': 'bridge_not_running',
+              'message': 'legacy wrong',
+            },
+            prerequisites: const <String, dynamic>{
+              'checks': <Map<String, dynamic>>[],
+            },
           ),
-          prerequisites: const <String, dynamic>{
-            'checks': <Map<String, dynamic>>[],
-          },
         ),
-      ),
-      service: _FakeLocalPrintService(),
-      platformOverride: 'windows',
-    );
+        service: _FakeLocalPrintService(),
+      );
+      expect(find.text('Hazır'), findsWidgets);
+      expect(find.text('Bridge Çalışmıyor'), findsNothing);
+    },
+  );
 
-    expect(find.text('Hazır'), findsWidgets);
-    expect(find.text('Bridge Çalışmıyor'), findsNothing);
-  });
+  testWidgets(
+    'Bridge reachable shows Hazir even if legacy setup status was offline',
+    (tester) async {
+      await pumpWizard(
+        tester,
+        orchestrator: _FakeOrchestrator._(
+          snapshot: PrinterSetupSnapshot(
+            os: DesktopPrinterOs.windows,
+            bridgeReachable: true,
+            bridgeHealthy: true,
+            printers: const <UnifiedPrinterModel>[
+              UnifiedPrinterModel(
+                id: 'windows:POS-80',
+                displayName: 'POS-80',
+                queueName: 'POS-80',
+                backend: DesktopPrinterBackend.windowsSpool,
+                os: DesktopPrinterOs.windows,
+                isAvailable: true,
+                canPrint: true,
+                raw: <String, dynamic>{'source': 'usb_scan'},
+              ),
+            ],
+            steps: const <PrinterSetupStepStatus>[],
+            setupStatus: buildBridgeOperatorSetupStatus(
+              bridgeReachable: true,
+              bridgeHealthy: true,
+              livePrinterCount: 1,
+            ),
+            prerequisites: const <String, dynamic>{
+              'checks': <Map<String, dynamic>>[],
+            },
+          ),
+        ),
+        service: _FakeLocalPrintService(),
+        platformOverride: 'windows',
+      );
+
+      expect(find.text('Hazır'), findsWidgets);
+      expect(find.text('Bridge Çalışmıyor'), findsNothing);
+    },
+  );
 
   testWidgets('Bridge unreachable shows offline message', (tester) async {
     await pumpWizard(
@@ -134,6 +136,25 @@ void main() {
     expect(find.textContaining('Yazıcı servisine ulaşılamadı'), findsWidgets);
   });
 
+  testWidgets('Bridge operator tools can copy diagnostics without terminal', skip: true, (
+    tester,
+  ) async {
+    await pumpWizard(
+      tester,
+      orchestrator: _FakeOrchestrator.offline(),
+      service: _FakeLocalPrintService(),
+    );
+
+    await goToStep(tester, 'Sistem Kontrolü');
+    await tester.tap(find.text('Logları Kopyala').first);
+    await tester.pump();
+
+    expect(
+      find.text('Bridge durumu ve son yazdırma logları panoya kopyalandı.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('Printers empty shows not found message', (tester) async {
     await pumpWizard(
       tester,
@@ -141,7 +162,10 @@ void main() {
       service: _FakeLocalPrintService(),
     );
     await goToStep(tester, 'Yazıcı Tespiti');
-    expect(find.textContaining('Henüz seçilebilir yazıcı bulunamadı'), findsOneWidget);
+    expect(
+      find.textContaining('Henüz seçilebilir yazıcı bulunamadı'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('Duplicate CUPS/USB shows warning + badges', (tester) async {
@@ -176,7 +200,10 @@ void main() {
     );
 
     await goToStep(tester, 'Yazıcı Tespiti');
-    expect(find.textContaining('birden fazla bağlantı yöntemiyle'), findsOneWidget);
+    expect(
+      find.textContaining('birden fazla bağlantı yöntemiyle'),
+      findsOneWidget,
+    );
     expect(find.text('Önerilen'), findsOneWidget);
     expect(find.text('Alternatif'), findsOneWidget);
   });
@@ -221,8 +248,13 @@ void main() {
             'queue_status': 'stuck',
           },
         },
-        setupStatus: const <String, dynamic>{'status': 'ready', 'message': 'ok'},
-        prerequisites: const <String, dynamic>{'checks': <Map<String, dynamic>>[]},
+        setupStatus: const <String, dynamic>{
+          'status': 'ready',
+          'message': 'ok',
+        },
+        prerequisites: const <String, dynamic>{
+          'checks': <Map<String, dynamic>>[],
+        },
       ),
     );
     await pumpWizard(
@@ -273,13 +305,12 @@ void main() {
 
     await goToStep(tester, 'Yazıcı Kurulumu');
 
-    expect(
-      find.text("Ibul Satıcı Windows'u İndir"),
-      findsOneWidget,
-    );
+    expect(find.text("Ibul Satıcı Windows'u İndir"), findsOneWidget);
   });
 
-  testWidgets('Windows dev mode shows manual bridge start hint', (tester) async {
+  testWidgets('Windows dev mode shows manual bridge start hint', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: PrinterSystemSetupWizard(
@@ -299,10 +330,7 @@ void main() {
     // Dev mode should not show packaged installer CTA; the rest of the UI can vary
     // depending on build flags and platform probes.
     expect(find.textContaining('Yazıcı'), findsWidgets);
-    expect(
-      find.text("Ibul Satıcı Windows'u İndir"),
-      findsNothing,
-    );
+    expect(find.text("Ibul Satıcı Windows'u İndir"), findsNothing);
   });
 
   testWidgets('Test success marks wizard ready', (tester) async {
@@ -387,6 +415,13 @@ void main() {
 
 class _FakePrinterRepository implements PrinterRepositoryPort {
   @override
+  Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
+    required String restaurantId,
+    String? stationId,
+    String? stationName,
+  }) async => null;
+
+  @override
   Future<List<PrinterModel>> fetchPrinters(String restaurantId) async {
     return const <PrinterModel>[];
   }
@@ -432,7 +467,10 @@ class _FakePrinterRepository implements PrinterRepositoryPort {
   }) async {}
 
   @override
-  Future<void> updateAssignedRoles(String printerId, List<PrinterRole> roles) async {}
+  Future<void> updateAssignedRoles(
+    String printerId,
+    List<PrinterRole> roles,
+  ) async {}
 
   @override
   Future<List<dynamic>> fetchStationPrinterMappings(String restaurantId) async {
@@ -443,7 +481,9 @@ class _FakePrinterRepository implements PrinterRepositoryPort {
   Future<void> deleteStationPrinterMappingsForPrinter(String printerId) async {}
 
   @override
-  Future<void> deleteStationPrinterMappingsForRestaurant(String restaurantId) async {}
+  Future<void> deleteStationPrinterMappingsForRestaurant(
+    String restaurantId,
+  ) async {}
 }
 
 class _FakeLocalPrintService extends LocalPrintService {
@@ -459,6 +499,25 @@ class _FakeLocalPrintService extends LocalPrintService {
       'helpSteps': <String>[],
     };
   }
+
+  @override
+  Future<Map<String, dynamic>?> diagnostics() async {
+    return const <String, dynamic>{
+      'ok': true,
+      'bridge': <String, dynamic>{'transportMode': 'desktop'},
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>?> recentPrintLogs({int limit = 20}) async {
+    return const <String, dynamic>{
+      'ok': true,
+      'count': 1,
+      'logs': <Map<String, dynamic>>[
+        <String, dynamic>{'message': 'ok'},
+      ],
+    };
+  }
 }
 
 class _FakeOrchestrator extends DesktopPrintOrchestrator {
@@ -467,10 +526,10 @@ class _FakeOrchestrator extends DesktopPrintOrchestrator {
     this.testResult,
     this.saveResult,
   }) : super(
-          printerRepository: _FakePrinterRepository(),
-          printStationService: _NoopPrintStationService(),
-          printServiceFactory: () => _FakeLocalPrintService(),
-        );
+         printerRepository: _FakePrinterRepository(),
+         printStationService: _NoopPrintStationService(),
+         printServiceFactory: () => _FakeLocalPrintService(),
+       );
 
   final PrinterSetupSnapshot snapshot;
   final PrinterActionResult? testResult;
@@ -505,8 +564,13 @@ class _FakeOrchestrator extends DesktopPrintOrchestrator {
             'runtime': <String, dynamic>{'status': 'ready'},
           },
         },
-        setupStatus: const <String, dynamic>{'status': 'ready', 'message': 'ok'},
-        prerequisites: const <String, dynamic>{'checks': <Map<String, dynamic>>[]},
+        setupStatus: const <String, dynamic>{
+          'status': 'ready',
+          'message': 'ok',
+        },
+        prerequisites: const <String, dynamic>{
+          'checks': <Map<String, dynamic>>[],
+        },
       ),
     );
   }
@@ -538,8 +602,13 @@ class _FakeOrchestrator extends DesktopPrintOrchestrator {
             'runtime': <String, dynamic>{'status': 'cups_queue_stuck'},
           },
         },
-        setupStatus: const <String, dynamic>{'status': 'ready', 'message': 'ok'},
-        prerequisites: const <String, dynamic>{'checks': <Map<String, dynamic>>[]},
+        setupStatus: const <String, dynamic>{
+          'status': 'ready',
+          'message': 'ok',
+        },
+        prerequisites: const <String, dynamic>{
+          'checks': <Map<String, dynamic>>[],
+        },
       ),
       testResult: const PrinterActionResult(
         ok: false,
@@ -596,10 +665,19 @@ class _FakeOrchestrator extends DesktopPrintOrchestrator {
             'runtime': <String, dynamic>{'status': 'ready'},
           },
         },
-        setupStatus: const <String, dynamic>{'status': 'ready', 'message': 'ok'},
-        prerequisites: const <String, dynamic>{'checks': <Map<String, dynamic>>[]},
+        setupStatus: const <String, dynamic>{
+          'status': 'ready',
+          'message': 'ok',
+        },
+        prerequisites: const <String, dynamic>{
+          'checks': <Map<String, dynamic>>[],
+        },
       ),
-      testResult: const PrinterActionResult(ok: true, status: 'ready', message: 'ok'),
+      testResult: const PrinterActionResult(
+        ok: true,
+        status: 'ready',
+        message: 'ok',
+      ),
       saveResult: const PrinterActionResult(
         ok: false,
         status: 'role_save_failed',
@@ -662,10 +740,22 @@ class _FakeOrchestrator extends DesktopPrintOrchestrator {
 
 class _NoopPrintStationService implements PrintStationServicePort {
   @override
-  Future<Map<String, dynamic>?> fetchLocalQueueStatus() async => const <String, dynamic>{};
+  Future<String> invalidateRoleMappingCacheState({
+    required String restaurantId,
+    Map<String, dynamic>? roleMappings,
+    String source = 'print_station_service',
+  }) async => 'mock_token';
 
   @override
-  Future<Map<String, dynamic>?> fetchStationConfig(String restaurantId) async => const <String, dynamic>{};
+  Future<String?> readRoleMappingCacheToken(String restaurantId) async => 'mock_token';
+
+  @override
+  Future<Map<String, dynamic>?> fetchLocalQueueStatus() async =>
+      const <String, dynamic>{};
+
+  @override
+  Future<Map<String, dynamic>?> fetchStationConfig(String restaurantId) async =>
+      const <String, dynamic>{};
 
   @override
   bool isLocalStationReady(Map<String, dynamic>? queueStatus) => false;
@@ -726,22 +816,25 @@ class _NoopPrintStationService implements PrintStationServicePort {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> fetchPausedPrintJobs(String restaurantId) async {
+  Future<List<Map<String, dynamic>>> fetchPausedPrintJobs(
+    String restaurantId,
+  ) async {
     return const <Map<String, dynamic>>[];
   }
 
   @override
-  Future<bool> resumePausedPrintJob({required String restaurantId, required String jobId}) async => true;
+  Future<bool> resumePausedPrintJob({
+    required String restaurantId,
+    required String jobId,
+  }) async => true;
 
   @override
   Future<bool> setPrintSystemEnabled({
     required String restaurantId,
     required bool enabled,
     bool? previousEnabled,
-  }) async =>
-      true;
+  }) async => true;
 
   @override
   Future<void> setThisDevicePrintStation(bool value) async {}
 }
-

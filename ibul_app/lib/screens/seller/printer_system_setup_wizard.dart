@@ -113,6 +113,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   Map<String, dynamic>? _bridgeHealth;
   int _livePrinterCount = 0;
   bool _bridgeStartBusy = false;
+  bool _bridgeLogsBusy = false;
   String? _bridgeStartMessage;
 
   String get _windowsInstallerUrl =>
@@ -311,6 +312,56 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
         ),
       ),
     );
+  }
+
+  Future<void> _copyBridgeDiagnostics() async {
+    setState(() {
+      _bridgeLogsBusy = true;
+    });
+    final service = _localPrintServiceFactory();
+    try {
+      final diagnostics = await service.diagnostics();
+      final recentLogs = await service.recentPrintLogs(limit: 25);
+      final payload = <String, dynamic>{
+        'generated_at': DateTime.now().toIso8601String(),
+        'bridge_health': _bridgeHealth,
+        'diagnostics': diagnostics,
+        'recent_print_logs': recentLogs,
+      };
+      await Clipboard.setData(
+        ClipboardData(
+          text: const JsonEncoder.withIndent('  ').convert(payload),
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Bridge durumu ve son yazdırma logları panoya kopyalandı.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _operatorErrorMessage(
+              error,
+              fallback:
+                  'Bridge loglari kopyalanamadi. Servisin acik oldugunu kontrol edin.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      service.dispose();
+      if (mounted) {
+        setState(() {
+          _bridgeLogsBusy = false;
+        });
+      }
+    }
   }
 
   Future<void> _toggleAutostart(bool enabled) async {
@@ -1363,6 +1414,19 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
                     )
                   : const Icon(Icons.refresh_rounded, size: 16),
               label: const Text('Yazıcıları Yeniden Tara'),
+            ),
+            OutlinedButton.icon(
+              onPressed: (_bridgeStartBusy || _bridgeLogsBusy)
+                  ? null
+                  : _copyBridgeDiagnostics,
+              icon: _bridgeLogsBusy
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.copy_all_rounded, size: 16),
+              label: const Text('Logları Kopyala'),
             ),
           ],
         ),

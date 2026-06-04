@@ -266,6 +266,26 @@ class PrinterModel {
   static const String localReceiptRoute = '/print/receipt';
   static const String localKitchenRoute = '/print/kitchen';
 
+  /// Default ESC/POS raw TCP port for Ethernet receipt printers
+  /// (NETUM ZJ-8360, Epson TM-T20/T88, etc.).
+  static const int ethernetDefaultPort = 9100;
+
+  /// Bridge ``backend`` value sent to the local print server for Ethernet
+  /// printers. Matches the smart-router branch that bypasses CUPS/USB.
+  static const String ethernetBridgeBackend = 'tcp';
+
+  /// Bridge ``transportType`` value for Ethernet printers.
+  static const String ethernetBridgeTransport = 'ethernet';
+
+  /// Prefix used to namespace the ``device_identifier`` column for Ethernet
+  /// printers (e.g. ``tcp:192.168.1.100:9100``). Lets us round-trip a saved
+  /// printer through the bridge without colliding with USB / CUPS identifiers.
+  static const String ethernetDeviceIdentifierPrefix = 'tcp:';
+
+  /// Stable printer-id pattern used in remote payloads: ``tcp:HOST:PORT``.
+  static String ethernetPrinterId({required String host, required int port}) =>
+      'tcp:${host.trim()}:$port';
+
   final String id;
   final String restaurantId;
   final String name;
@@ -296,6 +316,9 @@ class PrinterModel {
 
   String get _normalizedHost => ipAddress?.trim().toLowerCase() ?? '';
 
+  String get _normalizedDeviceIdentifier =>
+      deviceIdentifier?.trim().toLowerCase() ?? '';
+
   bool get isLocalConnection {
     if (_normalizedConnectionType == localConnectionType) {
       return true;
@@ -307,6 +330,91 @@ class PrinterModel {
     final isLoopbackHost =
         _normalizedHost == localDefaultHost || _normalizedHost == 'localhost';
     return isLoopbackHost && (port ?? localDefaultPort) == localDefaultPort;
+  }
+
+  /// True when this printer is a remote Ethernet ESC/POS printer that the
+  /// bridge should reach via raw TCP (default port 9100) — never CUPS/USB.
+  ///
+  /// Detected by either:
+  ///   - ``device_identifier`` starting with ``tcp:`` (preferred / explicit), or
+  ///   - ``connection_type='network'`` with a non-loopback IP address.
+  bool get isEthernetConnection {
+    if (_normalizedDeviceIdentifier.startsWith(
+      ethernetDeviceIdentifierPrefix,
+    )) {
+      return true;
+    }
+    if (_normalizedConnectionType != networkConnectionType) {
+      return false;
+    }
+    if (isLocalConnection) {
+      return false;
+    }
+    if (_normalizedHost.isEmpty) {
+      return false;
+    }
+    return true;
+  }
+
+  /// IP / hostname to use when dispatching to this printer. Empty when not
+  /// configured.
+  String get ethernetHost {
+    final fromField = ipAddress?.trim() ?? '';
+    if (fromField.isNotEmpty) return fromField;
+    final identifier = deviceIdentifier?.trim() ?? '';
+    if (identifier.startsWith(ethernetDeviceIdentifierPrefix)) {
+      final parts = identifier.split(':');
+      if (parts.length >= 2 && parts[1].trim().isNotEmpty) {
+        return parts[1].trim();
+      }
+    }
+    return '';
+  }
+
+  /// TCP port for the Ethernet printer (defaults to 9100 when unset).
+  int get ethernetPort {
+    if (port != null && port! > 0) return port!;
+    final identifier = deviceIdentifier?.trim() ?? '';
+    if (identifier.startsWith(ethernetDeviceIdentifierPrefix)) {
+      final parts = identifier.split(':');
+      if (parts.length >= 3) {
+        final parsed = int.tryParse(parts[2].trim());
+        if (parsed != null && parsed > 0) return parsed;
+      }
+    }
+    return ethernetDefaultPort;
+  }
+
+  /// Bridge-shaped printer dict for Ethernet printers. Carries every field
+  /// the local bridge needs to bypass CUPS/USB and dispatch via raw TCP.
+  Map<String, dynamic> toEthernetBridgePayload({
+    String? roleOverride,
+    String? documentType,
+  }) {
+    final host = ethernetHost;
+    final tcpPort = ethernetPort;
+    return <String, dynamic>{
+      'id': ethernetPrinterId(host: host, port: tcpPort),
+      'printer_id': ethernetPrinterId(host: host, port: tcpPort),
+      'name': name,
+      'printer_name': name,
+      'backend': ethernetBridgeBackend,
+      'transportType': ethernetBridgeTransport,
+      'transport_type': ethernetBridgeTransport,
+      'connectionType': networkConnectionType,
+      'connection_type': networkConnectionType,
+      'host': host,
+      'ip_address': host,
+      'port': tcpPort,
+      'paper_width_mm': paperWidthMm,
+      'paperWidthMm': paperWidthMm,
+      'auto_cut': supportsCut,
+      'autoCut': supportsCut,
+      if (roleOverride != null && roleOverride.isNotEmpty)
+        'printer_role': roleOverride,
+      if (documentType != null && documentType.isNotEmpty)
+        'document_type': documentType,
+    };
   }
 
   String get formConnectionType {

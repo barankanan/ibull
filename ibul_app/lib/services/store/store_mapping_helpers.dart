@@ -1,6 +1,7 @@
 import '../../models/seller_product.dart';
 
 const List<String> optionalProductColumns = <String>[
+  'sub_category_id',
   'pricing_mode',
   'base_price',
   'specifications',
@@ -79,6 +80,7 @@ SellerProduct mapSnakeCaseToProduct(Map<String, dynamic> data) {
     'brand': data['brand'],
     'store_name': data['store_name'],
     'mainCategory': data['main_category'],
+    'subCategoryId': data['sub_category_id'],
     'subCategory': data['sub_category'],
     'price': data['price'],
     'pricing_mode': data['pricing_mode'],

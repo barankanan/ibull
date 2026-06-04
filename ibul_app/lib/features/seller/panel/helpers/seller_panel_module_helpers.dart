@@ -433,6 +433,12 @@ bool shouldBlockGarsonBackgroundPublish({
   if (selectedModule != SellerModule.garson) return false;
   if (manualRefreshInProgress) return false;
   if (!hasPublishedData) return false;
+  if (source == 'garson_manual_refresh_button' ||
+      source == 'garson_order_submit' ||
+      source == 'garson_table_route_popped' ||
+      source == 'garson_local_table_action') {
+    return false;
+  }
   return source != 'garson_manual_refresh_button';
 }
 

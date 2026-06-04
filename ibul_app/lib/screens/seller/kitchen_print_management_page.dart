@@ -24,6 +24,7 @@ import '../../services/kitchen_product_mapping_cache_store.dart';
 import '../../services/kitchen_routing_service.dart';
 import '../../services/store_service.dart';
 import '../../services/local_print_service.dart';
+import '../../services/bridge_manager.dart';
 import '../../utils/print_perf_log.dart';
 import '../../widgets/bridge_error_dialog.dart';
 import 'printer_guide_dialog.dart';
@@ -2217,6 +2218,65 @@ class _KitchenPrintManagementPageState
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       children: [
         _constrainedSection(_buildPrintSystemControlCard()),
+        const SizedBox(height: 12),
+        _constrainedSection(
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFD1D5DB)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Local Print Bridge',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _bridgeHealthy ? 'Bridge is running and healthy' : 'Bridge is currently unreachable',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: _bridgeHealthy ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ),
+                ElevatedButton.icon(
+                  onPressed: _bridgeHealthy
+                      ? null
+                      : () async {
+                          final result = await BridgeManager.ensureReady();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(result.message),
+                                backgroundColor: result.ok ? Colors.green : Colors.red,
+                              ),
+                            );
+                            _triggerPrintersRefresh(reason: 'bridge_start');
+                          }
+                        },
+                  icon: const Icon(Icons.power_settings_new),
+                  label: const Text('Start Bridge'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _bridgeHealthy ? Colors.grey : const Color(0xFF2563EB),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: 12),
         if ((_printStationError ?? '').isNotEmpty &&
             (_lastCupsQueueBlockedDetails?['suggested_action'] == 'clear_queue'))

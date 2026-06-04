@@ -363,6 +363,99 @@ class LocalPrintService {
     );
   }
 
+  Future<Map<String, dynamic>?> probeTcpPrinter({
+    required String host,
+    required int port,
+    Map<String, dynamic>? printer,
+    Duration? timeout,
+  }) {
+    return _probeTcpPrinterWithFallback(
+      host: host,
+      port: port,
+      printer: printer,
+      timeout: timeout,
+    );
+  }
+
+  Future<Map<String, dynamic>?> _probeTcpPrinterWithFallback({
+    required String host,
+    required int port,
+    Map<String, dynamic>? printer,
+    Duration? timeout,
+  }) async {
+    final effectiveTimeout = timeout ?? const Duration(seconds: 8);
+    final probeBody = _mergePrintOptions(
+      <String, dynamic>{
+        'target_host': host,
+        'target_port': port,
+        if (printer != null && printer.isNotEmpty)
+          'printer': Map<String, dynamic>.from(printer),
+      },
+      targetHost: host,
+      targetPort: port,
+    );
+
+    try {
+      return await _send(
+        section: 'Ethernet',
+        branch: 'tcp_probe',
+        method: 'POST',
+        path: '/printer/tcp/probe',
+        body: probeBody,
+        timeout: effectiveTimeout,
+        requireOk: false,
+      );
+    } on LocalPrintServiceException catch (error) {
+      if (error.statusCode != 404) rethrow;
+      _log(
+        'Ethernet',
+        'fallback tcp_probe_404 -> /print/test test_mode=tcp_connection',
+      );
+      try {
+        final fallbackResponse = await _send(
+          section: 'Ethernet',
+          branch: 'tcp_probe_fallback',
+          method: 'POST',
+          path: '/print/test',
+          body: _mergePrintOptions(
+            <String, dynamic>{
+              'document_type': 'test',
+              'test_mode': 'tcp_connection',
+              'target_host': host,
+              'target_port': port,
+              if (printer != null && printer.isNotEmpty)
+                'printer': Map<String, dynamic>.from(printer),
+            },
+            targetHost: host,
+            targetPort: port,
+          ),
+          timeout: effectiveTimeout,
+          requireOk: false,
+        );
+        if (fallbackResponse == null) return fallbackResponse;
+        final normalized = Map<String, dynamic>.from(fallbackResponse);
+        final suggested =
+            normalized['suggested_message']?.toString().trim() ?? '';
+        normalized['suggested_message'] = normalized['ok'] == true
+            ? (suggested.isNotEmpty
+                  ? '$suggested Bridge eski olabilir; alternatif bağlantı kontrolü kullanıldı.'
+                  : 'Baglanti basarili. Bridge eski oldugu icin alternatif baglanti kontrolden dogrulandi.')
+            : (suggested.isNotEmpty
+                  ? suggested
+                  : 'Baglanti dogrulanamadi. Bridge TCP probe endpointini desteklemiyor olabilir.');
+        normalized['fallback_used'] = true;
+        normalized['fallback_reason'] = 'tcp_probe_route_missing';
+        return normalized;
+      } on LocalPrintServiceException {
+        rethrow;
+      } catch (_) {
+        throw const LocalPrintServiceException(
+          'Baglanti testi su anda bu bridge surumunde desteklenmiyor. Test fisi gondererek dogrulayabilirsiniz.',
+        );
+      }
+    }
+  }
+
   Future<Map<String, dynamic>?> printTurkishDiagnostic({
     required String encoding,
     required List<int> codePages,
@@ -491,13 +584,15 @@ class LocalPrintService {
   Future<Map<String, dynamic>?> printReceipt(
     Map<String, dynamic> payload,
   ) async {
-    return _send(
+    final result = await _send(
       section: 'Receipt',
       branch: 'print_receipt',
       method: 'POST',
       path: '/print/receipt',
       body: payload,
     );
+    _throwIfQueuePaused(result);
+    return result;
   }
 
   Future<Map<String, dynamic>?> printJob(Map<String, dynamic> payload) async {
@@ -758,6 +853,33 @@ class LocalPrintService {
     };
   }
 
+  Future<Map<String, dynamic>?> diagnostics() async {
+    try {
+      return await _send(
+        section: 'Bridge',
+        branch: 'diagnostics',
+        method: 'GET',
+        path: '/diagnostics',
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> recentPrintLogs({int limit = 20}) async {
+    final normalizedLimit = limit.clamp(1, 200);
+    try {
+      return await _send(
+        section: 'Bridge',
+        branch: 'recent_print_logs',
+        method: 'GET',
+        path: '/print/logs/recent?limit=$normalizedLimit',
+      );
+    } on LocalPrintServiceException {
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> releaseUsbPrinters() {
     return _send(
       section: 'System',
@@ -772,27 +894,85 @@ class LocalPrintService {
     Map<String, dynamic> payload, {
     String path = '/print/kitchen',
   }) async {
-    final result = await _send(
-      section: 'Kitchen',
-      branch: 'print_kitchen',
-      method: 'POST',
-      path: path,
-      body: payload,
-    );
-    if (result != null) {
-      final writeStarted = result['printer_write_started_at'];
-      final writeCompleted = result['printer_write_completed_at'];
-      final transportMs = result['transport_ms'];
-      if (writeStarted != null) {
-        debugPrint(
-          '[PrintPipeline] stage=bridge_write '
-          'printer_write_started_at=$writeStarted '
-          'printer_write_completed_at=$writeCompleted '
-          'transport_ms=$transportMs',
-        );
+    final host =
+        payload['host'] ?? payload['ip_address'] ?? payload['ipAddress'];
+    final port = payload['port'];
+    try {
+      final result = await _send(
+        section: 'Kitchen',
+        branch: 'print_kitchen',
+        method: 'POST',
+        path: path,
+        body: payload,
+      );
+      if (result != null) {
+        final writeStarted = result['printer_write_started_at'];
+        final writeCompleted = result['printer_write_completed_at'];
+        final transportMs = result['transport_ms'];
+        if (writeStarted != null) {
+          debugPrint(
+            '[PrintPipeline] stage=bridge_write '
+            'printer_write_started_at=$writeStarted '
+            'printer_write_completed_at=$writeCompleted '
+            'transport_ms=$transportMs',
+          );
+        }
+        if (result['ok'] == false) {
+          throw LocalPrintServiceException(
+            'Ethernet mutfak yazıcısına /print/kitchen isteği başarısız oldu.',
+            details: <String, dynamic>{
+              ...result,
+              'endpoint': path,
+              'host': host,
+              'port': port,
+            },
+          );
+        }
       }
+      _throwIfQueuePaused(result);
+      return result;
+    } on LocalPrintServiceException catch (error) {
+      final details = error.details is Map<String, dynamic>
+          ? Map<String, dynamic>.from(error.details! as Map<String, dynamic>)
+          : <String, dynamic>{};
+      throw LocalPrintServiceException(
+        'Ethernet mutfak yazıcısına /print/kitchen isteği başarısız oldu.',
+        statusCode: error.statusCode,
+        details: <String, dynamic>{
+          ...details,
+          'endpoint': path,
+          'host': host,
+          'port': port,
+          'original_message': error.message,
+        },
+      );
     }
-    return result;
+  }
+
+  void _throwIfQueuePaused(Map<String, dynamic>? result) {
+    if (result == null || result.isEmpty) return;
+    final queueStatus =
+        (result['queue_status'] ?? result['queue_status_snapshot'])
+            ?.toString()
+            .trim()
+            .toLowerCase();
+    final queueMessage =
+        result['queue_message']?.toString().trim().toLowerCase() ?? '';
+    final paused =
+        queueStatus == 'disabled' ||
+        queueMessage.contains('paused') ||
+        queueMessage.contains('duraklat') ||
+        queueMessage.contains('devre dışı') ||
+        queueMessage.contains('devre disi');
+    if (!paused) return;
+    throw LocalPrintServiceException(
+      'USB yazıcı macOS kuyruğunda duraklatılmış. Yazıcılar ve Tarayıcılar’dan Devam Ettir.',
+      details: <String, dynamic>{
+        ...result,
+        'errorCode': 'cups_queue_paused',
+        'suggested_action': 'enable_queue',
+      },
+    );
   }
 
   void dispose() {

@@ -13,4 +13,19 @@ void main() {
     final listening = await BridgeManager.isBridgePortListening();
     expect(listening, isFalse);
   });
+
+  test('normalizeAlreadyRunningMessage maps Errno 48 to friendly text', () {
+    expect(
+      BridgeManager.normalizeAlreadyRunningMessage(
+        'OSError: [Errno 48] Address already in use',
+      ),
+      'Bridge zaten çalışıyor.',
+    );
+    expect(
+      BridgeManager.looksLikeAlreadyRunningSignal(
+        'OSError: [Errno 48] Address already in use',
+      ),
+      isTrue,
+    );
+  });
 }

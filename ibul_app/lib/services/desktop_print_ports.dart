@@ -2,6 +2,44 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/printer_model.dart';
 
+class ExpectedKitchenPrinterResolution {
+  const ExpectedKitchenPrinterResolution({
+    required this.source,
+    required this.printer,
+    required this.backend,
+    required this.host,
+    required this.port,
+    required this.queue,
+    this.stationId,
+    this.stationName,
+  });
+
+  final String source;
+  final PrinterModel printer;
+  final String backend;
+  final String host;
+  final int? port;
+  final String queue;
+  final String? stationId;
+  final String? stationName;
+
+  bool get isTcp => backend == 'tcp';
+
+  Map<String, dynamic> toLogDetails() {
+    return <String, dynamic>{
+      'source': source,
+      'station_id': stationId,
+      'station_name': stationName,
+      'printer_id': printer.id,
+      'printer_name': printer.name,
+      'backend': backend,
+      'host': host,
+      'port': port,
+      'queue': queue,
+    };
+  }
+}
+
 abstract class PrinterRepositoryPort {
   Future<List<PrinterModel>> fetchPrinters(String restaurantId);
 
@@ -43,6 +81,12 @@ abstract class PrinterRepositoryPort {
     required String printerId,
     required bool success,
     String? error,
+  });
+
+  Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
+    required String restaurantId,
+    String? stationId,
+    String? stationName,
   });
 }
 
@@ -108,4 +152,12 @@ abstract class PrintStationServicePort {
   });
 
   Future<Map<String, dynamic>?> fetchLocalQueueStatus();
+
+  Future<String?> readRoleMappingCacheToken(String restaurantId);
+
+  Future<String> invalidateRoleMappingCacheState({
+    required String restaurantId,
+    Map<String, dynamic>? roleMappings,
+    String source = 'print_station_service',
+  });
 }

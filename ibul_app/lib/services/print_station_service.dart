@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config/runtime_config.dart';
 import 'desktop_print_ports.dart';
 import 'local_print_service.dart';
+import 'printer_event_log_service.dart';
 
 class PrintStationService implements PrintStationServicePort {
   PrintStationService({
@@ -15,10 +18,14 @@ class PrintStationService implements PrintStationServicePort {
        _localPrintService = localPrintService;
 
   static const String _kDeviceModeKey = 'ibul_print_station_device_mode_v1';
+  static const String _kRoleMappingCacheTokenPrefix =
+      'ibul_role_mapping_cache_token_v1_';
+  static const String _kLocalConfigPrefix = 'ibul_unified_printer_setup_v1_';
   static const Duration _stationHeartbeatGrace = Duration(seconds: 45);
 
   final SupabaseClient _client;
   final LocalPrintService? _localPrintService;
+  final PrinterEventLogService _eventLogService = PrinterEventLogService();
 
   LocalPrintService _service() => _localPrintService ?? LocalPrintService();
 
@@ -150,6 +157,58 @@ class PrintStationService implements PrintStationServicePort {
   }
 
   @override
+  Future<String?> readRoleMappingCacheToken(String restaurantId) async {
+    final normalizedRestaurantId = restaurantId.trim();
+    if (normalizedRestaurantId.isEmpty) {
+      return null;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(
+      '$_kRoleMappingCacheTokenPrefix$normalizedRestaurantId',
+    );
+  }
+
+  @override
+  Future<String> invalidateRoleMappingCacheState({
+    required String restaurantId,
+    Map<String, dynamic>? roleMappings,
+    String source = 'print_station_service',
+  }) async {
+    final normalizedRestaurantId = restaurantId.trim();
+    final now = DateTime.now().toIso8601String();
+    if (normalizedRestaurantId.isEmpty) {
+      return now;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      '$_kRoleMappingCacheTokenPrefix$normalizedRestaurantId',
+      now,
+    );
+    await prefs.remove('$_kLocalConfigPrefix$normalizedRestaurantId');
+    await _eventLogService.append(
+      restaurantId: normalizedRestaurantId,
+      event: 'role_mapping_cache_invalidated',
+      message: 'Rol eşleştirme cache işareti yenilendi.',
+      details: <String, dynamic>{
+        'source': source,
+        'token': now,
+        'local_config_cleared': true,
+      },
+    );
+    await _eventLogService.append(
+      restaurantId: normalizedRestaurantId,
+      event: 'role_mapping_hydrated',
+      message: 'Rol eşleştirme cache yenilemesi bir sonraki çözümlemeye zorlandı.',
+      details: <String, dynamic>{
+        'source': source,
+        'token': now,
+        if (roleMappings != null) 'role_mappings': jsonEncode(roleMappings),
+      },
+    );
+    return now;
+  }
+
+  @override
   Future<Map<String, dynamic>?> saveStationConfiguration({
     required String restaurantId,
     required String deviceName,
@@ -209,8 +268,7 @@ class PrintStationService implements PrintStationServicePort {
     final combined =
         '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
             .toLowerCase();
-    if (error.code == 'PGRST204' &&
-        combined.contains('print_system_enabled')) {
+    if (error.code == 'PGRST204' && combined.contains('print_system_enabled')) {
       return 'Supabase şemasında restaurant_print_station_configs.print_system_enabled '
           'kolonu yok veya PostgREST önbelleği güncel değil. SQL Editor’de bu kolonu '
           'ekleyin (migration: 20260504 veya 20260507_ensure_print_system_enabled_and_reload_schema.sql) '
@@ -272,7 +330,27 @@ class PrintStationService implements PrintStationServicePort {
   Future<Map<String, dynamic>?> fetchLocalQueueStatus() async {
     final service = _service();
     try {
-      return await service.queueStatus();
+      final status = await service.queueStatus();
+      if (status == null) return null;
+      final normalized = Map<String, dynamic>.from(status);
+      final queue = normalized['queue'];
+      final queueStatus = queue is Map
+          ? queue['queue_status']?.toString().trim().toLowerCase()
+          : normalized['queue_status']?.toString().trim().toLowerCase();
+      final queueMessage = queue is Map
+          ? queue['queue_message']?.toString().trim()
+          : normalized['queue_message']?.toString().trim();
+      final suggestedAction = queue is Map
+          ? queue['suggested_action']?.toString().trim()
+          : normalized['suggested_action']?.toString().trim();
+      normalized['queue_status'] = queueStatus;
+      normalized['queue_message'] = queueMessage;
+      normalized['suggested_action'] = suggestedAction;
+      if (queueStatus == 'disabled') {
+        normalized['status_message'] =
+            'USB yazıcı macOS kuyruğunda duraklatılmış. Yazıcılar ve Tarayıcılar’dan Devam Ettir.';
+      }
+      return normalized;
     } finally {
       if (_localPrintService == null) {
         service.dispose();
@@ -314,9 +392,9 @@ class PrintStationService implements PrintStationServicePort {
         previousEnabled ?? previousConfig?['print_system_enabled'] == true;
     var localUpdated = false;
     try {
-      final localResult = await service.configurePrintStationStrict(
-        {'print_system_enabled': enabled},
-      );
+      final localResult = await service.configurePrintStationStrict({
+        'print_system_enabled': enabled,
+      });
       if (localResult == null || localResult['ok'] != true) {
         throw Exception(
           localResult?['error']?.toString().trim().isNotEmpty == true
@@ -339,9 +417,9 @@ class PrintStationService implements PrintStationServicePort {
     } catch (error) {
       if (localUpdated && priorEnabled != enabled) {
         try {
-          await service.configurePrintStationStrict(
-            {'print_system_enabled': priorEnabled},
-          );
+          await service.configurePrintStationStrict({
+            'print_system_enabled': priorEnabled,
+          });
         } catch (_) {
           // ignore revert failures
         }

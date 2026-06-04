@@ -16,6 +16,7 @@ import 'kitchen_print_trace_log.dart';
 import 'kitchen_product_mapping_cache_store.dart';
 import 'local_print_service.dart';
 import 'printer_event_log_service.dart';
+import 'printer_repository.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status types
@@ -119,6 +120,7 @@ class DesktopPrintHub extends ChangeNotifier {
   final DesktopPrintOrchestrator _printOrchestrator =
       DesktopPrintOrchestrator();
   final PrinterEventLogService _eventLogService = PrinterEventLogService();
+  final PrinterRepository _printerRepository = PrinterRepository();
 
   // ── Observable state ───────────────────────────────────────────────────────
 
@@ -427,11 +429,13 @@ class DesktopPrintHub extends ChangeNotifier {
   }
 
   /// Send a test print to validate the end-to-end path.
-  Future<void> testPrint() async {
+  Future<void> testPrint({
+    PrinterSetupRole role = PrinterSetupRole.adisyon,
+  }) async {
     if ((_restaurantId ?? '').trim().isNotEmpty) {
       final result = await _printOrchestrator.printTestReceipt(
         restaurantId: _restaurantId!,
-        role: PrinterSetupRole.adisyon,
+        role: role,
       );
       _setLastJob(
         description: 'Test fişi ${result.printer?.displayName ?? ""}'.trim(),
@@ -838,18 +842,18 @@ class DesktopPrintHub extends ChangeNotifier {
     Map<String, dynamic> payload;
 
     if (hasFullPayload) {
-      // Fast path: fire-and-forget claim + instant enrich.
-      // The claim DB round-trip (200-500ms) no longer blocks dispatch.
-      // This is safe because:
-      //   - _dispatchedJobIds dedup prevents local re-dispatch
-      //   - Only one desktop hub runs per restaurant
-      //   - markCompleted at the end will update status regardless
-      _dispatchedJobIds.add(jobId);
-      _claimJob(
+      final claimed = await _claimJob(
         jobId,
         hubJobReceivedAt: hubJobReceivedAt,
         claimedAt: claimedAt,
-      ).ignore();
+      );
+      if (!claimed) {
+        debugPrint(
+          '[PrintHub] claim_failed jobId=$jobId '
+          'claimMs=${dispatchWatch.elapsedMilliseconds} fastPath=true',
+        );
+        return;
+      }
       payload = await _enrichPayloadWithPrinterConfig(
         payloadMap,
         printerId: printerId,
@@ -892,7 +896,8 @@ class DesktopPrintHub extends ChangeNotifier {
     final enrichMs = dispatchWatch.elapsedMilliseconds;
 
     final jobRecordForStamp = fullJob ?? jobRecord;
-    final isKitchenJob = _restaurantId != null &&
+    final isKitchenJob =
+        _restaurantId != null &&
         isHubKitchenPrintJob(payload, jobRecordForStamp);
     if (isKitchenJob && _restaurantId != null) {
       await KitchenProductMappingCacheStore.ensureHydrated(_restaurantId!);
@@ -906,11 +911,17 @@ class DesktopPrintHub extends ChangeNotifier {
       );
       payload = kitchenPrintBodies.first;
     } else {
-      kitchenTraceJsonLog('KitchenPrintPayload', 'HubStampSkipped', <String, Object?>{
-        'reason': 'not_kitchen_job',
-        'jobType': payload['job_type'] ?? jobRecordForStamp['job_type'] ?? '',
-        'itemCount': payload['items'] is List ? (payload['items'] as List).length : 0,
-      });
+      kitchenTraceJsonLog(
+        'KitchenPrintPayload',
+        'HubStampSkipped',
+        <String, Object?>{
+          'reason': 'not_kitchen_job',
+          'jobType': payload['job_type'] ?? jobRecordForStamp['job_type'] ?? '',
+          'itemCount': payload['items'] is List
+              ? (payload['items'] as List).length
+              : 0,
+        },
+      );
     }
 
     final tableNo = payload['table_no']?.toString() ?? '-';
@@ -918,12 +929,22 @@ class DesktopPrintHub extends ChangeNotifier {
         payload['station_name']?.toString() ??
         payload['area_name']?.toString() ??
         'Genel';
+    _synthesizeQueuedTcpPayload(payload);
     final preparedPayload = await _printOrchestrator.prepareQueuedPrintPayload(
       restaurantId: _restaurantId!,
       jobRecord: fullJob ?? jobRecordForStamp,
       payload: payload,
     );
     payload = preparedPayload.payload;
+    debugPrint('[DesktopPrintHub][loaded_job]');
+    debugPrint('printer_id=${payload['printer_id'] ?? '-'}');
+    debugPrint(
+      'backend=${payload['backend'] ?? payload['printer_backend'] ?? '-'}',
+    );
+    debugPrint(
+      'host=${payload['host'] ?? payload['ip_address'] ?? payload['ipAddress'] ?? payload['target_host'] ?? '-'}',
+    );
+    debugPrint('port=${payload['port'] ?? payload['target_port'] ?? '-'}');
     final resolvedRole = payload['printer_role']?.toString() ?? '-';
     final resolvedPrinterId = preparedPayload.printer?.id ?? '-';
     final resolvedPrinterRecordId =
@@ -938,6 +959,65 @@ class DesktopPrintHub extends ChangeNotifier {
         preparedPayload.printer?.backend.value ??
         payload['printer']?['backend']?.toString() ??
         '-';
+    if (resolvedRole != 'adisyon') {
+      final expectedKitchenPrinter = await _printerRepository
+          .resolveExpectedKitchenPrinter(
+            restaurantId: _restaurantId!,
+            stationId: _readText(
+              jobRecordForStamp['station_id'] ?? payload['station_id'],
+            ),
+            stationName: _readText(
+              payload['station_name'] ??
+                  payload['kitchen_ticket_header'] ??
+                  area,
+            ),
+          );
+      if (expectedKitchenPrinter != null) {
+        final actualQueue =
+            preparedPayload.printer?.queueName ??
+            _readText(payload['printer_queue']);
+        final actualHost = _readText(
+          payload['selected_printer_host'] ??
+              payload['host'] ??
+              payload['ip_address'] ??
+              payload['ipAddress'],
+        );
+        final actualPort = _readText(
+          payload['selected_printer_port'] ?? payload['port'],
+        );
+        final routeMismatch = expectedKitchenPrinter.isTcp
+            ? resolvedPrinterBackend != 'tcp' ||
+                  actualHost != expectedKitchenPrinter.host ||
+                  actualPort != (expectedKitchenPrinter.port?.toString() ?? '')
+            : actualQueue.trim().toLowerCase() !=
+                  expectedKitchenPrinter.queue.trim().toLowerCase();
+        if (routeMismatch) {
+          _eventLogService
+              .append(
+                restaurantId: _restaurantId!,
+                event: 'printer_route_mismatch',
+                message:
+                    'Hub runtime rotası ile canonical mutfak rotası farklı bulundu.',
+                level: 'error',
+                jobId: jobId,
+                role: resolvedRole,
+                printerId: expectedKitchenPrinter.printer.id,
+                queueName: expectedKitchenPrinter.queue,
+                backend: expectedKitchenPrinter.backend,
+                details: <String, dynamic>{
+                  'test_backend': expectedKitchenPrinter.backend,
+                  'test_host': expectedKitchenPrinter.host,
+                  'test_port': expectedKitchenPrinter.port,
+                  'real_backend': resolvedPrinterBackend,
+                  'real_queue': actualQueue,
+                  'real_host': actualHost,
+                  'real_port': actualPort,
+                },
+              )
+              .ignore();
+        }
+      }
+    }
     _eventLogService
         .append(
           restaurantId: _restaurantId!,
@@ -1013,7 +1093,38 @@ class DesktopPrintHub extends ChangeNotifier {
         )
         .ignore();
     if (preparedPayload.printer == null) {
-      final err = 'Printer resolution failed';
+      final stationId = _readText(
+        jobRecordForStamp['station_id'] ?? payload['station_id'],
+      );
+      final stationName = _readText(
+        payload['station_name'] ?? payload['kitchen_ticket_header'] ?? area,
+      );
+      final requestedPrinterId = _readText(
+        jobRecord['printer_id'] ?? payload['printer_id'],
+      );
+      final selectedPrinterId = _readText(
+        preparedPayload.payload['selected_printer_id'] ??
+            payload['selected_printer_id'],
+      );
+      final selectedPrinterName = _readText(
+        preparedPayload.payload['selected_printer_name'] ??
+            payload['selected_printer_name'],
+      );
+      final backend = _readText(
+        preparedPayload.payload['selected_printer_backend'] ??
+            payload['printer_backend'] ??
+            payload['backend'],
+      );
+      final host = _readText(
+        preparedPayload.payload['selected_printer_host'] ??
+            payload['host'] ??
+            payload['ip_address'] ??
+            payload['ipAddress'],
+      );
+      final port = _readText(
+        preparedPayload.payload['selected_printer_port'] ?? payload['port'],
+      );
+      final err = 'Mutfak fişi yazdırılamadı: yazıcı çözümlenemedi.';
       _eventLogService
           .append(
             restaurantId: _restaurantId!,
@@ -1032,6 +1143,18 @@ class DesktopPrintHub extends ChangeNotifier {
                 ? resolvedPrinterBackend
                 : null,
             details: <String, dynamic>{
+              'printer_resolution_failed': true,
+              'print_job_id': jobId,
+              'job_type': _readText(
+                jobRecord['job_type'] ?? payload['job_type'],
+              ),
+              'station_id': stationId,
+              'station_name': stationName,
+              'requested_printer_id': requestedPrinterId,
+              'selected_printer_id': selectedPrinterId,
+              'selected_printer_name': selectedPrinterName,
+              'host': host,
+              'port': port,
               'resolutionSource': preparedPayload.resolutionSource,
               'printerQueue': resolvedPrinterQueue,
             },
@@ -1047,17 +1170,54 @@ class DesktopPrintHub extends ChangeNotifier {
       return;
     }
     if (resolvedRole != 'adisyon') {
+      if (preparedPayload.payload['wrong_printer_corrected'] == true) {
+        _eventLogService
+            .append(
+              restaurantId: _restaurantId!,
+              event: 'hub_kitchen_wrong_printer_corrected',
+              message:
+                  'Hub mutfak job yanlış yazıcıdan Ethernet yazıcıya düzeltildi.',
+              jobId: jobId,
+              role: resolvedRole,
+              printerId: resolvedPrinterRecordId != '-'
+                  ? resolvedPrinterRecordId
+                  : resolvedPrinterId,
+              queueName: resolvedPrinterQueue != '-'
+                  ? resolvedPrinterQueue
+                  : null,
+              backend: resolvedPrinterBackend != '-'
+                  ? resolvedPrinterBackend
+                  : null,
+              details: <String, dynamic>{
+                'old_printer':
+                    preparedPayload.payload['ignored_printer_name']
+                        ?.toString() ??
+                    '-',
+                'new_printer':
+                    preparedPayload.payload['selected_printer_name']
+                        ?.toString() ??
+                    preparedPayload.printer?.displayName ??
+                    '-',
+                'backend': resolvedPrinterBackend,
+                'host': preparedPayload.payload['selected_printer_host'],
+                'port': preparedPayload.payload['selected_printer_port'],
+              },
+            )
+            .ignore();
+      }
       _eventLogService
           .append(
             restaurantId: _restaurantId!,
             event:
-                preparedPayload.resolutionSource == 'legacy_printer' ||
+                preparedPayload.resolutionSource == 'station_mapping' ||
+                    preparedPayload.resolutionSource == 'legacy_printer' ||
                     preparedPayload.resolutionSource == 'payload' ||
                     preparedPayload.resolutionSource == 'payload_queue'
                 ? 'mapped_area_printer_selected'
                 : 'kitchen_role_fallback_selected',
             message:
-                preparedPayload.resolutionSource == 'legacy_printer' ||
+                preparedPayload.resolutionSource == 'station_mapping' ||
+                    preparedPayload.resolutionSource == 'legacy_printer' ||
                     preparedPayload.resolutionSource == 'payload' ||
                     preparedPayload.resolutionSource == 'payload_queue'
                 ? 'Alan/istasyon eşleştirmesinden yazıcı seçildi.'
@@ -1133,6 +1293,32 @@ class DesktopPrintHub extends ChangeNotifier {
           },
         )
         .ignore();
+    if (resolvedRole != 'adisyon') {
+      _eventLogService
+          .append(
+            restaurantId: _restaurantId!,
+            event: 'hub_kitchen_job_claimed',
+            message: 'Hub mutfak print job kaydını sahiplendi.',
+            jobId: jobId,
+            role: resolvedRole,
+            printerId: resolvedPrinterRecordId != '-'
+                ? resolvedPrinterRecordId
+                : resolvedPrinterId,
+            queueName: resolvedPrinterQueue != '-'
+                ? resolvedPrinterQueue
+                : null,
+            backend: resolvedPrinterBackend != '-'
+                ? resolvedPrinterBackend
+                : null,
+            details: <String, dynamic>{
+              'station_id': _readText(
+                jobRecordForStamp['station_id'] ?? payload['station_id'],
+              ),
+              'station_name': area,
+            },
+          )
+          .ignore();
+    }
     _eventLogService
         .append(
           restaurantId: _restaurantId!,
@@ -1180,10 +1366,14 @@ class DesktopPrintHub extends ChangeNotifier {
         stationIndex < bodiesToPrint.length && finalError == null;
         stationIndex++
       ) {
-        var printPayload = Map<String, dynamic>.from(bodiesToPrint[stationIndex]);
+        var printPayload = Map<String, dynamic>.from(
+          bodiesToPrint[stationIndex],
+        );
         _mergeHubPrinterDispatchFields(printPayload, payload);
 
-        if (isKitchenJob && resolvedRole != 'adisyon' && _restaurantId != null) {
+        if (isKitchenJob &&
+            resolvedRole != 'adisyon' &&
+            _restaurantId != null) {
           printPayload = stampHubKitchenPrintPayload(
             restaurantId: _restaurantId!,
             payload: printPayload,
@@ -1210,6 +1400,80 @@ class DesktopPrintHub extends ChangeNotifier {
 
         for (var attempt = 1; attempt <= _maxPrintAttempts; attempt++) {
           try {
+            if (resolvedRole != 'adisyon') {
+              _eventLogService
+                  .append(
+                    restaurantId: _restaurantId!,
+                    event: 'hub_kitchen_physical_print_dispatched',
+                    message: 'Hub Ethernet mutfak fişini bridge\'e gönderiyor.',
+                    jobId: jobId,
+                    role: resolvedRole,
+                    printerId: resolvedPrinterRecordId != '-'
+                        ? resolvedPrinterRecordId
+                        : resolvedPrinterId,
+                    queueName: resolvedPrinterQueue != '-'
+                        ? resolvedPrinterQueue
+                        : null,
+                    backend: resolvedPrinterBackend != '-'
+                        ? resolvedPrinterBackend
+                        : null,
+                    details: <String, dynamic>{
+                      'attempt': attempt,
+                      'station_id': _readText(
+                        jobRecordForStamp['station_id'] ??
+                            payload['station_id'],
+                      ),
+                      'station_name': area,
+                      'host': _readText(
+                        printPayload['selected_printer_host'] ??
+                            printPayload['host'] ??
+                            printPayload['ip_address'] ??
+                            printPayload['ipAddress'],
+                      ),
+                      'port': _readText(
+                        printPayload['selected_printer_port'] ??
+                            printPayload['port'],
+                      ),
+                    },
+                  )
+                  .ignore();
+              _eventLogService
+                  .append(
+                    restaurantId: _restaurantId!,
+                    event: 'kitchen_physical_print_dispatched',
+                    message: 'Mutfak fişi bridge\'e gönderildi.',
+                    jobId: jobId,
+                    role: resolvedRole,
+                    printerId: resolvedPrinterRecordId != '-'
+                        ? resolvedPrinterRecordId
+                        : resolvedPrinterId,
+                    queueName: resolvedPrinterQueue != '-'
+                        ? resolvedPrinterQueue
+                        : null,
+                    backend: resolvedPrinterBackend != '-'
+                        ? resolvedPrinterBackend
+                        : null,
+                    details: <String, dynamic>{
+                      'attempt': attempt,
+                      'station_id': _readText(
+                        jobRecordForStamp['station_id'] ??
+                            payload['station_id'],
+                      ),
+                      'station_name': area,
+                      'host': _readText(
+                        printPayload['selected_printer_host'] ??
+                            printPayload['host'] ??
+                            printPayload['ip_address'] ??
+                            printPayload['ipAddress'],
+                      ),
+                      'port': _readText(
+                        printPayload['selected_printer_port'] ??
+                            printPayload['port'],
+                      ),
+                    },
+                  )
+                  .ignore();
+            }
             final physicalResult = await _printOrchestrator
                 .printPhysicalToPrinter(
                   preparedPayload.printer!,
@@ -1275,6 +1539,50 @@ class DesktopPrintHub extends ChangeNotifier {
               },
             )
             .ignore();
+        if (resolvedRole != 'adisyon') {
+          _eventLogService
+              .append(
+                restaurantId: _restaurantId!,
+                event: 'hub_kitchen_physical_print_completed',
+                message: 'Hub mutfak fişini başarıyla yazdırdı.',
+                jobId: jobId,
+                role: resolvedRole,
+                printerId: resolvedPrinterRecordId != '-'
+                    ? resolvedPrinterRecordId
+                    : resolvedPrinterId,
+                queueName: resolvedPrinterQueue != '-'
+                    ? resolvedPrinterQueue
+                    : null,
+                backend: resolvedPrinterBackend != '-'
+                    ? resolvedPrinterBackend
+                    : null,
+                details: <String, dynamic>{
+                  'bridgeResult': bridgeResult ?? const <String, dynamic>{},
+                },
+              )
+              .ignore();
+          _eventLogService
+              .append(
+                restaurantId: _restaurantId!,
+                event: 'kitchen_physical_print_completed',
+                message: 'Mutfak fişi başarıyla yazdırıldı.',
+                jobId: jobId,
+                role: resolvedRole,
+                printerId: resolvedPrinterRecordId != '-'
+                    ? resolvedPrinterRecordId
+                    : resolvedPrinterId,
+                queueName: resolvedPrinterQueue != '-'
+                    ? resolvedPrinterQueue
+                    : null,
+                backend: resolvedPrinterBackend != '-'
+                    ? resolvedPrinterBackend
+                    : null,
+                details: <String, dynamic>{
+                  'bridgeResult': bridgeResult ?? const <String, dynamic>{},
+                },
+              )
+              .ignore();
+        }
         _failedJobs.removeWhere((j) => j.jobId == jobId);
         _persistFailedJobs().ignore();
         _dispatchedCount++;
@@ -1317,6 +1625,15 @@ class DesktopPrintHub extends ChangeNotifier {
       } else {
         final err = _normalizedPrintFailure(finalError);
         await _markFailed(jobId, err);
+        final selectedHost = _readText(
+          payload['selected_printer_host'] ??
+              payload['host'] ??
+              payload['ip_address'] ??
+              payload['ipAddress'],
+        );
+        final selectedPort = _readText(
+          payload['selected_printer_port'] ?? payload['port'],
+        );
         _eventLogService
             .append(
               restaurantId: _restaurantId!,
@@ -1334,12 +1651,90 @@ class DesktopPrintHub extends ChangeNotifier {
               backend: resolvedPrinterBackend != '-'
                   ? resolvedPrinterBackend
                   : null,
-              details: <String, dynamic>{'error': err},
+              details: <String, dynamic>{
+                'error': err,
+                'print_job_id': jobId,
+                'station_id': _readText(
+                  jobRecordForStamp['station_id'] ?? payload['station_id'],
+                ),
+                'station_name': _readText(
+                  payload['station_name'] ??
+                      payload['kitchen_ticket_header'] ??
+                      area,
+                ),
+                'requested_printer_id': _readText(
+                  jobRecord['printer_id'] ?? payload['printer_id'],
+                ),
+                'selected_printer_id': _readText(
+                  payload['selected_printer_id'] ?? resolvedPrinterId,
+                ),
+                'selected_printer_name': _readText(
+                  payload['selected_printer_name'] ?? resolvedPrinterName,
+                ),
+                'backend': _readText(
+                  payload['selected_printer_backend'] ?? resolvedPrinterBackend,
+                ),
+                'host': selectedHost,
+                'port': selectedPort,
+              },
             )
             .ignore();
+        if (resolvedRole != 'adisyon') {
+          _eventLogService
+              .append(
+                restaurantId: _restaurantId!,
+                event: 'hub_kitchen_physical_print_failed',
+                message: 'Hub mutfak fişini yazdıramadı.',
+                level: 'error',
+                jobId: jobId,
+                role: resolvedRole,
+                printerId: resolvedPrinterRecordId != '-'
+                    ? resolvedPrinterRecordId
+                    : resolvedPrinterId,
+                queueName: resolvedPrinterQueue != '-'
+                    ? resolvedPrinterQueue
+                    : null,
+                backend: resolvedPrinterBackend != '-'
+                    ? resolvedPrinterBackend
+                    : null,
+                details: <String, dynamic>{
+                  'error': err,
+                  'host': selectedHost,
+                  'port': selectedPort,
+                },
+              )
+              .ignore();
+          _eventLogService
+              .append(
+                restaurantId: _restaurantId!,
+                event: 'kitchen_physical_print_failed',
+                message: 'Mutfak fişi yazdırılamadı.',
+                level: 'error',
+                jobId: jobId,
+                role: resolvedRole,
+                printerId: resolvedPrinterRecordId != '-'
+                    ? resolvedPrinterRecordId
+                    : resolvedPrinterId,
+                queueName: resolvedPrinterQueue != '-'
+                    ? resolvedPrinterQueue
+                    : null,
+                backend: resolvedPrinterBackend != '-'
+                    ? resolvedPrinterBackend
+                    : null,
+                details: <String, dynamic>{
+                  'error': err,
+                  'host': selectedHost,
+                  'port': selectedPort,
+                },
+              )
+              .ignore();
+        }
         _failedCount++;
-        _setLastJob(description: description, error: err);
-        _addFailedJob(jobId, description, err);
+        final userVisibleError = selectedHost.isNotEmpty
+            ? 'Mutfak fişi yazdırılamadı: Ethernet yazıcıya ulaşılamadı.'
+            : 'Mutfak fişi yazdırılamadı: yazıcı çözümlenemedi.';
+        _setLastJob(description: description, error: userVisibleError);
+        _addFailedJob(jobId, description, userVisibleError);
         debugPrint(
           '[PrintHub] all attempts exhausted jobId=$jobId '
           'claimMs=$claimMs enrichMs=$enrichMs totalMs=$totalMs error=$err',
@@ -1368,6 +1763,48 @@ class DesktopPrintHub extends ChangeNotifier {
             details: <String, dynamic>{'error': err},
           )
           .ignore();
+      if (resolvedRole != 'adisyon') {
+        _eventLogService
+            .append(
+              restaurantId: _restaurantId!,
+              event: 'hub_kitchen_physical_print_failed',
+              message: 'Hub mutfak fişini yazdıramadı.',
+              level: 'error',
+              jobId: jobId,
+              role: resolvedRole,
+              printerId: resolvedPrinterRecordId != '-'
+                  ? resolvedPrinterRecordId
+                  : resolvedPrinterId,
+              queueName: resolvedPrinterQueue != '-'
+                  ? resolvedPrinterQueue
+                  : null,
+              backend: resolvedPrinterBackend != '-'
+                  ? resolvedPrinterBackend
+                  : null,
+              details: <String, dynamic>{'error': err},
+            )
+            .ignore();
+        _eventLogService
+            .append(
+              restaurantId: _restaurantId!,
+              event: 'kitchen_physical_print_failed',
+              message: 'Mutfak fişi yazdırılamadı.',
+              level: 'error',
+              jobId: jobId,
+              role: resolvedRole,
+              printerId: resolvedPrinterRecordId != '-'
+                  ? resolvedPrinterRecordId
+                  : resolvedPrinterId,
+              queueName: resolvedPrinterQueue != '-'
+                  ? resolvedPrinterQueue
+                  : null,
+              backend: resolvedPrinterBackend != '-'
+                  ? resolvedPrinterBackend
+                  : null,
+              details: <String, dynamic>{'error': err},
+            )
+            .ignore();
+      }
       _failedCount++;
       _setLastJob(description: description, error: err);
       _addFailedJob(jobId, description, err);
@@ -1404,7 +1841,10 @@ class DesktopPrintHub extends ChangeNotifier {
       'printer_name',
       'printer_queue',
       'printer_backend',
+      'backend',
       'printer_device_identifier',
+      'printer_record_id',
+      'printerRecordId',
       'printer_encoding',
       'encoding',
       'printer_code_page',
@@ -1417,9 +1857,88 @@ class DesktopPrintHub extends ChangeNotifier {
       'render_mode',
       'encoding_profile_verified',
       'turkish_print_mode',
+      'transportType',
+      'transport_type',
+      'host',
+      'ip_address',
+      'ipAddress',
+      'port',
+      'paper_width_mm',
+      'auto_cut',
+      'printer_target_host',
+      'printer_target_port',
+      'target_host',
+      'target_port',
+      'printer',
     ]) {
       if (prepared.containsKey(key) && prepared[key] != null) {
         target[key] = prepared[key];
+      }
+    }
+  }
+
+  void _synthesizeQueuedTcpPayload(Map<String, dynamic> payload) {
+    final printerId = _readText(payload['printer_id']);
+    final beforeBackend = _readText(
+      payload['backend'] ?? payload['printer_backend'],
+    );
+    final beforeHost = _readText(
+      payload['host'] ??
+          payload['ip_address'] ??
+          payload['ipAddress'] ??
+          payload['target_host'],
+    );
+    final beforePort = _readText(payload['port'] ?? payload['target_port']);
+    final host = _readText(
+      payload['host'] ??
+          payload['ip_address'] ??
+          payload['ipAddress'] ??
+          payload['target_host'],
+    );
+    final portRaw = payload['port'] ?? payload['target_port'];
+    var port = portRaw is int
+        ? portRaw
+        : int.tryParse(portRaw?.toString() ?? '');
+    if (printerId.toLowerCase().startsWith('tcp:')) {
+      final parts = printerId.split(':');
+      if (parts.length >= 3) {
+        final resolvedHost = host.isNotEmpty ? host : parts[1].trim();
+        port ??= int.tryParse(parts[2].trim());
+        if (resolvedHost.isNotEmpty && (port ?? 0) > 0) {
+          payload['backend'] = payload['backend'] ?? 'tcp';
+          payload['printer_backend'] = payload['printer_backend'] ?? 'tcp';
+          payload['transportType'] = payload['transportType'] ?? 'ethernet';
+          payload['transport_type'] =
+              payload['transport_type'] ??
+              payload['transportType'] ??
+              'ethernet';
+          payload['host'] = resolvedHost;
+          payload['ip_address'] = resolvedHost;
+          payload['ipAddress'] = resolvedHost;
+          payload['port'] = port;
+          final afterBackend = _readText(
+            payload['backend'] ?? payload['printer_backend'],
+          );
+          final afterHost = _readText(
+            payload['host'] ??
+                payload['ip_address'] ??
+                payload['ipAddress'] ??
+                payload['target_host'],
+          );
+          final afterPort = _readText(
+            payload['port'] ?? payload['target_port'],
+          );
+          if ((beforeBackend != afterBackend ||
+                  beforeHost != afterHost ||
+                  beforePort != afterPort) &&
+              afterBackend == 'tcp') {
+            debugPrint('[DesktopPrintHub][synthesized_tcp_metadata]');
+            debugPrint('printer_id=$printerId');
+            debugPrint('backend=$afterBackend');
+            debugPrint('host=${afterHost.isEmpty ? '-' : afterHost}');
+            debugPrint('port=${afterPort.isEmpty ? '-' : afterPort}');
+          }
+        }
       }
     }
   }

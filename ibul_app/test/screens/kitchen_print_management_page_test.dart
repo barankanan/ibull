@@ -375,6 +375,7 @@ class _FakeKitchenPrintOrchestrator extends DesktopPrintOrchestrator {
   Future<PrinterSetupSnapshot> loadSetupSnapshot({
     required String restaurantId,
     bool forceRefresh = false,
+    bool minimal = false,
     String flowName = 'setup_snapshot',
     String source = 'orchestrator',
     String? storeId,
@@ -476,13 +477,17 @@ class _FakeTestOrchestrator extends _FakeKitchenPrintOrchestrator {
   @override
   Future<PrinterActionResult> printBridgeTest({
     required String restaurantId,
+    covariant dynamic explicitPrinter,
     String? printerId,
     String? printerName,
     String? targetHost,
+    Map<String, dynamic>? extraBody,
     int? targetPort,
     String? encoding,
     int? codePage,
     String renderMode = 'image',
+    String testMode = 'escpos_short',
+    bool skipSetupSnapshot = false,
     String flowName = 'generic_printer_test',
     String source = 'orchestrator',
     String? storeId,
@@ -592,8 +597,11 @@ class _FakeKitchenPrinterRepository extends PrinterRepository {
 
   @override
   Future<void> assignPrinterToStation({
+    String? restaurantId,
     required String stationId,
     required String printerId,
+    String? printerName,
+    String? stationName,
     bool isPrimary = true,
   }) async {}
 

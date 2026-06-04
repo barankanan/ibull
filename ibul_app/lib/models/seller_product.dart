@@ -9,6 +9,7 @@ class SellerProduct {
   final String name;
   final String brand;
   final String mainCategory;
+  final String? subCategoryId;
   final String subCategory;
   final double price;
   final String pricingMode;
@@ -63,6 +64,7 @@ class SellerProduct {
     required this.name,
     required this.brand,
     required this.mainCategory,
+    this.subCategoryId,
     required this.subCategory,
     required this.price,
     this.pricingMode = 'base_only',
@@ -239,8 +241,7 @@ class SellerProduct {
 
   int get resolvedWeightStepGrams => resolvedWeightGramSettings.stepGrams;
 
-  int get resolvedDefaultWeightGrams =>
-      resolvedWeightGramSettings.defaultGrams;
+  int get resolvedDefaultWeightGrams => resolvedWeightGramSettings.defaultGrams;
 
   int? get resolvedMaxWeightGrams => resolvedWeightGramSettings.maxGrams;
 
@@ -274,6 +275,7 @@ class SellerProduct {
       'name': name,
       'brand': brand,
       'mainCategory': mainCategory,
+      'subCategoryId': subCategoryId,
       'subCategory': subCategory,
       'price': price,
       'pricingMode': pricingMode,
@@ -375,27 +377,30 @@ class SellerProduct {
       brand: map['brand'] ?? '',
       mainCategory:
           map['main_category'] ?? map['mainCategory'] ?? map['category'] ?? '',
+      subCategoryId:
+          map['sub_category_id']?.toString() ??
+          map['subCategoryId']?.toString(),
       subCategory: map['sub_category'] ?? map['subCategory'] ?? '',
       price: (map['price'] ?? 0).toDouble(),
-        pricingMode:
+      pricingMode:
           map['pricing_mode']?.toString() ??
           map['pricingMode']?.toString() ??
           ProductPriceCalculator.resolvePricingMode(
-          basePrice: resolvedPortionPrice,
-          pricePerKg: resolvedPricePerKg > 0 ? resolvedPricePerKg : null,
-          sizeOptions: resolvedSizeOptions,
+            basePrice: resolvedPortionPrice,
+            pricePerKg: resolvedPricePerKg > 0 ? resolvedPricePerKg : null,
+            sizeOptions: resolvedSizeOptions,
           ).storageValue,
-        basePrice: resolvedPortionPrice,
+      basePrice: resolvedPortionPrice,
       pricingType: resolvedPricingType,
       portionPrice:
           resolvedPortionPrice ??
           ProductPriceCalculator.parsePriceValue(map['price']),
       pricePerKg: resolvedPricePerKg > 0 ? resolvedPricePerKg : null,
-        sizeOptions: resolvedSizeOptions,
-        selectedSizeName:
+      sizeOptions: resolvedSizeOptions,
+      selectedSizeName:
           map['selected_size_name']?.toString() ??
           map['selectedSizeName']?.toString(),
-        selectedSizePrice:
+      selectedSizePrice:
           (map['selected_size_price'] as num?)?.toDouble() ??
           (map['selectedSizePrice'] as num?)?.toDouble(),
       serviceControlType:
@@ -442,9 +447,7 @@ class SellerProduct {
           ? List<String>.from(map['attributes'])
           : [],
       storeName: map['store_name'],
-      videoUrl:
-          map['video_public_url'] ??
-          map['video_url'],
+      videoUrl: map['video_public_url'] ?? map['video_url'],
       videoPath: map['video_path'],
       videoPublicUrl: map['video_public_url'],
       thumbnailPath: map['thumbnail_path'],

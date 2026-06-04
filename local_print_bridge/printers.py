@@ -138,6 +138,83 @@ def dedupe_printers(records: list[dict[str, object]]) -> list[dict[str, object]]
     return unique
 
 
+def annotate_duplicate_physical_printers(
+    records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    groups: dict[str, list[dict[str, object]]] = {}
+
+    def _looks_like_pos58(record: dict[str, object]) -> bool:
+        vid = _normalize_hex_id(record.get("vendorId") or record.get("vid")) or ""
+        pid = _normalize_hex_id(record.get("productId") or record.get("pid")) or ""
+        if vid == "0x0416" and pid == "0x5011":
+            return True
+        text = " ".join(
+            str(
+                record.get(key) or ""
+            )
+            for key in ("id", "name", "queue", "displayName", "product", "manufacturer")
+        ).lower()
+        return "pos58" in text or "pos-58" in text or "stmicroelectronics" in text
+
+    def _group_key(record: dict[str, object]) -> str | None:
+        if not _looks_like_pos58(record):
+            return None
+        vid = _normalize_hex_id(record.get("vendorId") or record.get("vid")) or ""
+        pid = _normalize_hex_id(record.get("productId") or record.get("pid")) or ""
+        if vid and pid:
+            return f"pos58:{vid}:{pid}"
+        text = " ".join(
+            str(record.get(key) or "")
+            for key in ("name", "queue", "displayName", "product", "manufacturer")
+        ).lower()
+        normalized = re.sub(r"[^a-z0-9]+", " ", text)
+        normalized = re.sub(r"\b(usb|printer|queue|cups|direct|stmicroelectronics)\b", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return f"pos58:{normalized or 'unknown'}"
+
+    for record in records:
+        key = _group_key(record)
+        if key is None:
+            continue
+        groups.setdefault(key, []).append(record)
+
+    for key, group in groups.items():
+        if len(group) < 2:
+            continue
+        backends = {
+            str(record.get("backend") or record.get("transportType") or "").strip().lower()
+            for record in group
+        }
+        if "cups" not in backends or "usb-direct" not in backends:
+            continue
+        for record in group:
+            backend = str(
+                record.get("backend") or record.get("transportType") or ""
+            ).strip().lower()
+            record["duplicatePhysicalPrinter"] = True
+            record["duplicateGroupKey"] = key
+            record["duplicateBackends"] = ["cups", "usb-direct"]
+            record["recommendedBackend"] = "cups"
+            record["recommended"] = backend == "cups"
+            if backend == "cups":
+                record["backendStatusLabel"] = "CUPS: Onerilen"
+                if not str(record.get("statusMessage") or "").strip():
+                    record["statusMessage"] = "CUPS kuyrugu POS-58 adisyon icin onerilir."
+            elif backend == "usb-direct":
+                record["backendStatusLabel"] = "USB Direct: Kilitli / CUPS tutuyor olabilir"
+                record["statusLevel"] = (
+                    "error"
+                    if str(record.get("statusLevel") or "").strip().lower() == "error"
+                    else "warning"
+                )
+                if not str(record.get("statusMessage") or "").strip():
+                    record["statusMessage"] = (
+                        "Bu yazici macOS tarafindan tutuluyor olabilir. "
+                        "Adisyon icin CUPS yolunu kullanmaniz onerilir."
+                    )
+    return records
+
+
 def discover_windows_printers() -> list[dict[str, object]]:
     if platform.system().lower() != "windows":
         return []

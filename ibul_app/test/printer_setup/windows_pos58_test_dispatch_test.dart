@@ -148,6 +148,13 @@ class _Pos58ProbeService extends LocalPrintService {
 }
 
 class _FakePrinterRepo implements PrinterRepositoryPort {
+  @override
+  Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
+    required String restaurantId,
+    String? stationId,
+    String? stationName,
+  }) async => null;
+
   _FakePrinterRepo({this.saved = const <PrinterModel>[]});
 
   final List<PrinterModel> saved;
@@ -217,6 +224,16 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
 }
 
 class _FakeStationService implements PrintStationServicePort {
+  @override
+  Future<String> invalidateRoleMappingCacheState({
+    required String restaurantId,
+    Map<String, dynamic>? roleMappings,
+    String source = 'print_station_service',
+  }) async => 'mock_token';
+
+  @override
+  Future<String?> readRoleMappingCacheToken(String restaurantId) async => 'mock_token';
+
   @override
   Future<Map<String, dynamic>?> fetchStationConfig(String restaurantId) async =>
       null;

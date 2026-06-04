@@ -31,10 +31,7 @@ void main() {
     expect(find.text('Baskı Sistemi'), findsOneWidget);
     expect(find.text('Kapalı'), findsWidgets);
     expect(find.text('Baskı Sistemini Aç'), findsOneWidget);
-    expect(
-      tester.widget<Switch>(find.byType(Switch).first).value,
-      isFalse,
-    );
+    expect(tester.widget<Switch>(find.byType(Switch).first).value, isFalse);
   });
 
   testWidgets('Toggle kapatinca local ve remote state kapaliya doner', (
@@ -59,10 +56,7 @@ void main() {
     expect(stationService.toggleCalls, <bool>[false]);
     expect(stationService.localEnabled, isFalse);
     expect(stationService.remoteEnabled, isFalse);
-    expect(
-      tester.widget<Switch>(find.byType(Switch).first).value,
-      isFalse,
-    );
+    expect(tester.widget<Switch>(find.byType(Switch).first).value, isFalse);
     expect(
       find.text(
         'Baskı sistemi kapatıldı. Siparişler alınır ancak fişler otomatik yazdırılmaz.',
@@ -93,10 +87,7 @@ void main() {
     expect(stationService.toggleCalls, <bool>[true]);
     expect(stationService.localEnabled, isTrue);
     expect(stationService.remoteEnabled, isTrue);
-    expect(
-      tester.widget<Switch>(find.byType(Switch).first).value,
-      isTrue,
-    );
+    expect(tester.widget<Switch>(find.byType(Switch).first).value, isTrue);
     expect(
       find.text('Baskı sistemi açıldı. Yeni siparişler otomatik yazdırılır.'),
       findsOneWidget,
@@ -126,10 +117,7 @@ void main() {
     expect(stationService.toggleCalls, <bool>[false]);
     expect(stationService.localEnabled, isTrue);
     expect(stationService.remoteEnabled, isTrue);
-    expect(
-      tester.widget<Switch>(find.byType(Switch).first).value,
-      isTrue,
-    );
+    expect(tester.widget<Switch>(find.byType(Switch).first).value, isTrue);
     expect(
       find.text(
         'Baskı sistemi güncellenemedi. Yerel bridge ve bulut ayarı eski duruma geri alındı.',
@@ -208,9 +196,8 @@ Future<void> _pumpPage(
         guideTabOverride: const SizedBox.shrink(),
         printOrchestrator: orchestrator,
         printStationService: stationService,
-        printerStreamBuilder: (_) => Stream<List<PrinterModel>>.value(
-          const <PrinterModel>[],
-        ),
+        printerStreamBuilder: (_) =>
+            Stream<List<PrinterModel>>.value(const <PrinterModel>[]),
       ),
     ),
   );
@@ -376,6 +363,7 @@ class _FakeDesktopPrintOrchestrator extends DesktopPrintOrchestrator {
   Future<PrinterSetupSnapshot> loadSetupSnapshot({
     required String restaurantId,
     bool forceRefresh = false,
+    bool minimal = false,
     String flowName = 'setup_snapshot',
     String source = 'orchestrator',
     String? storeId,
@@ -425,7 +413,9 @@ class _FakeDesktopPrintOrchestrator extends DesktopPrintOrchestrator {
         },
       },
       setupStatus: const <String, dynamic>{'status': 'ready'},
-      prerequisites: const <String, dynamic>{'checks': <Map<String, dynamic>>[]},
+      prerequisites: const <String, dynamic>{
+        'checks': <Map<String, dynamic>>[],
+      },
       discoveryWarning: null,
       bridgeStatusLabel: 'Hazir',
     );

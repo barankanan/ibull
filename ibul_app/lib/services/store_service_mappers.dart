@@ -105,6 +105,7 @@ class StoreServiceMappers {
       'name': data['name'],
       'brand': data['brand'],
       'main_category': data['mainCategory'],
+      'sub_category_id': data['subCategoryId'],
       'sub_category': data['subCategory'],
       'price': data['price'],
       'pricing_mode': data['pricingMode'],
@@ -131,8 +132,7 @@ class StoreServiceMappers {
       'image_urls': data['imageUrls'],
       'description': data['description'],
       'specifications': _serializeSpecifications(data['specifications']),
-      if (data['productType'] != null)
-        'product_type': data['productType'],
+      if (data['productType'] != null) 'product_type': data['productType'],
       'preparation_time': data['preparationTime'],
       'attributes': data['attributes'] ?? [],
       'video_url': data['videoPublicUrl'] ?? data['videoUrl'],
