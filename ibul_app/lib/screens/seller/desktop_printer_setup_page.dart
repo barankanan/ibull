@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../services/desktop_print_ports.dart';
+import '../../services/bridge_manager.dart';
 import '../../services/local_print_service.dart';
 import '../../models/desktop_printer_setup_models.dart';
 import '../../models/windows_printer_classification.dart';
@@ -205,7 +206,8 @@ class _PrintersTabState extends State<_PrintersTab> {
   bool _bridgeReachable = false;
   bool _bridgeHealthy = false;
   List<Map<String, dynamic>> _bridgePrinters = const <Map<String, dynamic>>[];
-  List<Map<String, dynamic>> _staleBridgePrinters = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _staleBridgePrinters =
+      const <Map<String, dynamic>>[];
   Map<String, dynamic>? _bridgeHealth;
   Map<String, dynamic>? _printSystemQueueStatus;
 
@@ -245,8 +247,7 @@ class _PrintersTabState extends State<_PrintersTab> {
   @override
   void initState() {
     super.initState();
-    _printOrchestrator =
-        widget.printOrchestrator ?? DesktopPrintOrchestrator();
+    _printOrchestrator = widget.printOrchestrator ?? DesktopPrintOrchestrator();
     _printStationService = widget.printStationService ?? PrintStationService();
     unawaited(_loadPrintCenterState());
   }
@@ -297,11 +298,13 @@ class _PrintersTabState extends State<_PrintersTab> {
         }
       }
       if (!mounted) return;
-      final pausedJobs = await _printStationService
-          .fetchPausedPrintJobs(widget.restaurantId);
+      final pausedJobs = await _printStationService.fetchPausedPrintJobs(
+        widget.restaurantId,
+      );
       if (!mounted) return;
-      final queueDisabled =
-          _queueRuntimePrintSystemDisabled(snapshot.queueStatus);
+      final queueDisabled = _queueRuntimePrintSystemDisabled(
+        snapshot.queueStatus,
+      );
       setState(() {
         _bridgeReachable = snapshot.bridgeReachable;
         _bridgeHealthy = snapshot.bridgeHealthy;
@@ -335,10 +338,12 @@ class _PrintersTabState extends State<_PrintersTab> {
         _localPrintSystemEnabled = localPrintSystemEnabled;
         _remotePrintSystemEnabled = remotePrintSystemEnabled;
         _printSystemSourceIsLocalRuntime = localPrintSystemEnabled != null;
-        _printSystemEnabled = localPrintSystemEnabled ??
+        _printSystemEnabled =
+            localPrintSystemEnabled ??
             remotePrintSystemEnabled ??
             (queueDisabled ? false : true);
-        _printSystemEnabledLoaded = localPrintSystemEnabled != null ||
+        _printSystemEnabledLoaded =
+            localPrintSystemEnabled != null ||
             remotePrintSystemEnabled != null ||
             snapshot.queueStatus != null;
         _printSystemSyncNotice = syncNotice;
@@ -376,7 +381,10 @@ class _PrintersTabState extends State<_PrintersTab> {
       setState(() {
         _bridgeServiceMessage = _bridgeReachable
             ? 'Yazıcı servisi hazır.'
-            : result.message;
+            : BridgeManager.normalizeAlreadyRunningMessage(
+                result.message,
+                fallback: result.message,
+              );
       });
     } finally {
       if (mounted) {
@@ -407,7 +415,11 @@ class _PrintersTabState extends State<_PrintersTab> {
       setState(() {
         _bridgeServiceMessage = _bridgeReachable
             ? 'Yazıcı servisi hazır.'
-            : 'Servis onarılamadı. Kurulum uygulamasını yeniden çalıştırın.';
+            : BridgeManager.normalizeAlreadyRunningMessage(
+                result.message,
+                fallback:
+                    'Servis onarılamadı. Kurulum uygulamasını yeniden çalıştırın.',
+              );
       });
     } finally {
       if (mounted) {
@@ -441,8 +453,7 @@ class _PrintersTabState extends State<_PrintersTab> {
   bool get _hasDetectedPrinters =>
       _bridgePrinters.any((printer) => printer['isLive'] == true);
 
-  bool get _canSelectPrinterRoles =>
-      _bridgeReachable && _hasDetectedPrinters;
+  bool get _canSelectPrinterRoles => _bridgeReachable && _hasDetectedPrinters;
 
   Future<void> _togglePrintSystemEnabled(bool enabled) async {
     if (_savingPrintSystemEnabled) {
@@ -704,11 +715,7 @@ class _PrintersTabState extends State<_PrintersTab> {
           const SizedBox(height: 14),
           Row(
             children: [
-              Icon(
-                Icons.power_settings_new,
-                color: statusColor,
-                size: 20,
-              ),
+              Icon(Icons.power_settings_new, color: statusColor, size: 20),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -789,8 +796,7 @@ class _PrintersTabState extends State<_PrintersTab> {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed:
-                  _savingPrintSystemEnabled || !_printSystemEnabledLoaded
+              onPressed: _savingPrintSystemEnabled || !_printSystemEnabledLoaded
                   ? null
                   : () => _togglePrintSystemEnabled(!uiEnabled),
               icon: _savingPrintSystemEnabled
@@ -820,10 +826,7 @@ class _PrintersTabState extends State<_PrintersTab> {
               padding: const EdgeInsets.only(top: 0),
               child: Text(
                 'Bekleyen baskı sayısı: ${_pausedPrintJobs.length}.',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF4B5563),
-                ),
+                style: const TextStyle(fontSize: 12, color: Color(0xFF4B5563)),
               ),
             ),
           ],
@@ -839,10 +842,7 @@ class _PrintersTabState extends State<_PrintersTab> {
               ),
               child: Text(
                 _printSystemSyncNotice!,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF075985),
-                ),
+                style: const TextStyle(fontSize: 12, color: Color(0xFF075985)),
               ),
             ),
           if (_printSystemError != null)
@@ -856,10 +856,7 @@ class _PrintersTabState extends State<_PrintersTab> {
               ),
               child: Text(
                 _printSystemError!,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFFB91C1C),
-                ),
+                style: const TextStyle(fontSize: 12, color: Color(0xFFB91C1C)),
               ),
             ),
         ],
@@ -1376,19 +1373,16 @@ class _PrintersTabState extends State<_PrintersTab> {
       final selection =
           map['selectionId']?.toString() ?? map['printerRecordId']?.toString();
       if (bridgeId != needle && selection != needle) continue;
-      return UnifiedPrinterModel.fromBridgeMap(
-        <String, dynamic>{
-          ...map,
-          'id': bridgeId,
-          'name': map['queue']?.toString() ?? map['name']?.toString(),
-          'queue': map['queue']?.toString() ?? map['name']?.toString(),
-          'backend': map['backend']?.toString() ?? 'windows-spool',
-          'source': 'usb_scan',
-          'statusLevel': map['statusLevel']?.toString() ?? 'ready',
-          'ready': map['statusLevel']?.toString() == 'ready',
-        },
-        os: DesktopPrinterOs.windows,
-      );
+      return UnifiedPrinterModel.fromBridgeMap(<String, dynamic>{
+        ...map,
+        'id': bridgeId,
+        'name': map['queue']?.toString() ?? map['name']?.toString(),
+        'queue': map['queue']?.toString() ?? map['name']?.toString(),
+        'backend': map['backend']?.toString() ?? 'windows-spool',
+        'source': 'usb_scan',
+        'statusLevel': map['statusLevel']?.toString() ?? 'ready',
+        'ready': map['statusLevel']?.toString() == 'ready',
+      }, os: DesktopPrinterOs.windows);
     }
     return null;
   }
@@ -1503,135 +1497,138 @@ class _PrintersTabState extends State<_PrintersTab> {
                   ),
                 );
               }
+
               if (index == 0) {
                 return wrap(_buildPrintSystemControlCard());
               }
               if (index == 1) {
                 return wrap(
                   _DesktopPrintCenterCard(
-                  loading: _loadingPrintCenter,
-                  saving: _savingPrintCenter,
-                  testingReceipt: _testingReceipt,
-                  testingKitchen: _testingKitchen,
-                  testingGeneric: _testingGeneric,
-                  errorText: _printCenterError,
-                  setupStatusLabel: _wizardStatusLabel(_setupStatusKey()),
-                  setupStatusColor: _wizardStatusColor(_setupStatusKey()),
-                  bridgeSummaryLabel: _bridgeSummaryLabel(),
-                  bridgeSummaryMessage: _bridgeSummaryMessage(),
-                  scanGuidance: _printerDiscoveryGuidance(),
-                  canSelectPrinterRoles: _canSelectPrinterRoles,
-                  bridgeReachable: _bridgeReachable,
-                  bridgeHealthy: _bridgeHealthy,
-                  bridgeHealth: _bridgeHealth,
-                  hasDetectedPrinters: _hasDetectedPrinters,
-                  workingTestPrinter: _workingTestPrinter,
-                  setupChecks:
-                      (_setupPrerequisites?['checks'] as List?)
-                          ?.whereType<Map>()
-                          .map((entry) => Map<String, dynamic>.from(entry))
-                          .toList(growable: false) ??
-                      const <Map<String, dynamic>>[],
-                  onOpenGuidedSetup: _openGuidedSetup,
-                  bridgePrinters: _bridgePrinters,
-                  staleBridgePrinters: _staleBridgePrinters,
-                  selectedReceiptPrinterId: _selectedReceiptPrinterId,
-                  selectedKitchenPrinterId: _selectedKitchenPrinterId,
-                  onRefreshPrinters: _loadPrintCenterState,
-                  onReceiptPrinterChanged: (value) {
-                    setState(() => _selectedReceiptPrinterId = value);
-                  },
-                  onKitchenPrinterChanged: (value) {
-                    setState(() => _selectedKitchenPrinterId = value);
-                  },
-                  onSendReceiptTest: () => _sendTestReceipt(kitchen: false),
-                  onSendKitchenTest: () => _sendTestReceipt(kitchen: true),
-                  onOpenTurkishEncodingTest: _openTurkishEncodingCalibration,
-                  onSendGenericTest: _sendGenericTest,
-                  onUseWorkingTestPrinter: _useWorkingTestPrinter,
-                  onSavePrintCenter: _savePrintCenter,
-                  bridgeServiceBusy: _bridgeServiceBusy,
-                  bridgeServiceMessage: _bridgeServiceMessage,
-                  onStartBridgeService: _startBridgeService,
-                  onRepairBridgeService: _repairBridgeService,
+                    loading: _loadingPrintCenter,
+                    saving: _savingPrintCenter,
+                    testingReceipt: _testingReceipt,
+                    testingKitchen: _testingKitchen,
+                    testingGeneric: _testingGeneric,
+                    errorText: _printCenterError,
+                    setupStatusLabel: _wizardStatusLabel(_setupStatusKey()),
+                    setupStatusColor: _wizardStatusColor(_setupStatusKey()),
+                    bridgeSummaryLabel: _bridgeSummaryLabel(),
+                    bridgeSummaryMessage: _bridgeSummaryMessage(),
+                    scanGuidance: _printerDiscoveryGuidance(),
+                    canSelectPrinterRoles: _canSelectPrinterRoles,
+                    bridgeReachable: _bridgeReachable,
+                    bridgeHealthy: _bridgeHealthy,
+                    bridgeHealth: _bridgeHealth,
+                    hasDetectedPrinters: _hasDetectedPrinters,
+                    workingTestPrinter: _workingTestPrinter,
+                    setupChecks:
+                        (_setupPrerequisites?['checks'] as List?)
+                            ?.whereType<Map>()
+                            .map((entry) => Map<String, dynamic>.from(entry))
+                            .toList(growable: false) ??
+                        const <Map<String, dynamic>>[],
+                    onOpenGuidedSetup: _openGuidedSetup,
+                    bridgePrinters: _bridgePrinters,
+                    staleBridgePrinters: _staleBridgePrinters,
+                    selectedReceiptPrinterId: _selectedReceiptPrinterId,
+                    selectedKitchenPrinterId: _selectedKitchenPrinterId,
+                    onRefreshPrinters: _loadPrintCenterState,
+                    onReceiptPrinterChanged: (value) {
+                      setState(() => _selectedReceiptPrinterId = value);
+                    },
+                    onKitchenPrinterChanged: (value) {
+                      setState(() => _selectedKitchenPrinterId = value);
+                    },
+                    onSendReceiptTest: () => _sendTestReceipt(kitchen: false),
+                    onSendKitchenTest: () => _sendTestReceipt(kitchen: true),
+                    onOpenTurkishEncodingTest: _openTurkishEncodingCalibration,
+                    onSendGenericTest: _sendGenericTest,
+                    onUseWorkingTestPrinter: _useWorkingTestPrinter,
+                    onSavePrintCenter: _savePrintCenter,
+                    bridgeServiceBusy: _bridgeServiceBusy,
+                    bridgeServiceMessage: _bridgeServiceMessage,
+                    onStartBridgeService: _startBridgeService,
+                    onRepairBridgeService: _repairBridgeService,
                   ),
                 );
               }
               if (index == 2) {
                 return wrap(
                   Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Yazici bakimi',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF111827),
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'Liste canonical yazıcı kayıtlarını gösterir; canlı taramadakiler üstte, kayıtlı ama şu an görünmeyenler altta kalır.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF4B5563),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
                           children: [
-                            Text(
-                              'Yazici bakimi',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF111827),
-                              ),
+                            OutlinedButton.icon(
+                              onPressed: _runningMaintenance
+                                  ? null
+                                  : _cleanupBrokenPrinters,
+                              icon: _runningMaintenance
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.cleaning_services_outlined,
+                                    ),
+                              label: const Text('Temizle'),
                             ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Liste canonical yazıcı kayıtlarını gösterir; canlı taramadakiler üstte, kayıtlı ama şu an görünmeyenler altta kalır.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF4B5563),
-                              ),
+                            OutlinedButton.icon(
+                              onPressed: _runningHardReset
+                                  ? null
+                                  : _hardResetPrinters,
+                              icon: _runningHardReset
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.restart_alt_rounded),
+                              label: const Text('Hard Reset Printers'),
                             ),
                           ],
                         ),
-                      ),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: _runningMaintenance
-                                ? null
-                                : _cleanupBrokenPrinters,
-                            icon: _runningMaintenance
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.cleaning_services_outlined),
-                            label: const Text('Temizle'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: _runningHardReset
-                                ? null
-                                : _hardResetPrinters,
-                            icon: _runningHardReset
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.restart_alt_rounded),
-                            label: const Text('Hard Reset Printers'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
                   ),
                 );
               }
@@ -1928,7 +1925,8 @@ class _DesktopPrintCenterCard extends StatelessWidget {
             subtitle: bridgeSummaryMessage,
             done: bridgeHealthy,
           ),
-          if (kDebugMode && formatBridgeProcessIdentity(bridgeHealth).isNotEmpty) ...[
+          if (kDebugMode &&
+              formatBridgeProcessIdentity(bridgeHealth).isNotEmpty) ...[
             const SizedBox(height: 6),
             SelectableText(
               formatBridgeProcessIdentity(bridgeHealth),
@@ -3052,7 +3050,8 @@ class _ListenerTabViewState extends State<_ListenerTabView> {
           const SizedBox(height: 12),
           _FailedJobsCard(hub: widget.hub),
         ],
-        if (widget.hub.launchAgentCheckDone && !widget.hub.launchAgentInstalled) ...[
+        if (widget.hub.launchAgentCheckDone &&
+            !widget.hub.launchAgentInstalled) ...[
           const SizedBox(height: 12),
           _LaunchAgentCard(),
         ],
@@ -3110,10 +3109,7 @@ class _PausedPrintJobsCard extends StatelessWidget {
               const Expanded(
                 child: Text(
                   'Bekleyen Baskılar',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
                 ),
               ),
               if (!loading)
@@ -3133,7 +3129,11 @@ class _PausedPrintJobsCard extends StatelessWidget {
           const SizedBox(height: 8),
           const Text(
             'Sistem kapalıyken oluşturulan ve fiziksel baskıya gönderilmeyen işleri burada görebilir, yeniden etkinleştirebilirsiniz.',
-            style: TextStyle(fontSize: 12, color: Color(0xFF4B5563), height: 1.45),
+            style: TextStyle(
+              fontSize: 12,
+              color: Color(0xFF4B5563),
+              height: 1.45,
+            ),
           ),
           const SizedBox(height: 12),
           if (errorText != null)
@@ -3141,10 +3141,7 @@ class _PausedPrintJobsCard extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 12),
               child: Text(
                 errorText!,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFFB91C1C),
-                ),
+                style: const TextStyle(fontSize: 12, color: Color(0xFFB91C1C)),
               ),
             ),
           if (!loading && pausedJobs.isEmpty)

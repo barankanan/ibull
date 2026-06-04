@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,18 +23,17 @@ class BridgeSetupResult {
     required String printerName,
     required int paperWidthMm,
     required String transportType,
-  }) =>
-      BridgeSetupResult._(
-        success: true,
-        printerName: printerName,
-        paperWidthMm: paperWidthMm,
-        transportType: transportType,
-      );
+  }) => BridgeSetupResult._(
+    success: true,
+    printerName: printerName,
+    paperWidthMm: paperWidthMm,
+    transportType: transportType,
+  );
 
   factory BridgeSetupResult.noPrinterFound() => const BridgeSetupResult._(
-        success: false,
-        errorMessage: 'no_printer_found',
-      );
+    success: false,
+    errorMessage: 'no_printer_found',
+  );
 
   factory BridgeSetupResult.error(String message) =>
       BridgeSetupResult._(success: false, errorMessage: message);
@@ -204,6 +204,25 @@ class BridgeManager {
     }
   }
 
+  static bool looksLikeAlreadyRunningSignal(Object? error) {
+    final raw = '${error ?? ''}'.toLowerCase();
+    return raw.contains('errno 48') ||
+        raw.contains('address already in use') ||
+        raw.contains('already in use') ||
+        raw.contains('eaddrinuse') ||
+        raw.contains('only one usage of each socket address');
+  }
+
+  static String normalizeAlreadyRunningMessage(
+    Object? error, {
+    String fallback = 'Yazıcı servisi zaten çalışıyor.',
+  }) {
+    if (looksLikeAlreadyRunningSignal(error)) {
+      return 'Bridge zaten çalışıyor.';
+    }
+    return fallback;
+  }
+
   static Future<BridgeStartResult> _ensureReadyInternal({
     BridgeProgressCallback? onProgress,
   }) async {
@@ -365,11 +384,15 @@ class BridgeManager {
 
       if (resp.statusCode == 404) return BridgeSetupResult.noPrinterFound();
 
-      final msg = body['message'] as String? ?? body['error'] as String? ?? 'Bilinmeyen hata';
+      final msg =
+          body['message'] as String? ??
+          body['error'] as String? ??
+          'Bilinmeyen hata';
       return BridgeSetupResult.error(msg);
     } on TimeoutException {
       return BridgeSetupResult.error(
-          'Zaman aşımı. Yazıcı servisi meşgul olabilir, lütfen tekrar deneyin.');
+        'Zaman aşımı. Yazıcı servisi meşgul olabilir, lütfen tekrar deneyin.',
+      );
     } catch (e) {
       return BridgeSetupResult.error('Bağlantı hatası: $e');
     }
@@ -407,7 +430,8 @@ class BridgeManager {
     if (python == null) {
       return const LaunchAgentResult(
         success: false,
-        error: 'Python bulunamadı. '
+        error:
+            'Python bulunamadı. '
             'Homebrew kurulu ve python3 erişilebilir olmalı.',
       );
     }
@@ -428,12 +452,14 @@ class BridgeManager {
       const label = 'com.ibul.localprint';
       final plistPath = '${agentsDir.path}/$label.plist';
 
-      File(plistPath).writeAsStringSync(_buildPlist(
-        python: python,
-        bridgeDir: bridgeParent,
-        stdoutLog: '/tmp/ibul-local-print.log',
-        stderrLog: '/tmp/ibul-local-print.error.log',
-      ));
+      File(plistPath).writeAsStringSync(
+        _buildPlist(
+          python: python,
+          bridgeDir: bridgeParent,
+          stdoutLog: '/tmp/ibul-local-print.log',
+          stderrLog: '/tmp/ibul-local-print.error.log',
+        ),
+      );
 
       final uid = await _getUid();
       // bootstrap is idempotent — harmless if the agent is already loaded.
@@ -445,7 +471,9 @@ class BridgeManager {
       return const LaunchAgentResult(success: true);
     } catch (e) {
       return LaunchAgentResult(
-          success: false, error: 'LaunchAgent kurulumu başarısız: $e');
+        success: false,
+        error: 'LaunchAgent kurulumu başarısız: $e',
+      );
     }
   }
 
@@ -454,8 +482,8 @@ class BridgeManager {
     if (!Platform.isMacOS) return false;
     final home = Platform.environment['HOME'] ?? '';
     return File(
-            '$home/Library/LaunchAgents/com.ibul.localprint.plist')
-        .existsSync();
+      '$home/Library/LaunchAgents/com.ibul.localprint.plist',
+    ).existsSync();
   }
 
   // ── Internals ────────────────────────────────────────────────────────────────
@@ -527,11 +555,13 @@ class BridgeManager {
   static Future<bool> isWindowsBridgeProcessRunning() async {
     if (kIsWeb || !Platform.isWindows) return false;
     try {
-      final result = await Process.run(
-        'tasklist',
-        const ['/FI', 'IMAGENAME eq IbulPrintBridge.exe', '/FO', 'CSV', '/NH'],
-        runInShell: false,
-      );
+      final result = await Process.run('tasklist', const [
+        '/FI',
+        'IMAGENAME eq IbulPrintBridge.exe',
+        '/FO',
+        'CSV',
+        '/NH',
+      ], runInShell: false);
       final output = '${result.stdout}'.trim().toLowerCase();
       return output.contains('ibulprintbridge.exe');
     } catch (_) {
@@ -572,7 +602,9 @@ class BridgeManager {
     ];
     for (final p in candidates) {
       try {
-        final args = p == 'py' ? <String>['-3', '--version'] : <String>['--version'];
+        final args = p == 'py'
+            ? <String>['-3', '--version']
+            : <String>['--version'];
         final r = await Process.run(p, args);
         if (r.exitCode == 0) return p;
       } catch (_) {}
@@ -615,8 +647,8 @@ class BridgeManager {
     }
     final programFiles =
         Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
-    final programFilesX86 = Platform.environment['ProgramFiles(x86)'] ??
-        r'C:\Program Files (x86)';
+    final programFilesX86 =
+        Platform.environment['ProgramFiles(x86)'] ?? r'C:\Program Files (x86)';
     final candidates = <String>[];
     try {
       final sellerExeDir = File(Platform.resolvedExecutable).parent.path;

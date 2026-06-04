@@ -17,6 +17,7 @@ import '../../services/local_print_service.dart';
 import '../../services/printer_repository.dart';
 import '../../utils/external_navigation.dart';
 import '../../widgets/bridge_error_dialog.dart';
+import 'printer_ethernet_dialog.dart';
 
 Future<List<PrinterModel>?> showPrinterSystemSetupWizard(
   BuildContext context, {
@@ -189,7 +190,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
         _bridgeHealth = snapshot.bridgeHealth;
         _livePrinterCount = snapshot.livePrinterCount;
         _setupStatus = snapshot.buildOperatorSetupStatus();
-        _prerequisites = snapshot.prerequisites ??
+        _prerequisites =
+            snapshot.prerequisites ??
             <String, dynamic>{
               'ok': snapshot.bridgeReachable && snapshot.bridgeHealthy,
               'checks': snapshot.buildOperatorSetupStatus()['checks'],
@@ -355,6 +357,46 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     }
   }
 
+  Future<void> _openEthernetSetup() async {
+    // Embed the Ethernet / Ağ Yazıcısı flow into the step-by-step wizard.
+    // The dialog handles IP / port input, connection probe, test receipt and
+    // role assignment. After it returns we refresh the printer list so the
+    // newly added TCP printer becomes selectable in the Test Fişi step.
+    if (!mounted) return;
+    final saved = await showAddEthernetPrinterDialog(
+      context,
+      restaurantId: widget.restaurantId,
+      repository: _printerRepository is PrinterRepository
+          ? _printerRepository
+          : null,
+      orchestrator: _printOrchestrator,
+    );
+    if (!mounted || saved == null) return;
+    await _detectPrinters();
+    if (!mounted) return;
+    final added = _detectedPrinters
+        .where(
+          (p) =>
+              (p['printerRecordId']?.toString() ??
+                      p['printer_record_id']?.toString()) ==
+                  saved.id ||
+              (p['id']?.toString() == saved.id),
+        )
+        .toList();
+    if (added.isNotEmpty) {
+      final printer = added.first;
+      setState(() {
+        _selectedTestPrinterId =
+            printer['selectionId']?.toString() ?? printer['id']?.toString();
+        _receiptPrinterId ??= _selectedTestPrinterId;
+        _kitchenPrinterId ??= _selectedTestPrinterId;
+      });
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Ethernet yazıcı eklendi.')));
+  }
+
   Future<void> _detectPrinters() async {
     setState(() {
       _detectingPrinters = true;
@@ -498,7 +540,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     sorted.sort((a, b) {
       final byRank = rank(a).compareTo(rank(b));
       if (byRank != 0) return byRank;
-      return (a['name']?.toString() ?? '').compareTo(b['name']?.toString() ?? '');
+      return (a['name']?.toString() ?? '').compareTo(
+        b['name']?.toString() ?? '',
+      );
     });
     return sorted;
   }
@@ -617,8 +661,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
     setState(() {
       _turkishEncodingVerified = profile != null;
       _selectedEncodingCandidateId = profile?.candidateId;
-      _selectedTurkishPrintMode =
-          profile?.printMode ?? kTurkishPrintModeText;
+      _selectedTurkishPrintMode = profile?.printMode ?? kTurkishPrintModeText;
       _turkishCalibrationMessage = profile == null
           ? null
           : profile.isGuaranteeMode
@@ -731,8 +774,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       _turkishCalibrationError = null;
     });
     try {
-      final result =
-          await _printOrchestrator.printTurkishEncodingCalibrationSheet(
+      final result = await _printOrchestrator
+          .printTurkishEncodingCalibrationSheet(
             restaurantId: widget.restaurantId,
             printer: printer,
           );
@@ -765,7 +808,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   }
 
   Future<void> _confirmTurkishEncodingSelection() async {
-    final candidate = turkishEncodingCandidateById(_selectedEncodingCandidateId);
+    final candidate = turkishEncodingCandidateById(
+      _selectedEncodingCandidateId,
+    );
     final printer = _selectedUnifiedPrinter();
     if (candidate == null || printer == null) {
       setState(() {
@@ -817,19 +862,16 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   UnifiedPrinterModel? _selectedUnifiedPrinter() {
     final selected = _selectedPrinter;
     if (selected == null) return null;
-    return UnifiedPrinterModel.fromBridgeMap(
-      <String, dynamic>{
-        ...selected,
-        'id': selected['id']?.toString() ?? '',
-        'name': selected['queue']?.toString() ?? selected['name']?.toString(),
-        'queue': selected['queue']?.toString() ?? selected['name']?.toString(),
-        'backend': selected['backend']?.toString() ?? 'windows-spool',
-        'source': 'usb_scan',
-        'statusLevel': selected['statusLevel']?.toString() ?? 'ready',
-        'ready': selected['statusLevel']?.toString() == 'ready',
-      },
-      os: DesktopPrinterOs.windows,
-    );
+    return UnifiedPrinterModel.fromBridgeMap(<String, dynamic>{
+      ...selected,
+      'id': selected['id']?.toString() ?? '',
+      'name': selected['queue']?.toString() ?? selected['name']?.toString(),
+      'queue': selected['queue']?.toString() ?? selected['name']?.toString(),
+      'backend': selected['backend']?.toString() ?? 'windows-spool',
+      'source': 'usb_scan',
+      'statusLevel': selected['statusLevel']?.toString() ?? 'ready',
+      'ready': selected['statusLevel']?.toString() == 'ready',
+    }, os: DesktopPrinterOs.windows);
   }
 
   Future<PrinterActionResult> _runWizardTestPrint({
@@ -967,7 +1009,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       'ok': false,
       'step': 'prerequisites',
       'status': 'bridge_not_running',
-      'message': 'Yazıcı servisi kapalı olduğu için gereksinimler doğrulanamadı.',
+      'message':
+          'Yazıcı servisi kapalı olduğu için gereksinimler doğrulanamadı.',
       'errorCode': 'bridge_not_running',
       'platform': _selectedPlatform,
       'actionRequired': 'start_bridge',
@@ -1005,6 +1048,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   }
 
   String _operatorErrorMessage(Object error, {required String fallback}) {
+    if (BridgeManager.looksLikeAlreadyRunningSignal(error)) {
+      return 'Bridge zaten çalışıyor.';
+    }
     final raw = error.toString().toLowerCase();
     if (raw.contains('timeout')) {
       return 'İşlem zaman aşımına uğradı. Lütfen tekrar deneyin.';
@@ -1206,7 +1252,10 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
         _bridgeStartMessage = _bridgeReachable
             ? 'Yazıcı servisi hazır.'
             : (startResult.message.isNotEmpty
-                  ? startResult.message
+                  ? BridgeManager.normalizeAlreadyRunningMessage(
+                      startResult.message,
+                      fallback: startResult.message,
+                    )
                   : (kIsWeb
                         ? 'Yazıcı servisi başlatılamadı. Ibul Satıcı Windows kurulumunu çalıştırın.'
                         : 'Yazıcı servisini başlatın veya onarın.'));
@@ -1251,7 +1300,11 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
             ? 'Yazıcı servisi hazır.'
             : (kIsWeb
                   ? 'Yazıcı servisi onarılamadı. Ibul Satıcı Windows kurulumunu yeniden çalıştırın.'
-                  : 'Yazıcı servisini onarın veya uygulamayı yeniden başlatın.');
+                  : BridgeManager.normalizeAlreadyRunningMessage(
+                      startResult.message,
+                      fallback:
+                          'Yazıcı servisini onarın veya uygulamayı yeniden başlatın.',
+                    ));
       });
     } catch (error) {
       if (!mounted) return;
@@ -1287,7 +1340,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
                     )
                   : const Icon(Icons.play_circle_outline),
               label: Text(
-                _bridgeStartBusy ? 'Başlatılıyor...' : 'Yazıcı servisini başlat',
+                _bridgeStartBusy
+                    ? 'Başlatılıyor...'
+                    : 'Yazıcı servisini başlat',
               ),
             ),
             OutlinedButton.icon(
@@ -1296,7 +1351,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
               label: const Text('Yazıcı servisini onar'),
             ),
             OutlinedButton.icon(
-              onPressed: (_bridgeStartBusy || !_bridgeReachable || _detectingPrinters)
+              onPressed:
+                  (_bridgeStartBusy || !_bridgeReachable || _detectingPrinters)
                   ? null
                   : _detectPrinters,
               icon: _detectingPrinters
@@ -1337,7 +1393,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       final service = _localPrintServiceFactory();
       final response = await service.printAdvancedBitmapTest(
         printerId: explicit?.id ?? printerId,
-        printerName: explicit?.queueName ?? selectedPrinter['queue']?.toString(),
+        printerName:
+            explicit?.queueName ?? selectedPrinter['queue']?.toString(),
         printer: explicit == null
             ? selectedPrinter
             : <String, dynamic>{
@@ -1346,7 +1403,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
                 'queue': explicit.queueName,
                 'queueName': explicit.queueName,
                 'backend': explicit.backend.value,
-                'connectionType': explicit.raw['connectionType'] ??
+                'connectionType':
+                    explicit.raw['connectionType'] ??
                     explicit.raw['connection_type'] ??
                     'usb',
               },
@@ -1368,7 +1426,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       });
     } catch (error) {
       if (!mounted) return;
-      final details = error is LocalPrintServiceException &&
+      final details =
+          error is LocalPrintServiceException &&
               error.details is Map<String, dynamic>
           ? WindowsPrinterClassification.formatTestFailureDetails(
               error.details! as Map<String, dynamic>,
@@ -1692,7 +1751,8 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
               if (_driverHelp != null) 'driverHelp': _driverHelp,
               if (_setupTechnicalError != null) 'error': _setupTechnicalError,
               if (kDebugMode && _selectedPlatform == 'windows')
-                'devStartHint': 'BridgeManager.ensureReady uses packaged EXE when installed',
+                'devStartHint':
+                    'BridgeManager.ensureReady uses packaged EXE when installed',
             },
           ),
       ],
@@ -1913,6 +1973,10 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
             ),
           ],
         ),
+        const SizedBox(height: 10),
+        _EthernetSetupCallout(
+          onAddEthernet: _detectingPrinters ? null : _openEthernetSetup,
+        ),
         if (_printerDetectionError != null) ...[
           const SizedBox(height: 12),
           Text(
@@ -2076,7 +2140,11 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
         const SizedBox(height: 4),
         const Text(
           'Varsayılan test Pillow gerektirmez. Bitmap testi yalnızca gelişmiş doğrulama içindir.',
-          style: TextStyle(fontSize: 11.5, color: Color(0xFF6B7280), height: 1.35),
+          style: TextStyle(
+            fontSize: 11.5,
+            color: Color(0xFF6B7280),
+            height: 1.35,
+          ),
         ),
         const SizedBox(height: 12),
         _StatusRow(
@@ -2139,8 +2207,10 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
 
   Widget _buildTurkishEncodingCalibrationSection() {
     final printerSelected = _selectedTestPrinterId != null;
-    final guaranteeMode = _selectedTurkishPrintMode == kTurkishPrintModeGuarantee;
-    final recommendGuarantee = !guaranteeMode &&
+    final guaranteeMode =
+        _selectedTurkishPrintMode == kTurkishPrintModeGuarantee;
+    final recommendGuarantee =
+        !guaranteeMode &&
         _turkishCombinedSheetPrinted &&
         !_turkishEncodingVerified;
     return Column(
@@ -2204,7 +2274,11 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
             child: const Text(
               'Bu yazıcıda Türkçe karakterler text modda güvenilir görünmüyor. '
               'Türkçe Garanti Modu önerilir.',
-              style: TextStyle(fontSize: 12, color: Color(0xFF9A3412), height: 1.35),
+              style: TextStyle(
+                fontSize: 12,
+                color: Color(0xFF9A3412),
+                height: 1.35,
+              ),
             ),
           ),
         const SizedBox(height: 12),
@@ -2237,7 +2311,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
         _StatusRow(
           title: 'Türkçe karakter',
           value: _turkishEncodingVerified
-              ? (guaranteeMode ? 'Garanti modu kayıtlı' : 'Türkçe karakter doğrulandı')
+              ? (guaranteeMode
+                    ? 'Garanti modu kayıtlı'
+                    : 'Türkçe karakter doğrulandı')
               : 'Doğrulanmadı',
           color: _turkishEncodingVerified
               ? const Color(0xFF15803D)
@@ -2247,7 +2323,9 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
         _StatusRow(
           title: 'Baskı hızı',
           value: _testPassed
-              ? (_testWarning == null ? 'Baskı doğrulandı' : 'Kuyruğa gönderildi')
+              ? (_testWarning == null
+                    ? 'Baskı doğrulandı'
+                    : 'Kuyruğa gönderildi')
               : 'Önce test fişi gönderin',
           color: _testPassed
               ? (_testWarning == null
@@ -2303,45 +2381,47 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
           const SizedBox(height: 10),
         ],
         if (!guaranteeMode)
-        ...kTurkishEncodingCalibrationCandidates.asMap().entries.map((entry) {
-          final index = entry.key + 1;
-          final candidate = entry.value;
-          final selected = _selectedEncodingCandidateId == candidate.id;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Radio<String>(
-                  value: candidate.id,
-                  groupValue: _selectedEncodingCandidateId,
-                  onChanged: printerSelected && !_turkishCalibrationBusy
-                      ? (value) {
-                          setState(() {
-                            _selectedEncodingCandidateId = value;
-                          });
-                        }
-                      : null,
-                ),
-                Expanded(
-                  child: Text(
-                    candidate.formatReceiptOptionLine(index),
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight:
-                          selected ? FontWeight.w600 : FontWeight.w500,
-                      color: const Color(0xFF111827),
-                      height: 1.35,
+          ...kTurkishEncodingCalibrationCandidates.asMap().entries.map((entry) {
+            final index = entry.key + 1;
+            final candidate = entry.value;
+            final selected = _selectedEncodingCandidateId == candidate.id;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Radio<String>(
+                    value: candidate.id,
+                    groupValue: _selectedEncodingCandidateId,
+                    onChanged: printerSelected && !_turkishCalibrationBusy
+                        ? (value) {
+                            setState(() {
+                              _selectedEncodingCandidateId = value;
+                            });
+                          }
+                        : null,
+                  ),
+                  Expanded(
+                    child: Text(
+                      candidate.formatReceiptOptionLine(index),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                        color: const Color(0xFF111827),
+                        height: 1.35,
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          );
-        }),
+                ],
+              ),
+            );
+          }),
         if (!guaranteeMode)
           FilledButton.icon(
-            onPressed: !printerSelected ||
+            onPressed:
+                !printerSelected ||
                     _turkishCalibrationBusy ||
                     _selectedEncodingCandidateId == null
                 ? null
@@ -2453,6 +2533,141 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
       default:
         return value;
     }
+  }
+}
+
+/// Inline callout inside the Step-by-step setup wizard's "Yazıcı Tespiti"
+/// step. Lists the operator's Ethernet checklist (kablo / self-test / IP)
+/// and surfaces a CTA that opens the dedicated Ethernet flow without
+/// touching the existing USB / CUPS discovery path.
+class _EthernetSetupCallout extends StatelessWidget {
+  const _EthernetSetupCallout({required this.onAddEthernet});
+
+  final VoidCallback? onAddEthernet;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F3FF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFC4B5FD)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.lan_rounded, size: 18, color: Color(0xFF6D28D9)),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Ethernet / Ağ Yazıcısı',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF4C1D95),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Yazıcı USB veya CUPS olarak görünmüyorsa ağ üzerinden (IP + Port) '
+            'eklenebilir. Aşağıdaki adımları tamamlayın:',
+            style: TextStyle(
+              fontSize: 12,
+              color: Color(0xFF4B5563),
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const _EthernetStep(index: 1, text: 'Yazıcıyı adaptörüne tak ve aç.'),
+          const _EthernetStep(
+            index: 2,
+            text:
+                'Ethernet kablosunu modem / router / switch LAN portuna bağla.',
+          ),
+          const _EthernetStep(
+            index: 3,
+            text: 'Yazıcıdan self-test fişi al (genelde FEED / TEST düğmesi).',
+          ),
+          const _EthernetStep(
+            index: 4,
+            text:
+                'Self-test fişinde IP Address ve Server Port alanlarını bul. '
+                'Bu cihazda port genelde 9100\'dür.',
+          ),
+          const _EthernetStep(
+            index: 5,
+            text:
+                'Aşağıdaki butona basıp formdaki IP / Port alanlarını gir, '
+                'bağlantıyı doğrula, ardından deneme baskısı al ve rol ataması yapıp kaydet.',
+          ),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: onAddEthernet,
+            icon: const Icon(Icons.add_rounded, size: 16),
+            label: const Text('Ethernet Yazıcı Ekle'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF7C3AED),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EthernetStep extends StatelessWidget {
+  const _EthernetStep({required this.index, required this.text});
+
+  final int index;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 2),
+            width: 18,
+            height: 18,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: Color(0xFFDDD6FE),
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              '$index',
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF4C1D95),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Color(0xFF374151),
+                height: 1.45,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -2665,7 +2880,10 @@ Map<String, Map<String, dynamic>> _computeDuplicateMeta(
     if (vid != null && pid != null) {
       return 'vidpid:$vid:$pid';
     }
-    final normalizedQueue = queue.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+    final normalizedQueue = queue.toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9]+'),
+      '',
+    );
     if (normalizedQueue.isNotEmpty && normalizedQueue.length >= 6) {
       return 'queue:$normalizedQueue';
     }
@@ -2692,12 +2910,13 @@ Map<String, Map<String, dynamic>> _computeDuplicateMeta(
       ? runtime
       : (runtime is Map ? Map<String, dynamic>.from(runtime) : null);
   final runtimeStatus = (runtimeMap?['status']?.toString() ?? '').toLowerCase();
-  final queueStatusText =
-      (queueMap?['queue_status']?.toString() ?? '').toLowerCase();
+  final queueStatusText = (queueMap?['queue_status']?.toString() ?? '')
+      .toLowerCase();
   final hasActive =
       queueMap?['queue_has_active_job'] == true ||
       ((queueMap?['active_job_ids'] as List?)?.isNotEmpty ?? false);
-  final cupsStuck = runtimeStatus == 'cups_queue_stuck' || queueStatusText == 'stuck';
+  final cupsStuck =
+      runtimeStatus == 'cups_queue_stuck' || queueStatusText == 'stuck';
   final cupsBusy = runtimeStatus == 'cups_queue_busy' || hasActive;
 
   bool isReady(Map<String, dynamic> p) =>
@@ -2809,7 +3028,11 @@ class _WindowsPosSetupGuide extends StatelessWidget {
           const SizedBox(height: 8),
           const Text(
             'Canlı taramada POS/termal aday bulunamadı. Generic / Text Only veya Fax hedefleri fiş basmaz.',
-            style: TextStyle(fontSize: 12.5, color: Color(0xFF7C2D12), height: 1.4),
+            style: TextStyle(
+              fontSize: 12.5,
+              color: Color(0xFF7C2D12),
+              height: 1.4,
+            ),
           ),
           const SizedBox(height: 8),
           for (var i = 0; i < steps.length; i++)

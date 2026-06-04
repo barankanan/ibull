@@ -17,6 +17,17 @@ LOGGER = logging.getLogger("local_print_bridge.transport")
 class TransportError(RuntimeError):
     """Raised when the local print transport cannot submit a job."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = details or {}
+
 
 @dataclass(frozen=True)
 class PrintResult:

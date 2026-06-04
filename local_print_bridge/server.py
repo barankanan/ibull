@@ -5,12 +5,14 @@ from dataclasses import replace
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import logging
 import os
 from pathlib import Path
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -18,14 +20,26 @@ import time
 from logging.handlers import RotatingFileHandler
 from urllib.parse import parse_qs, urlparse
 
-from .config import BridgeSettings, EscPosProfile, resolve_escpos_profile, write_env_file
+from .config import (
+    BridgeSettings,
+    EscPosProfile,
+    contains_turkish_chars,
+    default_raster_width_px,
+    resolve_escpos_profile,
+    write_env_file,
+)
 from .diagnostics import build_diagnostics
 from .document import DocumentPayloadError, EscPosDocumentRenderer
 from .kitchen import KitchenRenderer
 from .log_store import PrintLogStore
 from .models import KitchenPayload, PayloadError, ReceiptPayload
 from .network_transport import NetworkTcpTransport
-from .printers import PrinterRecord, dedupe_printers, discover_windows_printers
+from .printers import (
+    PrinterRecord,
+    annotate_duplicate_physical_printers,
+    dedupe_printers,
+    discover_windows_printers,
+)
 from .queue_autoselect import pick_auto_windows_printer_queue
 from .pillow_probe import probe_pillow
 from .print_station import (
@@ -43,7 +57,7 @@ from .raster import (
     resolve_bundled_mono_font_path,
     warm_font_cache,
 )
-from .receipt import ReceiptRenderer
+from .receipt import ReceiptRenderer, _cut
 from .runtime_paths import bridge_env_path, bridge_server_log_path
 from .transport import CupsRawTransport, TransportError
 from .usb_transport import UsbDirectTransport
@@ -55,6 +69,73 @@ LOGGER = logging.getLogger("local_print_bridge")
 # Protects atomic hot-reload of PrintBridgeHandler class-level state.
 _STATE_LOCK = threading.Lock()
 _AUTOSTART_LABEL = "com.ibul.localprint"
+
+
+def _local_ipv4_addresses() -> list[str]:
+    results: list[str] = []
+    try:
+        hostname = socket.gethostname()
+        for family, _socktype, _proto, _canonname, sockaddr in socket.getaddrinfo(
+            hostname,
+            None,
+            family=socket.AF_INET,
+        ):
+            if family != socket.AF_INET:
+                continue
+            ip = str(sockaddr[0]).strip()
+            if not ip or ip.startswith("127."):
+                continue
+            if ip not in results:
+                results.append(ip)
+    except OSError:
+        pass
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(("8.8.8.8", 80))
+            outbound_ip = probe.getsockname()[0]
+            if (
+                outbound_ip
+                and not outbound_ip.startswith("127.")
+                and outbound_ip not in results
+            ):
+                results.append(outbound_ip)
+        finally:
+            probe.close()
+    except OSError:
+        pass
+    return results
+
+
+def _same_subnet_hint(host: str, local_ips: list[str]) -> tuple[bool | None, str]:
+    host_text = host.strip()
+    if not host_text:
+        return None, ""
+    try:
+        target_ip = ipaddress.ip_address(host_text)
+    except ValueError:
+        return None, ""
+    if target_ip.version != 4:
+        return None, ""
+    for local_ip_text in local_ips:
+        try:
+            local_ip = ipaddress.ip_address(local_ip_text)
+        except ValueError:
+            continue
+        if local_ip.version != 4:
+            continue
+        if str(local_ip).split(".")[:3] == str(target_ip).split(".")[:3]:
+            return True, ""
+    if not local_ips:
+        return None, ""
+    local_prefix = ".".join(local_ips[0].split(".")[:3])
+    target_prefix = ".".join(str(target_ip).split(".")[:3])
+    return (
+        False,
+        "Yazıcı ile bilgisayar aynı ağda görünmüyor. "
+        f"Yazıcının IP adresi {host_text}, bilgisayar ağı {local_prefix}.x. "
+        f"Yazıcı IP'sini {target_prefix}.x yerine {local_prefix}.x ağına uygun olacak şekilde ayarlayın.",
+    )
 
 
 def _git_commit_short() -> str:
@@ -160,6 +241,181 @@ def _guess_paper_width(name: str) -> int:
     if any(x in n for x in ("80", "tm-t20", "tm-t88", "tm-u", "rp80", "pos80")):
         return 80
     return 80  # safe default — text wraps rather than truncates
+
+
+def _request_printer_blob(body: dict[str, object] | None) -> dict[str, object]:
+    raw_body = body or {}
+    printer = raw_body.get("printer")
+    return dict(printer) if isinstance(printer, dict) else {}
+
+
+def _request_paper_width_mm(body: dict[str, object] | None) -> int | None:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("paper_width_mm"),
+        raw_body.get("paperWidthMm"),
+        printer.get("paper_width_mm"),
+        printer.get("paperWidthMm"),
+    ):
+        try:
+            parsed = int(str(candidate).strip()) if candidate is not None else None
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is not None and parsed > 0:
+            return parsed
+    return None
+
+
+def _request_chars_per_line(body: dict[str, object] | None) -> int | None:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("chars_per_line"),
+        raw_body.get("charsPerLine"),
+        printer.get("chars_per_line"),
+        printer.get("charsPerLine"),
+    ):
+        try:
+            parsed = int(str(candidate).strip()) if candidate is not None else None
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is not None and parsed > 0:
+            return parsed
+    return None
+
+
+def _request_auto_cut(body: dict[str, object] | None) -> bool | None:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("auto_cut"),
+        raw_body.get("autoCut"),
+        printer.get("auto_cut"),
+        printer.get("autoCut"),
+    ):
+        if isinstance(candidate, bool):
+            return candidate
+        if candidate is None:
+            continue
+        normalized = str(candidate).strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _request_printer_profile(body: dict[str, object] | None) -> str:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("printer_profile"),
+        raw_body.get("printer_profile_id"),
+        printer.get("printer_profile"),
+        printer.get("printer_profile_id"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _request_raster_mode(body: dict[str, object] | None) -> str:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("raster_mode"),
+        raw_body.get("rasterMode"),
+        printer.get("raster_mode"),
+        printer.get("rasterMode"),
+    ):
+        value = str(candidate or "").strip().lower()
+        if value in {"gs_v_0", "esc_star"}:
+            return value
+    return ""
+
+
+def _request_fallback_raster_mode(body: dict[str, object] | None) -> str:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("fallback_raster_mode"),
+        raw_body.get("fallbackRasterMode"),
+        printer.get("fallback_raster_mode"),
+        printer.get("fallbackRasterMode"),
+    ):
+        value = str(candidate or "").strip().lower()
+        if value in {"gs_v_0", "esc_star"}:
+            return value
+    return ""
+
+
+def _request_raster_width_px(body: dict[str, object] | None) -> int | None:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("raster_width_px"),
+        raw_body.get("rasterWidthPx"),
+        printer.get("raster_width_px"),
+        printer.get("rasterWidthPx"),
+    ):
+        try:
+            parsed = int(str(candidate).strip()) if candidate is not None else None
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is not None and parsed > 0:
+            return parsed
+    return None
+
+
+def _request_printer_queue_name(body: dict[str, object] | None) -> str:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("printer_queue"),
+        raw_body.get("queueName"),
+        raw_body.get("printer_name"),
+        raw_body.get("printerName"),
+        printer.get("queue"),
+        printer.get("queueName"),
+        printer.get("name"),
+        printer.get("displayName"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _request_printer_backend_value(body: dict[str, object] | None) -> str:
+    raw_body = body or {}
+    printer = _request_printer_blob(raw_body)
+    for candidate in (
+        raw_body.get("printer_backend"),
+        raw_body.get("backend"),
+        printer.get("backend"),
+        printer.get("transportType"),
+        printer.get("transport_type"),
+    ):
+        value = str(candidate or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _default_chars_per_line_for_paper(paper_width_mm: int) -> int:
+    if paper_width_mm <= 58:
+        return 32
+    if paper_width_mm <= 72:
+        return 42
+    return 48
+
+
+def _cut_mode_for_request(*, paper_width_mm: int, auto_cut: bool) -> str:
+    if not auto_cut:
+        return "none"
+    return "partial" if paper_width_mm <= 80 else "full"
 
 
 def _parse_hex_int(value: object) -> int | None:
@@ -338,7 +594,11 @@ class _SmartTransport:
         if platform.system().lower() == "windows":
             windows_printers = spool_printers or discover_windows_printers()
 
-        combined = dedupe_printers([*usb_devices, *spool_printers, *windows_printers])
+        combined = dedupe_printers(
+            annotate_duplicate_physical_printers(
+                [*usb_devices, *spool_printers, *windows_printers]
+            )
+        )
 
         return {
             "printers": combined,
@@ -488,23 +748,64 @@ def build_test_payload() -> ReceiptPayload:
             "datetime": datetime.now().astimezone().isoformat(),
             "items": [
                 {
-                    "name": "ÇĞİÖŞÜ çğıöşü Iİ ıi",
+                    "name": "Çorba - Ezogelin",
                     "qty": 1,
-                    "total": "1.00",
-                    "price": "1.00",
+                    "total": "95.00",
+                    "price": "95.00",
+                    "note": "Az sıcak",
                 },
                 {
-                    "name": "İğne, Şiş, Çorba, Kuzu Şiş, Karışık, Adisyon",
+                    "name": "Ciğer Şiş",
+                    "qty": 2,
+                    "total": "520.00",
+                    "price": "260.00",
+                    "note": "ÇĞİÖŞÜ çğıöşü",
+                },
+                {
+                    "name": "Kemiksiz Tavuk Servis",
                     "qty": 1,
-                    "total": "1.00",
-                    "price": "1.00",
-                    "note": "ğ Ğ ş Ş ı İ ç Ç ö Ö ü Ü",
+                    "total": "285.00",
+                    "price": "285.00",
+                },
+                {
+                    "name": "İskenderun Usulü Karışık Izgara",
+                    "qty": 1,
+                    "total": "640.00",
+                    "price": "640.00",
+                },
+                {
+                    "name": "Künefe",
+                    "qty": 1,
+                    "total": "175.00",
+                    "price": "175.00",
+                    "note": "Az şerbetli",
                 },
             ],
-            "subtotal": "2.00",
+            "subtotal": "1715.00",
             "discount": "0.00",
-            "grand_total": "2.00",
+            "grand_total": "1715.00",
             "footer_note": "Türkçe karakter testi",
+        }
+    )
+
+
+def build_pos58_calibration_payload() -> ReceiptPayload:
+    return ReceiptPayload.from_dict(
+        {
+            "store_name": "ÇAĞRI RESTORAN",
+            "branch": "TÜRKÇE TESTİ",
+            "table_no": "POS-58",
+            "datetime": datetime.now().astimezone().isoformat(),
+            "items": [
+                {"name": "ÇĞİÖŞÜ çğıöşü", "qty": 1, "price": "0.00", "total": "0.00"},
+                {"name": "İskenderun", "qty": 1, "price": "0.00", "total": "0.00"},
+                {"name": "Ciğer Şiş", "qty": 1, "price": "0.00", "total": "0.00"},
+                {"name": "Kemiksiz Tavuk Servis", "qty": 1, "price": "0.00", "total": "0.00"},
+                {"name": "1 x Çorba, Şiş, İçecek", "qty": 1, "price": "280.00", "total": "280.00"},
+            ],
+            "subtotal": "280.00",
+            "discount": "0.00",
+            "grand_total": "280.00",
         }
     )
 
@@ -617,6 +918,58 @@ def build_ethernet_test_payload(
             "discount": "0.00",
             "grand_total": "0.00",
             "footer_note": "Kesme Testi" if auto_cut else "Test tamam",
+        }
+    )
+
+
+def build_kitchen_simulation_payload(
+    *,
+    station_name: str = "Genel",
+) -> KitchenPayload:
+    return KitchenPayload.from_dict(
+        {
+            "title": "MUTFAK TEST FISI",
+            "store_name": "ibul",
+            "order_no": "TEST",
+            "daily_order_no": "T-001",
+            "table_no": "TEST",
+            "table_name": "Test Masa",
+            "area_name": station_name,
+            "waiter_name": "Sistem",
+            "job_type": "test_receipt",
+            "datetime": datetime.now().astimezone().isoformat(),
+            "items": [
+                {
+                    "id": "kitchen-test-item-1",
+                    "name": "Çorba Büyük Boy",
+                    "quantity": 1,
+                    "note": "ÇĞİÖŞÜ çğıöşü",
+                },
+                {
+                    "id": "kitchen-test-item-2",
+                    "name": "Kuzu Şiş",
+                    "quantity": 2,
+                    "note": "Az pişmiş, soğansız",
+                },
+                {
+                    "id": "kitchen-test-item-3",
+                    "name": "Kemiksiz Tavuk Servis",
+                    "quantity": 1,
+                    "amount_label": "500 g",
+                },
+                {
+                    "id": "kitchen-test-item-4",
+                    "name": "İskenderun Karışık Tabak",
+                    "quantity": 1,
+                    "note": "Biber olmasın",
+                },
+                {
+                    "id": "kitchen-test-item-5",
+                    "name": "Ciğer Şiş",
+                    "quantity": 3,
+                    "note": "Az tuzlu",
+                },
+            ],
         }
     )
 
@@ -1306,6 +1659,9 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         if request_path == "/configure/print-station":
             self._handle_configure_print_station()
             return
+        if request_path == "/printer/tcp/probe":
+            self._handle_tcp_probe()
+            return
         if request_path == "/setup/install":
             self._handle_setup_install()
             return
@@ -1722,8 +2078,76 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         if test_mode in {"escpos_short", "escpos_text", "escpos", "raw", "text"}:
             raw_body["render_mode"] = "text"
             raw_body.setdefault("test_mode", "escpos_short")
+        elif test_mode == "pos58_text_cp857":
+            raw_body.update(
+                {
+                    "render_mode": "text",
+                    "encoding": "cp857",
+                    "printer_encoding": "cp857",
+                    "codepage": 13,
+                    "printer_code_page": 13,
+                    "printer_profile": "pos58",
+                    "paper_width_mm": 58,
+                    "raster_width_px": 384,
+                    "chars_per_line": 32,
+                }
+            )
+        elif test_mode == "pos58_text_cp1254":
+            raw_body.update(
+                {
+                    "render_mode": "text",
+                    "encoding": "cp1254",
+                    "printer_encoding": "cp1254",
+                    "codepage": 21,
+                    "printer_code_page": 21,
+                    "printer_profile": "pos58",
+                    "paper_width_mm": 58,
+                    "raster_width_px": 384,
+                    "chars_per_line": 32,
+                }
+            )
+        elif test_mode == "text_cp857":
+            raw_body["render_mode"] = "text"
+            raw_body["encoding"] = "cp857"
+            raw_body["printer_encoding"] = "cp857"
+            raw_body["codepage"] = 13
+            raw_body["printer_code_page"] = 13
+        elif test_mode == "text_cp1254":
+            raw_body["render_mode"] = "text"
+            raw_body["encoding"] = "cp1254"
+            raw_body["printer_encoding"] = "cp1254"
+            raw_body["codepage"] = 21
+            raw_body["printer_code_page"] = 21
         elif test_mode in {"bitmap", "image", "turkish"}:
             raw_body["render_mode"] = "image"
+        elif test_mode == "raster_gs_v0":
+            raw_body["render_mode"] = "image"
+            raw_body["raster_mode"] = "gs_v_0"
+        elif test_mode == "pos58_raster_gs_v0":
+            raw_body.update(
+                {
+                    "render_mode": "image",
+                    "raster_mode": "gs_v_0",
+                    "printer_profile": "pos58",
+                    "paper_width_mm": 58,
+                    "raster_width_px": 384,
+                    "chars_per_line": 32,
+                }
+            )
+        elif test_mode == "raster_esc_star":
+            raw_body["render_mode"] = "image"
+            raw_body["raster_mode"] = "esc_star"
+        elif test_mode == "pos58_raster_esc_star":
+            raw_body.update(
+                {
+                    "render_mode": "image",
+                    "raster_mode": "esc_star",
+                    "printer_profile": "pos58",
+                    "paper_width_mm": 58,
+                    "raster_width_px": 384,
+                    "chars_per_line": 32,
+                }
+            )
         elif test_mode in {"ethernet", "ethernet_test", "tcp_test"}:
             # Ethernet test receipt uses an image render so the Türkçe block
             # and the cut command are emitted regardless of the printer's
@@ -1738,6 +2162,55 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 target_host=target_host,
                 target_port=target_port,
                 selected_printer=selected_printer,
+            )
+            return
+        requested_document_type = str(
+            raw_body.get("document_type")
+            or (
+                "kitchen"
+                if str(raw_body.get("printer_role") or "").strip().lower() == "mutfak"
+                else "receipt"
+            )
+        ).strip().lower()
+        if test_mode in {"kitchen_simulation", "kitchen_preview"} or (
+            test_mode in {"ethernet", "ethernet_test", "tcp_test"}
+            and requested_document_type == "kitchen"
+        ):
+            self._log_print_test_request(
+                raw_body=raw_body,
+                selected_printer=selected_printer,
+            )
+            simulation_payload = build_kitchen_simulation_payload(
+                station_name=str(
+                    raw_body.get("station_name")
+                    or raw_body.get("stationName")
+                    or raw_body.get("printer_role")
+                    or "Genel"
+                ).strip()
+                or "Genel"
+            )
+            self._handle_direct_kitchen_print(
+                simulation_payload,
+                raw_payload=raw_body,
+                target_host=target_host,
+                target_port=target_port,
+                selected_printer=selected_printer,
+            )
+            return
+        if test_mode in {"receipt_simulation", "receipt_preview"}:
+            self._log_print_test_request(
+                raw_body=raw_body,
+                selected_printer=selected_printer,
+            )
+            self._submit_receipt(
+                build_test_payload(),
+                job_name="receipt-test-simulation",
+                raw_request=raw_body,
+                target_host=target_host,
+                target_port=target_port,
+                selected_printer=selected_printer,
+                document_type="receipt",
+                source="test_receipt",
             )
             return
         if test_mode in {"ethernet", "ethernet_test", "tcp_test"}:
@@ -1779,6 +2252,13 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 role_label=role_label or "Adisyon",
                 printer_name=printer_name or "Ethernet Yazıcı",
             )
+        elif test_mode in {
+            "pos58_raster_gs_v0",
+            "pos58_raster_esc_star",
+            "pos58_text_cp857",
+            "pos58_text_cp1254",
+        }:
+            payload = build_pos58_calibration_payload()
         elif test_mode == "escpos_short":
             payload = build_short_safe_test_payload()
         else:
@@ -1823,6 +2303,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             target_port=target_port,
             selected_printer=selected_printer,
             require_physical_confirmation=not fast_test,
+            source="test_receipt",
         )
 
     def _handle_ethernet_connection_test(
@@ -1864,6 +2345,8 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "error_code": str(getattr(exc, "code", "") or "tcp_io_error"),
                 "reason": str(exc),
             }
+        local_ips = _local_ipv4_addresses()
+        same_subnet, suggested_message = _same_subnet_hint(host or "", local_ips)
         if result.get("ok") is True:
             LOGGER.info(
                 "[EthernetPrinter][connection_test_success] host=%s port=%d",
@@ -1884,6 +2367,11 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     "bytes_sent": 0,
                     "target_host": host,
                     "target_port": port,
+                    "reachable": True,
+                    "port_open": True,
+                    "local_ips": local_ips,
+                    "same_subnet": same_subnet,
+                    "suggested_message": suggested_message or "Bağlantı başarılı.",
                     "printer": selected_printer
                     or {
                         "id": f"tcp:{host}:{port}",
@@ -1929,6 +2417,11 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "transport_type": "ethernet",
                 "target_host": host,
                 "target_port": port,
+                "reachable": False,
+                "port_open": False,
+                "local_ips": local_ips,
+                "same_subnet": same_subnet,
+                "suggested_message": suggested_message,
                 "printer": selected_printer
                 or {
                     "id": f"tcp:{host}:{port}",
@@ -1942,6 +2435,19 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     "source": "ethernet_dialog_form",
                 },
             },
+        )
+
+    def _handle_tcp_probe(self) -> None:
+        raw_body = self._maybe_read_json_body() or {}
+        if not isinstance(raw_body, dict):
+            raw_body = {}
+        target_host, target_port = self._extract_target(raw_body)
+        selected_printer = self._resolve_selected_printer(raw_body)
+        self._handle_ethernet_connection_test(
+            raw_body=raw_body,
+            target_host=target_host,
+            target_port=target_port,
+            selected_printer=selected_printer,
         )
 
     def _handle_print_turkish_encoding_calibration(self) -> None:
@@ -2106,6 +2612,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             target_port=target_port,
             selected_printer=selected_printer,
             require_physical_confirmation=True,
+            source="test_receipt",
         )
 
     def _handle_print(self) -> None:
@@ -2243,6 +2750,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 target_host=target_host,
                 target_port=target_port,
                 selected_printer=selected_printer,
+                source="real_receipt",
             )
             return
 
@@ -2283,6 +2791,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 target_host=target_host,
                 target_port=target_port,
                 selected_printer=selected_printer,
+                source="real_receipt",
             )
             return
 
@@ -2372,6 +2881,14 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         if isinstance(target_port, str):
             target_port = int(target_port) if target_port.isdigit() else None
         selected_printer = self._resolve_selected_printer(raw_payload)
+        try:
+            raw_payload = self._complete_receipt_request(
+                raw_payload,
+                selected_printer=selected_printer,
+            )
+        except PayloadError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
         self._submit_receipt(
             payload,
             job_name=job_name,
@@ -2379,6 +2896,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             target_host=str(target_host) if target_host else None,
             target_port=int(target_port) if target_port else None,
             selected_printer=selected_printer,
+            source="real_receipt",
         )
 
     def _handle_print_kitchen(self) -> None:
@@ -2744,16 +3262,53 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             item_count,
             payload.job_type,
         )
+        profile_request = {**raw_payload, "document_type": "kitchen"}
         profile, effective_settings = self._resolve_request_profile(
-            raw_payload,
+            profile_request,
             job_name=job_name,
         )
-        render_mode = self._resolve_render_mode(raw_payload)
+        # Extract sample text from payload for Turkish char detection
+        payload_text_sample = " ".join([
+            str(item.name or "") for item in payload.items[:3]
+        ])
+        # Enforce image mode for real kitchen documents
+        render_mode = self._enforce_render_mode_for_document(
+            document_type="kitchen",
+            backend=_request_printer_backend_value(profile_request),
+            payload_text_sample=payload_text_sample,
+        )
+        self._log_effective_printer_profile(
+            document_type="kitchen",
+            render_mode=render_mode,
+            settings=effective_settings,
+            raw_request=profile_request,
+            selected_printer=selected_printer,
+        )
+        LOGGER.info(
+            "[PrintRender][start] document=kitchen items=%d backend=%s transport=%s paper=%d renderMode=%s profile=%s chars=%d",
+            item_count,
+            _request_printer_backend_value(profile_request) or "-",
+            str((selected_printer or {}).get("transportType") or (selected_printer or {}).get("backend") or "-"),
+            effective_settings.paper_width_mm,
+            render_mode,
+            _request_printer_profile(profile_request) or "-",
+            effective_settings.chars_per_line,
+        )
         t_render_start = _time.monotonic()
         try:
             if render_mode == "image":
-                image = self.kitchen_bitmap_renderer.render(payload)
-                rasterized = self.raster_encoder.encode(image)
+                image = KitchenBitmapRenderer(effective_settings).render(payload)
+                rasterized, effective_settings, fallback_reason = self._encode_raster_with_fallback(
+                    image,
+                    settings=effective_settings,
+                    document_type="kitchen",
+                )
+                LOGGER.info(
+                    "[PrintRender][image_ready] document=kitchen widthPx=%d heightPx=%d chunkCount=%d",
+                    rasterized.width_px,
+                    rasterized.height_px,
+                    rasterized.chunk_count,
+                )
                 raster_render_ms = int((_time.monotonic() - t_render_start) * 1000)
                 LOGGER.info(
                     "kitchen-raster: job=%s printer=%s width_px=%d height_px=%d "
@@ -2777,7 +3332,11 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     "chunk_count": rasterized.chunk_count,
                     "item_count": item_count,
                     "turkish_print_mode": _request_turkish_print_mode_label(raw_payload),
+                    "raster_mode": effective_settings.raster_mode,
                 }
+                if fallback_reason:
+                    extra["used_fallback"] = True
+                    extra["fallback_reason"] = fallback_reason
                 if effective_settings.turkish_guarantee_mode:
                     try:
                         extra["bundled_font_path"] = resolve_bundled_mono_font_path(
@@ -2790,10 +3349,11 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     job_name=job_name,
                     profile=profile,
                     settings=effective_settings,
-                    raw_request=raw_payload,
+                    raw_request=profile_request,
                     target_host=target_host,
                     target_port=target_port,
                     selected_printer=selected_printer,
+                    document_type="kitchen",
                     extra_response={
                         **extra,
                         "total_request_ms": int((_time.monotonic() - t_start) * 1000),
@@ -2829,10 +3389,11 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             job_name=job_name,
             profile=profile,
             settings=effective_settings,
-            raw_request=raw_payload,
+            raw_request=profile_request,
             target_host=target_host,
             target_port=target_port,
             selected_printer=selected_printer,
+            document_type="kitchen",
             extra_response={
                 "render_mode": "text",
                 "render_ms": render_ms,
@@ -2846,6 +3407,103 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         return "items" in keys and (
             "store_name" in keys or "storeName" in keys or "table_no" in keys or "tableNo" in keys
         )
+
+    def _complete_receipt_request(
+        self,
+        raw_request: dict[str, object] | None,
+        *,
+        selected_printer: dict[str, object] | None,
+    ) -> dict[str, object]:
+        request = dict(raw_request or {})
+        request["document_type"] = "receipt"
+        request.setdefault("printer_role", "adisyon")
+        request.setdefault("paper_width_mm", self.settings.receipt_paper_width_mm)
+        request.setdefault("raster_width_px", self.settings.receipt_raster_width_px)
+        request.setdefault("chars_per_line", self.settings.receipt_chars_per_line)
+        request.setdefault("printer_profile", self.settings.receipt_printer_profile)
+        request.setdefault("auto_cut", True)
+
+        if selected_printer:
+            request.setdefault("printer_id", selected_printer.get("id"))
+            request.setdefault(
+                "printer_name",
+                selected_printer.get("name")
+                or selected_printer.get("displayName")
+                or selected_printer.get("queue")
+                or selected_printer.get("queueName"),
+            )
+            request.setdefault("backend", selected_printer.get("backend"))
+
+        if "render_mode" not in request:
+            request["render_mode"] = self.settings.receipt_render_mode
+        if request["render_mode"] == "image":
+            request.setdefault("raster_mode", self.settings.receipt_raster_mode)
+            request.setdefault("codepage", "none")
+        else:
+            request.setdefault("encoding", self.settings.receipt_encoding)
+            request.setdefault("printer_encoding", request.get("encoding") or self.settings.receipt_encoding)
+            request.setdefault("codepage", self.settings.receipt_codepage or 13)
+            request.setdefault("printer_code_page", request.get("codepage"))
+
+        effective_paper = _request_paper_width_mm(request)
+        effective_raster = _request_raster_width_px(request)
+        profile_name = _request_printer_profile(request).strip().lower()
+        if effective_paper != 58 or effective_raster != 384 or "80" in profile_name:
+            raise PayloadError(
+                "POS-58 adisyon profili gecersiz. paper_width_mm=58, raster_width_px=384 ve printer_profile=pos58 olmalidir."
+            )
+        return request
+
+    def _render_receipt_document(
+        self,
+        payload: ReceiptPayload,
+        *,
+        effective_settings: BridgeSettings,
+        render_mode: str,
+        source: str,
+        document_type: str,
+    ) -> tuple[bytes, dict[str, object], BridgeSettings]:
+        LOGGER.info(
+            "[ReceiptRender][source] source=%s same_renderer=true renderMode=%s rasterMode=%s",
+            source,
+            render_mode,
+            effective_settings.raster_mode,
+        )
+        if render_mode == "image":
+            image = ReceiptBitmapRenderer(effective_settings).render(payload)
+            rasterized, effective_settings, fallback_reason = self._encode_raster_with_fallback(
+                image,
+                settings=effective_settings,
+                document_type=document_type,
+            )
+            extra: dict[str, object] = {
+                "render_mode": "image",
+                "width_px": rasterized.width_px,
+                "height_px": rasterized.height_px,
+                "chunk_count": rasterized.chunk_count,
+                "raster_mode": effective_settings.raster_mode,
+                "same_renderer": True,
+                "receipt_source": source,
+            }
+            if fallback_reason:
+                extra["used_fallback"] = True
+                extra["fallback_reason"] = fallback_reason
+            return rasterized.data, extra, effective_settings
+
+        if str(effective_settings.encoding or "").strip().lower() in {"utf-8", "utf8"}:
+            raise PayloadError("POS-58 text mode UTF-8 raw kullanamaz. cp857 veya cp1254 gerekli.")
+        raw_bytes = ReceiptRenderer(effective_settings).render(payload)
+        LOGGER.info(
+            "[ReceiptText][encode] codepage=%s inputLen=%d encodedLen=%d utf8Raw=false",
+            effective_settings.encoding,
+            sum(len(str(item.name or "")) for item in payload.items),
+            len(raw_bytes),
+        )
+        return raw_bytes, {
+            "render_mode": "text",
+            "same_renderer": True,
+            "receipt_source": source,
+        }, effective_settings
 
     def _printer_identity(
         self,
@@ -2903,62 +3561,77 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         selected_printer: dict[str, object] | None = None,
         document_type: str = "receipt",
         require_physical_confirmation: bool = False,
+        source: str = "real_receipt",
     ) -> None:
         import time as _time
 
-        render_mode = self._resolve_render_mode(raw_request)
+        render_mode = "image"
         try:
+            profile_request = self._complete_receipt_request(
+                {**(raw_request or {}), "document_type": document_type},
+                selected_printer=selected_printer,
+            )
             profile, effective_settings = self._resolve_request_profile(
-                raw_request,
+                profile_request,
                 job_name=job_name,
             )
-            render_mode = effective_settings.render_mode
+            # Extract sample text from payload for Turkish char detection
+            payload_text_sample = " ".join([
+                str(item.name or "") for item in payload.items[:3]
+            ])
+            render_mode = str(effective_settings.render_mode or "image").strip().lower()
+            if render_mode not in {"image", "text"}:
+                render_mode = "image"
+            self._log_effective_printer_profile(
+                document_type=document_type,
+                render_mode=render_mode,
+                settings=effective_settings,
+                raw_request=profile_request,
+                selected_printer=selected_printer,
+            )
+            LOGGER.info(
+                "[PrintRender][start] document=%s items=%d backend=%s transport=%s paper=%d renderMode=%s profile=%s chars=%d",
+                document_type,
+                len(payload.items),
+                _request_printer_backend_value(profile_request) or "-",
+                str((selected_printer or {}).get("transportType") or (selected_printer or {}).get("backend") or "-"),
+                effective_settings.paper_width_mm,
+                render_mode,
+                _request_printer_profile(profile_request) or "-",
+                effective_settings.chars_per_line,
+            )
+            t_render = _time.monotonic()
+            rendered_bytes, extra, effective_settings = self._render_receipt_document(
+                payload,
+                effective_settings=effective_settings,
+                render_mode=render_mode,
+                source=source,
+                document_type=document_type,
+            )
             if render_mode == "image":
-                t_render = _time.monotonic()
-                image = ReceiptBitmapRenderer(effective_settings).render(payload)
-                rasterized = RasterEscPosEncoder(effective_settings).encode(image)
                 raster_render_ms = int((_time.monotonic() - t_render) * 1000)
+                extra["raster_render_ms"] = raster_render_ms
+                extra["turkish_print_mode"] = _request_turkish_print_mode_label(raw_request)
                 LOGGER.info(
-                    "receipt-raster: job=%s printer=%s width_px=%d height_px=%d "
-                    "chunk_count=%d raster_render_ms=%d guarantee=%s",
-                    job_name,
-                    effective_settings.printer_queue or "<usb-direct>",
-                    rasterized.width_px,
-                    rasterized.height_px,
-                    rasterized.chunk_count,
-                    raster_render_ms,
-                    effective_settings.turkish_guarantee_mode,
+                    "[PrintRender][image_ready] document=%s widthPx=%d heightPx=%d chunkCount=%d",
+                    document_type,
+                    extra.get("width_px", 0),
+                    extra.get("height_px", 0),
+                    extra.get("chunk_count", 0),
                 )
-                extra: dict[str, object] = {
-                    "render_mode": "image",
-                    "width_px": rasterized.width_px,
-                    "height_px": rasterized.height_px,
-                    "chunk_count": rasterized.chunk_count,
-                    "raster_render_ms": raster_render_ms,
-                    "turkish_print_mode": _request_turkish_print_mode_label(raw_request),
-                }
-                if effective_settings.turkish_guarantee_mode:
-                    try:
-                        extra["bundled_font_path"] = resolve_bundled_mono_font_path(
-                            bold=False
-                        )
-                    except BundledFontMissingError:
-                        extra["bundled_font_path"] = "missing"
-                self._submit_bytes(
-                    rasterized.data,
-                    job_name=job_name,
-                    profile=profile,
-                    settings=effective_settings,
-                    raw_request=raw_request,
-                    target_host=target_host,
-                    target_port=target_port,
-                    selected_printer=selected_printer,
+            else:
+                extra["turkish_print_mode"] = _request_turkish_print_mode_label(raw_request)
+        except PayloadError as exc:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                _error_response(
+                    exc,
+                    errorCode="receipt_profile_invalid",
+                    render_mode=render_mode,
                     document_type=document_type,
-                    require_physical_confirmation=require_physical_confirmation,
-                    extra_response=extra,
-                )
-                return
-            raw_bytes = ReceiptRenderer(effective_settings).render(payload)
+                ),
+            )
+            return
         except BundledFontMissingError as exc:
             LOGGER.error("receipt-raster bundled font missing: %s", exc)
             self._send_json(
@@ -2984,17 +3657,17 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             )
             return
         self._submit_bytes(
-            raw_bytes,
+            rendered_bytes,
             job_name=job_name,
             profile=profile,
             settings=effective_settings,
-            raw_request=raw_request,
+            raw_request=profile_request,
             target_host=target_host,
             target_port=target_port,
             selected_printer=selected_printer,
             document_type=document_type,
             require_physical_confirmation=require_physical_confirmation,
-            extra_response={"render_mode": "text"},
+            extra_response=extra,
         )
 
     def _submit_bytes(
@@ -3015,6 +3688,26 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         import time as _time
 
         t0 = _time.monotonic()
+        render_mode_for_bytes = str(
+            (extra_response or {}).get("render_mode")
+            or (raw_request or {}).get("render_mode")
+            or document_type
+        )
+        try:
+            raw_bytes = self._validate_binary_payload(
+                raw_bytes,
+                render_mode=render_mode_for_bytes,
+            )
+        except TransportError as exc:
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "errorCode": "raster_payload_invalid",
+                },
+            )
+            return
         printer_id, printer_name, transport_type = self._printer_identity(
             selected_printer=selected_printer,
             settings=settings,
@@ -3030,6 +3723,34 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         except Exception:
             selected_backend = ""
             selected_queue = ""
+        tcp_dispatch_expected = (
+            str(document_type).strip().lower() == "kitchen"
+            and (
+                selected_backend in {"tcp", "network-tcp", "ethernet"}
+                or transport_type in {"tcp", "network-tcp", "ethernet"}
+            )
+        )
+        tcp_dispatch_host = str(
+            target_host
+            or (selected_printer or {}).get("host")
+            or (selected_printer or {}).get("ip_address")
+            or (selected_printer or {}).get("ipAddress")
+            or ""
+        ).strip()
+        tcp_dispatch_port = _parse_port(
+            target_port
+            or (selected_printer or {}).get("port")
+            or (selected_printer or {}).get("tcp_port")
+        ) or 9100
+        if tcp_dispatch_expected:
+            LOGGER.info(
+                "[BRIDGE_TCP_DISPATCH] document_type=%s host=%s port=%s bytes_len=%d printer_name=%s transport=tcp",
+                document_type,
+                tcp_dispatch_host or "-",
+                tcp_dispatch_port,
+                len(raw_bytes),
+                printer_name,
+            )
         if transport_type in {"cups", "windows-spool"} or selected_backend == "cups":
             # Only meaningful for CUPS on macOS/Linux. Best-effort, never 500.
             try:
@@ -3078,6 +3799,13 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             )
         except TransportError as exc:
             elapsed_ms = int((_time.monotonic() - t0) * 1000)
+            if tcp_dispatch_expected:
+                LOGGER.error(
+                    "[BRIDGE_TCP_DISPATCH_ERROR] error=%s host=%s port=%s",
+                    exc,
+                    tcp_dispatch_host or "-",
+                    tcp_dispatch_port,
+                )
             log_entry = self.log_store.build_entry(
                 printer_id=printer_id,
                 printer_name=printer_name,
@@ -3117,10 +3845,43 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             structured_code = getattr(exc, "code", None)
             if isinstance(structured_code, str) and structured_code:
                 response["errorCode"] = structured_code
+            exc_details = getattr(exc, "details", None)
+            if isinstance(exc_details, dict) and exc_details:
+                response.update(exc_details)
+            if (
+                selected_printer
+                and str(selected_printer.get("backend") or "").strip().lower() == "usb-direct"
+                and str(document_type).strip().lower() == "receipt"
+                and str(
+                    selected_printer.get("printer_profile")
+                    or selected_printer.get("printerProfile")
+                    or (raw_request or {}).get("printer_profile")
+                    or ""
+                ).strip().lower() == "pos58"
+                and (
+                    response.get("errorCode") == "usb_interface_claim_denied"
+                    or "cannot claim usb interface" in str(exc).lower()
+                    or "access denied" in str(exc).lower()
+                )
+            ):
+                response["errorCode"] = "usb_interface_claim_denied"
+                response["suggested_backend"] = "cups"
+                response["recommended_backend"] = "cups"
+                response["operator_message"] = (
+                    "Bu yazıcı macOS tarafından tutuluyor. "
+                    "Adisyon için CUPS yolunu kullanmanız önerilir."
+                )
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, response)
             return
         except Exception as exc:  # pragma: no cover - defensive guard
             elapsed_ms = int((_time.monotonic() - t0) * 1000)
+            if tcp_dispatch_expected:
+                LOGGER.error(
+                    "[BRIDGE_TCP_DISPATCH_ERROR] error=%s host=%s port=%s",
+                    exc,
+                    tcp_dispatch_host or "-",
+                    tcp_dispatch_port,
+                )
             log_entry = self.log_store.build_entry(
                 printer_id=printer_id,
                 printer_name=printer_name,
@@ -3181,6 +3942,22 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         actual_backend = str(
             result_metadata.get("actual_backend") or transport_type
         ).strip().lower()
+        actual_host = str(
+            result_metadata.get("actual_host")
+            or result_metadata.get("target_host")
+            or tcp_dispatch_host
+            or ""
+        ).strip()
+        actual_port = _parse_port(
+            result_metadata.get("actual_port")
+            or result_metadata.get("target_port")
+            or tcp_dispatch_port
+        ) or tcp_dispatch_port
+        actual_queue = str(
+            result_metadata.get("actual_queue")
+            or result_metadata.get("queue")
+            or ("" if actual_backend == "tcp" else selected_queue)
+        ).strip()
         lp_exit_code = result_metadata.get("lp_exit_code")
         lp_command = str(result_metadata.get("lp_command") or "").strip()
         lp_output = str(result_metadata.get("lp_output") or "").strip()
@@ -3198,6 +3975,12 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             and actual_backend
             and selected_backend != actual_backend
         )
+        if document_type == "receipt":
+            LOGGER.info(
+                "[ReceiptDispatch][transport] selected=%s fallbackUsed=%s",
+                selected_backend or actual_backend or "-",
+                "true" if used_fallback else "false",
+            )
         physical_confirmation = actual_backend != "cups"
         confirmation_status = "confirmed" if physical_confirmation else "cups_accepted_unverified"
         physical_confirmation_message = (
@@ -3299,6 +4082,28 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             settings.printer_queue or "-",
             elapsed_ms,
         )
+        LOGGER.info(
+            "[PrintDispatch][bytes_sent] document=%s backend=%s total=%d job=%s",
+            document_type,
+            actual_backend or transport_type,
+            result.bytes_sent,
+            job_name,
+        )
+        if tcp_dispatch_expected:
+            LOGGER.info(
+                "[BRIDGE_TCP_DISPATCH_OK] host=%s port=%s bytes_len=%d printer_name=%s transport=tcp",
+                actual_host or tcp_dispatch_host or "-",
+                actual_port,
+                result.bytes_sent,
+                printer_name,
+            )
+        if settings.cut_mode != "none" and raw_bytes.endswith(_cut(settings.cut_mode)):
+            LOGGER.info(
+                "[PrintDispatch][cut_sent] document=%s backend=%s mode=%s",
+                document_type,
+                actual_backend or transport_type,
+                settings.cut_mode,
+            )
         render_mode_log = str(
             (extra_response or {}).get("render_mode")
             or (raw_request or {}).get("render_mode")
@@ -3370,6 +4175,9 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             "selected_backend": selected_backend,
             "selected_queue": selected_queue,
             "actual_backend": actual_backend,
+            "actual_host": actual_host,
+            "actual_port": actual_port,
+            "actual_queue": actual_queue,
             "lp_exit_code": lp_exit_code,
             "encoding": profile.encoding,
             "codepage": profile.codepage,
@@ -3432,6 +4240,10 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         elif extra_response and extra_response.get("render_ms") is not None:
             response["total_dispatch_ms"] = int(extra_response.get("render_ms", 0)) + elapsed_ms
         response["turkish_print_mode"] = _request_turkish_print_mode_label(raw_request)
+        response["profile_persisted"] = self._persist_profile_selection(
+            settings=settings,
+            raw_request=raw_request,
+        )
         if settings.turkish_guarantee_mode:
             try:
                 response["bundled_font_path"] = resolve_bundled_mono_font_path(bold=False)
@@ -3513,6 +4325,43 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         )
         render_mode = self._resolve_render_mode(requested)
         guarantee_mode = _request_turkish_guarantee_mode(requested)
+        requested_document_type = str(requested.get("document_type") or "").strip().lower()
+        requested_backend = _request_printer_backend_value(requested)
+        requested_profile = _request_printer_profile(requested).strip().lower()
+        requested_raster_mode = _request_raster_mode(requested) or self.settings.raster_mode
+        requested_fallback_raster_mode = (
+            _request_fallback_raster_mode(requested) or self.settings.fallback_raster_mode
+        )
+        paper_width_mm = _request_paper_width_mm(requested)
+        if paper_width_mm is None:
+            if "58" in requested_profile:
+                paper_width_mm = 58
+            elif (
+                "80" in requested_profile
+                or requested_document_type == "kitchen"
+                or requested_backend in {"tcp", "network-tcp", "ethernet"}
+            ):
+                paper_width_mm = 80
+            elif requested_document_type == "receipt":
+                paper_width_mm = 58
+            else:
+                paper_width_mm = self.settings.paper_width_mm
+        chars_per_line = _request_chars_per_line(requested)
+        if chars_per_line is None:
+            chars_per_line = _default_chars_per_line_for_paper(paper_width_mm)
+        raster_width_px = _request_raster_width_px(requested) or default_raster_width_px(
+            paper_width_mm
+        )
+        auto_cut = _request_auto_cut(requested)
+        cut_mode = (
+            _cut_mode_for_request(
+                paper_width_mm=paper_width_mm,
+                auto_cut=auto_cut if auto_cut is not None else self.settings.cut_mode != "none",
+            )
+            if auto_cut is not None
+            else self.settings.cut_mode
+        )
+        request_queue = _request_printer_queue_name(requested)
         effective_settings = replace(
             self.settings,
             encoding=profile.encoding,
@@ -3520,9 +4369,64 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             esc_r=profile.esc_r,
             render_mode=render_mode,
             turkish_guarantee_mode=guarantee_mode,
+            paper_width_mm=paper_width_mm,
+            chars_per_line=chars_per_line,
+            cut_mode=cut_mode,
+            printer_queue=request_queue or self.settings.printer_queue,
+            raster_mode=requested_raster_mode,
+            fallback_raster_mode=requested_fallback_raster_mode,
+            raster_width_px=raster_width_px,
+        )
+        LOGGER.info(
+            "[PrintRender][request_profile] job=%s backend=%s printer_profile=%s "
+            "paper_width_mm=%d chars_per_line=%d cut_mode=%s render_mode=%s raster_mode=%s fallback_raster_mode=%s guarantee=%s queue=%s",
+            job_name,
+            _request_printer_backend_value(requested) or "-",
+            _request_printer_profile(requested) or "-",
+            effective_settings.paper_width_mm,
+            effective_settings.chars_per_line,
+            effective_settings.cut_mode,
+            effective_settings.render_mode,
+            effective_settings.raster_mode,
+            effective_settings.fallback_raster_mode,
+            effective_settings.turkish_guarantee_mode,
+            effective_settings.printer_queue or "-",
         )
         self._log_print_profile(job_name=job_name, profile=profile, payload_source=payload_source)
         return profile, effective_settings
+
+    def _log_effective_printer_profile(
+        self,
+        *,
+        document_type: str,
+        render_mode: str,
+        settings: BridgeSettings,
+        raw_request: dict[str, object] | None,
+        selected_printer: dict[str, object] | None,
+    ) -> None:
+        printer_name = (
+            str(
+                (selected_printer or {}).get("name")
+                or (selected_printer or {}).get("displayName")
+                or (selected_printer or {}).get("queue")
+                or settings.printer_queue
+                or "-"
+            ).strip()
+            or "-"
+        )
+        LOGGER.info(
+            "[PrinterProfile][effective] printer=%s document=%s paperWidthMm=%d rasterWidthPx=%d charsPerLine=%d renderMode=%s rasterMode=%s codepage=%s backend=%s profile=%s",
+            printer_name,
+            document_type,
+            settings.paper_width_mm,
+            settings.raster_width_px or default_raster_width_px(settings.paper_width_mm),
+            settings.chars_per_line,
+            render_mode,
+            settings.raster_mode,
+            settings.encoding if render_mode == "text" else "none",
+            _request_printer_backend_value(raw_request) or "-",
+            _request_printer_profile(raw_request) or "-",
+        )
 
     def _log_print_profile(
         self,
@@ -3561,6 +4465,117 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 queue,
                 bytes_info,
             )
+
+    def _persist_profile_selection(
+        self,
+        *,
+        settings: BridgeSettings,
+        raw_request: dict[str, object] | None,
+    ) -> bool:
+        request = raw_request or {}
+        should_persist = bool(
+            request.get("persist_profile") is True
+            or request.get("save_profile") is True
+            or request.get("remember_selection") is True
+        )
+        if not should_persist:
+            return False
+        if (
+            str(request.get("document_type") or "").strip().lower() == "receipt"
+            and str(request.get("printer_profile") or "").strip().lower() == "pos58"
+        ):
+            codepage_value = request.get("codepage")
+            if str(codepage_value).strip().lower() == "none":
+                codepage_value = ""
+            write_env_file(
+                {
+                    "PRINT_BRIDGE_RECEIPT_RENDER_MODE": settings.render_mode,
+                    "PRINT_BRIDGE_RECEIPT_RASTER_MODE": settings.raster_mode,
+                    "PRINT_BRIDGE_RECEIPT_ENCODING": settings.encoding,
+                    "PRINT_BRIDGE_RECEIPT_CODEPAGE": str(codepage_value or ""),
+                    "PRINT_BRIDGE_RECEIPT_PRINTER_PROFILE": "pos58",
+                    "PRINT_BRIDGE_RECEIPT_PAPER_WIDTH_MM": str(settings.paper_width_mm),
+                    "PRINT_BRIDGE_RECEIPT_RASTER_WIDTH_PX": str(
+                        settings.raster_width_px or default_raster_width_px(settings.paper_width_mm)
+                    ),
+                    "PRINT_BRIDGE_RECEIPT_CHARS_PER_LINE": str(settings.chars_per_line),
+                }
+            )
+            return True
+        write_env_file(
+            {
+                "PRINT_BRIDGE_RENDER_MODE": settings.render_mode,
+                "PRINT_BRIDGE_RASTER_MODE": settings.raster_mode,
+                "PRINT_BRIDGE_FALLBACK_RASTER_MODE": settings.fallback_raster_mode,
+                "PRINT_BRIDGE_RASTER_WIDTH_PX": str(
+                    settings.raster_width_px or default_raster_width_px(settings.paper_width_mm)
+                ),
+                "PRINT_BRIDGE_PAPER_WIDTH_MM": str(settings.paper_width_mm),
+                "PRINT_BRIDGE_CHARS_PER_LINE": str(settings.chars_per_line),
+                "PRINT_BRIDGE_ENCODING": settings.encoding,
+                "PRINT_BRIDGE_CODEPAGE": str(settings.codepage or 13),
+            }
+        )
+        return True
+
+    def _validate_binary_payload(
+        self,
+        payload: object,
+        *,
+        render_mode: str,
+    ) -> bytes:
+        payload_type = type(payload).__name__
+        if isinstance(payload, str):
+            LOGGER.error("[RasterBytes][type] type=str len=%d containsBinary=false", len(payload))
+            raise TransportError("Raster output string'e donustu. Baski durduruldu.")
+        if isinstance(payload, bytearray):
+            payload_bytes = bytes(payload)
+        elif isinstance(payload, bytes):
+            payload_bytes = payload
+        else:
+            LOGGER.error(
+                "[RasterBytes][type] type=%s len=0 containsBinary=false",
+                payload_type,
+            )
+            raise TransportError(f"Print payload bytes degil: {payload_type}")
+        contains_binary = any(
+            (byte < 32 and byte not in {9, 10, 13}) or byte > 126
+            for byte in payload_bytes
+        )
+        LOGGER.info(
+            "[RasterBytes][type] type=bytes len=%d startsWith=%s containsBinary=%s renderMode=%s",
+            len(payload_bytes),
+            payload_bytes[:8].hex(),
+            "true" if contains_binary else "false",
+            render_mode,
+        )
+        return payload_bytes
+
+    def _encode_raster_with_fallback(
+        self,
+        image: object,
+        *,
+        settings: BridgeSettings,
+        document_type: str,
+    ) -> tuple[object, BridgeSettings, str | None]:
+        primary_settings = settings
+        try:
+            rasterized = RasterEscPosEncoder(primary_settings).encode(image)  # type: ignore[arg-type]
+            return rasterized, primary_settings, None
+        except Exception as exc:
+            fallback_mode = str(settings.fallback_raster_mode or "").strip().lower()
+            if not fallback_mode or fallback_mode == settings.raster_mode:
+                raise
+            LOGGER.warning(
+                "[PrintRender][fallback] document=%s primary=%s fallback=%s reason=%s",
+                document_type,
+                settings.raster_mode,
+                fallback_mode,
+                exc,
+            )
+            fallback_settings = replace(settings, raster_mode=fallback_mode)
+            rasterized = RasterEscPosEncoder(fallback_settings).encode(image)  # type: ignore[arg-type]
+            return rasterized, fallback_settings, str(exc)
 
     def _extract_target(
         self,
@@ -3669,9 +4684,28 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         if _request_turkish_guarantee_mode(raw_body):
             return "image"
         test_mode = str(raw_body.get("test_mode") or raw_body.get("mode") or "").strip().lower()
-        if test_mode in {"escpos_short", "escpos_text", "escpos", "raw", "text"}:
+        if test_mode in {
+            "escpos_short",
+            "escpos_text",
+            "escpos",
+            "raw",
+            "text",
+            "text_cp857",
+            "text_cp1254",
+            "pos58_text_cp857",
+            "pos58_text_cp1254",
+        }:
             return "text"
-        if test_mode in {"bitmap", "image", "turkish", "turkish_guarantee"}:
+        if test_mode in {
+            "bitmap",
+            "image",
+            "turkish",
+            "turkish_guarantee",
+            "raster_gs_v0",
+            "raster_esc_star",
+            "pos58_raster_gs_v0",
+            "pos58_raster_esc_star",
+        }:
             return "image"
         raw = raw_body.get("render_mode")
         if raw is not None:
@@ -3682,6 +4716,52 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 return "text"
             if normalized in {"escpos_short", "escpos_text", "escpos", "raw"}:
                 return "text"
+        return self.settings.render_mode
+
+    def _enforce_render_mode_for_document(
+        self,
+        *,
+        document_type: str,
+        backend: str | None = None,
+        payload_text_sample: str | None = None,
+    ) -> str:
+        """Enforce image/raster mode for kitchen & receipt documents.
+        
+        Rules:
+        - Real kitchen/receipt fişleri: hep image mode
+        - Backend=tcp: hep image mode  
+        - Turkish karakter varsa: hep image mode
+        
+        Returns: "image" or "text" (text only for test/misc docs)
+        """
+        doc_lower = str(document_type or "").strip().lower()
+        backend_lower = str(backend or "").strip().lower()
+        
+        # Rule 1: kitchen/receipt documents must use image mode
+        if doc_lower in {"kitchen", "receipt"}:
+            LOGGER.info(
+                "[PrintRender][enforce] document=%s → image (real receipt/kitchen)",
+                doc_lower,
+            )
+            return "image"
+        
+        # Rule 2: TCP/Ethernet backend must use image mode
+        if backend_lower in {"tcp", "network-tcp", "ethernet"}:
+            LOGGER.info(
+                "[PrintRender][enforce] document=%s backend=%s → image (tcp/ethernet)",
+                doc_lower,
+                backend_lower,
+            )
+            return "image"
+        
+        # Rule 3: Turkish characters require image mode for safety
+        if payload_text_sample and contains_turkish_chars(payload_text_sample):
+            LOGGER.info(
+                "[PrintRender][enforce] document=%s → image (turkish chars detected)",
+                doc_lower,
+            )
+            return "image"
+        
         return self.settings.render_mode
 
     def _maybe_read_json_body(self) -> dict[str, object]:

@@ -303,6 +303,442 @@ void main() {
   );
 
   test(
+    'printTestReceipt uses ethernet test dispatch for tcp role printer',
+    () async {
+      final fakeRepo = _FakePrinterRepository();
+      final fakeStation = _FakePrintStationService();
+      final fakePrint = _FakeLocalPrintService(
+        discoveredPrinters: <Map<String, dynamic>>[
+          _cupsPrinter('cups:selected', 'POS-58', 'POS58_QUEUE'),
+        ],
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: fakeRepo,
+        printStationService: fakeStation,
+        printServiceFactory: () => fakePrint,
+      );
+      final ethernetPrinter = UnifiedPrinterModel(
+        id: 'tcp:192.168.1.100:9100',
+        displayName: 'pos-80',
+        queueName: 'pos-80',
+        backend: DesktopPrinterBackend.tcp,
+        os: DesktopPrinterOs.macos,
+        isAvailable: true,
+        canPrint: true,
+        printerRecordId: 'db-kitchen',
+        raw: const <String, dynamic>{
+          'id': 'tcp:192.168.1.100:9100',
+          'name': 'pos-80',
+          'displayName': 'pos-80',
+          'backend': 'tcp',
+          'transportType': 'ethernet',
+          'transport_type': 'ethernet',
+          'host': '192.168.1.100',
+          'ip_address': '192.168.1.100',
+          'port': 9100,
+          'paper_width_mm': 80,
+          'auto_cut': true,
+        },
+      );
+
+      final result = await orchestrator.printTestReceipt(
+        restaurantId: 'rest-role-ethernet',
+        role: PrinterSetupRole.mutfak,
+        printerId: 'db-kitchen',
+        explicitLivePrinter: ethernetPrinter,
+        testSource: 'role_test',
+      );
+
+      expect(result.ok, isTrue);
+      expect(fakePrint.lastPrintTestPrinterId, 'tcp:192.168.1.100:9100');
+      expect(fakePrint.lastPrintTestPrinter?['backend'], 'tcp');
+      expect(fakePrint.lastPrintTestPrinter?['transportType'], 'ethernet');
+      expect(fakePrint.lastPrintTestTargetHost, '192.168.1.100');
+      expect(fakePrint.lastPrintTestTargetPort, 9100);
+      expect(fakePrint.lastPrintTestExtraBody?['document_type'], 'kitchen');
+      expect(fakePrint.lastPrintTestExtraBody?['printer_role'], 'mutfak');
+      expect(fakePrint.lastPrintTestExtraBody?['test_source'], 'role_test');
+    },
+  );
+
+  test(
+    'printPhysicalToPrinter keeps kitchen tcp mapping on payload without POS-58 fallback',
+    () async {
+      final fakeRepo = _FakePrinterRepository();
+      final fakeStation = _FakePrintStationService();
+      final fakePrint = _FakeLocalPrintService(
+        discoveredPrinters: <Map<String, dynamic>>[
+          _cupsPrinter('cups:selected', 'POS-58', 'POS58_QUEUE'),
+        ],
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: fakeRepo,
+        printStationService: fakeStation,
+        printServiceFactory: () => fakePrint,
+      );
+      final ethernetPrinter = UnifiedPrinterModel(
+        id: 'tcp:192.168.1.100:9100',
+        displayName: 'pos-80',
+        queueName: 'pos-80',
+        backend: DesktopPrinterBackend.tcp,
+        os: DesktopPrinterOs.macos,
+        isAvailable: true,
+        canPrint: true,
+        printerRecordId: 'db-kitchen',
+        raw: const <String, dynamic>{
+          'id': 'tcp:192.168.1.100:9100',
+          'name': 'pos-80',
+          'backend': 'tcp',
+          'transportType': 'ethernet',
+          'transport_type': 'ethernet',
+          'host': '192.168.1.100',
+          'ip_address': '192.168.1.100',
+          'port': 9100,
+        },
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        ethernetPrinter,
+        PrintPayload(
+          body: <String, dynamic>{
+            'document_type': 'kitchen',
+            'job_type': 'kitchen',
+            'table_no': '12',
+          },
+          documentType: 'kitchen',
+        ),
+        restaurantId: 'rest-kitchen-ethernet',
+        flowType: 'kitchen_test',
+      );
+
+      expect(result.ok, isTrue);
+      expect(
+        fakePrint.lastKitchenPayload?['printer_id'],
+        'tcp:192.168.1.100:9100',
+      );
+      expect(
+        (fakePrint.lastKitchenPayload?['printer']
+            as Map<String, dynamic>)['backend'],
+        'tcp',
+      );
+      expect(fakePrint.lastKitchenPayload?['backend'], 'tcp');
+      expect(fakePrint.lastKitchenPayload?['printer_backend'], 'tcp');
+      expect(fakePrint.lastKitchenPayload?['selected_printer_backend'], 'tcp');
+      expect(
+        fakePrint.lastKitchenPayload?['selected_printer_host'],
+        '192.168.1.100',
+      );
+      expect(fakePrint.lastKitchenPayload?['selected_printer_port'], 9100);
+      expect(fakePrint.lastKitchenPayload?['selected_printer_queue'], '');
+      expect(fakePrint.lastKitchenPayload?['transportType'], 'ethernet');
+      expect(fakePrint.lastKitchenPayload?['transport_type'], 'ethernet');
+      expect(fakePrint.lastKitchenPayload?['printer_target_host'], isNull);
+      expect(fakePrint.lastKitchenPayload?['target_host'], isNull);
+      expect(fakePrint.lastKitchenPayload?['host'], '192.168.1.100');
+      expect(fakePrint.lastKitchenPayload?['ip_address'], '192.168.1.100');
+      expect(fakePrint.lastKitchenPayload?['port'], 9100);
+      expect(
+        (fakePrint.lastKitchenPayload?['printer']
+            as Map<String, dynamic>)['host'],
+        '192.168.1.100',
+      );
+      expect(
+        (fakePrint.lastKitchenPayload?['printer']
+            as Map<String, dynamic>)['port'],
+        9100,
+      );
+      expect(fakePrint.lastKitchenPayload?['printer_name'], 'pos-80');
+    },
+  );
+
+  test(
+    'printPhysicalToPrinter removes stale usb and cups keys from kitchen tcp payload',
+    () async {
+      final fakePrint = _FakeLocalPrintService();
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepository(),
+        printStationService: _FakePrintStationService(),
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        _tcpKitchenPrinter(),
+        PrintPayload(
+          body: <String, dynamic>{
+            'document_type': 'kitchen',
+            'printer_role': 'mutfak',
+            'queue': 'POS58_QUEUE',
+            'queueName': 'POS58_QUEUE',
+            'printer_queue': 'POS58_QUEUE',
+            'deviceIdentifier': 'usb-old',
+            'device_identifier': 'usb-old',
+            'printer_device_identifier': 'usb-old',
+            'vendorId': '0x1234',
+            'productId': '0x5678',
+            'target_host': '127.0.0.1',
+            'target_port': 515,
+          },
+          documentType: 'kitchen',
+        ),
+        restaurantId: 'rest-kitchen-stale-cleanup',
+      );
+
+      expect(result.ok, isTrue);
+      expect(fakePrint.lastKitchenPayload?['queue'], isNull);
+      expect(fakePrint.lastKitchenPayload?['queueName'], isNull);
+      expect(fakePrint.lastKitchenPayload?['printer_queue'], isNull);
+      expect(fakePrint.lastKitchenPayload?['deviceIdentifier'], isNull);
+      expect(fakePrint.lastKitchenPayload?['device_identifier'], isNull);
+      expect(
+        fakePrint.lastKitchenPayload?['printer_device_identifier'],
+        isNull,
+      );
+      expect(fakePrint.lastKitchenPayload?['vendorId'], isNull);
+      expect(fakePrint.lastKitchenPayload?['productId'], isNull);
+      expect(fakePrint.lastKitchenPayload?['target_host'], isNull);
+      expect(fakePrint.lastKitchenPayload?['target_port'], isNull);
+      expect(fakePrint.lastKitchenPayload?['host'], '192.168.1.100');
+      expect(fakePrint.lastKitchenPayload?['port'], 9100);
+      final printerPayload =
+          fakePrint.lastKitchenPayload?['printer'] as Map<String, dynamic>;
+      expect(printerPayload['backend'], 'tcp');
+      expect(printerPayload['queue'], isNull);
+      expect(printerPayload['queueName'], isNull);
+      expect(printerPayload['deviceIdentifier'], isNull);
+      expect(printerPayload['device_identifier'], isNull);
+      expect(printerPayload['vendorId'], isNull);
+      expect(printerPayload['productId'], isNull);
+    },
+  );
+
+  test(
+    'printPhysicalToPrinter fails kitchen tcp dispatch when bridge reports POS58 cups target',
+    () async {
+      final fakePrint = _FakeLocalPrintService(
+        kitchenResponse: const <String, dynamic>{
+          'ok': true,
+          'actual_backend': 'cups',
+          'actual_queue': 'POS58_QUEUE',
+          'actual_printer_name': 'POS-58',
+        },
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepository(),
+        printStationService: _FakePrintStationService(),
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        _tcpKitchenPrinter(),
+        PrintPayload.fromQueuedJob(<String, dynamic>{
+          'document_type': 'kitchen',
+          'printer_role': 'mutfak',
+          'items': const <Map<String, dynamic>>[
+            <String, dynamic>{'name': 'Kebap', 'quantity': 1},
+          ],
+        }),
+        restaurantId: 'rest-kitchen-tcp-mismatch',
+      );
+
+      expect(result.ok, isFalse);
+      expect(result.status, 'kitchen_dispatch_route_mismatch');
+      expect(
+        result.message,
+        'Ethernet mutfak yazıcısı seçili ama fiziksel dispatch POS58/CUPS/USB\'ye sapıyor.',
+      );
+    },
+  );
+
+  test(
+    'printPhysicalToPrinter accepts kitchen tcp dispatch when bridge reports same host and port',
+    () async {
+      final fakePrint = _FakeLocalPrintService(
+        kitchenResponse: const <String, dynamic>{
+          'ok': true,
+          'actual_backend': 'tcp',
+          'actual_host': '192.168.1.100',
+          'actual_port': 9100,
+          'actual_queue': '',
+        },
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepository(),
+        printStationService: _FakePrintStationService(),
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        _tcpKitchenPrinter(),
+        PrintPayload.fromQueuedJob(<String, dynamic>{
+          'document_type': 'kitchen',
+          'printer_role': 'mutfak',
+          'items': const <Map<String, dynamic>>[
+            <String, dynamic>{'name': 'Pilav', 'quantity': 1},
+          ],
+        }),
+        restaurantId: 'rest-kitchen-tcp-match',
+      );
+
+      expect(result.ok, isTrue);
+      expect(result.status, isNot('kitchen_dispatch_route_mismatch'));
+    },
+  );
+
+  test(
+    'printPhysicalToPrinter prefers nested tcp printer payload over stale top-level cups fields',
+    () async {
+      final fakePrint = _FakeLocalPrintService(
+        kitchenResponse: const <String, dynamic>{
+          'ok': true,
+          'actual_backend': 'tcp',
+          'actual_host': '192.168.1.100',
+          'actual_port': 9100,
+          'actual_queue': '',
+        },
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepository(),
+        printStationService: _FakePrintStationService(),
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        _tcpKitchenPrinter(),
+        PrintPayload(
+          body: <String, dynamic>{
+            'document_type': 'kitchen',
+            'printer_role': 'mutfak',
+            'backend': 'cups',
+            'printer_backend': 'cups',
+            'selected_printer_backend': 'cups',
+            'queue': 'STMicroelectronics_POS58_Printer_USB',
+            'printer_queue': 'STMicroelectronics_POS58_Printer_USB',
+            'deviceIdentifier': 'usb-stale',
+            'printer': <String, dynamic>{
+              'id': 'tcp:192.168.1.100:9100',
+              'backend': 'tcp',
+              'transportType': 'ethernet',
+              'host': '192.168.1.100',
+              'ip_address': '192.168.1.100',
+              'port': 9100,
+            },
+          },
+          documentType: 'kitchen',
+        ),
+        restaurantId: 'rest-kitchen-stale-top-level',
+      );
+
+      expect(result.ok, isTrue);
+      expect(fakePrint.lastKitchenPayload?['backend'], 'tcp');
+      expect(fakePrint.lastKitchenPayload?['printer_backend'], 'tcp');
+      expect(fakePrint.lastKitchenPayload?['selected_printer_backend'], 'tcp');
+      expect(fakePrint.lastKitchenPayload?['queue'], isNull);
+      expect(fakePrint.lastKitchenPayload?['printer_queue'], isNull);
+      expect(fakePrint.lastKitchenPayload?['deviceIdentifier'], isNull);
+      final printerPayload =
+          fakePrint.lastKitchenPayload?['printer'] as Map<String, dynamic>;
+      expect(printerPayload['backend'], 'tcp');
+      expect(printerPayload['host'], '192.168.1.100');
+      expect(printerPayload['port'], 9100);
+    },
+  );
+
+  test(
+    'printPhysicalToPrinter skips strict kitchen guard for cups printer',
+    () async {
+      final fakePrint = _FakeLocalPrintService(
+        kitchenResponse: const <String, dynamic>{
+          'ok': true,
+          'actual_backend': 'usb-direct',
+          'actual_queue': 'POS58_QUEUE',
+        },
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepository(),
+        printStationService: _FakePrintStationService(),
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        _cupsKitchenPrinter(),
+        PrintPayload(
+          body: <String, dynamic>{
+            'document_type': 'kitchen',
+            'printer_role': 'mutfak',
+          },
+          documentType: 'kitchen',
+        ),
+        restaurantId: 'rest-kitchen-cups-skip',
+      );
+
+      expect(result.ok, isTrue);
+      expect(result.status, isNot('kitchen_dispatch_route_mismatch'));
+    },
+  );
+
+  test(
+    'printPhysicalToPrinter skips strict kitchen guard for usb printer',
+    () async {
+      final fakePrint = _FakeLocalPrintService();
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepository(),
+        printStationService: _FakePrintStationService(),
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        _usbKitchenPrinter(),
+        PrintPayload(
+          body: <String, dynamic>{
+            'document_type': 'kitchen',
+            'printer_role': 'mutfak',
+          },
+          documentType: 'kitchen',
+        ),
+        restaurantId: 'rest-kitchen-usb-skip',
+      );
+
+      expect(result.ok, isTrue);
+      expect(result.status, isNot('kitchen_dispatch_route_mismatch'));
+    },
+  );
+
+  test(
+    'printPhysicalToPrinter does not run strict kitchen guard for receipt path',
+    () async {
+      final fakePrint = _FakeLocalPrintService(
+        receiptResponse: const <String, dynamic>{
+          'ok': true,
+          'actual_backend': 'cups',
+          'actual_queue': 'POS58_QUEUE',
+        },
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: _FakePrinterRepository(),
+        printStationService: _FakePrintStationService(),
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        _tcpKitchenPrinter(),
+        PrintPayload(
+          body: <String, dynamic>{
+            'document_type': 'receipt',
+            'printer_role': 'adisyon',
+            'table_no': '12',
+          },
+          documentType: 'receipt',
+        ),
+        restaurantId: 'rest-receipt-guard-skip',
+      );
+
+      expect(result.ok, isTrue);
+      expect(result.status, isNot('kitchen_dispatch_route_mismatch'));
+      expect(fakePrint.lastReceiptPayload, isNotNull);
+    },
+  );
+
+  test(
     'savePrinterRoles stores db ids remotely and bridge-compatible canonical role mappings',
     () async {
       final fakeRepo = _FakePrinterRepository();
@@ -372,7 +808,7 @@ void main() {
   );
 
   test(
-    'successful test print promotes the printer as canonical fallback across flows',
+    'successful receipt test does not promote a working printer as mutfak fallback',
     () async {
       final fakeRepo = _FakePrinterRepository();
       final fakeStation = _FakePrintStationService();
@@ -401,7 +837,7 @@ void main() {
         restaurantId: 'rest-working-fallback',
         role: PrinterSetupRole.mutfak,
       );
-      expect(resolvedKitchen?.id, 'usb:receipt');
+      expect(resolvedKitchen, isNull);
 
       final prepared = await orchestrator.prepareQueuedPrintPayload(
         restaurantId: 'rest-working-fallback',
@@ -415,11 +851,11 @@ void main() {
         },
       );
 
-      expect(prepared.printer?.id, 'usb:receipt');
-      expect(prepared.resolutionSource, 'working_printer');
-      expect(prepared.payload['printer_id'], 'usb:receipt');
-      expect(prepared.payload['printer_device_identifier'], 'usb-1234:5678');
-      expect(prepared.payload['printer_backend'], 'usb-direct');
+      expect(prepared.printer, isNull);
+      expect(prepared.resolutionSource, 'unresolved');
+      expect(prepared.payload['printer_id'], isNull);
+      expect(prepared.payload['printer_device_identifier'], isNull);
+      expect(prepared.payload['printer_backend'], isNull);
     },
   );
 
@@ -1173,6 +1609,8 @@ void main() {
         ],
         receiptResponse: <String, dynamic>{
           'ok': true,
+          'actual_backend': 'cups',
+          'selected_backend': 'cups',
           'transport_output': 'cups',
         },
         kitchenResponse: <String, dynamic>{
@@ -1237,7 +1675,9 @@ void main() {
         ],
         receiptResponse: <String, dynamic>{
           'ok': true,
-          'transport_output': 'cups',
+          'actual_backend': 'usb-direct',
+          'selected_backend': 'usb-direct',
+          'transport_output': 'USB direct',
         },
       );
 
@@ -1271,7 +1711,7 @@ void main() {
   );
 
   test(
-    'printPhysicalToPrinter falls back to matching CUPS printer when POS58 USB conflicts on macOS',
+    'printPhysicalToPrinter keeps selected POS58 usb-direct backend on macOS',
     () async {
       final fakeRepo = _FakePrinterRepository();
       final fakeStation = _FakePrintStationService();
@@ -1292,7 +1732,9 @@ void main() {
         ],
         receiptResponse: <String, dynamic>{
           'ok': true,
-          'transport_output': 'cups',
+          'actual_backend': 'usb-direct',
+          'selected_backend': 'usb-direct',
+          'transport_output': 'USB direct',
         },
       );
 
@@ -1318,17 +1760,15 @@ void main() {
       );
 
       expect(result.ok, isTrue);
-      expect(result.printer?.backend, DesktopPrinterBackend.cups);
-      expect(fakePrint.lastReceiptPayload?['printer_backend'], 'cups');
+      expect(result.printer?.backend, DesktopPrinterBackend.usbDirect);
+      expect(fakePrint.lastReceiptPayload?['printer_backend'], 'usb-direct');
+      expect(fakePrint.lastReceiptPayload?['printer_queue'], isNull);
       expect(
-        fakePrint.lastReceiptPayload?['printer_queue'],
-        'STMicroelectronics_POS58_Printer_USB',
+        fakePrint.lastReceiptPayload?['printer_device_identifier'],
+        'usb-0416:5011',
       );
-      expect(fakePrint.lastReceiptPayload?['used_fallback'], isTrue);
-      expect(
-        fakePrint.lastReceiptPayload?['fallback_reason'],
-        'usb_cups_conflict_cups_fallback',
-      );
+      expect(fakePrint.lastReceiptPayload?['used_fallback'], isNot(true));
+      expect(fakePrint.lastReceiptPayload?['fallback_reason'], isNull);
     },
   );
 
@@ -1380,7 +1820,7 @@ void main() {
   );
 
   test(
-    'printPhysicalToPrinter retries once after macOS USB claim failure',
+    'printPhysicalToPrinter recommends CUPS instead of retrying locked POS58 usb-direct backend',
     () async {
       final fakeRepo = _FakePrinterRepository();
       final fakeStation = _FakePrintStationService();
@@ -1398,8 +1838,12 @@ void main() {
         receiptResponses: <Object>[
           const LocalPrintServiceException(
             'Cannot claim USB interface: [Errno 13] Access denied. If CUPS is holding the device, restart it: sudo killall -USR1 cupsd',
+            details: <String, dynamic>{
+              'errorCode': 'usb_interface_claim_denied',
+              'operator_message':
+                  'Bu yazıcı macOS tarafından tutuluyor. Adisyon için CUPS yolunu kullanmanız önerilir.',
+            },
           ),
-          <String, dynamic>{'ok': true, 'transport_output': 'USB direct'},
         ],
       );
 
@@ -1425,17 +1869,21 @@ void main() {
         restaurantId: 'rest-retry',
       );
 
-      expect(result.ok, isTrue);
-      expect(fakeRecovery.requestCount, 1);
-      expect(fakeRecovery.releaseCount, 1);
+      expect(result.ok, isFalse);
+      expect(
+        result.message,
+        contains('Adisyon için CUPS yolunu kullanmanız önerilir'),
+      );
+      expect(fakeRecovery.requestCount, 0);
+      expect(fakeRecovery.releaseCount, 0);
       expect(fakeRecovery.instructionsCount, 0);
-      expect(fakePrint.printReceiptCallCount, 2);
+      expect(fakePrint.printReceiptCallCount, 1);
       expect(fakePrint.releaseUsbPrintersCallCount, 0);
     },
   );
 
   test(
-    'printPhysicalToPrinter retries admin release after AppleScript cancel',
+    'printPhysicalToPrinter does not attempt admin release for locked POS58 usb-direct backend',
     () async {
       final fakeRepo = _FakePrinterRepository();
       final fakeStation = _FakePrintStationService();
@@ -1465,8 +1913,12 @@ void main() {
         receiptResponses: <Object>[
           const LocalPrintServiceException(
             'Cannot claim USB interface: [Errno 13] Access denied',
+            details: <String, dynamic>{
+              'errorCode': 'usb_interface_claim_denied',
+              'operator_message':
+                  'Bu yazıcı macOS tarafından tutuluyor. Adisyon için CUPS yolunu kullanmanız önerilir.',
+            },
           ),
-          <String, dynamic>{'ok': true, 'transport_output': 'USB direct'},
         ],
       );
 
@@ -1492,11 +1944,127 @@ void main() {
         restaurantId: 'rest-retry-cancel',
       );
 
+      expect(result.ok, isFalse);
+      expect(
+        result.message,
+        contains('Adisyon için CUPS yolunu kullanmanız önerilir'),
+      );
+      expect(fakeRecovery.requestCount, 0);
+      expect(fakeRecovery.retryPromptCount, 0);
+      expect(fakeRecovery.releaseCount, 0);
+      expect(fakePrint.printReceiptCallCount, 1);
+    },
+  );
+
+  test(
+    'ethernet kitchen print uses raster image mode with 80mm profile metadata',
+    () async {
+      final fakeRepo = _FakePrinterRepository();
+      final fakeStation = _FakePrintStationService();
+      final fakePrint = _FakeLocalPrintService();
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: fakeRepo,
+        printStationService: fakeStation,
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        const UnifiedPrinterModel(
+          id: 'tcp:192.168.1.100:9100',
+          displayName: 'pos-80',
+          queueName: 'pos-80',
+          backend: DesktopPrinterBackend.tcp,
+          os: DesktopPrinterOs.macos,
+          isAvailable: true,
+          canPrint: true,
+          raw: <String, dynamic>{
+            'backend': 'tcp',
+            'transportType': 'ethernet',
+            'host': '192.168.1.100',
+            'ip_address': '192.168.1.100',
+            'port': 9100,
+            'paper_width_mm': 80,
+            'auto_cut': true,
+          },
+        ),
+        PrintPayload(
+          documentType: 'kitchen',
+          body: <String, dynamic>{
+            'document_type': 'kitchen',
+            'printer_role': 'mutfak',
+            'items': const <Map<String, dynamic>>[
+              <String, dynamic>{'name': 'Çorba', 'quantity': 1},
+            ],
+          },
+        ),
+        restaurantId: 'rest-kitchen-render',
+      );
+
       expect(result.ok, isTrue);
-      expect(fakeRecovery.requestCount, 1);
-      expect(fakeRecovery.retryPromptCount, 1);
-      expect(fakeRecovery.releaseCount, 2);
-      expect(fakePrint.printReceiptCallCount, 2);
+      expect(fakePrint.lastKitchenPayload?['render_mode'], 'image');
+      expect(fakePrint.lastKitchenPayload?['paper_width_mm'], 80);
+      expect(
+        fakePrint.lastKitchenPayload?['printer_profile'],
+        'generic_80mm_escpos',
+      );
+      expect(fakePrint.lastKitchenPayload?['raster_width_px'], 576);
+      expect(fakePrint.lastKitchenPayload?['host'], '192.168.1.100');
+      expect(fakePrint.lastKitchenPayload?['port'], 9100);
+    },
+  );
+
+  test(
+    'macOS POS-58 receipt print uses 58mm safe raster profile metadata',
+    () async {
+      final fakeRepo = _FakePrinterRepository();
+      final fakeStation = _FakePrintStationService();
+      final fakePrint = _FakeLocalPrintService(
+        discoveredPrinters: <Map<String, dynamic>>[
+          _usbPrinter(
+            'usb:pos58',
+            'POS58 USB',
+            'POS58_USB',
+            vendorId: '0x0416',
+            productId: '0x5011',
+          ),
+        ],
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: fakeRepo,
+        printStationService: fakeStation,
+        printServiceFactory: () => fakePrint,
+      );
+
+      final result = await orchestrator.printPhysicalToPrinter(
+        UnifiedPrinterModel.fromBridgeMap(
+          _usbPrinter(
+            'usb:pos58',
+            'POS58 USB',
+            'POS58_USB',
+            vendorId: '0x0416',
+            productId: '0x5011',
+          ),
+          os: DesktopPrinterOs.macos,
+        ),
+        PrintPayload(
+          documentType: 'receipt',
+          body: <String, dynamic>{
+            'document_type': 'receipt',
+            'printer_role': 'adisyon',
+            'items': const <Map<String, dynamic>>[
+              <String, dynamic>{'name': 'Çay', 'qty': 1, 'total': 20},
+            ],
+          },
+        ),
+        restaurantId: 'rest-pos58-render',
+      );
+
+      expect(result.ok, isTrue);
+      expect(fakePrint.lastReceiptPayload?['render_mode'], 'image');
+      expect(fakePrint.lastReceiptPayload?['paper_width_mm'], 58);
+      expect(fakePrint.lastReceiptPayload?['printer_profile'], 'pos58');
+      expect(fakePrint.lastReceiptPayload?['raster_width_px'], 384);
+      expect(fakePrint.lastReceiptPayload?['auto_cut'], isFalse);
     },
   );
 
@@ -1973,6 +2541,262 @@ void main() {
   );
 
   test(
+    'prepareQueuedPrintPayload prefers station ethernet printer over kitchen role mapping',
+    () async {
+      final fakeRepo = _FakePrinterRepository();
+      final fakeStation = _FakePrintStationService();
+      final fakePrint = _FakeLocalPrintService(
+        discoveredPrinters: <Map<String, dynamic>>[
+          _usbPrinter('usb:receipt', 'POS58 USB', 'POS58_USB'),
+        ],
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: fakeRepo,
+        printStationService: fakeStation,
+        printServiceFactory: () => fakePrint,
+      );
+
+      await fakeRepo.upsertPrinter(
+        restaurantId: 'rest-station-priority',
+        printerId: 'db-receipt',
+        name: 'POS58 USB',
+        code: 'ADISYON_POS58_USB',
+        connectionType: PrinterModel.usbConnectionType,
+        deviceIdentifier: 'POS58_USB',
+      );
+      await fakeRepo.upsertPrinter(
+        restaurantId: 'rest-station-priority',
+        printerId: 'db-kitchen-role',
+        name: 'POS58 Kitchen',
+        code: 'MUTFAK_POS58_USB',
+        connectionType: PrinterModel.usbConnectionType,
+        deviceIdentifier: 'POS58_KITCHEN_USB',
+      );
+      await fakeRepo.upsertPrinter(
+        restaurantId: 'rest-station-priority',
+        printerId: 'db-kitchen-ethernet',
+        name: '80mm new',
+        code: 'MUTF_ETHERNET',
+        connectionType: PrinterModel.networkConnectionType,
+        ipAddress: '192.168.1.100',
+        port: 9100,
+        deviceIdentifier: 'tcp:192.168.1.100:9100',
+        supportsCut: true,
+      );
+      fakeRepo.stationMappings.add(
+        StationPrinterModel(
+          id: 'map-ocak',
+          stationId: 'station-ocak',
+          printerId: 'db-kitchen-ethernet',
+          isPrimary: true,
+          createdAt: DateTime(2026, 5, 27),
+          stationName: 'Ocak',
+          printerName: '80mm new',
+        ),
+      );
+
+      await orchestrator.savePrinterRoles(
+        restaurantId: 'rest-station-priority',
+        receiptPrinterId: 'db-receipt',
+        kitchenPrinterId: 'db-kitchen-role',
+      );
+
+      final resolution = await orchestrator.prepareQueuedPrintPayload(
+        restaurantId: 'rest-station-priority',
+        jobRecord: <String, dynamic>{
+          'id': 'job-station-priority',
+          'job_type': 'kitchen',
+          'order_id': 'order-1',
+          'station_id': 'station-ocak',
+        },
+        payload: <String, dynamic>{
+          'document_type': 'kitchen',
+          'station_id': 'station-ocak',
+          'station_name': 'Ocak',
+          'table_no': '12',
+        },
+      );
+
+      expect(resolution.resolutionSource, 'station_mapping');
+      expect(resolution.printer?.backend, DesktopPrinterBackend.tcp);
+      expect(resolution.printer?.id, 'tcp:192.168.1.100:9100');
+      expect(resolution.payload['printer_id'], 'tcp:192.168.1.100:9100');
+      expect(resolution.payload['printer_backend'], 'tcp');
+      expect(
+        (resolution.payload['printer']
+            as Map<String, dynamic>)['transportType'],
+        'ethernet',
+      );
+      expect(
+        (resolution.payload['printer'] as Map<String, dynamic>)['host'],
+        '192.168.1.100',
+      );
+      expect(
+        (resolution.payload['printer'] as Map<String, dynamic>)['port'],
+        9100,
+      );
+    },
+  );
+
+  test(
+    'resolvePrinterForRole does not fall back to working printer for mutfak when role mapping is missing',
+    () async {
+      final fakeRepo = _FakePrinterRepository();
+      final fakeStation = _FakePrintStationService();
+      final fakePrint = _FakeLocalPrintService(
+        discoveredPrinters: <Map<String, dynamic>>[
+          _usbPrinter('usb:receipt', 'POS58 USB', 'POS58_USB'),
+        ],
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: fakeRepo,
+        printStationService: fakeStation,
+        printServiceFactory: () => fakePrint,
+      );
+
+      await fakeRepo.upsertPrinter(
+        restaurantId: 'rest-no-kitchen-fallback',
+        printerId: 'db-receipt',
+        name: 'POS58 USB',
+        code: 'ADISYON_POS58_USB',
+        connectionType: PrinterModel.usbConnectionType,
+        deviceIdentifier: 'POS58_USB',
+      );
+
+      final testResult = await orchestrator.printTestReceipt(
+        restaurantId: 'rest-no-kitchen-fallback',
+        role: PrinterSetupRole.adisyon,
+        printerId: 'db-receipt',
+      );
+      expect(testResult.ok, isTrue);
+
+      final resolved = await orchestrator.resolvePrinterForRole(
+        restaurantId: 'rest-no-kitchen-fallback',
+        role: PrinterSetupRole.mutfak,
+      );
+      expect(resolved, isNull);
+    },
+  );
+
+  test(
+    'savePrinterRoles persists ethernet role mapping metadata and kitchen print sends tcp payload',
+    () async {
+      final fakeRepo = _FakePrinterRepository();
+      final fakeStation = _FakePrintStationService();
+      final fakePrint = _FakeLocalPrintService(
+        discoveredPrinters: <Map<String, dynamic>>[
+          _usbPrinter('usb:receipt', 'POS58 USB', 'POS58_USB'),
+        ],
+      );
+      final orchestrator = DesktopPrintOrchestrator(
+        printerRepository: fakeRepo,
+        printStationService: fakeStation,
+        printServiceFactory: () => fakePrint,
+      );
+
+      await fakeRepo.upsertPrinter(
+        restaurantId: 'rest-ethernet-payload',
+        printerId: 'db-receipt',
+        name: 'POS58 USB',
+        code: 'ADISYON_POS58_USB',
+        connectionType: PrinterModel.usbConnectionType,
+        deviceIdentifier: 'POS58_USB',
+      );
+      await fakeRepo.upsertPrinter(
+        restaurantId: 'rest-ethernet-payload',
+        printerId: 'db-kitchen-ethernet',
+        name: '80mm new',
+        code: 'MUTF_ETHERNET',
+        connectionType: PrinterModel.networkConnectionType,
+        ipAddress: '192.168.1.100',
+        port: 9100,
+        deviceIdentifier: 'tcp:192.168.1.100:9100',
+        supportsCut: true,
+      );
+
+      final saveResult = await orchestrator.savePrinterRoles(
+        restaurantId: 'rest-ethernet-payload',
+        receiptPrinterId: 'db-receipt',
+        kitchenPrinterId: 'db-kitchen-ethernet',
+      );
+      expect(saveResult.ok, isTrue);
+      final reloadedSnapshot = await orchestrator.loadSetupSnapshot(
+        restaurantId: 'rest-ethernet-payload',
+        forceRefresh: true,
+        minimal: true,
+      );
+      expect(
+        reloadedSnapshot.localConfig?.kitchenSelection?.printer.id,
+        'tcp:192.168.1.100:9100',
+      );
+      expect(
+        reloadedSnapshot.localConfig?.kitchenSelection?.printer.backend,
+        DesktopPrinterBackend.tcp,
+      );
+
+      final roleMappings =
+          fakeStation.savedConfig?['role_mappings'] as Map<String, dynamic>;
+      final kitchenRole = roleMappings['mutfak'] as Map<String, dynamic>;
+      expect(kitchenRole['id'], 'tcp:192.168.1.100:9100');
+      expect(kitchenRole['backend'], 'tcp');
+      expect(kitchenRole['transportType'], 'ethernet');
+      expect(kitchenRole['transport_type'], 'ethernet');
+      expect(kitchenRole['host'], '192.168.1.100');
+      expect(kitchenRole['ip_address'], '192.168.1.100');
+      expect(kitchenRole['port'], 9100);
+      expect(kitchenRole['printerRecordId'], 'db-kitchen-ethernet');
+
+      final kitchenPrinter = await orchestrator.resolvePrinterForRole(
+        restaurantId: 'rest-ethernet-payload',
+        role: PrinterSetupRole.mutfak,
+      );
+      expect(kitchenPrinter?.backend, DesktopPrinterBackend.tcp);
+
+      final printResult = await orchestrator.printPhysicalToPrinter(
+        kitchenPrinter!,
+        PrintPayload.fromQueuedJob(<String, dynamic>{
+          'document_type': 'kitchen',
+          'printer_role': 'mutfak',
+          'table_no': '9',
+          'items': const <Map<String, dynamic>>[
+            <String, dynamic>{'name': 'Kebap', 'quantity': 1},
+          ],
+        }),
+        restaurantId: 'rest-ethernet-payload',
+        flowName: 'kitchen_order',
+        flowType: 'kitchen_order',
+      );
+
+      expect(printResult.ok, isTrue);
+      expect(
+        fakePrint.lastKitchenPayload?['printer_id'],
+        'tcp:192.168.1.100:9100',
+      );
+      expect(fakePrint.lastKitchenPayload?['printer_backend'], 'tcp');
+      expect(
+        (fakePrint.lastKitchenPayload?['printer']
+            as Map<String, dynamic>)['backend'],
+        'tcp',
+      );
+      expect(
+        (fakePrint.lastKitchenPayload?['printer']
+            as Map<String, dynamic>)['transportType'],
+        'ethernet',
+      );
+      expect(
+        (fakePrint.lastKitchenPayload?['printer']
+            as Map<String, dynamic>)['host'],
+        '192.168.1.100',
+      );
+      expect(
+        (fakePrint.lastKitchenPayload?['printer']
+            as Map<String, dynamic>)['port'],
+        9100,
+      );
+    },
+  );
+
+  test(
     'saveSingleRoleSelection writes remote mapping and preserves other role',
     () async {
       final printerRepo = _FakePrinterRepository();
@@ -2049,6 +2873,75 @@ Map<String, dynamic> _usbPrinter(
   };
 }
 
+UnifiedPrinterModel _tcpKitchenPrinter() {
+  return const UnifiedPrinterModel(
+    id: 'tcp:192.168.1.100:9100',
+    displayName: 'pos-80',
+    queueName: 'pos-80',
+    backend: DesktopPrinterBackend.tcp,
+    os: DesktopPrinterOs.macos,
+    isAvailable: true,
+    canPrint: true,
+    printerRecordId: 'db-kitchen',
+    raw: <String, dynamic>{
+      'id': 'tcp:192.168.1.100:9100',
+      'name': 'pos-80',
+      'backend': 'tcp',
+      'transportType': 'ethernet',
+      'transport_type': 'ethernet',
+      'host': '192.168.1.100',
+      'ip_address': '192.168.1.100',
+      'port': 9100,
+      'paper_width_mm': 80,
+      'auto_cut': true,
+    },
+  );
+}
+
+UnifiedPrinterModel _cupsKitchenPrinter() {
+  return const UnifiedPrinterModel(
+    id: 'cups:kitchen',
+    displayName: 'Kitchen CUPS',
+    queueName: 'Kitchen_Queue',
+    backend: DesktopPrinterBackend.cups,
+    os: DesktopPrinterOs.macos,
+    isAvailable: true,
+    canPrint: true,
+    printerRecordId: 'db-kitchen-cups',
+    raw: <String, dynamic>{
+      'id': 'cups:kitchen',
+      'name': 'Kitchen CUPS',
+      'queue': 'Kitchen_Queue',
+      'backend': 'cups',
+    },
+  );
+}
+
+UnifiedPrinterModel _usbKitchenPrinter() {
+  return const UnifiedPrinterModel(
+    id: 'usb:kitchen',
+    displayName: 'Kitchen USB',
+    queueName: 'Kitchen_USB',
+    backend: DesktopPrinterBackend.usbDirect,
+    os: DesktopPrinterOs.macos,
+    isAvailable: true,
+    canPrint: true,
+    printerRecordId: 'db-kitchen-usb',
+    vendorId: '0x1111',
+    productId: '0x2222',
+    raw: <String, dynamic>{
+      'id': 'usb:kitchen',
+      'name': 'Kitchen USB',
+      'queue': 'Kitchen_USB',
+      'backend': 'usb-direct',
+      'deviceIdentifier': 'usb-1111:2222',
+      'device_identifier': 'usb-1111:2222',
+      'vendorId': '0x1111',
+      'productId': '0x2222',
+    },
+  );
+}
+
 Map<String, dynamic> _cupsPrinter(String id, String name, String queue) {
   return <String, dynamic>{
     'id': id,
@@ -2110,6 +3003,15 @@ class _FakePrinterRepository implements PrinterRepositoryPort {
       lastError: error,
       lastTestPrintAt: DateTime.now(),
     );
+  }
+
+  @override
+  Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
+    required String restaurantId,
+    String? stationId,
+    String? stationName,
+  }) async {
+    return null;
   }
 
   @override
@@ -2205,6 +3107,7 @@ class _FakePrintStationService implements PrintStationServicePort {
   final Map<String, dynamic>? localQueueStatus;
   bool printStation = false;
   Map<String, dynamic>? savedConfig;
+  String? roleMappingCacheToken;
 
   @override
   Future<Map<String, dynamic>?> configureLocalBridgeAsPrintStation({
@@ -2233,6 +3136,11 @@ class _FakePrintStationService implements PrintStationServicePort {
   @override
   Future<Map<String, dynamic>?> fetchLocalQueueStatus() async {
     return localQueueStatus ?? <String, dynamic>{'ok': true};
+  }
+
+  @override
+  Future<String?> readRoleMappingCacheToken(String restaurantId) async {
+    return roleMappingCacheToken;
   }
 
   @override
@@ -2314,6 +3222,17 @@ class _FakePrintStationService implements PrintStationServicePort {
       ...fields,
     };
     return savedConfig;
+  }
+
+  @override
+  Future<String> invalidateRoleMappingCacheState({
+    required String restaurantId,
+    Map<String, dynamic>? roleMappings,
+    String source = 'print_station_service',
+  }) async {
+    roleMappingCacheToken =
+        '$restaurantId:${roleMappings?.length ?? 0}:$source:${DateTime.now().microsecondsSinceEpoch}';
+    return roleMappingCacheToken!;
   }
 
   @override
