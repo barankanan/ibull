@@ -2,8 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/bridge_manager.dart';
 
 void main() {
-  test('windowsInstalledBridgeExeCandidates includes unified install paths', skip: true, () {
-    final candidates = BridgeManager.windowsInstalledBridgeExeCandidates();
+  test('windowsInstalledBridgeExeCandidates includes unified install paths', () {
+    final candidates = BridgeManager.windowsInstalledBridgeExeCandidates(isWindowsTest: true);
     expect(candidates, isNotEmpty);
     expect(
       candidates.any((path) => path.contains(r'IbulSeller\bridge\IbulPrintBridge.exe')),

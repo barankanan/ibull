@@ -641,8 +641,8 @@ class BridgeManager {
 
   /// Packaged Windows installer locations (unified + legacy Inno defaults).
   @visibleForTesting
-  static List<String> windowsInstalledBridgeExeCandidates() {
-    if (kIsWeb || !Platform.isWindows) {
+  static List<String> windowsInstalledBridgeExeCandidates({bool isWindowsTest = false}) {
+    if (kIsWeb || (!Platform.isWindows && !isWindowsTest)) {
       return const <String>[];
     }
     final programFiles =

@@ -1276,8 +1276,8 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
               else
                 Row(
                   children: [
-                    _buildTitleBlock(),
-                    const Spacer(),
+                    Expanded(child: _buildTitleBlock()),
+                    const SizedBox(width: 16),
                     _buildPeriodSwitch(),
                     const SizedBox(width: 12),
                     _buildViewSwitch(),

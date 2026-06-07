@@ -1182,7 +1182,7 @@ class _AdminSupportComplaintsPageState
             children: [
               OutlinedButton(
                 onPressed: () =>
-                    _updateSupportTicket(ticket, TicketStatus.in_progress),
+                    _updateSupportTicket(ticket, TicketStatus.inProgress),
                 child: const Text('Isleme Al'),
               ),
               const SizedBox(width: 10),
@@ -1520,7 +1520,7 @@ class _AdminSupportComplaintsPageState
     switch (status) {
       case TicketStatus.open:
         return 'Acik';
-      case TicketStatus.in_progress:
+      case TicketStatus.inProgress:
         return 'Islemde';
       case TicketStatus.closed:
         return 'Kapali';

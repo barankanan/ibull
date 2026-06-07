@@ -838,7 +838,7 @@ class DesktopPrintHub extends ChangeNotifier {
               : <String, dynamic>{});
     final printerId = jobRecord['printer_id']?.toString();
 
-    Map<String, dynamic>? fullJob;
+    late Map<String, dynamic> fullJob;
     Map<String, dynamic> payload;
 
     if (hasFullPayload) {
@@ -861,18 +861,19 @@ class DesktopPrintHub extends ChangeNotifier {
       fullJob = jobRecord;
     } else {
       // Fallback: claim + fetch in one round-trip (legacy path).
-      fullJob = await _claimAndFetchJob(
+      final fetchedJob = await _claimAndFetchJob(
         jobId,
         hubJobReceivedAt: hubJobReceivedAt,
         claimedAt: claimedAt,
       );
-      if (fullJob == null) {
+      if (fetchedJob == null) {
         debugPrint(
           '[PrintHub] claim_failed jobId=$jobId '
           'claimMs=${dispatchWatch.elapsedMilliseconds}',
         );
         return;
       }
+      fullJob = fetchedJob;
       // Enrich after fetch (sequential, can't parallelize here).
       final fetchedPayload = fullJob['payload'];
       payload = await _enrichPayloadWithPrinterConfig(
@@ -895,7 +896,7 @@ class DesktopPrintHub extends ChangeNotifier {
     // ── Stage 2: Payload already enriched — validate and resolve ─────────
     final enrichMs = dispatchWatch.elapsedMilliseconds;
 
-    final jobRecordForStamp = fullJob ?? jobRecord;
+    final jobRecordForStamp = fullJob;
     final isKitchenJob =
         _restaurantId != null &&
         isHubKitchenPrintJob(payload, jobRecordForStamp);
@@ -932,7 +933,7 @@ class DesktopPrintHub extends ChangeNotifier {
     _synthesizeQueuedTcpPayload(payload);
     final preparedPayload = await _printOrchestrator.prepareQueuedPrintPayload(
       restaurantId: _restaurantId!,
-      jobRecord: fullJob ?? jobRecordForStamp,
+      jobRecord: fullJob,
       payload: payload,
     );
     payload = preparedPayload.payload;
@@ -1109,11 +1110,6 @@ class DesktopPrintHub extends ChangeNotifier {
       final selectedPrinterName = _readText(
         preparedPayload.payload['selected_printer_name'] ??
             payload['selected_printer_name'],
-      );
-      final backend = _readText(
-        preparedPayload.payload['selected_printer_backend'] ??
-            payload['printer_backend'] ??
-            payload['backend'],
       );
       final host = _readText(
         preparedPayload.payload['selected_printer_host'] ??

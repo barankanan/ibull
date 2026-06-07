@@ -136,7 +136,7 @@ void main() {
     expect(find.textContaining('Yazıcı servisine ulaşılamadı'), findsWidgets);
   });
 
-  testWidgets('Bridge operator tools can copy diagnostics without terminal', skip: true, (
+  testWidgets('Bridge operator tools can copy diagnostics without terminal', (
     tester,
   ) async {
     await pumpWizard(

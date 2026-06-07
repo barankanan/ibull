@@ -424,6 +424,37 @@ bool shouldRunDashboardRefresh({required SellerModule selectedModule}) =>
 /// Otherwise we freeze the grid and surface only a lightweight
 /// "pending changes" indicator so realtime/products fallback traffic cannot
 /// make the waiter screen jump while the user is working.
+bool shouldAutoApplyGarsonVisibleSnapshot({required String source}) {
+  final normalized = source.trim();
+  const allowedPrefixes = <String>[
+    'initial_bootstrap',
+    'garson_initial_load',
+    'garson_module_opened',
+    'garson_initial_visible_seed',
+    'garson_visible_reenter_seed',
+    'garson_manual_refresh_button',
+    'mobile_pull_to_refresh',
+    'garson_order_submit',
+    'garson_table_route_popped',
+    'garson_local_table_action',
+    'table_orders_stream_error',
+    'table_orders_stream_error_board_sync',
+  ];
+  return allowedPrefixes.any(
+    (allowed) => normalized == allowed || normalized.startsWith('${allowed}_'),
+  );
+}
+
+bool shouldForceApplyGarsonVisibleSnapshot({required String source}) {
+  switch (source) {
+    case 'garson_manual_refresh_button':
+    case 'mobile_pull_to_refresh':
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool shouldBlockGarsonBackgroundPublish({
   required SellerModule selectedModule,
   required bool manualRefreshInProgress,
@@ -432,14 +463,8 @@ bool shouldBlockGarsonBackgroundPublish({
 }) {
   if (selectedModule != SellerModule.garson) return false;
   if (manualRefreshInProgress) return false;
-  if (!hasPublishedData) return false;
-  if (source == 'garson_manual_refresh_button' ||
-      source == 'garson_order_submit' ||
-      source == 'garson_table_route_popped' ||
-      source == 'garson_local_table_action') {
-    return false;
-  }
-  return source != 'garson_manual_refresh_button';
+  if (shouldAutoApplyGarsonVisibleSnapshot(source: source)) return false;
+  return true;
 }
 
 bool shouldSkipManualGarsonRefresh({required bool refreshInProgress}) =>
@@ -449,7 +474,7 @@ bool shouldAllowGarsonManualRefresh({
   required String source,
   required bool allowInitialAutoSeed,
 }) {
-  if (source == 'garson_manual_refresh_button') return true;
+  if (shouldForceApplyGarsonVisibleSnapshot(source: source)) return true;
   return allowInitialAutoSeed;
 }
 
@@ -457,7 +482,9 @@ bool shouldRunGarsonInitialVisibleSeed({
   required bool isGarsonVisible,
   required bool initialVisibleSeedDone,
   required bool initialLoading,
+  bool force = false,
 }) {
+  if (force) return isGarsonVisible && !initialLoading;
   if (!isGarsonVisible) return false;
   if (initialVisibleSeedDone) return false;
   if (initialLoading) return false;
@@ -477,10 +504,191 @@ bool shouldShowGarsonInitialLoading({
   required bool initialVisibleSeedDone,
   required int visibleOrderCount,
   required int storeTableCount,
+  int lastGoodTableCount = 0,
+  bool hasEverRenderedBoard = false,
+  bool manualRefreshInProgress = false,
 }) {
+  if (manualRefreshInProgress && hasEverRenderedBoard) return false;
+  if (hasEverRenderedBoard &&
+      (storeTableCount > 0 || lastGoodTableCount > 0)) {
+    return false;
+  }
   if (!initialLoading) return false;
   if (initialVisibleSeedDone) return false;
-  return visibleOrderCount == 0 && storeTableCount == 0;
+  return visibleOrderCount == 0 &&
+      storeTableCount == 0 &&
+      lastGoodTableCount == 0;
+}
+
+enum GarsonGridLoadState {
+  loading,
+  loadedWithTables,
+  loadedNoTables,
+  loadFailed,
+  pendingChangesAvailable,
+}
+
+class GarsonUiState {
+  const GarsonUiState({
+    required this.visibleTables,
+    required this.visibleAreas,
+    required this.visibleOrders,
+    required this.lastGoodTables,
+    required this.lastGoodAreas,
+    required this.lastGoodOrders,
+    required this.pendingIncomingTables,
+    required this.pendingIncomingAreas,
+    required this.pendingIncomingOrders,
+    required this.hasPendingRemoteChanges,
+    required this.hasEverLoadedTablesSuccessfully,
+    required this.hasEverLoadedOrdersSuccessfully,
+    required this.lastAppliedSource,
+  });
+
+  final List<Map<String, dynamic>> visibleTables;
+  final List<Map<String, dynamic>> visibleAreas;
+  final List<Map<String, dynamic>> visibleOrders;
+  final List<Map<String, dynamic>> lastGoodTables;
+  final List<Map<String, dynamic>> lastGoodAreas;
+  final List<Map<String, dynamic>> lastGoodOrders;
+  final List<Map<String, dynamic>> pendingIncomingTables;
+  final List<Map<String, dynamic>> pendingIncomingAreas;
+  final List<Map<String, dynamic>> pendingIncomingOrders;
+  final bool hasPendingRemoteChanges;
+  final bool hasEverLoadedTablesSuccessfully;
+  final bool hasEverLoadedOrdersSuccessfully;
+  final String lastAppliedSource;
+
+  List<Map<String, dynamic>> get uiTables =>
+      visibleTables.isNotEmpty ? visibleTables : lastGoodTables;
+
+  List<Map<String, dynamic>> get uiAreas =>
+      visibleAreas.isNotEmpty ? visibleAreas : lastGoodAreas;
+
+  List<Map<String, dynamic>> get uiOrders =>
+      visibleOrders.isNotEmpty ? visibleOrders : lastGoodOrders;
+
+  String get uiTablesSource =>
+      visibleTables.isNotEmpty ? 'visible' : 'last_good';
+
+  String get uiOrdersSource =>
+      visibleOrders.isNotEmpty ? 'visible' : 'last_good';
+}
+
+GarsonUiState buildGarsonUiState({
+  required List<Map<String, dynamic>> visibleTables,
+  required List<Map<String, dynamic>> visibleAreas,
+  required List<Map<String, dynamic>> visibleOrders,
+  required List<Map<String, dynamic>> lastGoodTables,
+  required List<Map<String, dynamic>> lastGoodAreas,
+  required List<Map<String, dynamic>> lastGoodOrders,
+  required List<Map<String, dynamic>> pendingIncomingTables,
+  required List<Map<String, dynamic>> pendingIncomingAreas,
+  required List<Map<String, dynamic>> pendingIncomingOrders,
+  required bool hasPendingRemoteChanges,
+  required bool hasEverLoadedTablesSuccessfully,
+  required bool hasEverLoadedOrdersSuccessfully,
+  required String lastAppliedSource,
+}) {
+  return GarsonUiState(
+    visibleTables: List<Map<String, dynamic>>.unmodifiable(visibleTables),
+    visibleAreas: List<Map<String, dynamic>>.unmodifiable(visibleAreas),
+    visibleOrders: List<Map<String, dynamic>>.unmodifiable(visibleOrders),
+    lastGoodTables: List<Map<String, dynamic>>.unmodifiable(lastGoodTables),
+    lastGoodAreas: List<Map<String, dynamic>>.unmodifiable(lastGoodAreas),
+    lastGoodOrders: List<Map<String, dynamic>>.unmodifiable(lastGoodOrders),
+    pendingIncomingTables: List<Map<String, dynamic>>.unmodifiable(
+      pendingIncomingTables,
+    ),
+    pendingIncomingAreas: List<Map<String, dynamic>>.unmodifiable(
+      pendingIncomingAreas,
+    ),
+    pendingIncomingOrders: List<Map<String, dynamic>>.unmodifiable(
+      pendingIncomingOrders,
+    ),
+    hasPendingRemoteChanges: hasPendingRemoteChanges,
+    hasEverLoadedTablesSuccessfully: hasEverLoadedTablesSuccessfully,
+    hasEverLoadedOrdersSuccessfully: hasEverLoadedOrdersSuccessfully,
+    lastAppliedSource: lastAppliedSource,
+  );
+}
+
+bool shouldShowGarsonEmptyStateFromUiState({
+  required GarsonUiState state,
+  required bool initialLoading,
+  required bool initialBootstrapFinished,
+  required bool initialBootstrapFailed,
+}) {
+  return resolveGarsonGridLoadState(
+        state: state,
+        initialLoading: initialLoading,
+        initialBootstrapFinished: initialBootstrapFinished,
+        initialBootstrapFailed: initialBootstrapFailed,
+      ) ==
+      GarsonGridLoadState.loadedNoTables;
+}
+
+GarsonGridLoadState resolveGarsonGridLoadState({
+  required GarsonUiState state,
+  required bool initialLoading,
+  required bool initialBootstrapFinished,
+  required bool initialBootstrapFailed,
+}) {
+  if (state.uiTables.isNotEmpty) {
+    return GarsonGridLoadState.loadedWithTables;
+  }
+  if (initialLoading && state.uiTables.isEmpty) {
+    return GarsonGridLoadState.loading;
+  }
+  if (initialBootstrapFailed) {
+    return GarsonGridLoadState.loadFailed;
+  }
+  if (!initialBootstrapFinished) {
+    return state.hasPendingRemoteChanges
+        ? GarsonGridLoadState.pendingChangesAvailable
+        : GarsonGridLoadState.loading;
+  }
+  return GarsonGridLoadState.loadedNoTables;
+}
+
+bool shouldShowGarsonPendingChangesChip({required GarsonUiState state}) {
+  if (!state.hasPendingRemoteChanges) return false;
+  if (!state.hasEverLoadedTablesSuccessfully) return false;
+  return state.uiTables.isNotEmpty || state.lastGoodTables.isNotEmpty;
+}
+
+bool shouldPreserveGarsonVisibleDataOnIncomingEmpty({
+  required String source,
+  required bool hasVisibleTables,
+  required bool hasVisibleOrders,
+  required bool hasIncomingTables,
+  required bool hasIncomingOrders,
+}) {
+  final hasVisibleData = hasVisibleTables || hasVisibleOrders;
+  if (!hasVisibleData) return false;
+
+  if (!hasIncomingTables && hasVisibleTables) {
+    return true;
+  }
+
+  if (!hasIncomingOrders && hasVisibleOrders) {
+    final normalized = source.trim();
+    if (normalized == 'garson_local_table_action' ||
+        normalized.startsWith('garson_local_table_action_') ||
+        normalized == 'garson_manual_refresh_button' ||
+        normalized.startsWith('garson_manual_refresh_button_') ||
+        normalized == 'mobile_pull_to_refresh' ||
+        normalized.startsWith('mobile_pull_to_refresh_') ||
+        normalized == 'user_close_table' ||
+        normalized.startsWith('user_close_table_') ||
+        normalized == 'payment_complete' ||
+        normalized.startsWith('payment_complete_')) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
 }
 
 String tableOrdersListSignature(List<Map<String, dynamic>> orders) {

@@ -452,7 +452,10 @@ class FinanceRepository {
         .update({
           'is_collected': true,
           'collected_at': DateTime.now().toIso8601String(),
-          if (accountId != null) 'account_id': accountId,
+          ...?switch (accountId) {
+            final value? => <String, dynamic>{'account_id': value},
+            null => null,
+          },
         })
         .eq('id', id)
         .eq('seller_id', _sellerId);
@@ -516,7 +519,10 @@ class FinanceRepository {
         .update({
           'is_paid': true,
           'paid_at': DateTime.now().toIso8601String(),
-          if (accountId != null) 'account_id': accountId,
+          ...?switch (accountId) {
+            final value? => <String, dynamic>{'account_id': value},
+            null => null,
+          },
         })
         .eq('id', id)
         .eq('seller_id', _sellerId);

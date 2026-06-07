@@ -363,7 +363,7 @@ class _ReconciliationTabState extends State<ReconciliationTab> {
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<ReconciliationStatus>(
-                  value: selectedStatus,
+                  initialValue: selectedStatus,
                   decoration: InputDecoration(
                     labelText: 'Durum',
                     border: OutlineInputBorder(
@@ -433,6 +433,7 @@ class _ReconciliationTabState extends State<ReconciliationTab> {
       final subject = subjectCtrl.text.trim();
       if (subject.isEmpty) return;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final note = ReconciliationNote(
           id: '',
@@ -456,6 +457,7 @@ class _ReconciliationTabState extends State<ReconciliationTab> {
         await fp.repo.createReconciliationNote(note);
         _load();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));

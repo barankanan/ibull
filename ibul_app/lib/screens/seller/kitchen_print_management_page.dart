@@ -1065,7 +1065,10 @@ class _KitchenPrintManagementPageState
           'bridge_request_ms': bridgeRequestMs,
           'total_ms': perf.elapsedMilliseconds,
           'ok': ok,
-          if (errorMessage != null) 'error': errorMessage,
+          ...?switch (errorMessage) {
+            final value? => <String, Object?>{'error': value},
+            null => null,
+          },
         },
       );
       if (mounted) {

@@ -123,12 +123,15 @@ class AdminSidebarHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Text(
-            panelTitle,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
+          Expanded(
+            child: Text(
+              panelTitle,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -189,14 +192,17 @@ class AdminSidebarMenuItem extends StatelessWidget {
                 size: 20,
               ),
               const SizedBox(width: 12),
-              Text(
-                entry.title,
-                style: TextStyle(
-                  color: entry.isActive ? Colors.white : Colors.grey.shade400,
-                  fontSize: 14,
-                  fontWeight: entry.isActive
-                      ? FontWeight.w600
-                      : FontWeight.normal,
+              Expanded(
+                child: Text(
+                  entry.title,
+                  style: TextStyle(
+                    color: entry.isActive ? Colors.white : Colors.grey.shade400,
+                    fontSize: 14,
+                    fontWeight: entry.isActive
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],

@@ -79,8 +79,10 @@ import '../utils/table_labels.dart';
 import '../utils/product_edit_log.dart';
 import '../utils/garson_product_selection.dart';
 import '../utils/print_perf_log.dart';
+import '../utils/garson_active_orders_fetch.dart';
+import '../utils/garson_board_state.dart';
 import '../utils/garson_table_order_state.dart';
-import '../utils/garson_table_area_groups.dart';
+import '../utils/garson_area_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_overview_widgets.dart';
@@ -329,6 +331,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   /// editing a table can NEVER swap the underlying panel to dashboard.
   bool _isGarsonTableRouteOpen = false;
 
+  /// Active Garson table-detail route context (cleared on close / stale guard).
+  int? _garsonSelectedTableNumber;
+  String? _garsonSelectedTableId;
+  String? _garsonSelectedOrderId;
+
   /// Wall-clock timestamp of the last [_refreshDashboardData] invocation.
   /// Used by the throttle in that method so a burst of async events cannot
   /// re-enter the parallel refresh chain.
@@ -369,6 +376,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   StreamSubscription<List<Map<String, dynamic>>>?
   _cancelAppealNotificationsSubscription;
   final Map<int, DateTime> _webGarsonClosedTableAt = <int, DateTime>{};
+  static const Duration _garsonClosedTableVisibilityHold = Duration(minutes: 2);
   // null = tümü, 'occupied' = dolu, 'preparing' = hazırlanıyor, 'payment_pending' = ödeme bekliyor
   String? _garsonStatusFilter;
   String _garsonAreaFilterKey = 'all';
@@ -396,7 +404,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   DateTime? _garsonCachedReceiptPrinterAt;
   PrinterEncodingProfile? _garsonCachedReceiptEncodingProfile;
   UnifiedPrinterModel? _garsonCachedKitchenPrinter;
-  DateTime? _garsonCachedKitchenPrinterAt;
   PrinterEncodingProfile? _garsonCachedKitchenEncodingProfile;
   bool? _isLocalPrintAvailable;
   String _localPrintStatusLabel = 'Yazıcı kontrol ediliyor';
@@ -522,10 +529,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   SellerDashboardRangePreset _dashboardRangePreset =
       SellerDashboardRangePreset.last7Days;
   DateTimeRange? _dashboardCustomRange;
-  SellerDashboardRangePreset _financeRangePreset =
-      SellerDashboardRangePreset.last30Days;
-  DateTimeRange? _financeCustomRange;
-  String _financeTransactionTypeFilter = 'Tum Islemler';
   int _sellerPanelBuildCount = 0;
   int _sellerPanelStateUpdateCount = 0;
   int _ordersVersion = 0;
@@ -551,8 +554,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   Map<String, int>? _sellerOrderStatusCountsCache;
   String? _filteredSellerOrdersCacheKey;
   List<Map<String, dynamic>>? _filteredSellerOrdersCache;
-  String? _financeSummaryCacheKey;
-  Map<String, dynamic>? _financeSummaryCache;
   String? _feedbackDataCacheKey;
   Map<String, dynamic>? _feedbackDataCache;
   String? _dashboardSnapshotCacheKey;
@@ -573,16 +574,54 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _garsonVisibleOrdersSnapshot =
       <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonVisibleTablesSnapshot =
+      <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonVisibleTableAreasSnapshot =
+      <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonLastKnownGoodOrdersSnapshot =
+      <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonLastKnownGoodTablesSnapshot =
+      <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonLastKnownGoodTableAreasSnapshot =
+      <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonPendingIncomingOrders =
+      <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonPendingIncomingTables =
+      <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _garsonPendingIncomingTableAreas =
+      <Map<String, dynamic>>[];
+  GarsonBoardState _garsonBoardState = const GarsonBoardState();
   String? _garsonManualTableOrdersSellerId;
   String? _garsonManualTableOrdersSignature;
   bool _hasLoadedGarsonTableOrdersData = false;
   bool _hasLoadedGarsonBootstrapData = false;
+  bool _garsonHasEverLoadedTablesSuccessfully = false;
+  bool _garsonHasEverLoadedOrdersSuccessfully = false;
   bool _garsonManualRefreshInProgress = false;
   bool _garsonInitialVisibleSeedDone = false;
+  bool _garsonInitialBootstrapFinished = false;
+  bool _garsonInitialBootstrapFailed = false;
+  bool _garsonBootstrapRetryQueued = false;
+  // Largest physical-table catalog size observed during this session. Used to
+  // gate the empty-state self-heal: if we have ever seen >0 tables but every
+  // in-memory layer is now empty, the "Henüz tanımlı masa yok" screen is a
+  // transient wipe (not a genuinely empty store) and we auto re-fetch instead
+  // of dead-ending. Stays 0 for stores that truly have no tables.
+  int _garsonMaxCatalogTablesSeen = 0;
+  // Throttle for the empty-state self-heal so the placeholder can never spin
+  // into a tight reload loop.
+  DateTime? _garsonEmptyStateSelfHealAt;
+  // Number of consecutive auto-recover attempts made from the empty-table
+  // placeholder. Reset to 0 the moment a non-empty catalog is observed. Caps
+  // the self-heal so a store that is *genuinely* empty stops retrying and the
+  // placeholder becomes the final state after [_garsonEmptyStateSelfHealMax].
+  int _garsonEmptyStateSelfHealAttempts = 0;
+  static const int _garsonEmptyStateSelfHealMax = 4;
   bool _isGarsonInitialLoading = false;
   String? _garsonInitialLoadError;
   int _garsonManualRefreshGeneration = 0;
   int _garsonBuildRenderCount = 0;
+  String _garsonLastAppliedSource = 'none';
   final ValueNotifier<bool> _garsonHasPendingRemoteChanges =
       ValueNotifier<bool>(false);
   final ValueNotifier<int> _localPrintUiRevision = ValueNotifier<int>(0);
@@ -846,94 +885,670 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   void _markGarsonHasPendingRemoteChanges({required String source}) {
     if (_garsonHasPendingRemoteChanges.value) return;
     debugPrint('[GarsonAutoRefresh][pending_changes] source=$source');
+    _garsonBoardState = _garsonBoardState.copyWith(
+      hasPendingRemoteChanges: true,
+      lastAppliedSource: source,
+      lastUpdateAt: DateTime.now(),
+    );
     _garsonHasPendingRemoteChanges.value = true;
+    _kickGarsonInitialBootstrapRetryIfNeeded(source: source);
+  }
+
+  void _clearGarsonPendingRemoteChanges({required String source}) {
+    if (!_garsonHasPendingRemoteChanges.value) return;
+    debugPrint('[GarsonAutoRefresh][pending_changes_cleared] source=$source');
+    _garsonBoardState = _garsonBoardState.copyWith(
+      hasPendingRemoteChanges: false,
+      lastAppliedSource: source,
+      lastUpdateAt: DateTime.now(),
+    );
+    _garsonHasPendingRemoteChanges.value = false;
+  }
+
+  void _syncGarsonBoardStateToLegacyFields() {
+    _garsonVisibleTablesSnapshot = _garsonBoardState.tables
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    _garsonVisibleTableAreasSnapshot = _garsonBoardState.areas
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    _garsonVisibleOrdersSnapshot = _garsonBoardState.orders
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    _garsonLastKnownGoodTablesSnapshot = _garsonBoardState.lastGoodTables
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    _garsonLastKnownGoodTableAreasSnapshot = _garsonBoardState.lastGoodAreas
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    _garsonLastKnownGoodOrdersSnapshot = _garsonBoardState.lastGoodOrders
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    _garsonPendingIncomingTables = _garsonBoardState.pendingTables
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    _garsonPendingIncomingOrders = _garsonBoardState.pendingOrders
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    _garsonHasEverLoadedTablesSuccessfully =
+        _garsonBoardState.hasEverLoadedTablesSuccessfully;
+    _garsonLastAppliedSource = _garsonBoardState.lastAppliedSource;
+    if (_garsonHasPendingRemoteChanges.value !=
+        _garsonBoardState.hasPendingRemoteChanges) {
+      _garsonHasPendingRemoteChanges.value =
+          _garsonBoardState.hasPendingRemoteChanges;
+    }
+  }
+
+  void _setGarsonBoardState(GarsonBoardState next) {
+    _garsonBoardState = next;
+    _syncGarsonBoardStateToLegacyFields();
+  }
+
+  GarsonUiState get _garsonUiState => buildGarsonUiState(
+    visibleTables: _garsonBoardState.tables,
+    visibleAreas: _garsonBoardState.areas,
+    visibleOrders: _garsonBoardState.orders,
+    lastGoodTables: _garsonBoardState.lastGoodTables,
+    lastGoodAreas: _garsonBoardState.lastGoodAreas,
+    lastGoodOrders: _garsonBoardState.lastGoodOrders,
+    pendingIncomingTables: _garsonBoardState.pendingTables,
+    pendingIncomingAreas: _garsonPendingIncomingTableAreas,
+    pendingIncomingOrders: _garsonBoardState.pendingOrders,
+    hasPendingRemoteChanges: _garsonBoardState.hasPendingRemoteChanges,
+    hasEverLoadedTablesSuccessfully:
+        _garsonBoardState.hasEverLoadedTablesSuccessfully,
+    hasEverLoadedOrdersSuccessfully: _garsonHasEverLoadedOrdersSuccessfully,
+    lastAppliedSource: _garsonBoardState.lastAppliedSource,
+  );
+
+  List<Map<String, dynamic>> _garsonVisibleTablesForUi() {
+    return _garsonUiState.uiTables;
+  }
+
+  List<Map<String, dynamic>> _garsonVisibleTableAreasForUi() {
+    return _garsonUiState.uiAreas;
   }
 
   List<Map<String, dynamic>> _garsonOrdersSnapshotForUi() {
-    return List<Map<String, dynamic>>.unmodifiable(
-      _garsonVisibleOrdersSnapshot,
+    return _garsonUiState.uiOrders;
+  }
+
+  String _garsonOrdersUiSource() => _garsonUiState.uiOrdersSource;
+
+  bool _shouldShowGarsonEmptyState({
+    required List<Map<String, dynamic>> orders,
+    required String source,
+  }) {
+    final state = _garsonUiState;
+    final willShow = shouldShowEmptyState(state: _garsonBoardState);
+    final reason = willShow
+        ? 'initial_bootstrap_completed_but_no_tables_returned'
+        : (state.uiTables.isNotEmpty
+              ? 'ui_tables_available'
+              : (_garsonInitialBootstrapFailed
+                    ? 'initial_bootstrap_failed'
+                    : (_isGarsonInitialLoading
+                          ? 'initial_loading_in_progress'
+                          : (state.hasPendingRemoteChanges
+                                ? 'pending_changes_waiting_for_bootstrap_retry'
+                                : 'waiting_for_first_successful_bootstrap'))));
+    debugPrint(
+      '[GARSON_EMPTY_STATE_DECISION] '
+      'visible_tables_count=${state.visibleTables.length} '
+      'last_good_tables_count=${state.lastGoodTables.length} '
+      'raw_store_tables_count=${_storeTables.length} '
+      'visible_orders_count=${state.visibleOrders.length} '
+      'last_good_orders_count=${state.lastGoodOrders.length} '
+      'has_ever_loaded_tables=${state.hasEverLoadedTablesSuccessfully} '
+      'initial_bootstrap_in_progress=$_isGarsonInitialLoading '
+      'initial_bootstrap_failed=$_garsonInitialBootstrapFailed '
+      'pending_remote_changes=${state.hasPendingRemoteChanges} '
+      'will_show_empty=$willShow '
+      'source=$source '
+      'reason=$reason',
+    );
+    return willShow;
+  }
+
+  void _logGarsonEmptyStateBlocked({
+    required String source,
+    required String reason,
+    int? incomingTablesCount,
+    int? incomingOrdersCount,
+  }) {
+    debugPrint(
+      '[GARSON_EMPTY_STATE_BLOCKED] '
+      'source=$source '
+      'reason=$reason '
+      'incoming_tables_count=${incomingTablesCount ?? '-'} '
+      'incoming_orders_count=${incomingOrdersCount ?? '-'} '
+      'visible_tables_count=${_garsonVisibleTablesSnapshot.length} '
+      'last_good_tables_count=${_garsonLastKnownGoodTablesSnapshot.length} '
+      'visible_orders_count=${_garsonVisibleOrdersSnapshot.length} '
+      'last_good_orders_count=${_garsonLastKnownGoodOrdersSnapshot.length}',
     );
   }
 
-  void _publishGarsonVisibleSnapshotFromCurrentState({required String source}) {
+  bool _shouldPreserveGarsonSnapshotOnIncomingEmpty({
+    required String source,
+    required bool hasIncomingTables,
+    required bool hasIncomingOrders,
+  }) {
+    return shouldPreserveGarsonVisibleDataOnIncomingEmpty(
+      source: source,
+      hasVisibleTables:
+          _garsonVisibleTablesSnapshot.isNotEmpty ||
+          _garsonLastKnownGoodTablesSnapshot.isNotEmpty,
+      hasVisibleOrders:
+          _garsonVisibleOrdersSnapshot.isNotEmpty ||
+          _garsonLastKnownGoodOrdersSnapshot.isNotEmpty,
+      hasIncomingTables: hasIncomingTables,
+      hasIncomingOrders: hasIncomingOrders,
+    );
+  }
+
+  void _applyGarsonTablesSnapshot({
+    required List<Map<String, dynamic>> tables,
+    required List<Map<String, dynamic>> areas,
+    required String source,
+    bool forceApply = false,
+    String? reason,
+  }) {
+    final shouldPreserveExistingTables =
+        tables.isEmpty &&
+        (_garsonBoardState.tables.isNotEmpty ||
+            _garsonBoardState.lastGoodTables.isNotEmpty);
+    final resolvedTables = shouldPreserveExistingTables
+        ? (_garsonBoardState.tables.isNotEmpty
+              ? _garsonBoardState.tables
+              : _garsonBoardState.lastGoodTables)
+        : tables;
+    final resolvedAreas = shouldPreserveExistingTables
+        ? (_garsonBoardState.areas.isNotEmpty
+              ? _garsonBoardState.areas
+              : _garsonBoardState.lastGoodAreas)
+        : areas;
+    if (shouldPreserveExistingTables) {
+      debugPrint(
+        '[GARSON_TABLE_SNAPSHOT_EMPTY_GUARD] '
+        'source=$source '
+        'incoming_tables=0 '
+        'preserving_tables=${resolvedTables.length} '
+        'preserving_areas=${resolvedAreas.length}',
+      );
+    }
+    final nextState = _garsonBoardState.copyWith(
+      tables: resolvedTables,
+      areas: resolvedAreas,
+      lastGoodTables: resolvedTables,
+      lastGoodAreas: resolvedAreas,
+      pendingTables: const <Map<String, dynamic>>[],
+      hasPendingRemoteChanges: false,
+      hasEverLoadedTablesSuccessfully: true,
+      initialLoadStatus: resolvedTables.isEmpty
+          ? GarsonInitialLoadStatus.empty
+          : GarsonInitialLoadStatus.loaded,
+      lastAppliedSource: source,
+      lastUpdateAt: DateTime.now(),
+    );
+    _setGarsonBoardState(nextState);
+    _garsonPendingIncomingTableAreas = <Map<String, dynamic>>[];
+    _cacheGarsonLastGoodSectionsForNumbers(
+      resolvedTables
+          .map(_tableNumberFromRow)
+          .where((n) => n > 0)
+          .toList(growable: false),
+    );
+    _logGarsonVisibleSnapshotApplied(
+      source: source,
+      forceApply: forceApply,
+      tablesCount: _garsonBoardState.tables.length,
+      ordersCount: _garsonBoardState.orders.length,
+      reason:
+          reason ??
+          _garsonVisibleSnapshotApplyReason(
+            source: source,
+            forceApply: forceApply,
+          ),
+    );
+  }
+
+  void _logGarsonSnapshotReceived({
+    required String source,
+    required int incomingTablesCount,
+    required int incomingOrdersCount,
+    required bool willApplyVisible,
+    required bool willStorePending,
+    required String reason,
+  }) {
+    debugPrint(
+      '[GARSON_BACKGROUND_UPDATE_RECEIVED] '
+      'source=$source '
+      'incoming_tables_count=$incomingTablesCount '
+      'incoming_orders_count=$incomingOrdersCount '
+      'will_apply_visible=$willApplyVisible '
+      'will_store_pending=$willStorePending '
+      'reason=$reason',
+    );
+  }
+
+  bool _isGarsonVisibleSnapshotApplySource(String source) {
+    final normalized = source.trim();
+    const allowedSources = <String>[
+      'initial_bootstrap',
+      'garson_initial_load',
+      'garson_module_opened',
+      'garson_initial_visible_seed',
+      'garson_visible_reenter_seed',
+      'garson_order_submit',
+      'garson_table_route_popped',
+      'garson_local_table_action',
+      'garson_manual_refresh_button',
+      'mobile_pull_to_refresh',
+    ];
+    return allowedSources.any(
+      (allowed) =>
+          normalized == allowed || normalized.startsWith('${allowed}_'),
+    );
+  }
+
+  bool _isGarsonBootstrapVisibleSeedSource(String source) {
+    final normalized = source.trim();
+    return normalized == 'garson_initial_visible_seed' ||
+        normalized.startsWith('garson_initial_visible_seed_') ||
+        normalized == 'garson_visible_reenter_seed' ||
+        normalized.startsWith('garson_visible_reenter_seed_');
+  }
+
+  bool _canApplyGarsonVisibleSnapshot({
+    required String source,
+    required bool forceApply,
+  }) {
+    if (forceApply) return true;
+    if (_isGarsonVisibleSnapshotApplySource(source)) return true;
+    if (_isGarsonBootstrapVisibleSeedSource(source)) {
+      return !_garsonInitialVisibleSeedDone &&
+          _garsonVisibleOrdersSnapshot.isEmpty;
+    }
+    return false;
+  }
+
+  String _garsonVisibleSnapshotApplyReason({
+    required String source,
+    required bool forceApply,
+  }) {
+    final normalized = source.trim();
+    if (forceApply ||
+        normalized.startsWith('garson_manual_refresh_button') ||
+        normalized.startsWith('mobile_pull_to_refresh')) {
+      return 'manual_refresh';
+    }
+    if (normalized.startsWith('garson_order_submit')) return 'user_submit';
+    if (normalized.startsWith('garson_table_route_popped')) {
+      return 'route_popped';
+    }
+    if (normalized.startsWith('garson_local_table_action')) {
+      return 'local_table_action';
+    }
+    if (_isGarsonBootstrapVisibleSeedSource(normalized)) {
+      return 'initial_seed';
+    }
+    return 'allowed_source';
+  }
+
+  void _logGarsonAutoRefreshBlocked({
+    required String source,
+    required int incomingTablesCount,
+    required int incomingOrdersCount,
+    required int visibleTablesCount,
+    required int visibleOrdersCount,
+    String reason = 'background_does_not_own_visible_grid',
+  }) {
+    debugPrint(
+      '[GARSON_AUTO_REFRESH_BLOCKED] '
+      'source=$source '
+      'incoming_tables_count=$incomingTablesCount '
+      'incoming_orders_count=$incomingOrdersCount '
+      'visible_tables_count=$visibleTablesCount '
+      'visible_orders_count=$visibleOrdersCount '
+      'reason=$reason',
+    );
+  }
+
+  void _logGarsonVisibleSnapshotApplied({
+    required String source,
+    required bool forceApply,
+    required int tablesCount,
+    required int ordersCount,
+    required String reason,
+  }) {
+    debugPrint(
+      '[GARSON_VISIBLE_SNAPSHOT_APPLIED] '
+      'source=$source '
+      'tables_count=$tablesCount '
+      'orders_count=$ordersCount '
+      'force_apply=$forceApply '
+      'reason=$reason',
+    );
+    debugPrint(
+      '[GARSON_VISIBLE_STATE_APPLIED] '
+      'source=$source '
+      'tables_count=$tablesCount '
+      'orders_count=$ordersCount '
+      'force_apply=$forceApply '
+      'reason=$reason',
+    );
+  }
+
+  void _logGarsonTableOrderPreservations({
+    required String source,
+    required List<GarsonVisibleOrderPreservation> preservedTables,
+  }) {
+    for (final preservation in preservedTables) {
+      final table = preservation.table;
+      final tableNumber = table == null
+          ? _garsonTableNumberFromOrder(preservation.currentOrder)
+          : _tableNumberFromRow(table);
+      final displayLabel = table == null
+          ? 'Masa $tableNumber'
+          : _tableDisplayLabelFromRow(table);
+      debugPrint(
+        '[GARSON_VISIBLE_ORDER_PRESERVED] '
+        'table_label=$displayLabel '
+        'order_id=${preservation.currentOrder['id'] ?? '-'} '
+        'table_id=${table?['id'] ?? preservation.currentOrder['table_id'] ?? preservation.currentOrder['store_table_id'] ?? '-'} '
+        'source=$source '
+        'incoming_has_order=${preservation.incomingHasOrder} '
+        'reason=incoming_missing_or_weaker',
+      );
+    }
+  }
+
+  void _publishGarsonVisibleSnapshotFromCurrentState({
+    required String source,
+    bool forceApply = false,
+    String? reason,
+  }) {
     if (!_isGarsonVisible && !_isGarsonTableRouteOpen) return;
     if (_garsonVisibleOrdersController.isClosed) return;
     final snapshot = List<Map<String, dynamic>>.unmodifiable(
       _garsonManualTableOrders,
     );
-    _garsonVisibleOrdersSnapshot = snapshot;
+    if (!_canApplyGarsonVisibleSnapshot(
+      source: source,
+      forceApply: forceApply,
+    )) {
+      _logGarsonAutoRefreshBlocked(
+        source: source,
+        incomingTablesCount: _garsonVisibleTablesForUi().length,
+        incomingOrdersCount: snapshot.length,
+        visibleTablesCount: _garsonVisibleTablesSnapshot.length,
+        visibleOrdersCount: _garsonVisibleOrdersSnapshot.length,
+      );
+      _markGarsonHasPendingRemoteChanges(source: source);
+      return;
+    }
+    final nextState = applyRoutePopped(
+      current: _garsonBoardState,
+      orders: snapshot,
+      source: source,
+    );
+    _setGarsonBoardState(nextState);
+    _garsonHasEverLoadedOrdersSuccessfully = true;
     _garsonVisibleOrdersController.add(snapshot);
+    _logGarsonVisibleSnapshotApplied(
+      source: source,
+      forceApply: forceApply,
+      tablesCount: _garsonVisibleTablesForUi().length,
+      ordersCount: snapshot.length,
+      reason:
+          reason ??
+          _garsonVisibleSnapshotApplyReason(
+            source: source,
+            forceApply: forceApply,
+          ),
+    );
     debugPrint(
       '[GarsonVisibleSnapshot][publish] '
       'source=$source '
-      'tables=${_storeTables.length} '
+      'tables=${_garsonVisibleTablesForUi().length} '
       'products=${_products.length} '
       'orders=${snapshot.length}',
     );
   }
 
-  void _publishGarsonVisibleOrders([List<Map<String, dynamic>>? orders]) {
+  void _publishGarsonVisibleOrders(
+    List<Map<String, dynamic>>? orders, {
+    required String source,
+    bool forceApply = false,
+    String? reason,
+  }) {
+    if (!_isGarsonVisible && !_isGarsonTableRouteOpen) return;
     if (_garsonVisibleOrdersController.isClosed) return;
     final snapshot = List<Map<String, dynamic>>.unmodifiable(
       orders ?? _garsonManualTableOrders,
     );
-    _garsonVisibleOrdersSnapshot = snapshot;
+    if (!_canApplyGarsonVisibleSnapshot(
+      source: source,
+      forceApply: forceApply,
+    )) {
+      _logGarsonAutoRefreshBlocked(
+        source: source,
+        incomingTablesCount: _garsonVisibleTablesForUi().length,
+        incomingOrdersCount: snapshot.length,
+        visibleTablesCount: _garsonVisibleTablesSnapshot.length,
+        visibleOrdersCount: _garsonVisibleOrdersSnapshot.length,
+      );
+      _markGarsonHasPendingRemoteChanges(source: source);
+      return;
+    }
+    if (_shouldPreserveGarsonSnapshotOnIncomingEmpty(
+      source: source,
+      hasIncomingTables: _garsonVisibleTablesForUi().isNotEmpty,
+      hasIncomingOrders: snapshot.isNotEmpty,
+    )) {
+      _logGarsonEmptyStateBlocked(
+        source: source,
+        reason: 'incoming_orders_empty_preserve_last_good',
+        incomingTablesCount: _garsonVisibleTablesForUi().length,
+        incomingOrdersCount: snapshot.length,
+      );
+      _garsonPendingIncomingOrders = snapshot
+          .map((order) => Map<String, dynamic>.from(order))
+          .toList(growable: false);
+      _setGarsonBoardState(
+        applyBackgroundUpdate(
+          current: _garsonBoardState,
+          incomingTables: _garsonBoardState.tables,
+          incomingOrders: snapshot,
+          source: source,
+        ),
+      );
+      debugPrint(
+        '[GARSON_BACKGROUND_UPDATE_BLOCKED] '
+        'source=$source '
+        'incoming_tables_count=${_garsonBoardState.tables.length} '
+        'incoming_orders_count=${snapshot.length} '
+        'reason=background_cannot_clear_visible_state',
+      );
+      _markGarsonHasPendingRemoteChanges(source: source);
+      return;
+    }
+    final nextState =
+        (source.startsWith('garson_order_submit') ||
+            source.startsWith('garson_table_route_popped'))
+        ? applyUserSubmit(
+            current: _garsonBoardState,
+            orders: snapshot,
+            source: source,
+          )
+        : applyManualRefresh(
+            current: _garsonBoardState,
+            tables: _garsonBoardState.uiTables,
+            areas: _garsonBoardState.uiAreas,
+            orders: snapshot,
+            source: source,
+          );
+    _setGarsonBoardState(nextState);
+    _garsonHasEverLoadedOrdersSuccessfully = true;
     _garsonVisibleOrdersController.add(snapshot);
+    _logGarsonVisibleSnapshotApplied(
+      source: source,
+      forceApply: forceApply,
+      tablesCount: _garsonVisibleTablesForUi().length,
+      ordersCount: snapshot.length,
+      reason:
+          reason ??
+          _garsonVisibleSnapshotApplyReason(
+            source: source,
+            forceApply: forceApply,
+          ),
+    );
   }
 
   Future<void> _ensureGarsonInitialVisibleData({
-    String source = 'garson_initial_visible_seed',
+    String source = 'garson_module_opened',
+    bool force = false,
   }) async {
     if (!shouldRunGarsonInitialVisibleSeed(
       isGarsonVisible: _isGarsonVisible,
       initialVisibleSeedDone: _garsonInitialVisibleSeedDone,
       initialLoading: _isGarsonInitialLoading,
+      force: force,
     )) {
       return;
     }
 
+    final sellerId = _resolveGarsonSellerId().trim();
     _safeSetState(() {
       _isGarsonInitialLoading = true;
       _garsonInitialLoadError = null;
+      _garsonInitialBootstrapFailed = false;
+      if (force) {
+        _garsonInitialBootstrapFinished = false;
+      }
     });
+    _setGarsonBoardState(
+      _garsonBoardState.copyWith(
+        initialLoadStatus: GarsonInitialLoadStatus.loading,
+        lastAppliedSource: source,
+        lastUpdateAt: DateTime.now(),
+      ),
+    );
+    debugPrint(
+      '[GARSON_INITIAL_BOOTSTRAP_START] '
+      'restaurant_id=${sellerId.isEmpty ? '-' : sellerId} '
+      'source=$source',
+    );
 
     try {
-      _publishGarsonVisibleSnapshotFromCurrentState(
-        source: '${source}_memory_seed',
-      );
+      final hasMemorySeed =
+          _garsonVisibleTablesSnapshot.isNotEmpty ||
+          _storeTables.isNotEmpty ||
+          _garsonManualTableOrders.isNotEmpty;
+      if (hasMemorySeed) {
+        _publishGarsonVisibleSnapshotFromCurrentState(
+          source: '${source}_memory_seed',
+          forceApply: force,
+        );
+      }
 
       if (_storeCategory.trim().isEmpty &&
           !_hasLoadedStoreProfile &&
           !_isLoading) {
         await _loadStoreProfile();
       }
-
-      final shouldBootstrap = shouldRunGarsonInitialBootstrapLoad(
-        hasStoreTables: _storeTables.isNotEmpty,
-        hasProducts: _products.isNotEmpty,
-        hasPublishedOrders: _garsonManualTableOrdersSignature != null,
+      final bootstrapSource = force ? source : 'garson_initial_load';
+      await _loadStoreTables(
+        silent: false,
+        source: bootstrapSource,
+        forceApply: true,
       );
-      if (shouldBootstrap) {
-        await _refreshGarsonDataManually(
-          source: source,
-          allowInitialAutoSeed: true,
-        );
-      }
+      if (!mounted) return;
+      final uiTablesAfterLoad = _garsonVisibleTablesForUi();
+      final initialTables = uiTablesAfterLoad.isNotEmpty
+          ? uiTablesAfterLoad
+          : _storeTables;
+      final firstTable = initialTables.isNotEmpty ? initialTables.first : null;
+      debugPrint(
+        '[GARSON_INITIAL_TABLES_RESULT] '
+        'store_tables_count=${_storeTables.length} '
+        'areas_count=${_storeTableAreas.length} '
+        'first_table_id=${firstTable?['id'] ?? '-'} '
+        'first_table_number=${firstTable?['table_number'] ?? '-'} '
+        'first_display_label=${firstTable?['display_label'] ?? firstTable?['table_name'] ?? '-'} '
+        'will_apply_visible=${uiTablesAfterLoad.isNotEmpty || _storeTables.isNotEmpty} '
+        'reason=${uiTablesAfterLoad.isNotEmpty ? 'visible_tables_seeded' : (_storeTables.isNotEmpty ? 'raw_tables_loaded' : 'no_tables_returned')}',
+      );
+      await _loadProductsSnapshot(source: bootstrapSource).then((_) {});
+      final ordersApplied = await _loadGarsonTableOrdersSnapshot(
+        source: bootstrapSource,
+        showError: false,
+        forceApply: true,
+      );
+      if (!mounted) return;
+      final uiOrdersAfterLoad = _garsonOrdersSnapshotForUi();
+      final firstOrder = uiOrdersAfterLoad.isNotEmpty
+          ? uiOrdersAfterLoad.first
+          : null;
+      debugPrint(
+        '[GARSON_INITIAL_ORDERS_RESULT] '
+        'orders_count=${uiOrdersAfterLoad.length} '
+        'first_order_id=${firstOrder?['id'] ?? '-'} '
+        'will_apply_visible=${ordersApplied || uiOrdersAfterLoad.isNotEmpty} '
+        'reason=${uiOrdersAfterLoad.isNotEmpty ? 'visible_orders_seeded' : (ordersApplied ? 'empty_orders_applied' : 'orders_not_applied')}',
+      );
+      _ensureGarsonRealtimeMonitoring(_resolveGarsonSellerId());
 
       if (!mounted) return;
       _publishGarsonVisibleSnapshotFromCurrentState(
         source: '${source}_final_seed',
+        forceApply: force,
       );
       _safeSetState(() {
         _garsonInitialVisibleSeedDone = true;
+        _garsonInitialBootstrapFinished = true;
+        _garsonInitialBootstrapFailed = false;
+        _hasLoadedGarsonBootstrapData = true;
       });
+      _setGarsonBoardState(
+        applyInitialBootstrap(
+          current: _garsonBoardState,
+          tables: _garsonBoardState.uiTables,
+          areas: _garsonBoardState.uiAreas,
+          orders: _garsonBoardState.uiOrders,
+          source: source,
+        ),
+      );
+      _cacheGarsonLastGoodSectionsForNumbers(
+        _garsonTableNumbersForGrid(
+          orderTableNumbers: _garsonBoardState.uiOrders
+              .map(_garsonTableNumberFromOrder)
+              .where((n) => n > 0)
+              .toList(growable: false),
+        ),
+      );
+      if (_garsonVisibleTablesForUi().isNotEmpty) {
+        _clearGarsonPendingRemoteChanges(source: source);
+      }
     } catch (error, stackTrace) {
       debugPrint('[GarsonInitialLoad][error] source=$source error=$error');
       debugPrintStack(stackTrace: stackTrace);
       if (!mounted) return;
       _safeSetState(() {
         _garsonInitialLoadError = error.toString();
+        _garsonInitialBootstrapFinished = true;
+        _garsonInitialBootstrapFailed = true;
+        _garsonInitialVisibleSeedDone = false;
       });
+      _setGarsonBoardState(
+        _garsonBoardState.copyWith(
+          initialLoadStatus: GarsonInitialLoadStatus.failed,
+          lastAppliedSource: source,
+          lastUpdateAt: DateTime.now(),
+        ),
+      );
     } finally {
       if (mounted) {
         _safeSetState(() {
@@ -1074,6 +1689,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           'initialTab=${_selectedModule.name}',
     );
     _applySellerSeo();
+    unawaited(
+      _authService.ensureCurrentUserRow(user: _authService.currentUser),
+    );
     unawaited(_restoreLastSelectedModule());
     unawaited(_restoreGarsonAreaFilter());
     unawaited(_restoreSidebarCollapsed());
@@ -1151,9 +1769,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     final options = <({String key, String label})>[
       (key: 'all', label: 'Tüm Alanlar'),
     ];
+    final areaRows = _garsonVisibleTableAreasForUi();
+    final tableRows = _garsonVisibleTablesForUi();
 
-    if (_storeTableAreas.isNotEmpty) {
-      for (final area in _storeTableAreas) {
+    if (areaRows.isNotEmpty) {
+      for (final area in areaRows) {
         final id = area['id']?.toString().trim() ?? '';
         final name = area['name']?.toString().trim() ?? '';
         if (id.isEmpty || name.isEmpty) continue;
@@ -1164,7 +1784,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
     // Fallback: derive distinct area names from tables.
     final seen = <String>{};
-    for (final t in _storeTables) {
+    for (final t in tableRows) {
       final name = (t['area_name']?.toString().trim() ?? '');
       if (name.isEmpty) continue;
       final norm = name.toLowerCase();
@@ -1177,17 +1797,13 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   Map<String, dynamic>? _storeTableRowByNumber(int tableNumber) {
     if (tableNumber <= 0) return null;
+    for (final row in _garsonVisibleTablesForUi()) {
+      if (_tableNumberFromRow(row) == tableNumber) return row;
+    }
     for (final row in _storeTables) {
       if (_tableNumberFromRow(row) == tableNumber) return row;
     }
     return null;
-  }
-
-  bool _matchesGarsonAreaFilter(int tableNumber) {
-    return matchesAreaFilter(
-      filterKey: _garsonAreaFilterKey,
-      tableRow: _storeTableRowByNumber(tableNumber),
-    );
   }
 
   Future<void> _restoreSidebarCollapsed() async {
@@ -1450,6 +2066,21 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         'navSource=${navigationSource.name} '
         'owner=$_navigationControllerOwnerKey',
       );
+      if (previous == SellerModule.garson || next == SellerModule.garson) {
+        logGarsonRouteChangeState(
+          fromModule: previous.name,
+          toModule: next.name,
+          boardTablesCount: _garsonBoardState.uiTables.length,
+          boardAreasCount: _garsonBoardState.uiAreas.length,
+          boardOrdersCount: _garsonBoardState.uiOrders.length,
+          lastGoodSectionsCount:
+              _garsonBoardState.lastGoodSections?.sections.length ?? 0,
+          willResetBoard: false,
+          reason: next == SellerModule.garson
+              ? 'garson_module_opened_keep_board'
+              : 'garson_module_left_keep_board',
+        );
+      }
       _logSellerPanelStateUpdate(
         'selected_module',
         note:
@@ -1537,6 +2168,120 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     );
   }
 
+  void _clearSelectedGarsonTableRoute({
+    required String source,
+    int? closedTableNumber,
+    String? closedLabel,
+    String? closedTableId,
+    String? closedOrderId,
+    bool logCloseCleanup = false,
+  }) {
+    final beforeRouteOpen = _isGarsonTableRouteOpen;
+    final hadSelection =
+        _garsonSelectedTableNumber != null ||
+        _garsonSelectedTableId != null ||
+        _garsonSelectedOrderId != null;
+    _garsonSelectedTableNumber = null;
+    _garsonSelectedTableId = null;
+    _garsonSelectedOrderId = null;
+    _isGarsonTableRouteOpen = false;
+    if (logCloseCleanup && closedTableNumber != null) {
+      logGarsonCloseTableRouteCleanup(
+        closedLabel: closedLabel ?? 'Masa $closedTableNumber',
+        tableNumber: closedTableNumber,
+        tableId: closedTableId ?? '-',
+        orderId: closedOrderId ?? '-',
+        beforeIsTableRouteOpen: beforeRouteOpen,
+        afterIsTableRouteOpen: _isGarsonTableRouteOpen,
+        selectedCleared: true,
+      );
+    } else if (hadSelection || beforeRouteOpen) {
+      debugPrint(
+        '[GARSON_CLOSE_TABLE_ROUTE_CLEANUP] '
+        'source=$source '
+        'before_isTableRouteOpen=$beforeRouteOpen '
+        'after_isTableRouteOpen=$_isGarsonTableRouteOpen '
+        'selectedCleared=true',
+      );
+    }
+  }
+
+  bool _isGarsonSelectedTableContextValid() {
+    return isGarsonSelectedTableContextValid(
+      selectedTableNumber: _garsonSelectedTableNumber,
+      state: _garsonBoardState,
+    );
+  }
+
+  void _guardGarsonStaleTableRouteOnBoard({required String source}) {
+    if (_selectedModule != SellerModule.garson) return;
+    final boardSectionsCount =
+        _garsonBoardState.lastGoodSections?.sections.length ?? 0;
+    final boardTablesCount = _garsonBoardState.uiTables.length;
+    final selectedValid = _isGarsonSelectedTableContextValid();
+    final shouldClear = shouldClearStaleGarsonTableRoute(
+      isGarsonModule: true,
+      isTableRouteOpen: _isGarsonTableRouteOpen,
+      selectedTableNumber: _garsonSelectedTableNumber,
+      selectedTableValid: selectedValid,
+      boardSectionsCount: boardSectionsCount,
+      boardTablesCount: boardTablesCount,
+    );
+    if (!shouldClear) return;
+    logGarsonStaleTableRouteCleared(
+      reason: 'selected_table_closed_or_missing',
+      selectedTableNumber: _garsonSelectedTableNumber,
+      selectedTableId: _garsonSelectedTableId,
+      boardSectionsCount: boardSectionsCount,
+    );
+    _clearSelectedGarsonTableRoute(source: '${source}_stale_guard');
+  }
+
+  void _logGarsonRouteBranchDecision({
+    required GarsonRenderBundle renderBundle,
+    required bool willShowNoOrderEmpty,
+    required String reason,
+  }) {
+    logGarsonRouteBranchDecision(
+      selectedModule: _selectedModule.name,
+      isGarsonTableRouteOpen: _isGarsonTableRouteOpen,
+      selectedTableNumber: _garsonSelectedTableNumber,
+      selectedTableId: _garsonSelectedTableId,
+      selectedOrderId: _garsonSelectedOrderId,
+      boardSectionsCount: renderBundle.renderSections.isNotEmpty
+          ? renderBundle.renderSections.length
+          : (_garsonBoardState.lastGoodSections?.sections.length ?? 0),
+      boardTablesCount: _garsonBoardState.uiTables.length,
+      willRender: decideGarsonRouteBranchRender(
+        isGarsonModule: _selectedModule == SellerModule.garson,
+        isTableRouteOpen: _isGarsonTableRouteOpen,
+        selectedTableNumber: _garsonSelectedTableNumber,
+        selectedTableValid: _isGarsonSelectedTableContextValid(),
+        willShowNoOrderEmpty: willShowNoOrderEmpty,
+        willShowGrid: renderBundle.willShowGrid,
+        boardSectionsCount: renderBundle.renderSections.isNotEmpty
+            ? renderBundle.renderSections.length
+            : (_garsonBoardState.lastGoodSections?.sections.length ?? 0),
+        boardTablesCount: _garsonBoardState.uiTables.length,
+      ),
+      reason: reason,
+    );
+  }
+
+  bool _shouldShowGarsonBoardNoOrderEmpty({
+    required GarsonRenderBundle renderBundle,
+    required List<int> allTableNumbers,
+  }) {
+    return shouldShowGarsonNoOrderEmptyOnBoard(
+      isGarsonTableRouteOpen: _isGarsonTableRouteOpen,
+      selectedTableContextValid: _isGarsonSelectedTableContextValid(),
+      renderBundle: renderBundle,
+      state: _garsonBoardState,
+      allTableNumbers: allTableNumbers,
+      initialBootstrapFinished: _garsonInitialBootstrapFinished,
+    );
+  }
+
   Future<void> _refreshGarsonDataManually({
     String source = 'garson_manual_refresh_button',
     bool allowInitialAutoSeed = false,
@@ -1560,26 +2305,49 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     }
     if (!mounted) return;
     debugPrint('[GarsonManualRefresh][start] source=$source');
+    logGarsonRefreshKeepingBoard(
+      reason: 'manual_refresh_started_keep_previous_board',
+      lastGoodSectionsCount:
+          _garsonBoardState.lastGoodSections?.sections.length ?? 0,
+    );
+    final forceApplyRefresh = shouldForceApplyGarsonVisibleSnapshot(
+      source: source,
+    );
     _safeSetState(() {
       _garsonManualRefreshInProgress = true;
     });
     try {
       _garsonManualRefreshGeneration += 1;
       await Future.wait<void>(<Future<void>>[
-        _loadStoreTables(silent: false, source: source),
+        _loadStoreTables(
+          silent: false,
+          source: source,
+          forceApply: forceApplyRefresh,
+        ),
         _loadProductsSnapshot(source: source).then((_) {}),
         _loadGarsonTableOrdersSnapshot(
           source: source,
           showError: true,
+          forceApply: forceApplyRefresh,
         ).then((_) {}),
       ]);
       _ensureGarsonRealtimeMonitoring(_resolveGarsonSellerId());
       if (!mounted) return;
       _hasLoadedGarsonBootstrapData = true;
-      _garsonHasPendingRemoteChanges.value = false;
+      _clearGarsonPendingRemoteChanges(source: source);
       _publishGarsonVisibleSnapshotFromCurrentState(
         source: '${source}_publish',
+        forceApply: forceApplyRefresh,
       );
+      _cacheGarsonLastGoodSectionsForNumbers(
+        _garsonTableNumbersForGrid(
+          orderTableNumbers: _garsonBoardState.uiOrders
+              .map(_garsonTableNumberFromOrder)
+              .where((n) => n > 0)
+              .toList(growable: false),
+        ),
+      );
+      _guardGarsonStaleTableRouteOnBoard(source: 'garson_manual_refresh_done');
       debugPrint(
         '[GarsonManualRefresh][done] '
         'tables=${_storeTables.length} '
@@ -1593,6 +2361,39 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         });
       }
     }
+  }
+
+  Future<void> _refreshGarsonDataOnModuleReturn() async {
+    if (!_isGarsonVisible) return;
+    logGarsonBoardBootstrapOnReturn(
+      source: 'garson_module_reopened',
+      tablesCount: _garsonBoardState.uiTables.length,
+      areasCount: _garsonBoardState.uiAreas.length,
+      ordersCount: _garsonBoardState.uiOrders.length,
+      willKeepLastGood: true,
+    );
+    await Future.wait<void>(<Future<void>>[
+      _loadStoreTables(
+        silent: true,
+        source: 'garson_module_reopened',
+        forceApply: false,
+      ),
+      _loadGarsonTableOrdersSnapshot(
+        source: 'garson_module_reopened',
+        showError: false,
+        forceApply: false,
+      ).then((_) {}),
+    ]);
+    if (!mounted) return;
+    _cacheGarsonLastGoodSectionsForNumbers(
+      _garsonTableNumbersForGrid(
+        orderTableNumbers: _garsonBoardState.uiOrders
+            .map(_garsonTableNumberFromOrder)
+            .where((n) => n > 0)
+            .toList(growable: false),
+      ),
+    );
+    _guardGarsonStaleTableRouteOnBoard(source: 'garson_module_reopened');
   }
 
   Future<void> _ensureModuleDataLoaded(SellerModule module) async {
@@ -1663,14 +2464,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           _warmGarsonPrintCaches(_authService.currentUser?.id.trim() ?? ''),
         );
         final shouldBootstrapGarson = !_hasLoadedGarsonBootstrapData;
-        logDecision('garson_initial_visible_seed', shouldBootstrapGarson);
+        logDecision('garson_module_opened', shouldBootstrapGarson);
         unawaited(
           _ensureGarsonInitialVisibleData(
             source: shouldBootstrapGarson
-                ? 'garson_initial_visible_seed'
+                ? 'garson_module_opened'
                 : 'garson_visible_reenter_seed',
           ),
         );
+        if (_hasLoadedGarsonBootstrapData) {
+          unawaited(_refreshGarsonDataOnModuleReturn());
+        }
         _ensureGarsonRealtimeMonitoring(_resolveGarsonSellerId());
         break;
       case SellerModule.system:
@@ -2000,8 +2804,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     _sellerOrderStatusCountsCache = null;
     _filteredSellerOrdersCacheKey = null;
     _filteredSellerOrdersCache = null;
-    _financeSummaryCacheKey = null;
-    _financeSummaryCache = null;
     _invalidateDashboardSnapshot();
   }
 
@@ -2079,13 +2881,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     });
   }
 
-  void _setFinanceTransactionTypeFilter(String value) {
-    if (_financeTransactionTypeFilter == value) return;
-    setState(() {
-      _financeTransactionTypeFilter = value;
-    });
-  }
-
   Stream<List<Map<String, dynamic>>> _getSellerTableOrdersStream(
     String sellerId,
   ) {
@@ -2143,13 +2938,73 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     _tableOrdersFallbackFuture = null;
   }
 
+  void _markGarsonTableRecentlyClosed(
+    int tableNumber, {
+    DateTime? at,
+    String source = 'unknown',
+  }) {
+    if (tableNumber <= 0) return;
+    _webGarsonClosedTableAt[tableNumber] = (at ?? DateTime.now()).toLocal();
+    _pruneExpiredGarsonClosedTableMarkers(source: source);
+  }
+
+  void _clearGarsonClosedTableMarker(
+    int tableNumber, {
+    String source = 'unknown',
+  }) {
+    if (_webGarsonClosedTableAt.remove(tableNumber) != null) {
+      debugPrint(
+        '[GARSON_CLOSE_MARKER_CLEAR] '
+        'table=$tableNumber '
+        'source=$source '
+        'remaining=${_webGarsonClosedTableAt.length}',
+      );
+    }
+  }
+
+  void _pruneExpiredGarsonClosedTableMarkers({
+    DateTime? now,
+    String source = 'unknown',
+  }) {
+    if (_webGarsonClosedTableAt.isEmpty) return;
+    final currentNow = (now ?? DateTime.now()).toLocal();
+    final expiredTables = _webGarsonClosedTableAt.entries
+        .where(
+          (entry) =>
+              currentNow.difference(entry.value) >
+              _garsonClosedTableVisibilityHold,
+        )
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    if (expiredTables.isEmpty) return;
+    for (final tableNumber in expiredTables) {
+      _webGarsonClosedTableAt.remove(tableNumber);
+    }
+    debugPrint(
+      '[GARSON_CLOSE_MARKER_PRUNE] '
+      'source=$source '
+      'expired_tables=$expiredTables '
+      'remaining=${_webGarsonClosedTableAt.length}',
+    );
+  }
+
+  bool _shouldKeepGarsonOrderVisibleAfterRecentClose(
+    Map<String, dynamic> order,
+  ) {
+    final tableNo = _garsonTableNumberFromOrder(order);
+    final closedAt = _webGarsonClosedTableAt[tableNo];
+    if (closedAt == null) return true;
+    return !shouldSuppressGarsonOrderForRecentlyClosedTable(
+      order: order,
+      closedAt: closedAt,
+      holdFor: _garsonClosedTableVisibilityHold,
+    );
+  }
+
   List<Map<String, dynamic>> _resolveGarsonTableOrdersForUi(
     List<Map<String, dynamic>>? streamOrQuerySnapshot,
   ) {
-    if (_garsonManualTableOrders.isNotEmpty) {
-      return _garsonOrdersSnapshotForUi();
-    }
-    return streamOrQuerySnapshot ?? const <Map<String, dynamic>>[];
+    return _garsonOrdersSnapshotForUi();
   }
 
   void _ensureGarsonRealtimeMonitoring(String sellerId) {
@@ -2161,7 +3016,15 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     _garsonRealtimeSubscription?.cancel();
     _garsonRealtimeSubscription = stream.listen(
       (orders) {
+        _pruneExpiredGarsonClosedTableMarkers(source: 'table_orders_stream');
         final nextSignature = tableOrdersListSignature(orders);
+        debugPrint(
+          '[GARSON_STREAM_EVENT] '
+          'ordersCount=${orders.length} '
+          'currentManualOrders=${_garsonManualTableOrders.length} '
+          'closedTableAtKeys=${_webGarsonClosedTableAt.keys} '
+          'signatureMatch=${_garsonManualTableOrdersSignature == nextSignature}',
+        );
         if (_garsonManualTableOrdersSignature == nextSignature) {
           _garsonStreamState = 'stream_event_same';
           return;
@@ -2171,39 +3034,98 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           hasPublishedData: _garsonManualTableOrdersSignature != null,
         )) {
           _garsonStreamState = 'stream_event_blocked';
+          _logGarsonAutoRefreshBlocked(
+            source: 'table_orders_stream',
+            incomingTablesCount: 0,
+            incomingOrdersCount: orders.length,
+            visibleTablesCount: _garsonVisibleTablesForUi().length,
+            visibleOrdersCount: _garsonVisibleOrdersSnapshot.length,
+          );
+          _logGarsonSnapshotReceived(
+            source: 'table_orders_stream',
+            incomingTablesCount: 0,
+            incomingOrdersCount: orders.length,
+            willApplyVisible: false,
+            willStorePending: true,
+            reason: 'background_skip_preserve_visible_orders',
+          );
+          _garsonPendingIncomingOrders = orders
+              .map((order) => Map<String, dynamic>.from(order))
+              .toList(growable: false);
+          _setGarsonBoardState(
+            applyBackgroundUpdate(
+              current: _garsonBoardState,
+              incomingTables: _garsonBoardState.tables,
+              incomingOrders: orders,
+              source: 'table_orders_stream',
+            ),
+          );
           debugPrint(
-            '[GarsonAutoRefresh][blocked] '
+            '[GARSON_BACKGROUND_UPDATE_BLOCKED] '
             'source=table_orders_stream '
-            'reason=table_orders_background_update',
+            'incoming_tables_count=0 '
+            'incoming_orders_count=${orders.length} '
+            'reason=background_cannot_clear_visible_state',
           );
           _markGarsonHasPendingRemoteChanges(source: 'table_orders_stream');
           return;
         }
+        final mergeResult = mergeGarsonVisibleOrdersSafely(
+          currentVisibleOrders: _resolveGarsonTableOrdersForUi(
+            _garsonOrdersSnapshotForUi(),
+          ),
+          incomingOrders: orders,
+          storeTables: _garsonVisibleTablesForUi(),
+          source: 'table_orders_stream',
+          userInitiated: false,
+        );
+        final mergedOrders = mergeResult.mergedOrders
+            .map((order) => Map<String, dynamic>.from(order))
+            .toList(growable: false);
+        final mergedSignature = tableOrdersListSignature(mergedOrders);
+        _logGarsonSnapshotReceived(
+          source: 'table_orders_stream',
+          incomingTablesCount: 0,
+          incomingOrdersCount: orders.length,
+          willApplyVisible: true,
+          willStorePending: false,
+          reason: mergeResult.reason,
+        );
+        _logGarsonTableOrderPreservations(
+          source: 'table_orders_stream',
+          preservedTables: mergeResult.preservedTables,
+        );
         if (!mounted) return;
-        _safeSetState(() {
-          _garsonManualTableOrders = orders;
+        if (_garsonManualTableOrdersSignature != mergedSignature ||
+            _garsonManualTableOrdersSellerId != sellerId.trim() ||
+            !_hasLoadedGarsonTableOrdersData) {
+          _safeSetState(() {
+            _garsonManualTableOrders = mergedOrders;
+            _garsonManualTableOrdersSellerId = sellerId.trim();
+            _garsonManualTableOrdersSignature = mergedSignature;
+            _hasLoadedGarsonTableOrdersData = true;
+          });
+        } else {
+          _garsonManualTableOrders = mergedOrders;
           _garsonManualTableOrdersSellerId = sellerId.trim();
-          _garsonManualTableOrdersSignature = nextSignature;
+          _garsonManualTableOrdersSignature = mergedSignature;
           _hasLoadedGarsonTableOrdersData = true;
-        });
-        _publishGarsonVisibleOrders(orders);
-        _garsonStreamState = 'stream_event_applied';
-      },
-      onError: (error) {
-        _handleGarsonRealtimeError(error, sellerId: sellerId);
-        if (_shouldBlockGarsonBackgroundPublish(
-          source: 'table_orders_stream_error',
-          hasPublishedData: _garsonManualTableOrdersSignature != null,
-        )) {
-          debugPrint(
-            '[GarsonAutoRefresh][blocked] '
-            'source=table_orders_stream_error '
-            'reason=table_orders_background_update',
-          );
-          _markGarsonHasPendingRemoteChanges(
-            source: 'table_orders_stream_error',
-          );
         }
+        _garsonHasEverLoadedOrdersSuccessfully = true;
+        _publishGarsonVisibleOrders(
+          mergedOrders,
+          source: 'table_orders_stream',
+        );
+        _garsonStreamState = mergeResult.preservedTables.isNotEmpty
+            ? 'stream_event_preserved'
+            : 'stream_event_applied';
+      },
+      onError: (error, stack) {
+        _handleGarsonRealtimeError(
+          error,
+          sellerId: sellerId,
+          stackTrace: stack,
+        );
       },
     );
   }
@@ -2211,42 +3133,155 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   Future<bool> _loadGarsonTableOrdersSnapshot({
     required String source,
     bool showError = false,
+    bool bypassSignatureGuard = false,
+    bool forceApply = false,
   }) async {
     final sellerId = _resolveGarsonSellerId().trim();
     if (sellerId.isEmpty) return false;
     _invalidateSellerTableOrdersFallbackFuture();
+    final userInitiated =
+        forceApply || shouldForceApplyGarsonVisibleSnapshot(source: source);
+    final shouldAutoApply =
+        shouldAutoApplyGarsonVisibleSnapshot(source: source) ||
+        bypassSignatureGuard ||
+        userInitiated;
     try {
+      _pruneExpiredGarsonClosedTableMarkers(source: source);
       final fresh = await _storeService.getTableOrdersSnapshot(sellerId);
+      debugPrint(
+        '[GARSON_LOAD_SNAPSHOT] '
+        'source=$source '
+        'freshOrders=${fresh.length} '
+        'closedTableAtKeys=${_webGarsonClosedTableAt.keys} '
+        'sellerId=$sellerId',
+      );
       final nextSignature = tableOrdersListSignature(fresh);
       if (_garsonManualTableOrdersSignature == nextSignature) {
         _garsonStreamState = 'snapshot_same_data';
-        return false;
+        if (shouldAutoApply) {
+          if (mounted) {
+            _safeSetState(() {
+              _hasLoadedGarsonTableOrdersData = true;
+            });
+          } else {
+            _hasLoadedGarsonTableOrdersData = true;
+          }
+          _garsonHasEverLoadedOrdersSuccessfully = true;
+          _clearGarsonPendingRemoteChanges(source: '${source}_same_signature');
+          _publishGarsonVisibleOrders(
+            _garsonManualTableOrders,
+            source: source,
+            forceApply: userInitiated,
+          );
+        }
+        return shouldAutoApply;
       }
-      if (_shouldBlockGarsonBackgroundPublish(
-        source: source,
-        hasPublishedData: _garsonManualTableOrdersSignature != null,
-      )) {
+      if (!userInitiated &&
+          _shouldBlockGarsonBackgroundPublish(
+            source: source,
+            hasPublishedData: _garsonManualTableOrdersSignature != null,
+          )) {
         _garsonStreamState = 'snapshot_blocked';
+        _logGarsonAutoRefreshBlocked(
+          source: source,
+          incomingTablesCount: 0,
+          incomingOrdersCount: fresh.length,
+          visibleTablesCount: _garsonVisibleTablesForUi().length,
+          visibleOrdersCount: _garsonVisibleOrdersSnapshot.length,
+        );
+        _logGarsonSnapshotReceived(
+          source: source,
+          incomingTablesCount: 0,
+          incomingOrdersCount: fresh.length,
+          willApplyVisible: false,
+          willStorePending: true,
+          reason: 'background_skip_preserve_visible_orders',
+        );
+        _garsonPendingIncomingOrders = fresh
+            .map((order) => Map<String, dynamic>.from(order))
+            .toList(growable: false);
+        _setGarsonBoardState(
+          applyBackgroundUpdate(
+            current: _garsonBoardState,
+            incomingTables: _garsonBoardState.tables,
+            incomingOrders: fresh,
+            source: source,
+          ),
+        );
         debugPrint(
-          '[GarsonAutoRefresh][blocked] '
+          '[GARSON_BACKGROUND_UPDATE_BLOCKED] '
           'source=$source '
-          'reason=table_orders_background_update',
+          'incoming_tables_count=0 '
+          'incoming_orders_count=${fresh.length} '
+          'reason=background_cannot_clear_visible_state',
         );
         _markGarsonHasPendingRemoteChanges(source: source);
         return false;
       }
+      final mergeResult = mergeGarsonVisibleOrdersSafely(
+        currentVisibleOrders: _resolveGarsonTableOrdersForUi(
+          _garsonOrdersSnapshotForUi(),
+        ),
+        incomingOrders: fresh,
+        storeTables: _garsonVisibleTablesForUi(),
+        source: source,
+        userInitiated: userInitiated,
+      );
+      final mergedOrders = mergeResult.mergedOrders
+          .map((order) => Map<String, dynamic>.from(order))
+          .toList(growable: false);
+      final mergedSignature = tableOrdersListSignature(mergedOrders);
+      _logGarsonSnapshotReceived(
+        source: source,
+        incomingTablesCount: 0,
+        incomingOrdersCount: fresh.length,
+        willApplyVisible: true,
+        willStorePending: false,
+        reason: mergeResult.reason,
+      );
+      _logGarsonTableOrderPreservations(
+        source: source,
+        preservedTables: mergeResult.preservedTables,
+      );
       if (!mounted) return false;
-      _safeSetState(() {
-        _garsonManualTableOrders = fresh;
+      if (_garsonManualTableOrdersSignature != mergedSignature ||
+          _garsonManualTableOrdersSellerId != sellerId ||
+          !_hasLoadedGarsonTableOrdersData) {
+        _safeSetState(() {
+          _garsonManualTableOrders = mergedOrders;
+          _garsonManualTableOrdersSellerId = sellerId;
+          _garsonManualTableOrdersSignature = mergedSignature;
+          _hasLoadedGarsonTableOrdersData = true;
+        });
+      } else {
+        _garsonManualTableOrders = mergedOrders;
         _garsonManualTableOrdersSellerId = sellerId;
-        _garsonManualTableOrdersSignature = nextSignature;
+        _garsonManualTableOrdersSignature = mergedSignature;
         _hasLoadedGarsonTableOrdersData = true;
-      });
-      _publishGarsonVisibleOrders(fresh);
-      _garsonStreamState = 'snapshot_applied';
+      }
+      _garsonHasEverLoadedOrdersSuccessfully = true;
+      _publishGarsonVisibleOrders(
+        mergedOrders,
+        source: source,
+        forceApply: userInitiated,
+      );
+
+      if (shouldAutoApply) {
+        _clearGarsonPendingRemoteChanges(source: source);
+      }
+
+      _garsonStreamState = mergeResult.preservedTables.isNotEmpty
+          ? 'snapshot_preserved'
+          : 'snapshot_applied';
       return true;
-    } catch (error) {
+    } catch (error, stack) {
       _garsonStreamState = 'snapshot_error';
+      logGarsonActiveOrdersFetchError(
+        restaurantId: sellerId,
+        source: source,
+        error: error,
+        stack: stack,
+      );
       if (showError && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2269,9 +3304,19 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     );
   }
 
-  void _handleGarsonRealtimeError(Object error, {required String sellerId}) {
+  void _handleGarsonRealtimeError(
+    Object error, {
+    required String sellerId,
+    StackTrace? stackTrace,
+  }) {
     final normalizedSellerId = sellerId.trim();
     _garsonStreamState = 'stream_error:$normalizedSellerId';
+    logGarsonOrdersStreamError(
+      restaurantId: normalizedSellerId,
+      error: error,
+      stack: stackTrace,
+      source: 'table_orders_stream',
+    );
     debugPrint(
       '[GarsonRealtime] mode=stream_error '
       'supabaseUrl=${AppRuntimeConfig.rawSupabaseUrl.trim().isEmpty ? '(missing)' : AppRuntimeConfig.rawSupabaseUrl.trim()} '
@@ -2289,6 +3334,52 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         );
       });
     }
+    unawaited(
+      _fallbackFetchGarsonActiveOrdersAfterStreamError(normalizedSellerId),
+    );
+  }
+
+  Future<void> _fallbackFetchGarsonActiveOrdersAfterStreamError(
+    String sellerId,
+  ) async {
+    if (sellerId.isEmpty || !mounted) return;
+    debugPrint(
+      '[GARSON_ORDERS_STREAM_FALLBACK] '
+      'restaurant_id=$sellerId '
+      'action=fallback_active_orders_fetch',
+    );
+    final applied = await _loadGarsonTableOrdersSnapshot(
+      source: 'table_orders_stream_error',
+      showError: false,
+      forceApply: true,
+    );
+    if (!mounted) return;
+    final ordersCount = _garsonBoardState.uiOrders.length;
+    debugPrint(
+      '[GARSON_ORDERS_STREAM_FALLBACK_RESULT] '
+      'restaurant_id=$sellerId '
+      'applied=$applied '
+      'orders_count=$ordersCount '
+      'orders_source=${_garsonBoardState.ordersSource}',
+    );
+    if (_garsonManualTableOrders.isNotEmpty && ordersCount == 0) {
+      _publishGarsonVisibleSnapshotFromCurrentState(
+        source: 'table_orders_stream_error_board_sync',
+        forceApply: true,
+        reason: 'fallback_manual_orders_sync',
+      );
+    }
+    if (_garsonBoardState.uiOrders.isNotEmpty) {
+      _clearGarsonPendingRemoteChanges(source: 'table_orders_stream_error');
+    }
+    debugPrint(
+      '[GARSON_BOARD_RENDER_SOURCE] '
+      'tables_source=${_garsonBoardState.tablesSource} '
+      'orders_source=${_garsonBoardState.ordersSource} '
+      'tables_count=${_garsonBoardState.uiTables.length} '
+      'orders_count=${_garsonBoardState.uiOrders.length} '
+      'reason=stream_error_fallback_complete',
+    );
   }
 
   Map<String, int> _sellerOrderStatusCounts() {
@@ -2528,9 +3619,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         error: error,
         stackTrace: stackTrace,
       );
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_mapSellerOrdersLoadError(error))));
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        SnackBar(content: Text(_mapSellerOrdersLoadError(error))),
+      );
     } finally {
       if (_canApplySellerOrdersRequest(requestId)) {
         _safeSetStateForSellerOrders(
@@ -3435,7 +4528,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       if (data != null) {
         if (data['isDeleted'] == true) {
           if (_canApplyStoreProfileRequest(requestId)) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            if (!mounted) return;
+            final messenger = ScaffoldMessenger.of(context);
+            messenger.showSnackBar(
               const SnackBar(
                 content: Text('Satıcı hesabınız kalıcı olarak kapatılmıştır.'),
               ),
@@ -3443,6 +4538,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             await _authService.signOut();
             await Future.delayed(const Duration(milliseconds: 200));
             if (_canApplyStoreProfileRequest(requestId)) {
+              if (!mounted) return;
               debugPrint(
                 '[SellerExit] store deleted — navigating to / via rootNavigator',
               );
@@ -3652,19 +4748,16 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   String _tableDisplayLabelFromRow(Map<String, dynamic> row) {
-    return resolveTableCardTitle(
-      tableRow: row,
-      tableNumber: _tableNumberFromRow(row),
+    return resolveTableDisplayLabel(
+      table: row,
+      fallbackTableNumber: _tableNumberFromRow(row),
     );
-  }
-
-  String _areaNameFromRow(Map<String, dynamic> row) {
-    return row['area_name']?.toString().trim() ?? '';
   }
 
   Future<void> _loadStoreTables({
     bool silent = false,
     String source = 'store_tables_load',
+    bool forceApply = false,
   }) async {
     final sellerId = _authService.currentUser?.id.trim() ?? '';
     if (sellerId.isNotEmpty &&
@@ -3674,6 +4767,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         setState(() {
           _storeTables = <Map<String, dynamic>>[];
           _storeTableAreas = <Map<String, dynamic>>[];
+          _garsonPendingIncomingTables = <Map<String, dynamic>>[];
+          _garsonPendingIncomingTableAreas = <Map<String, dynamic>>[];
           _storeTablesSignature = null;
           _storeTableAreasSignature = null;
           _hasLoadedStoreTablesData = false;
@@ -3685,6 +4780,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         setState(() {
           _storeTables = <Map<String, dynamic>>[];
           _storeTableAreas = <Map<String, dynamic>>[];
+          _garsonPendingIncomingTables = <Map<String, dynamic>>[];
+          _garsonPendingIncomingTableAreas = <Map<String, dynamic>>[];
           _storeTablesSignature = null;
           _storeTableAreasSignature = null;
         });
@@ -3722,6 +4819,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           requestUrl: requestUrl,
           note: 'silent=$silent',
         );
+        logGarsonAreaBootstrapStart(
+          restaurantId: sellerId,
+          tablesCount: _garsonVisibleTablesForUi().length,
+          areasCount: _garsonVisibleTableAreasForUi().length,
+          source: source,
+        );
         final tables = await _storeService.getStoreTables(sellerId: sellerId);
         // Best-effort preload of dining areas (Salon/Bahçe/Teras...). This must
         // not break older deployments where the areas table doesn't exist.
@@ -3735,42 +4838,200 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         tables.sort(
           (a, b) => _tableNumberFromRow(a).compareTo(_tableNumberFromRow(b)),
         );
-        final nextTablesSignature = garsonStoreTablesSignature(tables);
-        final nextAreasSignature = garsonStoreTablesSignature(areas);
-        final tablesChanged = _storeTablesSignature != nextTablesSignature;
-        final areasChanged = _storeTableAreasSignature != nextAreasSignature;
-        if (!tablesChanged && !areasChanged) {
+        final shouldGuardTransientEmptyPhysicalTables =
+            tables.isEmpty &&
+            (_storeTables.isNotEmpty ||
+                _garsonBoardState.tables.isNotEmpty ||
+                _garsonBoardState.lastGoodTables.isNotEmpty) &&
+            (_selectedModule == SellerModule.garson || _isGarsonTableRouteOpen);
+        if (shouldGuardTransientEmptyPhysicalTables) {
+          _logGarsonEmptyStateBlocked(
+            source: source,
+            reason: 'store_tables_empty_snapshot_preserved_existing_catalog',
+            incomingTablesCount: tables.length,
+            incomingOrdersCount: _garsonOrdersSnapshotForUi().length,
+          );
+          debugPrint(
+            '[GARSON_STORE_TABLES_EMPTY_GUARD] '
+            'source=$source '
+            'incoming_tables=0 '
+            'existing_store_tables=${_storeTables.length} '
+            'existing_board_tables=${_garsonBoardState.uiTables.length} '
+            'routeOpen=$_isGarsonTableRouteOpen',
+          );
           _hasLoadedStoreTablesData = true;
           _storeTablesLoadedForSellerId = sellerId;
           return;
         }
-        if (_shouldBlockGarsonBackgroundPublish(
-          source: source,
-          hasPublishedData:
-              _storeTablesSignature != null ||
-              _storeTableAreasSignature != null,
-        )) {
+        final nextTablesSignature = garsonStoreTablesSignature(tables);
+        final nextAreasSignature = garsonStoreTablesSignature(areas);
+        final tablesChanged = _storeTablesSignature != nextTablesSignature;
+        final areasChanged = _storeTableAreasSignature != nextAreasSignature;
+        final userInitiated =
+            forceApply ||
+            shouldForceApplyGarsonVisibleSnapshot(source: source) ||
+            _isGarsonVisibleSnapshotApplySource(source);
+        if (!tablesChanged && !areasChanged) {
+          _hasLoadedStoreTablesData = true;
+          _storeTablesLoadedForSellerId = sellerId;
+          _garsonHasEverLoadedTablesSuccessfully = true;
+          if (_garsonVisibleTablesSnapshot.isEmpty && tables.isNotEmpty) {
+            _applyGarsonTablesSnapshot(
+              tables: tables,
+              areas: areas,
+              source: '${source}_same_signature_seed',
+              forceApply: userInitiated,
+              reason: 'same_signature_seed',
+            );
+          }
+          return;
+        }
+        if (!userInitiated &&
+            _shouldBlockGarsonBackgroundPublish(
+              source: source,
+              hasPublishedData:
+                  _storeTablesSignature != null ||
+                  _storeTableAreasSignature != null,
+            )) {
+          _logGarsonSnapshotReceived(
+            source: source,
+            incomingTablesCount: tables.length,
+            incomingOrdersCount: _garsonVisibleOrdersSnapshot.length,
+            willApplyVisible: false,
+            willStorePending: true,
+            reason: 'store_tables_background_update_blocked',
+          );
+          _logGarsonAutoRefreshBlocked(
+            source: source,
+            incomingTablesCount: tables.length,
+            incomingOrdersCount: 0,
+            visibleTablesCount: _garsonVisibleTablesForUi().length,
+            visibleOrdersCount: _garsonVisibleOrdersSnapshot.length,
+          );
+          _garsonPendingIncomingTables = tables
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false);
+          _garsonPendingIncomingTableAreas = areas
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false);
+          _setGarsonBoardState(
+            applyBackgroundUpdate(
+              current: _garsonBoardState,
+              incomingTables: tables,
+              incomingOrders: _garsonBoardState.orders,
+              source: source,
+            ),
+          );
           debugPrint(
             '[GarsonAutoRefresh][blocked] '
             'source=$source '
             'reason=store_tables_background_update',
+          );
+          debugPrint(
+            '[GARSON_BACKGROUND_UPDATE_BLOCKED] '
+            'source=$source '
+            'incoming_tables_count=${tables.length} '
+            'incoming_orders_count=${_garsonBoardState.orders.length} '
+            'reason=background_cannot_clear_visible_state',
           );
           _markGarsonHasPendingRemoteChanges(source: source);
           _hasLoadedStoreTablesData = true;
           _storeTablesLoadedForSellerId = sellerId;
           return;
         }
+        if (_shouldPreserveGarsonSnapshotOnIncomingEmpty(
+          source: source,
+          hasIncomingTables: tables.isNotEmpty,
+          hasIncomingOrders: _garsonOrdersSnapshotForUi().isNotEmpty,
+        )) {
+          _logGarsonSnapshotReceived(
+            source: source,
+            incomingTablesCount: tables.length,
+            incomingOrdersCount: _garsonVisibleOrdersSnapshot.length,
+            willApplyVisible: false,
+            willStorePending: true,
+            reason: 'background_empty_snapshot_preserved_last_good',
+          );
+          _logGarsonEmptyStateBlocked(
+            source: source,
+            reason: 'incoming_tables_empty_preserve_last_good',
+            incomingTablesCount: tables.length,
+            incomingOrdersCount: _garsonOrdersSnapshotForUi().length,
+          );
+          setState(() {
+            _storeTables = tables;
+            _storeTableAreas = areas;
+            _storeTablesLoadedForSellerId = sellerId;
+            _storeTablesSignature = nextTablesSignature;
+            _storeTableAreasSignature = nextAreasSignature;
+          });
+          _garsonPendingIncomingTables = tables
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false);
+          _garsonPendingIncomingTableAreas = areas
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false);
+          _setGarsonBoardState(
+            applyBackgroundUpdate(
+              current: _garsonBoardState,
+              incomingTables: tables,
+              incomingOrders: _garsonBoardState.orders,
+              source: source,
+            ),
+          );
+          _garsonHasEverLoadedTablesSuccessfully = true;
+          debugPrint(
+            '[GARSON_BACKGROUND_UPDATE_BLOCKED] '
+            'source=$source '
+            'incoming_tables_count=${tables.length} '
+            'incoming_orders_count=${_garsonBoardState.orders.length} '
+            'reason=background_cannot_clear_visible_state',
+          );
+          _markGarsonHasPendingRemoteChanges(source: source);
+          _hasLoadedStoreTablesData = true;
+          return;
+        }
+        _logGarsonSnapshotReceived(
+          source: source,
+          incomingTablesCount: tables.length,
+          incomingOrdersCount: _garsonVisibleOrdersSnapshot.length,
+          willApplyVisible: true,
+          willStorePending: false,
+          reason: 'store_tables_snapshot_received',
+        );
         setState(() {
           _storeTables = tables;
           _storeTableAreas = areas;
           _storeTablesLoadedForSellerId = sellerId;
           _storeTablesSignature = nextTablesSignature;
           _storeTableAreasSignature = nextAreasSignature;
+          _applyGarsonTablesSnapshot(
+            tables: tables,
+            areas: areas,
+            source: source,
+            forceApply: userInitiated,
+            reason: 'store_tables_snapshot_applied',
+          );
         });
         debugPrint(
           '[GarsonTables] count=${tables.length} '
           'areas=${areas.length} '
           'sample=${tables.take(5).map((t) => '{table=${t['table_number']} label=${t['display_label'] ?? ''} area=${t['area_name'] ?? ''} areaId=${t['area_id'] ?? ''} areaNo=${t['area_table_number'] ?? ''}}').join(' ')}',
+        );
+        final firstTable = tables.isNotEmpty ? tables.first : null;
+        final firstArea = areas.isNotEmpty ? areas.first : null;
+        logGarsonAreaBootstrapResult(
+          restaurantId: sellerId,
+          areasLoaded: areas.length,
+          areaNames: areas
+              .map((area) => area['name']?.toString().trim() ?? '')
+              .where((name) => name.isNotEmpty)
+              .toList(growable: false),
+          tablesLoaded: tables.length,
+          firstTableId: firstTable?['id']?.toString() ?? '-',
+          firstTableNumber: _tableNumberFromRow(firstTable ?? const {}),
+          firstAreaId: firstArea?['id']?.toString() ?? '-',
+          firstAreaName: firstArea?['name']?.toString() ?? '-',
         );
         unawaited(_ensureDesktopPrintHubStarted(reason: 'store_tables_loaded'));
         _debugLogSellerBootstrap(
@@ -3835,7 +5096,96 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     return numbers;
   }
 
+  /// Returns visible tables for rendering, falling back to the raw `_storeTables`
+  /// snapshot when `boardState.uiTables` is transiently empty (e.g. during a
+  /// module re-entry race or between a close and the next refresh).
+  List<Map<String, dynamic>> _garsonVisibleTablesForRender() {
+    final ui = _garsonVisibleTablesForUi();
+    if (ui.isNotEmpty) return ui;
+    if (_storeTables.isNotEmpty) return _storeTables;
+    return const <Map<String, dynamic>>[];
+  }
+
+  /// Same as [_garsonVisibleTablesForRender] but for table areas.
+  List<Map<String, dynamic>> _garsonVisibleAreasForRender() {
+    final ui = _garsonVisibleTableAreasForUi();
+    if (ui.isNotEmpty) return ui;
+    if (_storeTableAreas.isNotEmpty) return _storeTableAreas;
+    return const <Map<String, dynamic>>[];
+  }
+
+  void _recordGarsonCatalogSeen(int count) {
+    if (count > _garsonMaxCatalogTablesSeen) {
+      _garsonMaxCatalogTablesSeen = count;
+    }
+    if (count > 0) {
+      // A real catalog is back on screen — clear the self-heal budget so a
+      // future collapse gets a fresh set of recovery attempts.
+      _garsonEmptyStateSelfHealAttempts = 0;
+    }
+  }
+
+  List<int> _garsonSortedStoreTableNumbersForUi() {
+    final visibleTables = _garsonVisibleTablesForUi();
+    if (visibleTables.isNotEmpty) {
+      final numbers = visibleTables
+          .map(_tableNumberFromRow)
+          .where((n) => n > 0)
+          .toSet()
+          .toList(growable: false)
+        ..sort();
+      _recordGarsonCatalogSeen(numbers.length);
+      return numbers;
+    }
+    // Fallback 1: _storeTables is the raw data loaded from the server and is
+    // never cleared by order operations. Use it when boardState.uiTables is
+    // transiently empty (e.g., between a close and the next refresh).
+    if (_storeTables.isNotEmpty) {
+      final numbers = _storeTables
+          .map(_tableNumberFromRow)
+          .where((n) => n > 0)
+          .toSet()
+          .toList(growable: false)
+        ..sort();
+      _recordGarsonCatalogSeen(numbers.length);
+      return numbers;
+    }
+    // Fallback 2 — Last-known-good guard: if _storeTables was transiently
+    // cleared (module switch, seller change) but we have a cached snapshot
+    // from the last successful render, use that.  This prevents "Toplam Masa: 0"
+    // during brief windows where both _garsonBoardState.uiTables and _storeTables
+    // are empty due to concurrent state resets or stream errors.
+    final lastGood = _garsonBoardState.lastGoodTables;
+    if (lastGood.isNotEmpty) {
+      debugPrint(
+        '[GARSON_BLANK_GUARD] using lastGoodTables as table source '
+        'lastGoodCount=${lastGood.length}',
+      );
+      final numbers = lastGood
+          .map(_tableNumberFromRow)
+          .where((n) => n > 0)
+          .toSet()
+          .toList(growable: false)
+        ..sort();
+      _recordGarsonCatalogSeen(numbers.length);
+      return numbers;
+    }
+    return const <int>[];
+  }
+
+  List<int> _garsonLastGoodTableNumbersForUi() {
+    final numbers =
+        _garsonBoardState.lastGoodTables
+            .map(_tableNumberFromRow)
+            .where((n) => n > 0)
+            .toSet()
+            .toList(growable: false)
+          ..sort();
+    return numbers;
+  }
+
   bool get _garsonStoreTablesReady {
+    if (_garsonVisibleTablesForUi().isNotEmpty) return true;
     if (_isLoadingStoreTables) return false;
     if (!_hasLoadedStoreTablesData) return false;
     final sellerId = _authService.currentUser?.id.trim() ?? '';
@@ -3845,12 +5195,66 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   bool _shouldShowGarsonInitialLoadingUi(List<Map<String, dynamic>> orders) {
+    final loadState = _garsonGridLoadState();
+    if (loadState == GarsonGridLoadState.pendingChangesAvailable &&
+        !_garsonBoardState.hasEverRenderedBoardSuccessfully) {
+      _kickGarsonInitialBootstrapRetryIfNeeded(source: 'garson_pending_state');
+      return true;
+    }
     return shouldShowGarsonInitialLoading(
       initialLoading: _isGarsonInitialLoading,
       initialVisibleSeedDone: _garsonInitialVisibleSeedDone,
       visibleOrderCount: orders.length,
-      storeTableCount: _storeTables.length,
+      storeTableCount: _garsonVisibleTablesForUi().length,
+      lastGoodTableCount: _garsonBoardState.lastGoodTables.length,
+      hasEverRenderedBoard: _garsonBoardState.hasEverRenderedBoardSuccessfully,
+      manualRefreshInProgress: _garsonManualRefreshInProgress,
     );
+  }
+
+  GarsonGridLoadState _garsonGridLoadState() {
+    return resolveGarsonGridLoadState(
+      state: _garsonUiState,
+      initialLoading: _isGarsonInitialLoading,
+      initialBootstrapFinished: _garsonInitialBootstrapFinished,
+      initialBootstrapFailed: _garsonInitialBootstrapFailed,
+    );
+  }
+
+  void _logGarsonBoardRenderSource({required String source}) {
+    final state = _garsonBoardState;
+    final willShowEmpty = shouldShowEmptyState(state: state);
+    debugPrint(
+      '[GARSON_BOARD_RENDER_SOURCE] '
+      'tables_source=${state.tablesSource} '
+      'orders_source=${state.ordersSource} '
+      'tables_count=${state.uiTables.length} '
+      'orders_count=${state.uiOrders.length} '
+      'areas_count=${_garsonVisibleTableAreasSnapshot.length} '
+      'last_good_areas_count=${_garsonLastKnownGoodTableAreasSnapshot.length} '
+      'pending_tables_count=${_garsonPendingIncomingTables.length} '
+      'pending_orders_count=${_garsonPendingIncomingOrders.length} '
+      'last_applied_source=${_garsonLastAppliedSource.isEmpty ? '-' : _garsonLastAppliedSource} '
+      'will_show_empty=$willShowEmpty '
+      'reason=$source',
+    );
+  }
+
+  void _kickGarsonInitialBootstrapRetryIfNeeded({required String source}) {
+    if (_garsonHasEverLoadedTablesSuccessfully) return;
+    if (_garsonVisibleTablesForUi().isNotEmpty) return;
+    if (_isGarsonInitialLoading || _garsonBootstrapRetryQueued) return;
+    _garsonBootstrapRetryQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _garsonBootstrapRetryQueued = false;
+      if (!mounted) return;
+      unawaited(
+        _ensureGarsonInitialVisibleData(
+          source: '${source}_bootstrap_retry',
+          force: true,
+        ),
+      );
+    });
   }
 
   Widget _buildGarsonTablesLoadingPlaceholder() {
@@ -3885,12 +5289,13 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             const SizedBox(height: 12),
             FilledButton.tonalIcon(
               onPressed: () => unawaited(
-                _refreshGarsonDataManually(
+                _ensureGarsonInitialVisibleData(
                   source: 'garson_manual_refresh_button',
+                  force: true,
                 ),
               ),
               icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Yenile'),
+              label: const Text('Tekrar Dene'),
             ),
           ],
         ),
@@ -3898,7 +5303,18 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     );
   }
 
-  Widget _buildGarsonEmptyState({required String message}) {
+  Widget _buildGarsonEmptyState({
+    required String title,
+    required String message,
+  }) {
+    // Same self-heal as the "no physical tables" placeholder: if the catalog
+    // collapsed transiently (e.g. open table → enter order → back → close
+    // leaving the board state momentarily reset), auto re-fetch instead of
+    // dead-ending on this screen. Genuinely empty stores fall through after
+    // the attempt budget is spent.
+    if (_maybeScheduleGarsonEmptyStateSelfHeal()) {
+      return _buildGarsonAreasLoadingPlaceholder();
+    }
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -3919,8 +5335,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Garson verisi henüz hazır değil',
+            Text(
+              title,
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
@@ -3933,6 +5349,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
             ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: () => unawaited(
+                _ensureGarsonInitialVisibleData(
+                  source: 'garson_manual_refresh_button',
+                  force: true,
+                ),
+              ),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Yeniden Yükle'),
+            ),
           ],
         ),
       ),
@@ -3941,28 +5368,266 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   List<int> _garsonTableNumbersForGrid({required List<int> orderTableNumbers}) {
     return garsonTableNumbersForDisplay(
-      configuredTableNumbers: _sortedStoreTableNumbers(),
+      configuredTableNumbers: _garsonSortedStoreTableNumbersForUi(),
+      lastGoodTableNumbers: _garsonLastGoodTableNumbersForUi(),
       orderTableNumbers: orderTableNumbers,
       storeTablesReady: _garsonStoreTablesReady,
     );
   }
 
-  List<GarsonTableAreaGroup> _garsonTableAreaGroupsForNumbers(
-    List<int> tableNumbers, {
-    bool includeOtherArea = false,
-  }) {
-    final groups = groupGarsonTablesByArea(
-      tableNumbers: tableNumbers,
-      storeTables: _storeTables,
-      storeTableAreas: _storeTableAreas,
-      tableRowForNumber: _storeTableRowByNumber,
-    );
-    if (includeOtherArea) return groups;
-    // "Diğer" alanını garson ana gridinde gizle; alanı olmayan masalar sadece
-    // Sistem > Masa QR Yönetimi ekranında yönetilebilir.
-    return groups
-        .where((g) => g.areaKey != kGarsonOtherAreaKey)
+  GarsonRenderBundle _resolveGarsonRenderBundle(List<int> tableNumbers) {
+    // ── Blank-screen guard ───────────────────────────────────────────────────
+    // If the render pipeline produces an empty table list but we have a
+    // previously cached successful render, inject that cache as the input.
+    // This prevents "Toplam Masa: 0" during transient state resets caused by:
+    //   • Stream errors that briefly clear boardState.uiTables
+    //   • Module switches that clear _storeTables before reload completes
+    //   • Navigator.pop firing setState before the next snapshot is applied
+    final lastGoodSections = _garsonBoardState.lastGoodSections;
+    final effectiveTableNumbers =
+        tableNumbers.isEmpty &&
+            _garsonBoardState.hasEverLoadedTablesSuccessfully &&
+            (lastGoodSections?.sections.isNotEmpty ?? false)
+        ? lastGoodSections!.sections
+              .expand((s) => s.tableNumbers)
+              .toSet()
+              .toList(growable: false)
+        : tableNumbers;
+    if (tableNumbers.isEmpty && effectiveTableNumbers.isNotEmpty) {
+      debugPrint(
+        '[GARSON_BLANK_GUARD] tableNumbers empty but lastGoodSections has data '
+        '— injecting lastGood count=${effectiveTableNumbers.length}',
+      );
+    }
+
+    final configuredCount = _garsonSortedStoreTableNumbersForUi().length;
+    final activeOrdersForSections = _garsonOrdersSnapshotForUi()
+        .where((o) => !_isGarsonClosedStatus(o['status']?.toString()))
+        .where(_shouldKeepGarsonOrderVisibleAfterRecentClose)
         .toList(growable: false);
+    final willUseConfigured = configuredCount > 0;
+    logGarsonTableSourceDecision(
+      source: 'resolve_render_bundle',
+      configuredTablesCount: configuredCount,
+      lastGoodTablesCount: _garsonBoardState.lastGoodTables.length,
+      activeOrdersCount: activeOrdersForSections.length,
+      tableNumbersCount: effectiveTableNumbers.length,
+      willUseConfiguredTables: willUseConfigured,
+      reason: willUseConfigured
+          ? 'configured_tables_available'
+          : (effectiveTableNumbers.isNotEmpty
+                ? 'order_derived_fallback'
+                : 'no_source'),
+    );
+    if (activeOrdersForSections.isEmpty && configuredCount > 0) {
+      logGarsonAllOrdersClosedKeepTables(
+        ordersCount: 0,
+        tablesCount: configuredCount,
+        sectionsCount: _garsonBoardState.lastGoodSections?.sections.length ?? 0,
+        willRenderEmptyTables: true,
+      );
+    }
+    final renderTables = _garsonVisibleTablesForRender();
+    final renderAreas = _garsonVisibleAreasForRender();
+    final currentSections = resolveGarsonAreaSections(
+      areas: renderAreas,
+      tables: renderTables,
+      activeOrders: activeOrdersForSections,
+      tableNumbers: effectiveTableNumbers.toSet(),
+    );
+    logGarsonGroupingRenderSource(
+      result: currentSections,
+      areasCount: renderAreas.length,
+      tablesCount: renderTables.length,
+    );
+    final bundle = resolveGarsonRenderBundle(
+      currentSections: currentSections,
+      lastGoodSections: _garsonBoardState.lastGoodSections,
+      fallbackAreas: renderAreas,
+      fallbackTables: renderTables,
+      fallbackOrders: _garsonBoardState.uiOrders,
+      tableNumbers: effectiveTableNumbers.toSet(),
+      areaFilterKey: _garsonAreaFilterKey,
+      uiTablesCount: renderTables.length,
+      hasEverRenderedBoard: _garsonBoardState.hasEverRenderedBoardSuccessfully,
+      initialBootstrapFinished: _garsonInitialBootstrapFinished,
+      isRefreshing: _garsonManualRefreshInProgress,
+      initialLoading: _isGarsonInitialLoading,
+      storeTablesReady: _garsonStoreTablesReady,
+    );
+    logGarsonSectionsRenderDecision(
+      decision: bundle.decision,
+      currentSectionsCount: currentSections.sections.length,
+      lastGoodSectionsCount:
+          _garsonBoardState.lastGoodSections?.sections.length ?? 0,
+      tablesCount: renderTables.length,
+      areasCount: renderAreas.length,
+      ordersCount: _garsonOrdersSnapshotForUi().length,
+      hasEverRenderedBoard: _garsonBoardState.hasEverRenderedBoardSuccessfully,
+    );
+    return bundle;
+  }
+
+  void _cacheGarsonLastGoodSectionsForNumbers(List<int> tableNumbers) {
+    final sections = resolveGarsonAreaSections(
+      areas: _garsonBoardState.uiAreas,
+      tables: _garsonBoardState.uiTables,
+      activeOrders: _garsonBoardState.uiOrders,
+      tableNumbers: tableNumbers.toSet(),
+    );
+    final next = cacheGarsonLastGoodSections(
+      current: _garsonBoardState,
+      sectionsResult: sections,
+    );
+    if (next != _garsonBoardState) {
+      _setGarsonBoardState(next);
+    }
+  }
+
+  Widget _buildGarsonAreasLoadingPlaceholder() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 24, 12, 24),
+      child: _mobileSurfaceCard(
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Alanlar yükleniyor...',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// White-screen guard placeholder.
+  ///
+  /// Shown when every catalog source returned 0 rows:
+  ///   • `boardState.tables` empty
+  ///   • `_storeTables` empty
+  ///   • `boardState.lastGoodTables` / `lastGoodSections` empty
+  ///
+  /// Replaces the previous `SizedBox.shrink()` which presented as a fully
+  /// blank screen (Toplam Masa: 0 + no widget below).  The user is given an
+  /// actionable next step instead of a silent failure.
+  /// Self-heal trigger for the empty-table placeholder.
+  ///
+  /// The garson board carries multiple last-good layers (board.tables,
+  /// board.lastGoodTables, board.lastGoodSections, `_storeTables`).  In rare
+  /// races — e.g. a close that pops the table route while a transient empty
+  /// `store_tables` snapshot lands AND the layers are momentarily all empty —
+  /// every layer can collapse at once, surfacing "Henüz tanımlı masa yok"
+  /// even though the store genuinely has tables.  Rather than dead-ending on
+  /// that screen and forcing the user to hit "Yeniden Yükle", we auto re-fetch
+  /// the catalog from the server.
+  ///
+  /// Returns `true` while a recovery is in progress (caller should show a
+  /// loading placeholder instead of the dead-end "no tables" screen).
+  ///
+  /// Strategy: rather than trusting any in-memory "we had tables before" flag
+  /// (those reset if the State is recreated during the close→pop navigation,
+  /// which is exactly the failure we keep hitting), we simply attempt a forced
+  /// catalog re-fetch up to [_garsonEmptyStateSelfHealMax] times.  A transient
+  /// collapse recovers on the first attempt; a store that is genuinely empty
+  /// exhausts the budget and then shows the real placeholder.  The attempt
+  /// budget resets the instant a non-empty catalog is observed
+  /// (see [_recordGarsonCatalogSeen]), and a 3s throttle guarantees we can
+  /// never spin into a tight loop.
+  bool _maybeScheduleGarsonEmptyStateSelfHeal() {
+    final action = decideGarsonEmptyStateSelfHeal(
+      isGarsonVisible: _isGarsonVisible,
+      isTableRouteOpen: _isGarsonTableRouteOpen,
+      isLoading: _isGarsonInitialLoading || _isLoadingStoreTables,
+      attempts: _garsonEmptyStateSelfHealAttempts,
+      maxAttempts: _garsonEmptyStateSelfHealMax,
+      lastHealAt: _garsonEmptyStateSelfHealAt,
+      now: DateTime.now(),
+    );
+    switch (action) {
+      case GarsonEmptyStateSelfHealAction.showEmpty:
+        return false;
+      case GarsonEmptyStateSelfHealAction.showLoading:
+        return true;
+      case GarsonEmptyStateSelfHealAction.scheduleReload:
+        _garsonEmptyStateSelfHealAt = DateTime.now();
+        _garsonEmptyStateSelfHealAttempts++;
+        debugPrint(
+          '[GARSON_EMPTY_STATE_SELF_HEAL] '
+          'attempt=$_garsonEmptyStateSelfHealAttempts/$_garsonEmptyStateSelfHealMax '
+          'max_catalog_seen=$_garsonMaxCatalogTablesSeen '
+          'store_tables=${_storeTables.length} '
+          'board_tables=${_garsonBoardState.tables.length} '
+          'last_good_tables=${_garsonBoardState.lastGoodTables.length} '
+          'reason=catalog_collapsed_auto_refetch',
+        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(
+            _ensureGarsonInitialVisibleData(
+              source: 'garson_empty_state_self_heal',
+              force: true,
+            ),
+          );
+        });
+        return true;
+    }
+  }
+
+  Widget _buildGarsonNoPhysicalTablesPlaceholder() {
+    final isRecovering = _maybeScheduleGarsonEmptyStateSelfHeal();
+    if (isRecovering) {
+      return _buildGarsonAreasLoadingPlaceholder();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 24, 12, 24),
+      child: _mobileSurfaceCard(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.table_restaurant_outlined,
+                size: 48,
+                color: Color(0xFF94A3B8),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Henüz tanımlı masa yok',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Mağaza Profili → Masa Yönetimi sekmesinden alan ve masa ekleyebilirsiniz.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.5,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildGarsonAreaSectionHeader({
@@ -4006,29 +5671,89 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   Widget _buildGarsonGroupedTableGrids({
-    required List<GarsonTableAreaGroup> groups,
-    required Set<int> occupiedTableNumbers,
+    required GarsonRenderBundle renderBundle,
     required Widget Function(int tableNumber) cardBuilder,
     required int Function(double maxWidth) columnsResolver,
     required double Function(double maxWidth, int columns) aspectRatioResolver,
     EdgeInsetsGeometry sectionPadding = const EdgeInsets.fromLTRB(12, 0, 12, 0),
     double sectionSpacing = 18,
   }) {
-    if (groups.isEmpty) {
-      return const SizedBox.shrink();
+    if (renderBundle.willShowLoading && !renderBundle.willShowGrid) {
+      return _buildGarsonAreasLoadingPlaceholder();
+    }
+    final sections = renderBundle.renderSections;
+    if (sections.isEmpty) {
+      if (renderBundle.totalTableCount > 0 ||
+          renderBundle.occupiedTableCount > 0 ||
+          (_garsonBoardState.lastGoodSections?.sections.isNotEmpty ?? false)) {
+        logGarsonBlankBodyGuardTriggered(
+          reason: 'grid_builder_sections_empty_with_counts',
+          totalChipCount: renderBundle.totalTableCount,
+          occupiedChipCount: renderBundle.occupiedTableCount,
+          lastGoodSectionsCount:
+              _garsonBoardState.lastGoodSections?.sections.length ?? 0,
+        );
+        final fallbackSections = filterGarsonSectionsByArea(
+          sections:
+              _garsonBoardState.lastGoodSections?.sections ??
+              const <GarsonAreaSection>[],
+          areaFilterKey: _garsonAreaFilterKey,
+        );
+        if (fallbackSections.isNotEmpty) {
+          return _buildGarsonGroupedTableGrids(
+            renderBundle: GarsonRenderBundle(
+              decision: renderBundle.decision,
+              renderSections: fallbackSections,
+              sectionsResult: GarsonAreaSectionsResult(
+                sections: fallbackSections,
+                mode: GarsonAreaGroupingMode.areaBased,
+                legacyMasaGroupDetected: false,
+              ),
+              totalTableCount: fallbackSections.fold<int>(
+                0,
+                (sum, section) => sum + section.totalCount,
+              ),
+              occupiedTableCount: fallbackSections.fold<int>(
+                0,
+                (sum, section) => sum + section.occupiedCount,
+              ),
+              willShowGrid: true,
+              willShowLoading: false,
+              willShowEmpty: false,
+              reason: 'blank_body_guard_fallback',
+            ),
+            cardBuilder: cardBuilder,
+            columnsResolver: columnsResolver,
+            aspectRatioResolver: aspectRatioResolver,
+            sectionPadding: sectionPadding,
+            sectionSpacing: sectionSpacing,
+          );
+        }
+      }
+      // BUG-FIX (White Screen):
+      // When sections are empty AND no fallback rescued us, show an
+      // actionable empty state instead of a blank `SizedBox.shrink()` so
+      // the screen never becomes a true white-screen.  This is the LAST
+      // line of defense — by the time we reach it:
+      //   • renderBundle.renderSections is empty
+      //   • renderBundle.totalTableCount == 0
+      //   • boardState.lastGoodSections is empty/null
+      //   • _storeTables for this seller_id is genuinely empty OR the
+      //     identity-mismatch beacon ([GARSON_IDENTITY_MISMATCH]) has
+      //     fired in the logs.
+      // The user should see a hint, never a blank widget.
+      return _buildGarsonNoPhysicalTablesPlaceholder();
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < groups.length; i++) ...[
+        for (var i = 0; i < sections.length; i++) ...[
           Padding(
             padding: sectionPadding,
             child: _buildGarsonAreaSectionHeader(
-              areaName: groups[i].areaName,
-              totalCount: groups[i].tableNumbers.length,
-              occupiedCount: groups[i].tableNumbers
-                  .where(occupiedTableNumbers.contains)
-                  .length,
+              areaName: sections[i].areaName,
+              totalCount: sections[i].totalCount,
+              occupiedCount: sections[i].occupiedCount,
             ),
           ),
           const SizedBox(height: 10),
@@ -4041,7 +5766,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
                   constraints.maxWidth,
                   columns,
                 );
-                final numbers = groups[i].tableNumbers;
+                final numbers = sections[i].tableNumbers;
                 return GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -4059,7 +5784,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
               },
             ),
           ),
-          if (i < groups.length - 1) SizedBox(height: sectionSpacing),
+          if (i < sections.length - 1) SizedBox(height: sectionSpacing),
         ],
         SizedBox(height: sectionSpacing),
       ],
@@ -5098,6 +6823,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       source: source,
       hasPublishedData: _productsSignature != null,
     )) {
+      _logGarsonAutoRefreshBlocked(
+        source: source,
+        incomingTablesCount: 0,
+        incomingOrdersCount: 0,
+        visibleTablesCount: _garsonVisibleTablesForUi().length,
+        visibleOrdersCount: _garsonVisibleOrdersSnapshot.length,
+      );
       debugPrint(
         '[GarsonAutoRefresh][blocked] '
         'source=$source '
@@ -5881,9 +7613,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           ),
         ),
       );
-      // TODO(manuel-test): Yayın sonrası şunları kontrol et:
-      //   1. Seller ürün listesinde menü "Aktif" olarak görünüyor mu?
-      //   2. Garson ekranında (business_detail_page) menü sipariş listesinde çıkıyor mu?
+      // Manual check note:
+      // 1. Seller ürün listesinde menü "Aktif" olarak görünüyor mu?
+      // 2. Garson ekranında (business_detail_page) menü sipariş listesinde çıkıyor mu?
       _refreshProducts();
     } catch (error) {
       if (!mounted) return;
@@ -8818,8 +10550,30 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       'total=${_garsonOrdersTotal(<Map<String, dynamic>>[enrichedOrder])} '
       'submit_ok=true',
     );
+    final submitRestaurantId =
+        enrichedOrder['restaurant_id'] ??
+        enrichedOrder['seller_id'] ??
+        _resolveGarsonSellerId();
+    debugPrint(
+      '[GARSON_ORDER_SUBMIT_DB_RESULT] '
+      'order_id=${enrichedOrder['id'] ?? '-'} '
+      'restaurant_id=$submitRestaurantId '
+      'store_id=$submitRestaurantId '
+      'table_id=${enrichedOrder['table_id'] ?? enrichedOrder['store_table_id'] ?? '-'} '
+      'store_table_id=${enrichedOrder['store_table_id'] ?? enrichedOrder['table_id'] ?? '-'} '
+      'table_number=${enrichedOrder['table_number'] ?? tableNumber} '
+      'display_table_label=${enrichedOrder['display_table_label'] ?? enrichedOrder['table_display_name'] ?? enrichedOrder['table_name'] ?? '-'} '
+      'area_name=${enrichedOrder['area_name'] ?? enrichedOrder['table_area_name'] ?? '-'} '
+      'area_table_number=${enrichedOrder['area_table_number'] ?? '-'} '
+      'status=${resolveGarsonOrderStatusField(enrichedOrder)} '
+      'items_count=${garsonExtractActiveOrderItems(enrichedOrder).length} '
+      'total=${enrichedOrder['total'] ?? enrichedOrder['grand_total'] ?? _garsonOrdersTotal(<Map<String, dynamic>>[enrichedOrder])} '
+      'created_at=${enrichedOrder['created_at'] ?? '-'} '
+      'returned_payload_keys=${enrichedOrder.keys.map((key) => key.toString()).join(',')}',
+    );
     setState(() {
       _invalidateSellerTableOrdersFallbackFuture();
+      _clearGarsonClosedTableMarker(tableNumber, source: 'garson_order_submit');
       _garsonManualTableOrders = _mergeGarsonSubmittedOrderIntoParentState(
         submittedOrder: enrichedOrder,
       );
@@ -8835,7 +10589,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         items,
       );
     });
-    _publishGarsonVisibleOrders(_garsonManualTableOrders);
+    _publishGarsonVisibleOrders(
+      _garsonManualTableOrders,
+      source: 'garson_order_submit',
+      reason: 'user_submit',
+    );
     unawaited(_refreshGarsonGridAfterOrderSubmit(tableNumber: tableNumber));
   }
 
@@ -8855,9 +10613,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       ...submittedOrder,
       ...tableFields,
       'items': _cloneGarsonItems(items),
-      if (tableId != null) 'table_id': tableId,
-      if (tableId != null) 'store_table_id': tableId,
-      if (sellerId != null) 'seller_id': sellerId,
+      ...?switch (tableId) {
+        final value? => <String, dynamic>{
+          'table_id': value,
+          'store_table_id': value,
+        },
+        null => null,
+      },
+      ...?switch (sellerId) {
+        final value? => <String, dynamic>{'seller_id': value},
+        null => null,
+      },
     };
   }
 
@@ -8882,48 +10648,58 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       showError: false,
     );
     if (!mounted) return;
+    // Always re-publish visible snapshot after submit so the grid has
+    // up-to-date data regardless of whether DB changed the signature.
+    _publishGarsonVisibleSnapshotFromCurrentState(
+      source: 'garson_order_submit_post_refresh',
+    );
     final currentOrders = _resolveGarsonTableOrdersForUi(
       _garsonOrdersSnapshotForUi(),
     );
-    final matchedOrder = currentOrders
-        .where((order) => _garsonTableNumberFromOrder(order) == tableNumber)
-        .cast<Map<String, dynamic>?>()
-        .firstWhere(
-          (order) =>
-              order != null &&
-              !_isGarsonCompletedStatus(order['status']?.toString()),
-          orElse: () => currentOrders
-              .where(
-                (order) => _garsonTableNumberFromOrder(order) == tableNumber,
-              )
-              .cast<Map<String, dynamic>?>()
-              .firstWhere((_) => true, orElse: () => null),
-        );
-    final tableRow = _storeTableRowByNumber(tableNumber);
+    final tableRow =
+        _storeTableRowByNumber(tableNumber) ??
+        <String, dynamic>{'table_number': tableNumber};
+    final binding = resolveActiveOrderBindingForTable(
+      table: tableRow,
+      activeOrders: currentOrders,
+      optimisticOrders: _garsonRecentOptimisticOrders(tableNumber: tableNumber),
+    );
+    final matchedOrder = binding.order;
     final cardStatus = _mobileGarsonStatusLabel(
       matchedOrder?['status']?.toString(),
       hasOrder: matchedOrder != null,
     );
+    final hasOptimisticForTable =
+        _mobileGarsonOptimisticSentAtByTable[tableNumber] != null;
     debugPrint(
       '[GARSON_TABLE_REFRESH_AFTER_SUBMIT] '
-      'table_count=${_storeTables.length} '
+      'table_count=${_garsonVisibleTablesForUi().length} '
       'active_orders_count=${currentOrders.where((order) => !_isGarsonCompletedStatus(order['status']?.toString())).length} '
-      'matched_table_id=${tableRow?['id'] ?? matchedOrder?['table_id'] ?? matchedOrder?['store_table_id'] ?? '-'} '
+      'optimistic_orders_count=${_mobileGarsonOptimisticSentAtByTable.length} '
+      'matched_table_id=${tableRow['id'] ?? matchedOrder?['table_id'] ?? matchedOrder?['store_table_id'] ?? '-'} '
+      'matched_by=${binding.matchedBy} '
       'matched_table_number=$tableNumber '
-      'matched_display_label=${tableRow == null ? '-' : _tableDisplayLabelFromRow(tableRow)} '
+      'matched_display_label=${_tableDisplayLabelFromRow(tableRow)} '
       'matched_order_id=${matchedOrder?['id'] ?? '-'} '
       'card_status=$cardStatus '
-      'refreshed=$refreshed',
+      'refreshed=$refreshed '
+      'has_optimistic=$hasOptimisticForTable',
     );
-    if (!refreshed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Sipariş kaydedildi ama masa durumu yenilenemedi. Yenile butonuna basın.',
+    // refreshed=false now means DB returned the same signature as what was
+    // already merged optimistically — this IS success (Fix 3 ensures that
+    // garson_order_submit same-signature returns true). We only show the
+    // warning if the order is truly absent from both DB state and optimistic.
+    if (!refreshed && matchedOrder == null && !hasOptimisticForTable) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Sipariş kaydedildi ama masa durumu yenilenemedi. Yenile butonuna basın.',
+            ),
+            duration: Duration(seconds: 5),
           ),
-          duration: Duration(seconds: 5),
-        ),
-      );
+        );
+      }
     }
   }
 
@@ -8936,545 +10712,621 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       'pendingChanges=${_garsonHasPendingRemoteChanges.value} '
       'refreshGeneration=$_garsonManualRefreshGeneration',
     );
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 8),
-      physics: const BouncingScrollPhysics(),
-      children: [
-        _buildMobileModuleHero(
-          title: 'Garson • Masa Siparişleri',
-          subtitle: 'Masa bazlı siparişleri canlı takip et',
-          icon: Icons.room_service_rounded,
-          primary: const Color(0xFF9A3412),
-          secondary: const Color(0xFFF97316),
+    return RefreshIndicator.adaptive(
+      onRefresh: sellerId.isEmpty
+          ? () async {}
+          : () => _refreshGarsonDataManually(source: 'mobile_pull_to_refresh'),
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 8),
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
         ),
-        const SizedBox(height: 10),
-        if (kIsWeb) ...[
-          _buildPrinterServiceCompactBar(uiBranch: 'mobile_garson_panel'),
-          const SizedBox(height: 8),
-        ],
-        if (sellerId.isEmpty)
-          _mobileSurfaceCard(
-            child: const Center(child: Text('Satıcı oturumu bulunamadı.')),
-          )
-        else
-          StreamBuilder<List<Map<String, dynamic>>>(
-            initialData: _garsonOrdersSnapshotForUi(),
-            stream: _garsonVisibleOrdersController.stream,
-            builder: (ctx, snapshot) {
-              if (snapshot.hasError) {
-                _handleGarsonRealtimeError(snapshot.error!, sellerId: sellerId);
-                return FutureBuilder<List<Map<String, dynamic>>>(
-                  future: _getSellerTableOrdersFallbackFuture(sellerId),
-                  builder: (context, fallbackSnapshot) {
-                    final allOrders = _resolveGarsonTableOrdersForUi(
-                      fallbackSnapshot.data,
-                    );
-                    if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (fallbackSnapshot.hasError &&
-                        allOrders.isEmpty &&
-                        _storeTables.isEmpty) {
-                      return _mobileSurfaceCard(
-                        child: Text('Hata: ${fallbackSnapshot.error}'),
+        children: [
+          _buildMobileModuleHero(
+            title: 'Garson • Masa Siparişleri',
+            subtitle: 'Masa bazlı siparişleri canlı takip et',
+            icon: Icons.room_service_rounded,
+            primary: const Color(0xFF9A3412),
+            secondary: const Color(0xFFF97316),
+          ),
+          const SizedBox(height: 10),
+          if (kIsWeb) ...[
+            _buildPrinterServiceCompactBar(uiBranch: 'mobile_garson_panel'),
+            const SizedBox(height: 8),
+          ],
+          if (sellerId.isEmpty)
+            _mobileSurfaceCard(
+              child: const Center(child: Text('Satıcı oturumu bulunamadı.')),
+            )
+          else
+            StreamBuilder<List<Map<String, dynamic>>>(
+              initialData: _garsonOrdersSnapshotForUi(),
+              stream: _garsonVisibleOrdersController.stream,
+              builder: (ctx, snapshot) {
+                if (snapshot.hasError) {
+                  _handleGarsonRealtimeError(
+                    snapshot.error!,
+                    sellerId: sellerId,
+                  );
+                  return FutureBuilder<List<Map<String, dynamic>>>(
+                    future: _getSellerTableOrdersFallbackFuture(sellerId),
+                    builder: (context, fallbackSnapshot) {
+                      final allOrders = _resolveGarsonTableOrdersForUi(null);
+                      final uiTables = _garsonVisibleTablesForUi();
+                      _logGarsonBoardRenderSource(
+                        source: 'mobile_garson_fallback',
                       );
-                    }
-                    final orders = allOrders;
-                    final now = DateTime.now();
+                      if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (fallbackSnapshot.hasError &&
+                          allOrders.isEmpty &&
+                          uiTables.isEmpty) {
+                        return _mobileSurfaceCard(
+                          child: Text('Hata: ${fallbackSnapshot.error}'),
+                        );
+                      }
+                      final orders = allOrders;
+                      final now = DateTime.now();
 
-                    if (_garsonInitialLoadError != null &&
-                        orders.isEmpty &&
-                        _storeTables.isEmpty &&
-                        !_isGarsonInitialLoading) {
-                      return _buildGarsonInitialLoadErrorState();
-                    }
+                      if (_garsonInitialLoadError != null &&
+                          orders.isEmpty &&
+                          uiTables.isEmpty &&
+                          !_isGarsonInitialLoading) {
+                        return _buildGarsonInitialLoadErrorState();
+                      }
 
-                    if (orders.isEmpty &&
-                        _storeTables.isEmpty &&
-                        !_isGarsonInitialLoading) {
-                      return _buildGarsonEmptyState(
-                        message:
-                            'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
-                      );
-                    }
+                      if (orders.isEmpty &&
+                          uiTables.isEmpty &&
+                          !_isGarsonInitialLoading &&
+                          _shouldShowGarsonEmptyState(
+                            orders: orders,
+                            source: 'mobile_garson_fallback',
+                          )) {
+                        return _buildGarsonEmptyState(
+                          title: 'Henüz masa oluşturulmamış',
+                          message:
+                              'Sistem bölümünden masa ekleyin ya da tekrar deneyin.',
+                        );
+                      }
 
-                    final ordersByTable = <int, List<Map<String, dynamic>>>{};
-                    for (final order in orders) {
-                      final tableNo = _garsonTableNumberFromOrder(order);
-                      if (tableNo <= 0) continue;
-                      ordersByTable
-                          .putIfAbsent(tableNo, () => <Map<String, dynamic>>[])
-                          .add(order);
-                    }
-                    for (final entry in ordersByTable.entries) {
-                      entry.value.sort(
-                        (a, b) =>
-                            _garsonOrderCreatedAt(
-                              b['created_at']?.toString(),
-                            ).compareTo(
+                      final ordersByTable = <int, List<Map<String, dynamic>>>{};
+                      for (final order in orders) {
+                        final tableNo = _garsonTableNumberFromOrder(order);
+                        if (tableNo <= 0) continue;
+                        ordersByTable
+                            .putIfAbsent(
+                              tableNo,
+                              () => <Map<String, dynamic>>[],
+                            )
+                            .add(order);
+                      }
+                      for (final entry in ordersByTable.entries) {
+                        entry.value.sort(
+                          (a, b) =>
                               _garsonOrderCreatedAt(
-                                a['created_at']?.toString(),
+                                b['created_at']?.toString(),
+                              ).compareTo(
+                                _garsonOrderCreatedAt(
+                                  a['created_at']?.toString(),
+                                ),
                               ),
-                            ),
-                      );
-                    }
-                    final selectedOrderByTable = <int, Map<String, dynamic>>{};
-                    for (final entry in ordersByTable.entries) {
-                      final preferred = entry.value.firstWhere(
-                        (order) => !_isGarsonCompletedStatus(
-                          order['status']?.toString(),
-                        ),
-                        orElse: () => entry.value.first,
-                      );
-                      selectedOrderByTable[entry.key] = preferred;
-                    }
-                    
-                    // Include optimistic/draft items in selected orders map
-                    final currentTime = DateTime.now();
-                    for (final tableNumber in _mobileGarsonOptimisticSentAtByTable.keys) {
-                      final optimisticAt = _mobileGarsonOptimisticSentAtByTable[tableNumber];
-                      if (optimisticAt != null &&
-                          currentTime.difference(optimisticAt) <= const Duration(seconds: 45)) {
-                        final optimisticItems = _mobileGarsonOptimisticItemsByTable[tableNumber];
-                        if (optimisticItems != null && optimisticItems.isNotEmpty && !selectedOrderByTable.containsKey(tableNumber)) {
-                          selectedOrderByTable[tableNumber] = <String, dynamic>{
-                            'status': 'sent',
-                            'created_at': optimisticAt.toIso8601String(),
-                            'items': optimisticItems,
-                            'table_number': tableNumber,
-                            '_is_optimistic': true,
-                          };
+                        );
+                      }
+                      final selectedOrderByTable =
+                          <int, Map<String, dynamic>>{};
+                      for (final entry in ordersByTable.entries) {
+                        final preferred = entry.value.firstWhere(
+                          (order) => !_isGarsonCompletedStatus(
+                            order['status']?.toString(),
+                          ),
+                          orElse: () => entry.value.first,
+                        );
+                        selectedOrderByTable[entry.key] = preferred;
+                      }
+
+                      // Include optimistic/draft items in selected orders map
+                      final currentTime = DateTime.now();
+                      for (final tableNumber
+                          in _mobileGarsonOptimisticSentAtByTable.keys) {
+                        final optimisticAt =
+                            _mobileGarsonOptimisticSentAtByTable[tableNumber];
+                        if (optimisticAt != null &&
+                            currentTime.difference(optimisticAt) <=
+                                const Duration(seconds: 45)) {
+                          final optimisticItems =
+                              _mobileGarsonOptimisticItemsByTable[tableNumber];
+                          if (optimisticItems != null &&
+                              optimisticItems.isNotEmpty &&
+                              !selectedOrderByTable.containsKey(tableNumber)) {
+                            selectedOrderByTable[tableNumber] =
+                                <String, dynamic>{
+                                  'status': 'sent',
+                                  'created_at': optimisticAt.toIso8601String(),
+                                  'items': optimisticItems,
+                                  'table_number': tableNumber,
+                                  '_is_optimistic': true,
+                                };
+                          }
                         }
                       }
-                    }
 
-                    final draftTableNumbers = _mobileGarsonDraftItemsByTable
-                        .entries
-                        .where((entry) => entry.value.isNotEmpty)
-                        .map((entry) => entry.key)
-                        .toSet();
-                    final optimisticTableNumbers =
-                        _mobileGarsonOptimisticSentAtByTable.entries
-                            .where((entry) {
-                              final at = entry.value;
-                              return now.difference(at) <=
-                                  const Duration(seconds: 45);
-                            })
-                            .map((entry) => entry.key)
-                            .toSet();
+                      final draftTableNumbers = _mobileGarsonDraftItemsByTable
+                          .entries
+                          .where((entry) => entry.value.isNotEmpty)
+                          .map((entry) => entry.key)
+                          .toSet();
+                      final optimisticTableNumbers =
+                          _mobileGarsonOptimisticSentAtByTable.entries
+                              .where((entry) {
+                                final at = entry.value;
+                                return now.difference(at) <=
+                                    const Duration(seconds: 45);
+                              })
+                              .map((entry) => entry.key)
+                              .toSet();
 
-                    final tableNumbers = _garsonTableNumbersForGrid(
-                      orderTableNumbers: ordersByTable.keys.toList(
-                        growable: false,
-                      ),
-                    );
-                    if (tableNumbers.isEmpty) {
-                      return _mobileSurfaceCard(
-                        child: Text(
-                          'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
-                          style: TextStyle(color: Colors.grey.shade600),
+                      final tableNumbers = _garsonTableNumbersForGrid(
+                        orderTableNumbers: ordersByTable.keys.toList(
+                          growable: false,
                         ),
                       );
-                    }
-                    final filteredTableNumbers = tableNumbers
-                        .where(_matchesGarsonAreaFilter)
-                        .toList(growable: false);
-                    final activeTableNumbers = <int>{};
-                    for (final entry in ordersByTable.entries) {
-                      final hasActiveOrder = entry.value.any(
-                        (order) => !_isGarsonCompletedStatus(
-                          order['status']?.toString(),
-                        ),
+                      final renderBundle = _resolveGarsonRenderBundle(
+                        tableNumbers,
                       );
-                      if (hasActiveOrder) activeTableNumbers.add(entry.key);
-                    }
-                    activeTableNumbers.addAll(draftTableNumbers);
-                    activeTableNumbers.addAll(optimisticTableNumbers);
-                    final activeTableCount = activeTableNumbers.length;
-                    final waitingCount = orders
-                        .where(
-                          (o) =>
-                              _isGarsonWaitingStatus(o['status']?.toString()),
-                        )
-                        .map(_garsonTableNumberFromOrder)
-                        .where((tableNo) => tableNo > 0)
-                        .toSet()
-                        .length;
-                    final preparingCount = orders
-                        .where(
-                          (o) => (o['status']?.toString() ?? '') == 'preparing',
-                        )
-                        .map(_garsonTableNumberFromOrder)
-                        .where((tableNo) => tableNo > 0)
-                        .toSet()
-                        .length;
-                    final mutfaktaCount = orders
-                        .where((o) {
-                          final s = (o['status']?.toString() ?? '')
-                              .toLowerCase();
-                          return s == 'sent' || s == 'done';
-                        })
-                        .map(_garsonTableNumberFromOrder)
-                        .where((n) => n > 0)
-                        .toSet()
-                        .length;
+                      if (renderBundle.willShowEmpty) {
+                        return _mobileSurfaceCard(
+                          child: Text(
+                            'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
+                            style: TextStyle(color: Colors.grey.shade600),
+                          ),
+                        );
+                      }
+                      if (renderBundle.willShowLoading &&
+                          !renderBundle.willShowGrid) {
+                        return _buildGarsonAreasLoadingPlaceholder();
+                      }
+                      final activeTableNumbers = <int>{};
+                      for (final entry in ordersByTable.entries) {
+                        final hasActiveOrder = entry.value.any(
+                          (order) => !_isGarsonCompletedStatus(
+                            order['status']?.toString(),
+                          ),
+                        );
+                        if (hasActiveOrder) activeTableNumbers.add(entry.key);
+                      }
+                      activeTableNumbers.addAll(draftTableNumbers);
+                      activeTableNumbers.addAll(optimisticTableNumbers);
+                      final activeTableCount = activeTableNumbers.length;
+                      final waitingCount = orders
+                          .where(
+                            (o) =>
+                                _isGarsonWaitingStatus(o['status']?.toString()),
+                          )
+                          .map(_garsonTableNumberFromOrder)
+                          .where((tableNo) => tableNo > 0)
+                          .toSet()
+                          .length;
+                      final preparingCount = orders
+                          .where(
+                            (o) =>
+                                (o['status']?.toString() ?? '') == 'preparing',
+                          )
+                          .map(_garsonTableNumberFromOrder)
+                          .where((tableNo) => tableNo > 0)
+                          .toSet()
+                          .length;
+                      final mutfaktaCount = orders
+                          .where((o) {
+                            final s = (o['status']?.toString() ?? '')
+                                .toLowerCase();
+                            return s == 'sent' || s == 'done';
+                          })
+                          .map(_garsonTableNumberFromOrder)
+                          .where((n) => n > 0)
+                          .toSet()
+                          .length;
 
-                    return Column(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                          child: _mobileSurfaceCard(
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.map_outlined,
-                                  size: 18,
-                                  color: Color(0xFF0F172A),
-                                ),
-                                const SizedBox(width: 8),
-                                const Text(
-                                  'Alan Seç',
-                                  style: TextStyle(fontWeight: FontWeight.w800),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: DropdownButtonHideUnderline(
-                                    child: DropdownButton<String>(
-                                      isExpanded: true,
-                                      value:
-                                          _garsonAreaOptions().any(
-                                            (o) =>
-                                                o.key == _garsonAreaFilterKey,
-                                          )
-                                          ? _garsonAreaFilterKey
-                                          : 'all',
-                                      items: _garsonAreaOptions()
-                                          .map(
-                                            (o) => DropdownMenuItem<String>(
-                                              value: o.key,
-                                              child: Text(
-                                                o.label,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          )
-                                          .toList(growable: false),
-                                      onChanged: (value) {
-                                        final next = (value ?? 'all').trim();
-                                        if (next.isEmpty) return;
-                                        setState(
-                                          () => _garsonAreaFilterKey = next,
-                                        );
-                                        unawaited(
-                                          _persistGarsonAreaFilter(next),
-                                        );
-                                      },
+                      return Column(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                            child: _mobileSurfaceCard(
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.map_outlined,
+                                    size: 18,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    'Alan Seç',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
                                     ),
                                   ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: DropdownButtonHideUnderline(
+                                      child: DropdownButton<String>(
+                                        isExpanded: true,
+                                        value:
+                                            _garsonAreaOptions().any(
+                                              (o) =>
+                                                  o.key == _garsonAreaFilterKey,
+                                            )
+                                            ? _garsonAreaFilterKey
+                                            : 'all',
+                                        items: _garsonAreaOptions()
+                                            .map(
+                                              (o) => DropdownMenuItem<String>(
+                                                value: o.key,
+                                                child: Text(
+                                                  o.label,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            )
+                                            .toList(growable: false),
+                                        onChanged: (value) {
+                                          final next = (value ?? 'all').trim();
+                                          if (next.isEmpty) return;
+                                          setState(
+                                            () => _garsonAreaFilterKey = next,
+                                          );
+                                          unawaited(
+                                            _persistGarsonAreaFilter(next),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                _mobileBadge('Dolu Masa', '$activeTableCount'),
+                                _mobileBadge('Yeni', '$waitingCount'),
+                                _mobileBadge('Mutfakta', '$mutfaktaCount'),
+                                _mobileBadge('Hazırlanıyor', '$preparingCount'),
+                                _buildLocalPrintStatusBadge(
+                                  uiBranch: 'mobile_garson_fallback_summary',
                                 ),
                               ],
                             ),
                           ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              _mobileBadge('Dolu Masa', '$activeTableCount'),
-                              _mobileBadge('Yeni', '$waitingCount'),
-                              _mobileBadge('Mutfakta', '$mutfaktaCount'),
-                              _mobileBadge('Hazırlanıyor', '$preparingCount'),
-                              _buildLocalPrintStatusBadge(
-                                uiBranch: 'mobile_garson_fallback_summary',
-                              ),
-                            ],
+                          _buildGarsonGroupedTableGrids(
+                            renderBundle: renderBundle,
+                            columnsResolver: _mobileGarsonGridColumns,
+                            aspectRatioResolver: _mobileGarsonGridAspectRatio,
+                            sectionPadding: const EdgeInsets.fromLTRB(
+                              12,
+                              0,
+                              12,
+                              0,
+                            ),
+                            cardBuilder: (tableNumber) {
+                              final tableOrders =
+                                  ordersByTable[tableNumber] ??
+                                  const <Map<String, dynamic>>[];
+                              final order = selectedOrderByTable[tableNumber];
+                              // Check for optimistic items (submitted but not yet DB-confirmed)
+                              final optimisticItems =
+                                  _mobileGarsonOptimisticItemsByTable[tableNumber];
+                              final hasOptimistic =
+                                  _mobileGarsonOptimisticSentAtByTable[tableNumber] !=
+                                      null &&
+                                  now.difference(
+                                        _mobileGarsonOptimisticSentAtByTable[tableNumber]!,
+                                      ) <=
+                                      const Duration(seconds: 45);
+                              final foundIn = order != null
+                                  ? _garsonOrdersUiSource()
+                                  : (hasOptimistic &&
+                                            (optimisticItems?.isNotEmpty ??
+                                                false)
+                                        ? 'optimistic'
+                                        : 'none');
+                              return _buildMobileGarsonTableCard(
+                                tableNumber: tableNumber,
+                                order: order,
+                                orderCount: tableOrders.length,
+                                foundIn: foundIn,
+                                optimisticItems: hasOptimistic
+                                    ? optimisticItems
+                                    : null,
+                              );
+                            },
                           ),
-                        ),
-                        _buildGarsonGroupedTableGrids(
-                          groups: _garsonTableAreaGroupsForNumbers(
-                            filteredTableNumbers,
-                          ),
-                          occupiedTableNumbers: activeTableNumbers,
-                          columnsResolver: _mobileGarsonGridColumns,
-                          aspectRatioResolver: _mobileGarsonGridAspectRatio,
-                          sectionPadding: const EdgeInsets.fromLTRB(
-                            12,
-                            0,
-                            12,
-                            0,
-                          ),
-                          cardBuilder: (tableNumber) {
-                            final tableOrders =
-                                ordersByTable[tableNumber] ??
-                                const <Map<String, dynamic>>[];
-                            final order = selectedOrderByTable[tableNumber];
-                            // Check for optimistic items (submitted but not yet DB-confirmed)
-                            final optimisticItems = _mobileGarsonOptimisticItemsByTable[tableNumber];
-                            final hasOptimistic = _mobileGarsonOptimisticSentAtByTable[tableNumber] != null &&
-                                now.difference(_mobileGarsonOptimisticSentAtByTable[tableNumber]!) <=
-                                    const Duration(seconds: 45);
-                            return _buildMobileGarsonTableCard(
-                              tableNumber: tableNumber,
-                              order: order,
-                              orderCount: tableOrders.length,
-                              optimisticItems: hasOptimistic ? optimisticItems : null,
-                            );
-                          },
-                        ),
-                      ],
-                    );
-                  },
+                        ],
+                      );
+                    },
+                  );
+                }
+                final allOrders = _resolveGarsonTableOrdersForUi(null);
+                final orders = allOrders;
+                final now = DateTime.now();
+                _logGarsonBoardRenderSource(source: 'mobile_garson_stream');
+
+                if (_shouldShowGarsonInitialLoadingUi(orders)) {
+                  return _buildGarsonTablesLoadingPlaceholder();
+                }
+                final uiTables = _garsonVisibleTablesForUi();
+
+                if (_garsonInitialLoadError != null &&
+                    orders.isEmpty &&
+                    uiTables.isEmpty &&
+                    !_isGarsonInitialLoading) {
+                  return _buildGarsonInitialLoadErrorState();
+                }
+
+                if (orders.isEmpty &&
+                    uiTables.isEmpty &&
+                    !_isGarsonInitialLoading &&
+                    _shouldShowGarsonEmptyState(
+                      orders: orders,
+                      source: 'mobile_garson_stream',
+                    )) {
+                  return _buildGarsonEmptyState(
+                    title: 'Henüz masa oluşturulmamış',
+                    message:
+                        'Sistem bölümünden masa ekleyin ya da tekrar deneyin.',
+                  );
+                }
+
+                final ordersByTable = <int, List<Map<String, dynamic>>>{};
+                for (final order in orders) {
+                  final tableNo = _garsonTableNumberFromOrder(order);
+                  if (tableNo <= 0) continue;
+                  ordersByTable
+                      .putIfAbsent(tableNo, () => <Map<String, dynamic>>[])
+                      .add(order);
+                }
+                for (final entry in ordersByTable.entries) {
+                  entry.value.sort((a, b) {
+                    final left =
+                        garsonOrderActivityAt(a) ??
+                        _garsonOrderCreatedAt(a['created_at']?.toString());
+                    final right =
+                        garsonOrderActivityAt(b) ??
+                        _garsonOrderCreatedAt(b['created_at']?.toString());
+                    return right.compareTo(left);
+                  });
+                }
+                final selectedOrderByTable = <int, Map<String, dynamic>>{};
+                for (final entry in ordersByTable.entries) {
+                  final preferred = entry.value.firstWhere(
+                    (order) =>
+                        !_isGarsonCompletedStatus(order['status']?.toString()),
+                    orElse: () => entry.value.first,
+                  );
+                  selectedOrderByTable[entry.key] = preferred;
+                }
+
+                final draftTableNumbers = _mobileGarsonDraftItemsByTable.entries
+                    .where((entry) => entry.value.isNotEmpty)
+                    .map((entry) => entry.key)
+                    .toSet();
+                final optimisticTableNumbers =
+                    _mobileGarsonOptimisticSentAtByTable.entries
+                        .where((entry) {
+                          final at = entry.value;
+                          return now.difference(at) <=
+                              const Duration(seconds: 45);
+                        })
+                        .map((entry) => entry.key)
+                        .toSet();
+
+                final activeTableNumbers = <int>{};
+                for (final entry in ordersByTable.entries) {
+                  final hasActiveOrder = entry.value.any(
+                    (order) =>
+                        !_isGarsonCompletedStatus(order['status']?.toString()),
+                  );
+                  if (hasActiveOrder) activeTableNumbers.add(entry.key);
+                }
+                activeTableNumbers.addAll(draftTableNumbers);
+                activeTableNumbers.addAll(optimisticTableNumbers);
+                final waitingTableNumbers = orders
+                    .where(
+                      (o) => _isGarsonWaitingStatus(o['status']?.toString()),
+                    )
+                    .map(_garsonTableNumberFromOrder)
+                    .where((tableNo) => tableNo > 0)
+                    .toSet();
+                waitingTableNumbers.addAll(draftTableNumbers);
+                final newCount = waitingTableNumbers.length;
+                final preparingCount = orders
+                    .where(
+                      (o) => (o['status']?.toString() ?? '') == 'preparing',
+                    )
+                    .length;
+                final mutfaktaCount = orders
+                    .where((o) {
+                      final s = (o['status']?.toString() ?? '').toLowerCase();
+                      return s == 'sent' || s == 'done';
+                    })
+                    .map(_garsonTableNumberFromOrder)
+                    .where((n) => n > 0)
+                    .toSet()
+                    .length;
+
+                final tableNumbersForGrid = _garsonTableNumbersForGrid(
+                  orderTableNumbers: ordersByTable.keys.toList(growable: false),
                 );
-              }
-              final allOrders = _resolveGarsonTableOrdersForUi(snapshot.data);
-              final orders = allOrders;
-              final now = DateTime.now();
-
-              if (_shouldShowGarsonInitialLoadingUi(orders)) {
-                return _buildGarsonTablesLoadingPlaceholder();
-              }
-
-              if (_garsonInitialLoadError != null &&
-                  orders.isEmpty &&
-                  _storeTables.isEmpty &&
-                  !_isGarsonInitialLoading) {
-                return _buildGarsonInitialLoadErrorState();
-              }
-
-              if (orders.isEmpty &&
-                  _storeTables.isEmpty &&
-                  !_isGarsonInitialLoading) {
-                return _buildGarsonEmptyState(
-                  message: 'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
+                final renderBundle = _resolveGarsonRenderBundle(
+                  tableNumbersForGrid,
                 );
-              }
+                if (renderBundle.willShowEmpty) {
+                  return _mobileSurfaceCard(
+                    child: Text(
+                      'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  );
+                }
+                if (renderBundle.willShowLoading &&
+                    !renderBundle.willShowGrid) {
+                  return _buildGarsonAreasLoadingPlaceholder();
+                }
 
-              final ordersByTable = <int, List<Map<String, dynamic>>>{};
-              for (final order in orders) {
-                final tableNo = _garsonTableNumberFromOrder(order);
-                if (tableNo <= 0) continue;
-                ordersByTable
-                    .putIfAbsent(tableNo, () => <Map<String, dynamic>>[])
-                    .add(order);
-              }
-              for (final entry in ordersByTable.entries) {
-                entry.value.sort((a, b) {
-                  final left =
-                      garsonOrderActivityAt(a) ??
-                      _garsonOrderCreatedAt(a['created_at']?.toString());
-                  final right =
-                      garsonOrderActivityAt(b) ??
-                      _garsonOrderCreatedAt(b['created_at']?.toString());
-                  return right.compareTo(left);
-                });
-              }
-              final selectedOrderByTable = <int, Map<String, dynamic>>{};
-              for (final entry in ordersByTable.entries) {
-                final preferred = entry.value.firstWhere(
-                  (order) =>
-                      !_isGarsonCompletedStatus(order['status']?.toString()),
-                  orElse: () => entry.value.first,
-                );
-                selectedOrderByTable[entry.key] = preferred;
-              }
-
-              final draftTableNumbers = _mobileGarsonDraftItemsByTable.entries
-                  .where((entry) => entry.value.isNotEmpty)
-                  .map((entry) => entry.key)
-                  .toSet();
-              final optimisticTableNumbers =
-                  _mobileGarsonOptimisticSentAtByTable.entries
-                      .where((entry) {
-                        final at = entry.value;
-                        return now.difference(at) <=
-                            const Duration(seconds: 45);
-                      })
-                      .map((entry) => entry.key)
-                      .toSet();
-
-              final activeTableNumbers = <int>{};
-              for (final entry in ordersByTable.entries) {
-                final hasActiveOrder = entry.value.any(
-                  (order) =>
-                      !_isGarsonCompletedStatus(order['status']?.toString()),
-                );
-                if (hasActiveOrder) activeTableNumbers.add(entry.key);
-              }
-              activeTableNumbers.addAll(draftTableNumbers);
-              activeTableNumbers.addAll(optimisticTableNumbers);
-              final activeTableCount = activeTableNumbers.length;
-              final waitingTableNumbers = orders
-                  .where((o) => _isGarsonWaitingStatus(o['status']?.toString()))
-                  .map(_garsonTableNumberFromOrder)
-                  .where((tableNo) => tableNo > 0)
-                  .toSet();
-              waitingTableNumbers.addAll(draftTableNumbers);
-              final newCount = waitingTableNumbers.length;
-              final preparingCount = orders
-                  .where((o) => (o['status']?.toString() ?? '') == 'preparing')
-                  .length;
-              final mutfaktaCount = orders
-                  .where((o) {
-                    final s = (o['status']?.toString() ?? '').toLowerCase();
-                    return s == 'sent' || s == 'done';
-                  })
-                  .map(_garsonTableNumberFromOrder)
-                  .where((n) => n > 0)
-                  .toSet()
-                  .length;
-
-              final tableNumbersForGrid = _garsonTableNumbersForGrid(
-                orderTableNumbers: ordersByTable.keys.toList(growable: false),
-              );
-              if (tableNumbersForGrid.isEmpty) {
-                return _mobileSurfaceCard(
-                  child: Text(
-                    'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
-                    style: TextStyle(color: Colors.grey.shade600),
-                  ),
-                );
-              }
-              final filteredTableNumbersForGrid = tableNumbersForGrid
-                  .where(_matchesGarsonAreaFilter)
-                  .toList(growable: false);
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    child: _mobileSurfaceCard(
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.map_outlined,
-                            size: 18,
-                            color: Color(0xFF0F172A),
-                          ),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Alan Seç',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                isExpanded: true,
-                                value:
-                                    _garsonAreaOptions().any(
-                                      (o) => o.key == _garsonAreaFilterKey,
-                                    )
-                                    ? _garsonAreaFilterKey
-                                    : 'all',
-                                items: _garsonAreaOptions()
-                                    .map(
-                                      (o) => DropdownMenuItem<String>(
-                                        value: o.key,
-                                        child: Text(
-                                          o.label,
-                                          overflow: TextOverflow.ellipsis,
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                      child: _mobileSurfaceCard(
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.map_outlined,
+                              size: 18,
+                              color: Color(0xFF0F172A),
+                            ),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Alan Seç',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: DropdownButtonHideUnderline(
+                                child: DropdownButton<String>(
+                                  isExpanded: true,
+                                  value:
+                                      _garsonAreaOptions().any(
+                                        (o) => o.key == _garsonAreaFilterKey,
+                                      )
+                                      ? _garsonAreaFilterKey
+                                      : 'all',
+                                  items: _garsonAreaOptions()
+                                      .map(
+                                        (o) => DropdownMenuItem<String>(
+                                          value: o.key,
+                                          child: Text(
+                                            o.label,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
                                         ),
-                                      ),
-                                    )
-                                    .toList(growable: false),
-                                onChanged: (value) {
-                                  final next = (value ?? 'all').trim();
-                                  if (next.isEmpty) return;
-                                  setState(() => _garsonAreaFilterKey = next);
-                                  unawaited(_persistGarsonAreaFilter(next));
-                                },
+                                      )
+                                      .toList(growable: false),
+                                  onChanged: (value) {
+                                    final next = (value ?? 'all').trim();
+                                    if (next.isEmpty) return;
+                                    setState(() => _garsonAreaFilterKey = next);
+                                    unawaited(_persistGarsonAreaFilter(next));
+                                  },
+                                ),
                               ),
                             ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    _mobileSurfaceCard(
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _mobileBadge(
+                            'Toplam Masa',
+                            '${renderBundle.totalTableCount}',
+                          ),
+                          _mobileBadge(
+                            'Dolu Masa',
+                            '${renderBundle.occupiedTableCount}',
+                          ),
+                          _mobileBadge('Yeni Sipariş', '$newCount'),
+                          _mobileBadge('Mutfakta', '$mutfaktaCount'),
+                          _mobileBadge('Hazırlanıyor', '$preparingCount'),
+                          _buildLocalPrintStatusBadge(
+                            uiBranch: 'mobile_garson_summary',
                           ),
                         ],
                       ),
                     ),
-                  ),
-                  _mobileSurfaceCard(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _mobileBadge(
-                          'Toplam Masa',
-                          '${tableNumbersForGrid.length}',
-                        ),
-                        _mobileBadge('Dolu Masa', '$activeTableCount'),
-                        _mobileBadge('Yeni Sipariş', '$newCount'),
-                        _mobileBadge('Mutfakta', '$mutfaktaCount'),
-                        _mobileBadge('Hazırlanıyor', '$preparingCount'),
-                        _buildLocalPrintStatusBadge(
-                          uiBranch: 'mobile_garson_summary',
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _buildGarsonGroupedTableGrids(
-                    groups: _garsonTableAreaGroupsForNumbers(
-                      filteredTableNumbersForGrid,
-                    ),
-                    occupiedTableNumbers: activeTableNumbers,
-                    columnsResolver: _mobileGarsonGridColumns,
-                    aspectRatioResolver: _mobileGarsonGridAspectRatio,
-                    sectionPadding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-                    cardBuilder: (tableNumber) {
-                      final order = selectedOrderByTable[tableNumber];
-                      final orderCount =
-                          ordersByTable[tableNumber]?.length ?? 0;
-                      final draftItems =
-                          _mobileGarsonDraftItemsByTable[tableNumber] ??
-                          const <Map<String, dynamic>>[];
-                      final draftUpdatedAt =
-                          _mobileGarsonDraftUpdatedAtByTable[tableNumber];
-                      final optimisticAt =
-                          _mobileGarsonOptimisticSentAtByTable[tableNumber];
-                      final optimisticItems =
-                          _mobileGarsonOptimisticItemsByTable[tableNumber] ??
-                          const <Map<String, dynamic>>[];
-                      final hasDraft = draftItems.isNotEmpty;
-                      final hasRecentOptimistic =
-                          optimisticAt != null &&
-                          now.difference(optimisticAt) <=
-                              const Duration(seconds: 45) &&
-                          !hasDraft &&
-                          orderCount == 0;
+                    const SizedBox(height: 10),
+                    _buildGarsonGroupedTableGrids(
+                      renderBundle: renderBundle,
+                      columnsResolver: _mobileGarsonGridColumns,
+                      aspectRatioResolver: _mobileGarsonGridAspectRatio,
+                      sectionPadding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                      cardBuilder: (tableNumber) {
+                        final order = selectedOrderByTable[tableNumber];
+                        final orderCount =
+                            ordersByTable[tableNumber]?.length ?? 0;
+                        final draftItems =
+                            _mobileGarsonDraftItemsByTable[tableNumber] ??
+                            const <Map<String, dynamic>>[];
+                        final draftUpdatedAt =
+                            _mobileGarsonDraftUpdatedAtByTable[tableNumber];
+                        final optimisticAt =
+                            _mobileGarsonOptimisticSentAtByTable[tableNumber];
+                        final optimisticItems =
+                            _mobileGarsonOptimisticItemsByTable[tableNumber] ??
+                            const <Map<String, dynamic>>[];
+                        final hasDraft = draftItems.isNotEmpty;
+                        final hasRecentOptimistic =
+                            optimisticAt != null &&
+                            now.difference(optimisticAt) <=
+                                const Duration(seconds: 45) &&
+                            !hasDraft &&
+                            orderCount == 0;
 
-                      final optimisticOrder = hasRecentOptimistic
-                          ? <String, dynamic>{
-                              'status': 'sent',
-                              'created_at': optimisticAt.toIso8601String(),
-                              'items': optimisticItems,
-                            }
-                          : null;
-                      final displayOrder = hasDraft
-                          ? <String, dynamic>{
-                              'status': 'draft',
-                              'created_at': (draftUpdatedAt ?? now)
-                                  .toIso8601String(),
-                              'items': draftItems,
-                            }
-                          : (order ?? optimisticOrder);
-                      final displayOrderCount = hasDraft
-                          ? 1
-                          : (orderCount > 0
-                                ? orderCount
-                                : (hasRecentOptimistic ? 1 : 0));
-                      return _buildMobileGarsonTableCard(
-                        tableNumber: tableNumber,
-                        order: displayOrder,
-                        orderCount: displayOrderCount,
-                      );
-                    },
-                  ),
-                ],
-              );
-            },
-          ),
-      ],
+                        final optimisticOrder = hasRecentOptimistic
+                            ? <String, dynamic>{
+                                'status': 'sent',
+                                'table_number': tableNumber,
+                                'created_at': optimisticAt.toIso8601String(),
+                                'items': optimisticItems,
+                              }
+                            : null;
+                        final displayOrder = hasDraft
+                            ? <String, dynamic>{
+                                'status': 'draft',
+                                'table_number': tableNumber,
+                                'created_at': (draftUpdatedAt ?? now)
+                                    .toIso8601String(),
+                                'items': draftItems,
+                              }
+                            : (order ?? optimisticOrder);
+                        final displayOrderCount = hasDraft
+                            ? 1
+                            : (orderCount > 0
+                                  ? orderCount
+                                  : (hasRecentOptimistic ? 1 : 0));
+                        final foundIn = hasDraft
+                            ? 'manual'
+                            : (order != null
+                                  ? _garsonOrdersUiSource()
+                                  : (hasRecentOptimistic
+                                        ? 'optimistic'
+                                        : 'none'));
+                        return _buildMobileGarsonTableCard(
+                          tableNumber: tableNumber,
+                          order: displayOrder,
+                          orderCount: displayOrderCount,
+                          foundIn: foundIn,
+                          optimisticItems: hasRecentOptimistic
+                              ? optimisticItems
+                              : null,
+                        );
+                      },
+                    ),
+                  ],
+                );
+              },
+            ),
+        ],
+      ),
     );
   }
 
@@ -9486,7 +11338,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   /// subscriptions, order fetches, and adisyon prints all use the same
   /// ID as the one used when submitting orders.
   String _resolveGarsonSellerId() {
-    final fromTables = _storeTables
+    final fromTables = _garsonVisibleTablesForUi()
         .map((row) => row['seller_id']?.toString().trim() ?? '')
         .firstWhere((id) => id.isNotEmpty, orElse: () => '');
     return fromTables.isNotEmpty
@@ -9494,23 +11346,98 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         : (_authService.currentUser?.id ?? '');
   }
 
+  ({Map<String, dynamic>? table, String matchedBy})
+  _resolveGarsonStoreTableForOrder(Map<String, dynamic> order) {
+    return resolveStoreTableMatchForOrder(
+      order: order,
+      storeTables: _garsonVisibleTablesForUi(),
+    );
+  }
+
   int _garsonTableNumberFromOrder(Map<String, dynamic> order) {
-    // 1. Try to match by table_id or store_table_id (most reliable in area system)
-    final tableId = order['table_id']?.toString() ?? order['store_table_id']?.toString();
-    if (tableId != null && tableId.isNotEmpty) {
-      for (final row in _storeTables) {
-        if (row['id']?.toString() == tableId) {
-          final matched = _tableNumberFromRow(row);
-          if (matched > 0) return matched;
-        }
-      }
+    final tableMatch = _resolveGarsonStoreTableForOrder(order);
+    final matchedTable = tableMatch.table;
+    if (matchedTable != null) {
+      final matchedNumber = _tableNumberFromRow(matchedTable);
+      if (matchedNumber > 0) return matchedNumber;
     }
-    
-    // 2. Fallback to table_number on order
+
     final raw = order['table_number'];
     if (raw is int) return raw;
     if (raw is num) return raw.toInt();
     return int.tryParse(raw?.toString() ?? '') ?? 0;
+  }
+
+  List<Map<String, dynamic>> _garsonRecentOptimisticOrders({int? tableNumber}) {
+    final now = DateTime.now();
+    final orders = <Map<String, dynamic>>[];
+    for (final entry in _mobileGarsonOptimisticSentAtByTable.entries) {
+      final optimisticTableNumber = entry.key;
+      if (tableNumber != null && optimisticTableNumber != tableNumber) {
+        continue;
+      }
+      if (now.difference(entry.value) > const Duration(seconds: 45)) {
+        continue;
+      }
+      final items =
+          _mobileGarsonOptimisticItemsByTable[optimisticTableNumber] ??
+          const <Map<String, dynamic>>[];
+      if (items.isEmpty) continue;
+      final tableRow = _storeTableRowByNumber(optimisticTableNumber);
+      orders.add(<String, dynamic>{
+        ...resolvePrintableTablePayloadFields(
+          tableRow: tableRow,
+          tableNumber: optimisticTableNumber,
+        ),
+        'id':
+            'optimistic-$optimisticTableNumber-${entry.value.millisecondsSinceEpoch}',
+        'status': 'sent',
+        'table_number': optimisticTableNumber,
+        'created_at': entry.value.toIso8601String(),
+        'updated_at': entry.value.toIso8601String(),
+        'items': _cloneGarsonItems(items),
+        if (tableRow?['id'] != null) 'table_id': tableRow!['id'],
+        if (tableRow?['id'] != null) 'store_table_id': tableRow!['id'],
+        '_is_optimistic': true,
+      });
+    }
+    return orders;
+  }
+
+  bool _hasPersistedGarsonOrderId(Map<String, dynamic>? order) {
+    final id = order?['id']?.toString().trim() ?? '';
+    if (id.isEmpty) return false;
+    return !id.startsWith('optimistic-');
+  }
+
+  List<Map<String, dynamic>> _garsonOrdersForTable({
+    required int tableNumber,
+    required List<Map<String, dynamic>> orders,
+  }) {
+    final tableRow =
+        _storeTableRowByNumber(tableNumber) ??
+        <String, dynamic>{'table_number': tableNumber};
+    final matched = orders
+        .where((order) {
+          if (_isGarsonClosedStatus(order['status']?.toString())) return false;
+          final matchedBy = resolveOrderMatchKindForTable(
+            table: tableRow,
+            order: order,
+          );
+          if (matchedBy != 'none') return true;
+          return _garsonTableNumberFromOrder(order) == tableNumber;
+        })
+        .toList(growable: false);
+    matched.sort((a, b) {
+      final left =
+          garsonOrderActivityAt(a) ??
+          _garsonOrderCreatedAt(a['created_at']?.toString());
+      final right =
+          garsonOrderActivityAt(b) ??
+          _garsonOrderCreatedAt(b['created_at']?.toString());
+      return right.compareTo(left);
+    });
+    return matched;
   }
 
   DateTime _garsonOrderCreatedAt(String? raw) {
@@ -9530,12 +11457,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   /// 'sent'/'done' siparişleri garson ekranında aktif kalmaya devam eder
   /// (servis bekliyor), masa yalnızca [closeTableOrders] ile silinince boşalır.
   bool _isGarsonCompletedStatus(String? status) {
-    final normalized = (status ?? '').toLowerCase();
-    return normalized == 'closed';
+    final normalized = (status ?? '').trim().toLowerCase();
+    return normalized == 'closed' ||
+        normalized == 'paid' ||
+        normalized == 'cancelled' ||
+        normalized == 'canceled' ||
+        normalized == 'completed' ||
+        normalized == 'complete' ||
+        normalized == 'completed_payment' ||
+        normalized == 'payment_completed' ||
+        normalized == 'archived';
   }
 
   bool _isGarsonClosedStatus(String? status) {
-    return (status ?? '').toLowerCase() == 'closed';
+    return _isGarsonCompletedStatus(status);
   }
 
   int _mobileGarsonGridColumns(double maxWidth) {
@@ -9884,7 +11819,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           .resolveKitchenPrinterForGarsonFast(sellerId);
       if (kitchenPrinter != null) {
         _garsonCachedKitchenPrinter = kitchenPrinter;
-        _garsonCachedKitchenPrinterAt = DateTime.now();
         _garsonCachedKitchenEncodingProfile ??= await _printOrchestrator
             .loadEncodingProfile(
               restaurantId: sellerId,
@@ -10184,7 +12118,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Widget _buildLocalPrintServicePanel({required String uiBranch}) {
     return ValueListenableBuilder<int>(
       valueListenable: _localPrintUiRevision,
-      builder: (context, _, __) {
+      builder: (context, value, child) {
         return _buildLocalPrintServicePanelBody(uiBranch: uiBranch);
       },
     );
@@ -10363,7 +12297,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Widget _buildLocalPrintStatusBadge({required String uiBranch}) {
     return ValueListenableBuilder<int>(
       valueListenable: _localPrintUiRevision,
-      builder: (context, _, __) {
+      builder: (context, value, child) {
         return _buildLocalPrintStatusBadgeBody(uiBranch: uiBranch);
       },
     );
@@ -10419,7 +12353,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Widget _buildPrinterServiceCompactBar({required String uiBranch}) {
     return ValueListenableBuilder<int>(
       valueListenable: _localPrintUiRevision,
-      builder: (context, _, __) {
+      builder: (context, value, child) {
         return _buildPrinterServiceCompactBarBody(uiBranch: uiBranch);
       },
     );
@@ -10870,104 +12804,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return nextPayload;
   }
 
-  String _localReceiptPayloadSummary(Map<String, dynamic> payload) {
-    final items = payload['items'];
-    final itemCount = items is List ? items.length : 0;
-    final keys = payload.keys.toList(growable: false)..sort();
-    return 'keys=${keys.join(",")} items=$itemCount '
-        'grandTotal=${payload['grand_total'] ?? '-'}';
-  }
-
-  void _logLocalReceiptEvent(
-    String event, {
-    required String uiAction,
-    String? sellerId,
-    String? storeId,
-    String? guard,
-    String? guardResult,
-    String? emptyBranch,
-    String? mappingStatus,
-    bool? localPrintCallReached,
-    int? durationMs,
-    int? tableNumber,
-    List<Map<String, dynamic>>? orders,
-    Map<String, dynamic>? payload,
-    String? queryTable,
-    String? query,
-    Object? error,
-    StackTrace? stackTrace,
-  }) {
-    final itemCount = payload?['items'] is List
-        ? (payload!['items'] as List).length
-        : (orders?.length ?? 0);
-    final payloadSummary = payload == null
-        ? '-'
-        : _localReceiptPayloadSummary(payload);
-    debugPrint(
-      '[LocalPrint][Receipt] $event uiAction=$uiAction '
-      'sellerId=${sellerId ?? '-'} storeId=${storeId ?? '-'} '
-      'guard=${guard ?? '-'} guardResult=${guardResult ?? '-'} '
-      'emptyBranch=${emptyBranch ?? '-'} mappingStatus=${mappingStatus ?? '-'} '
-      'localPrintCallReached=${localPrintCallReached ?? false} '
-      'durationMs=${durationMs ?? '-'} '
-      'queryTable=${queryTable ?? '-'} query=${query ?? '-'} '
-      'tableNo=${tableNumber ?? '-'} itemCount=$itemCount '
-      'payloadSummary=$payloadSummary',
-    );
-    if (error != null) {
-      debugPrint(
-        '[LocalPrint][Error] event=$event uiAction=$uiAction '
-        'sellerId=${sellerId ?? '-'} storeId=${storeId ?? '-'} '
-        'guard=${guard ?? '-'} guardResult=${guardResult ?? '-'} '
-        'emptyBranch=${emptyBranch ?? '-'} mappingStatus=${mappingStatus ?? '-'} '
-        'localPrintCallReached=${localPrintCallReached ?? false} '
-        'durationMs=${durationMs ?? '-'} '
-        'queryTable=${queryTable ?? '-'} query=${query ?? '-'} '
-        'tableNo=${tableNumber ?? '-'} exception=$error',
-      );
-    }
-    if (stackTrace != null) {
-      debugPrint('$stackTrace');
-    }
-  }
-
-  String _localPrintUserMessage(
-    Object error, {
-    required bool localPrintCallReached,
-  }) {
-    if (!localPrintCallReached) {
-      final normalized = error.toString().toLowerCase();
-      if (normalized.contains('stores') ||
-          normalized.contains('business_name')) {
-        return 'Mağaza bilgisi alınamadı. Adisyon hazırlanamadı.';
-      }
-    }
-    if (error is LocalPrintServiceException) {
-      final normalized = error.message.toLowerCase();
-      if (normalized.contains('baglanilamadi')) {
-        return 'Yazıcı servisi kapalı. Lütfen bu bilgisayarda yazıcı servisini başlatın.';
-      }
-      if (normalized.contains('zaman asimina')) {
-        return 'Yazıcı servisi yanıt vermiyor. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
-      }
-      if (error.statusCode != null) {
-        return 'Adisyon yazdırılamadı. Lütfen yazıcı servisini kontrol edin.';
-      }
-      return localPrintCallReached
-          ? 'Adisyon yazdırılamadı. Lütfen yazıcı servisini kontrol edin.'
-          : 'Yazıcı servisine erişilemedi. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
-    }
-    final rawMessage = error.toString().replaceFirst('Exception: ', '').trim();
-    if (rawMessage.isEmpty) {
-      return localPrintCallReached
-          ? 'Adisyon yazdırılamadı. Lütfen yazıcı servisini kontrol edin.'
-          : 'Yazıcı servisine erişilemedi. Lütfen bu bilgisayarda yazıcı servisini kontrol edin.';
-    }
-    return localPrintCallReached
-        ? 'Adisyon yazdırılamadı. $rawMessage'
-        : 'Adisyon yazdırılamadı: $rawMessage';
-  }
-
   String _normalizePrinterWorkflowMessage(
     Object error, {
     required String fallback,
@@ -11015,13 +12851,76 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return;
       }
       final providedOrders = (orders ?? const <Map<String, dynamic>>[]);
-      final shouldFetchOrders = providedOrders.isEmpty;
-      final ordersFuture = shouldFetchOrders
-          ? _storeService.getTableOrdersByTable(
-              sellerId: sellerId,
+      final tableRow =
+          _storeTableRowByNumber(tableNumber) ??
+          <String, dynamic>{'table_number': tableNumber};
+      final optimisticTableOrders = _garsonRecentOptimisticOrders(
+        tableNumber: tableNumber,
+      );
+      final manualOrdersSource = providedOrders.isEmpty
+          ? _garsonManualTableOrders
+          : providedOrders;
+      final manualTableOrders = manualOrdersSource.isEmpty
+          ? const <Map<String, dynamic>>[]
+          : _garsonOrdersForTable(
               tableNumber: tableNumber,
-            )
-          : Future<List<Map<String, dynamic>>>.value(providedOrders);
+              orders: manualOrdersSource,
+            );
+      final visibleTableOrders = _garsonOrdersForTable(
+        tableNumber: tableNumber,
+        orders: _garsonBoardState.orders,
+      );
+      final lastKnownGoodTableOrders = _garsonOrdersForTable(
+        tableNumber: tableNumber,
+        orders: _garsonBoardState.lastGoodOrders,
+      );
+      ({
+        String source,
+        List<Map<String, dynamic>> orders,
+        Map<String, dynamic>? order,
+        String matchedBy,
+        bool fromOptimistic,
+      })
+      buildCandidate(
+        String source,
+        List<Map<String, dynamic>> candidateOrders, {
+        bool includeOptimistic = false,
+      }) {
+        final binding = resolveGarsonBoardActiveOrderForTable(
+          state: _garsonBoardState.copyWith(orders: candidateOrders),
+          table: tableRow,
+          optimisticOrders: includeOptimistic ? optimisticTableOrders : null,
+        );
+        return (
+          source: source,
+          orders: candidateOrders,
+          order: binding.order,
+          matchedBy: binding.matchedBy,
+          fromOptimistic: binding.fromOptimistic,
+        );
+      }
+
+      final visibleCandidate = buildCandidate('visible', visibleTableOrders);
+      final lastKnownGoodCandidate = buildCandidate(
+        'last_good',
+        lastKnownGoodTableOrders,
+      );
+      final optimisticCandidate = buildCandidate(
+        'optimistic',
+        const <Map<String, dynamic>>[],
+        includeOptimistic: true,
+      );
+      final manualCandidate = buildCandidate('manual', manualTableOrders);
+      final shouldFetchOrders =
+          !_hasPersistedGarsonOrderId(visibleCandidate.order) &&
+          !_hasPersistedGarsonOrderId(lastKnownGoodCandidate.order) &&
+          !_hasPersistedGarsonOrderId(optimisticCandidate.order) &&
+          !_hasPersistedGarsonOrderId(manualCandidate.order);
+      final ordersFuture = shouldFetchOrders
+          ? _storeService.getTableOrdersSnapshot(sellerId)
+          : Future<List<Map<String, dynamic>>>.value(
+              const <Map<String, dynamic>>[],
+            );
 
       final storeContext = _garsonReceiptStoreContextForPrint(sellerId);
       storeProfileFetchMs = 0;
@@ -11044,21 +12943,87 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       if (shouldFetchOrders) {
         orderFetchMs = fetchWatch.elapsedMilliseconds;
       }
-      final tableOrders = fetchedOrders;
-      if (tableOrders.isEmpty) {
+      final dbTableOrders = _garsonOrdersForTable(
+        tableNumber: tableNumber,
+        orders: fetchedOrders,
+      );
+      final dbCandidate = buildCandidate('db', dbTableOrders);
+      final candidates = [
+        visibleCandidate,
+        lastKnownGoodCandidate,
+        optimisticCandidate,
+        manualCandidate,
+        dbCandidate,
+      ];
+      ({
+        String source,
+        List<Map<String, dynamic>> orders,
+        Map<String, dynamic>? order,
+        String matchedBy,
+        bool fromOptimistic,
+      })?
+      selectedCandidate;
+      for (final candidate in candidates) {
+        if (_hasPersistedGarsonOrderId(candidate.order) &&
+            !candidate.fromOptimistic) {
+          selectedCandidate = candidate;
+          break;
+        }
+      }
+      if (selectedCandidate == null) {
+        for (final candidate in candidates) {
+          if (candidate.order != null && !candidate.fromOptimistic) {
+            selectedCandidate = candidate;
+            break;
+          }
+        }
+      }
+      selectedCandidate ??= optimisticCandidate;
+      final tableOrdersForPayload = selectedCandidate.orders;
+      final activeOrder = selectedCandidate.order;
+      final activeOrderId = activeOrder?['id']?.toString().trim() ?? '';
+      final foundIn = activeOrder == null ? 'none' : selectedCandidate.source;
+      debugPrint(
+        '[GARSON_RECEIPT_ACTIVE_ORDER_RESOLVE] '
+        'table_id=${tableRow['id'] ?? activeOrder?['table_id'] ?? activeOrder?['store_table_id'] ?? '-'} '
+        'table_label=${resolveTableDisplayLabel(table: tableRow, fallbackTableNumber: tableNumber)} '
+        'display_label=${resolveTableDisplayLabel(table: tableRow, fallbackTableNumber: tableNumber)} '
+        'found_in=$foundIn '
+        'order_id=${activeOrderId.isEmpty ? '-' : activeOrderId} '
+        'items_count=${_garsonExtractItems(activeOrder ?? const <String, dynamic>{}).length} '
+        'total=${_garsonOrdersTotal(tableOrdersForPayload)}',
+      );
+      debugPrint(
+        '[GARSON_ADISIYON_BIND] '
+        'table_number=$tableNumber '
+        'orders_total=${tableOrdersForPayload.length} '
+        'matched_by=${selectedCandidate.matchedBy} '
+        'found_in=$foundIn '
+        'order_id=${activeOrderId.isEmpty ? '-' : activeOrderId}',
+      );
+      if (tableOrdersForPayload.isEmpty ||
+          activeOrder == null ||
+          !_hasPersistedGarsonOrderId(activeOrder)) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Masa $tableNumber için adisyon yok.')),
+          const SnackBar(
+            content: Text(
+              'Bu masa için aktif sipariş bulunamadı. Lütfen yenileyin.',
+            ),
+          ),
         );
         return;
       }
       storeId = storeContext['store_id'] ?? '';
       final payloadWatch = Stopwatch()..start();
-      final basePayload = _buildGarsonReceiptPayload(
-        tableNumber: tableNumber,
-        tableOrders: tableOrders,
-        storeContext: storeContext,
-      );
+      final basePayload =
+          _buildGarsonReceiptPayload(
+              tableNumber: tableNumber,
+              tableOrders: tableOrdersForPayload,
+              storeContext: storeContext,
+            )
+            ..['order_id'] = activeOrderId
+            ..['table_order_id'] = activeOrderId;
       payloadBuildMs = payloadWatch.elapsedMilliseconds;
 
       if (_supportsDirectLocalPrintBridge && bridgeReachable) {
@@ -11305,9 +13270,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             : bridgeRequestMs,
         'total_ui_done_ms': watch.elapsedMilliseconds,
         'table': tableNumber,
-        if (path != null) 'path': path,
-        if (ok != null) 'ok': ok,
-        if (errorMessage != null) 'error': errorMessage,
+        ...?switch (path) {
+          final value? => <String, Object?>{'path': value},
+          null => null,
+        },
+        ...?switch (ok) {
+          final value? => <String, Object?>{'ok': value},
+          null => null,
+        },
+        ...?switch (errorMessage) {
+          final value? => <String, Object?>{'error': value},
+          null => null,
+        },
         if (path == 'direct') 'fallback_reason': 'none',
       });
     }
@@ -11650,8 +13624,70 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
+  GarsonDisplayTableLabelResult _resolveGarsonCloseTableLabel({
+    required int tableNumber,
+    String? displayLabel,
+    String? sectionDisplayLabel,
+    List<Map<String, dynamic>>? existingOrders,
+  }) {
+    final tableRow = _storeTableRowByNumber(tableNumber);
+    final activeOrder = existingOrders?.isNotEmpty == true
+        ? existingOrders!.first
+        : null;
+    if (displayLabel != null && displayLabel.trim().isNotEmpty) {
+      final resolved = GarsonDisplayTableLabelResult(
+        label: displayLabel.trim(),
+        source: GarsonTableLabelSource.tableDisplayLabel,
+        usedFallback: false,
+      );
+      logGarsonCloseTableLabelResolve(
+        tableId: tableRow?['id']?.toString() ?? '-',
+        storeTableId: tableRow?['id']?.toString() ?? '-',
+        rawTableNumber: tableNumber,
+        areaName: tableRow?['area_name']?.toString() ?? '',
+        areaTableNumber: _pi(tableRow?['area_table_number']),
+        displayTableLabel:
+            tableRow?['display_label']?.toString() ??
+            tableRow?['display_table_label']?.toString() ??
+            '',
+        sectionDisplayLabel: sectionDisplayLabel ?? '',
+        resolvedLabel: resolved.label,
+        source: 'card_display_label',
+      );
+      return resolved;
+    }
+    final resolved = resolveGarsonDisplayTableLabel(
+      table: tableRow,
+      activeOrder: activeOrder,
+      sectionDisplayLabel: sectionDisplayLabel,
+      fallbackTableNumber: tableNumber,
+    );
+    logGarsonCloseTableLabelResolve(
+      tableId: tableRow?['id']?.toString() ?? '-',
+      storeTableId: tableRow?['id']?.toString() ?? '-',
+      rawTableNumber: tableNumber,
+      areaName: tableRow?['area_name']?.toString() ?? '',
+      areaTableNumber: _pi(tableRow?['area_table_number']),
+      displayTableLabel:
+          tableRow?['display_label']?.toString() ??
+          tableRow?['display_table_label']?.toString() ??
+          '',
+      sectionDisplayLabel: sectionDisplayLabel ?? '',
+      resolvedLabel: resolved.label,
+      source: resolved.source.name,
+    );
+    return resolved;
+  }
+
+  int _pi(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
   Future<void> _closeGarsonTable({
     required int tableNumber,
+    required String tableLabel,
     List<Map<String, dynamic>>? existingOrders,
   }) async {
     final sellerId = _resolveGarsonSellerId();
@@ -11662,94 +13698,450 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       );
       return;
     }
+
+    // Snapshot of board state taken BEFORE any mutation. Restored if DB
+    // operations fail so the board never shows stale empty state.
+    final precloseBoard = _garsonBoardState;
+
     try {
-      var tableOrders =
-          existingOrders ??
-          await _storeService.getTableOrdersByTable(
-            sellerId: sellerId,
-            tableNumber: tableNumber,
-          );
+      // ── 1. Fetch live orders from DB (prefer passed list to avoid a
+      //       redundant round-trip, but always verify via DB IDs later).
+      var tableOrders = existingOrders?.isNotEmpty == true
+          ? List<Map<String, dynamic>>.from(existingOrders!)
+          : await _storeService.getTableOrdersByTable(
+              sellerId: sellerId,
+              tableNumber: tableNumber,
+            );
+
       if (tableOrders.isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Masa $tableNumber zaten boş.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(garsonCloseTableAlreadyEmptySnackbarText(tableLabel)),
+          ),
+        );
         return;
       }
 
+      // ── 2. Record the exact IDs we intend to close. Verification will use
+      //       these primary keys — NOT the seller_id + table_number filter —
+      //       so a filter mismatch or RLS difference cannot produce a
+      //       false-success result.
+      final targetOrderIds = tableOrders
+          .map((o) => o['id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
+
+      // ── 3. Optimistic UI: mark table as closing.
       if (mounted) {
         setState(() {
           _invalidateSellerTableOrdersFallbackFuture();
-          _webGarsonClosedTableAt[tableNumber] = DateTime.now();
+          _markGarsonTableRecentlyClosed(
+            tableNumber,
+            source: 'close_table_optimistic',
+          );
         });
       }
 
+      // Track how many `orders` rows actually got closed across all attempts.
+      // 0 across the board is the silent-failure signature for the reopen
+      // bug — surface it to the user.
+      var ordersClosedTotal = 0;
+
+      // ── 4. Attempt bulk delete — log any error but allow per-order fallback.
       try {
         await _storeService.closeTableOrders(
           sellerId: sellerId,
           tableNumber: tableNumber,
         );
-      } catch (_) {}
+        // BUG-FIX (Reopen Bug): `closeTableOrders` already mirrors the close
+        // into the `orders` table internally, but if a future caller skips
+        // the bulk path we still want explicit insurance.  Calling it twice
+        // is safe (the filter excludes already-terminal rows).
+        ordersClosedTotal += await _storeService.closeRestaurantOrdersForTable(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+        );
+        debugPrint(
+          '[GARSON_CLOSE] bulk_delete=ok '
+          'table=$tableNumber '
+          'target_ids=${targetOrderIds.length} '
+          'orders_closed_so_far=$ordersClosedTotal',
+        );
+      } catch (bulkErr) {
+        // Bulk delete failed (e.g. RLS blocks DELETE on table_orders).
+        // Log the error and fall through to the per-order fallback below.
+        debugPrint(
+          '[GARSON_CLOSE_BULK_ERROR] '
+          'table=$tableNumber '
+          'error=$bulkErr '
+          'action=falling_back_to_per_order_delete',
+        );
+      }
 
-      tableOrders = await _storeService.getTableOrdersByTable(
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-      );
-      if (tableOrders.isNotEmpty) {
-        for (final order in tableOrders) {
+      // ── 5. Per-order fallback: re-fetch the targeted rows by ID to see
+      //       which ones the bulk delete missed, then delete/status each.
+      if (targetOrderIds.isNotEmpty) {
+        final survivors = await _storeService.getTableOrdersByIds(
+          targetOrderIds,
+        );
+        for (final order in survivors) {
           final orderId = order['id']?.toString() ?? '';
           if (orderId.isEmpty) continue;
           try {
             await _storeService.deleteTableOrder(orderId);
-          } catch (_) {
-            await _storeService.updateTableOrder(orderId, status: 'closed');
+            debugPrint('[GARSON_CLOSE] per_order_delete=ok orderId=$orderId');
+          } catch (deleteErr) {
+            debugPrint(
+              '[GARSON_CLOSE_DELETE_ERROR] '
+              'orderId=$orderId '
+              'error=$deleteErr '
+              'action=falling_back_to_status_update',
+            );
+            try {
+              final updateResult = await _storeService.updateTableOrder(
+                orderId,
+                status: 'closed',
+              );
+              // updateTableOrder returns null (not throws) when 0 rows
+              // were affected (e.g. RLS silent block or stale id).
+              // Treat null as a soft failure so the verification step
+              // below can surface it instead of silently mis-reporting ok.
+              if (updateResult == null) {
+                debugPrint(
+                  '[GARSON_CLOSE_UPDATE_NULL] '
+                  'orderId=$orderId '
+                  'reason=0_rows_affected '
+                  'action=will_be_caught_by_id_verification',
+                );
+              } else {
+                debugPrint(
+                  '[GARSON_CLOSE] per_order_status_update=ok orderId=$orderId',
+                );
+              }
+            } catch (updateErr) {
+              // Both delete and status-update failed for this order.
+              // Log and continue — the ID-based verification below will
+              // catch any survivors and surface them as an error.
+              debugPrint(
+                '[GARSON_CLOSE_UPDATE_ERROR] '
+                'orderId=$orderId '
+                'error=$updateErr '
+                'action=will_be_caught_by_id_verification',
+              );
+            }
           }
         }
       }
 
-      final remaining = await _storeService.getTableOrdersByTable(
-        sellerId: sellerId,
-        tableNumber: tableNumber,
+      // BUG-FIX (Reopen Bug): per-order fallback path may have closed
+      // `table_orders` rows one-by-one without ever calling
+      // `closeRestaurantOrdersForTable`.  Make sure the customer-facing
+      // `orders` rows are also closed so the table doesn't re-appear after
+      // refresh.
+      final ordersClosedTail = await _storeService
+          .closeRestaurantOrdersForTable(
+            sellerId: sellerId,
+            tableNumber: tableNumber,
+          );
+      ordersClosedTotal += ordersClosedTail;
+      debugPrint(
+        '[GARSON_CLOSE_ORDERS_TAIL] '
+        'table=$tableNumber '
+        'orders_closed_tail=$ordersClosedTail '
+        'orders_closed_total=$ordersClosedTotal',
       );
-      if (remaining.isNotEmpty) {
-        throw Exception(
-          'Masa kayıtları kapatılamadı (kalan sipariş: ${remaining.length}).',
+
+      // ── 6. ID-based verification — confirms every targeted row is gone or
+      //       marked closed. A filter-based re-query (seller_id + table_number)
+      //       would silently "succeed" when orders were never in table_orders or
+      //       when a type mismatch caused the filter to match 0 rows.
+      if (targetOrderIds.isNotEmpty) {
+        final remainingById = await _storeService.getTableOrdersByIds(
+          targetOrderIds,
         );
+        final stillActive = remainingById
+            .where((o) => !_isGarsonClosedStatus(o['status']?.toString()))
+            .toList(growable: false);
+
+        if (stillActive.isNotEmpty) {
+          debugPrint(
+            '[GARSON_CLOSE_VERIFY_FAIL] '
+            'table=$tableNumber '
+            'still_active=${stillActive.length} '
+            'ids=${stillActive.map((o) => o['id']).toList()}',
+          );
+          throw Exception(
+            'Masa kayıtları veritabanında kapatılamadı '
+            '(aktif kalan: ${stillActive.length}). '
+            'Lütfen internet bağlantınızı kontrol edip tekrar deneyin.',
+          );
+        }
       }
 
+      // ── 7. All DB operations confirmed — now mutate local state.
       if (!mounted) return;
       setState(() {
         _invalidateSellerTableOrdersFallbackFuture();
-        _webGarsonClosedTableAt[tableNumber] = DateTime.now();
+        _markGarsonTableRecentlyClosed(
+          tableNumber,
+          source: 'close_table_success',
+        );
         _mobileGarsonDraftItemsByTable.remove(tableNumber);
         _mobileGarsonDraftUpdatedAtByTable.remove(tableNumber);
         _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
         _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Masa $tableNumber kapatıldı.')));
+
+      final snackbarText = garsonCloseTableSnackbarText(tableLabel);
+      final firstOrderId = tableOrders.isNotEmpty
+          ? tableOrders.first['id']?.toString() ?? '-'
+          : '-';
+      final tableRow = _storeTableRowByNumber(tableNumber);
+      logGarsonCloseTableSuccess(
+        resolvedLabel: tableLabel,
+        tableId: tableRow?['id']?.toString() ?? '-',
+        orderId: firstOrderId,
+        snackbarText: snackbarText,
+      );
+
+      final shouldPopTableRoute = _isGarsonTableRouteOpen;
+      _clearSelectedGarsonTableRoute(
+        source: 'close_table_success',
+        closedTableNumber: tableNumber,
+        closedLabel: tableLabel,
+        closedTableId: tableRow?['id']?.toString(),
+        closedOrderId: firstOrderId,
+        logCloseCleanup: true,
+      );
+
+      // Remove closed table's orders from board state (tables/areas untouched).
+      final nextBoardState = removeClosedTableOrdersFromBoardState(
+        current: _garsonBoardState,
+        tableNumber: tableNumber,
+        closedOrderId: firstOrderId,
+      );
+      if (nextBoardState != _garsonBoardState) {
+        _setGarsonBoardState(nextBoardState);
+      }
+      debugPrint(
+        '[GARSON_CLOSE_VERIFY_AFTER_REMOVE] '
+        'boardTables=${_garsonBoardState.tables.length} '
+        'boardOrders=${_garsonBoardState.orders.length} '
+        'lastGoodTables=${_garsonBoardState.lastGoodTables.length} '
+        'storeTables=${_storeTables.length} '
+        'uiTablesCount=${_garsonVisibleTablesForUi().length} '
+        'sortedStoreTableNumbers=${_garsonSortedStoreTableNumbersForUi().length}',
+      );
+
+      // Atomic purge of the secondary cache (_garsonManualTableOrders).
+      // Must be in the same setState as the board-state update to prevent
+      // the route-pop finally block from re-inserting stale orders.
+      final purgedManualCount = _garsonManualTableOrders
+          .where((o) => _garsonTableNumberFromOrder(o) == tableNumber)
+          .length;
+      if (purgedManualCount > 0) {
+        _garsonManualTableOrders = _garsonManualTableOrders
+            .where((o) => _garsonTableNumberFromOrder(o) != tableNumber)
+            .toList(growable: false);
+        _garsonManualTableOrdersSignature = tableOrdersListSignature(
+          _garsonManualTableOrders,
+        );
+        debugPrint(
+          '[GARSON_CLOSE_TABLE_MANUAL_PURGE] '
+          'table=$tableNumber '
+          'purged=$purgedManualCount '
+          'remaining=${_garsonManualTableOrders.length} '
+          'source=close_table_web',
+        );
+      }
+
+      _cacheGarsonLastGoodSectionsForNumbers(
+        _garsonSortedStoreTableNumbersForUi(),
+      );
+      logGarsonAfterCloseBoardState(
+        closedLabel: tableLabel,
+        closedTableNumber: tableNumber,
+        closedOrderId: firstOrderId,
+        boardTablesCount: _garsonBoardState.tables.length,
+        lastGoodTablesCount: _garsonBoardState.lastGoodTables.length,
+        boardOrdersCount: _garsonBoardState.orders.length,
+        lastGoodOrdersCount: _garsonBoardState.lastGoodOrders.length,
+        sectionsCount: _garsonBoardState.lastGoodSections?.sections.length ?? 0,
+        lastGoodSectionsCount:
+            _garsonBoardState.lastGoodSections?.sections.length ?? 0,
+        totalChipCount: _garsonSortedStoreTableNumbersForUi().length,
+        occupiedChipCount: _garsonBoardState.orders
+            .where(
+              (o) =>
+                  _garsonTableNumberFromOrder(o) > 0 &&
+                  !(_isGarsonClosedStatus(o['status']?.toString())),
+            )
+            .map(_garsonTableNumberFromOrder)
+            .toSet()
+            .length,
+      );
+
+      // Capture state right before pop to verify render data is intact
+      final prePopBoardTables = _garsonBoardState.tables.length;
+      final prePopBoardOrders = _garsonBoardState.orders.length;
+      final prePopLastGoodTables = _garsonBoardState.lastGoodTables.length;
+      final prePopStoreTables = _storeTables.length;
+      if (shouldPopTableRoute && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      debugPrint(
+        '[GARSON_CLOSE_PREPOP] '
+        'shouldPop=$shouldPopTableRoute '
+        'boardTables=$prePopBoardTables '
+        'boardOrders=$prePopBoardOrders '
+        'lastGoodTables=$prePopLastGoodTables '
+        'storeTables=$prePopStoreTables '
+        'uiTablesAtPop=${_garsonVisibleTablesForUi().length} '
+        'sortedNumsAtPop=${_garsonSortedStoreTableNumbersForUi().length}',
+      );
+      // BUG-FIX (Reopen Bug — diagnostic surface):
+      // If `table_orders` was successfully purged (verification passed) but
+      // we never closed a single `orders` row, then any customer-placed
+      // order for this table will silently re-appear on the next refresh.
+      //
+      // IMPORTANT: `orders_closed == 0` is the *normal* case for garson-only
+      // tables — orders entered by the waiter live in `table_orders`, not the
+      // customer `orders` table, so there is simply nothing to close there.
+      // Surfacing the warning unconditionally turned every ordinary close into
+      // a scary "kapatılamadı" message.  The warning is only meaningful when
+      // the close *could* have silently failed at the DB layer — i.e. when the
+      // authenticated user's id does NOT match the resolved seller id
+      // (sub-admin / waiter RLS scenario, the exact case the diagnostic SQL
+      // targets).  Identity-matched owners closing a garson table see a clean
+      // success message.  The diagnostic debug log still fires regardless.
+      final authUid = _authService.currentUser?.id.trim() ?? '';
+      final identityMatches =
+          authUid.isNotEmpty && authUid == sellerId.trim();
+      final ordersUntouched =
+          ordersClosedTotal == 0 && tableOrders.isNotEmpty;
+      final shouldWarnOrdersUntouched = shouldWarnGarsonOrdersUntouched(
+        ordersClosed: ordersClosedTotal,
+        hadTableOrders: tableOrders.isNotEmpty,
+        identityMatches: identityMatches,
+      );
+      if (ordersUntouched) {
+        debugPrint(
+          '[GARSON_CLOSE_PARTIAL_SUCCESS] '
+          'table=$tableNumber '
+          'table_orders_purged=ok '
+          'orders_closed=0 '
+          'identity_matches=$identityMatches '
+          'user_warning_shown=$shouldWarnOrdersUntouched '
+          'warning=${identityMatches
+              ? 'no_customer_orders_for_table_normal_garson_close'
+              : 'customer_orders_may_resurface_after_refresh'} '
+          'next_step=inspect_GARSON_ORDERS_CLOSE_ZERO_log_above',
+        );
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            shouldWarnOrdersUntouched
+                ? '$snackbarText\n'
+                      '⚠️ Müşteri siparişleri kapatılamadı (orders=0). '
+                      'Sayfa yenilenince geri görünebilir. '
+                      'Konsol logunda [GARSON_ORDERS_CLOSE_ZERO] aratın.'
+                : snackbarText,
+          ),
+          duration: shouldWarnOrdersUntouched
+              ? const Duration(seconds: 10)
+              : const Duration(seconds: 4),
+        ),
+      );
     } catch (error) {
+      // ── Extract the most useful DB error detail for display ────────────────
+      String errorDetail;
+      if (error is PostgrestException) {
+        // Show the raw Supabase error code + message so the user/developer
+        // can identify the exact DB-side failure (e.g. P0001 trigger missing,
+        // 42501 permission denied, etc.) without digging into logs.
+        final code = error.code?.isNotEmpty == true ? '[${error.code}] ' : '';
+        final msg = error.message.length > 200
+            ? '${error.message.substring(0, 200)}…'
+            : error.message;
+        errorDetail = '$code$msg';
+      } else {
+        final raw = error.toString().replaceFirst('Exception: ', '').trim();
+        errorDetail = raw.length > 200 ? '${raw.substring(0, 200)}…' : raw;
+      }
+      debugPrint(
+        '[GARSON_CLOSE_TABLE_FAILED] '
+        'table=$tableNumber '
+        'label=$tableLabel '
+        'error=$error',
+      );
       if (!mounted) return;
+      // ── Rollback: restore pre-close board state ────────────────────────────
+      // precloseBoard is the immutable snapshot taken before any local mutation.
+      // Restoring it guarantees the table grid is never left blank after a DB
+      // failure — the board shows exactly what the user saw before tapping "Kapat".
+      _setGarsonBoardState(precloseBoard);
       setState(() {
-        _webGarsonClosedTableAt.remove(tableNumber);
+        _clearGarsonClosedTableMarker(
+          tableNumber,
+          source: 'close_table_failed',
+        );
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Masa kapatılamadı: $error')));
+      // Safety net: if the pre-close snapshot itself had no tables (e.g. board
+      // was loading during the close attempt), trigger a background refresh so
+      // the screen never gets stuck in an empty state.
+      if (precloseBoard.uiTables.isEmpty) {
+        debugPrint(
+          '[GARSON_CLOSE_ROLLBACK_EMPTY_BOARD] '
+          'precloseBoard.uiTables empty — scheduling background refresh',
+        );
+        unawaited(
+          _loadGarsonTableOrdersSnapshot(
+            source: 'close_table_rollback_recover',
+            forceApply: true,
+          ),
+        );
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Masa kapatılamadı.\n$errorDetail'),
+          duration: const Duration(seconds: 8),
+        ),
+      );
     }
   }
 
   Future<void> _confirmCloseGarsonTable({
     required int tableNumber,
     List<Map<String, dynamic>>? existingOrders,
+    String? displayLabel,
+    String? sectionDisplayLabel,
   }) async {
     if (!mounted) return;
+    final labelResult = _resolveGarsonCloseTableLabel(
+      tableNumber: tableNumber,
+      displayLabel: displayLabel,
+      sectionDisplayLabel: sectionDisplayLabel,
+      existingOrders: existingOrders,
+    );
+    final tableLabel = labelResult.label;
+    final dialogTitle = garsonCloseTableDialogTitle(tableLabel);
+    final tableRow = _storeTableRowByNumber(tableNumber);
+    final orderId = existingOrders?.isNotEmpty == true
+        ? existingOrders!.first['id']?.toString() ?? '-'
+        : '-';
+    logGarsonCloseDialogOpen(
+      resolvedLabel: tableLabel,
+      dialogTitle: dialogTitle,
+      tableId: tableRow?['id']?.toString() ?? '-',
+      orderId: orderId,
+    );
     final shouldClose = await showDialog<bool>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: Text('Masa $tableNumber kapatılsın mı?'),
+          title: Text(dialogTitle),
           content: const Text(
             'Bu işlem masadaki aktif sipariş kayıtlarını kapatır.',
           ),
@@ -11772,6 +14164,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     if (shouldClose == true) {
       await _closeGarsonTable(
         tableNumber: tableNumber,
+        tableLabel: tableLabel,
         existingOrders: existingOrders,
       );
     }
@@ -11799,7 +14192,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
-  String _mobileGarsonStatusLabel(String? status, {required bool hasOrder, bool isOptimistic = false}) {
+  String _mobileGarsonStatusLabel(
+    String? status, {
+    required bool hasOrder,
+    bool isOptimistic = false,
+  }) {
     if (!hasOrder) return 'Boş Masa';
     if (isOptimistic) return 'Gönderiliyor...';
     switch ((status ?? '').toLowerCase()) {
@@ -11826,24 +14223,28 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required int tableNumber,
     required Map<String, dynamic>? order,
     required int orderCount,
+    required String foundIn,
     List<Map<String, dynamic>>? optimisticItems,
   }) {
-    // Prefer order from DB, but fall back to optimistic items if order is null
     final effectiveOrder = order;
     final hasOrderInDb = effectiveOrder != null;
-    final hasOptimisticItems = optimisticItems != null && optimisticItems.isNotEmpty;
+    final hasOptimisticItems =
+        optimisticItems != null && optimisticItems.isNotEmpty;
     final hasOrder = hasOrderInDb || hasOptimisticItems;
-    
+
     final status = effectiveOrder?['status']?.toString();
     final isOptimistic = hasOptimisticItems && !hasOrderInDb;
     final color = _mobileGarsonStatusColor(status, hasOrder: hasOrder);
-    final statusLabel = _mobileGarsonStatusLabel(status, hasOrder: hasOrder, isOptimistic: isOptimistic);
-    
-    // Use DB order items first, then fall back to optimistic items
-    final previewItems = hasOrderInDb
-        ? _garsonExtractItems(effectiveOrder!)
+    final statusLabel = _mobileGarsonStatusLabel(
+      status,
+      hasOrder: hasOrder,
+      isOptimistic: isOptimistic,
+    );
+
+    final previewItems = effectiveOrder != null
+        ? _garsonExtractItems(effectiveOrder)
         : (optimisticItems ?? const <Map<String, dynamic>>[]);
-    
+
     final sortedPreviewItems = List<Map<String, dynamic>>.from(previewItems)
       ..sort((a, b) {
         final left = (a['name']?.toString() ?? '').toLowerCase();
@@ -11865,18 +14266,36 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final tableTitle = tableRow == null
         ? 'Masa $tableNumber'
         : _tableDisplayLabelFromRow(tableRow);
-    
-    final orderIdForDebug = effectiveOrder?['id'] ?? 'optimistic-${DateTime.now().millisecondsSinceEpoch}';
-    final totalForDebug = hasOrderInDb
-        ? _garsonOrdersTotal(<Map<String, dynamic>>[effectiveOrder!])
-        : (optimisticItems?.isEmpty ?? true ? 0 : optimisticItems!.fold<num>(0, (sum, item) => sum + ((item['line_total'] as num?) ?? 0)));
-    
+    final matchedBy = effectiveOrder == null
+        ? 'none'
+        : resolveOrderMatchKindForTable(
+            table: tableRow ?? <String, dynamic>{'table_number': tableNumber},
+            order: effectiveOrder,
+          );
+    final orderIdForDebug =
+        effectiveOrder?['id'] ??
+        'optimistic-${DateTime.now().millisecondsSinceEpoch}';
+    final totalForDebug = effectiveOrder != null
+        ? _garsonOrdersTotal(<Map<String, dynamic>>[effectiveOrder])
+        : (optimisticItems?.isEmpty ?? true
+              ? 0
+              : optimisticItems!.fold<num>(
+                  0,
+                  (sum, item) => sum + ((item['line_total'] as num?) ?? 0),
+                ));
+
     debugPrint(
       '[GARSON_TABLE_CARD_BIND] '
-      'table_id=${tableRow?['id'] ?? order?['table_id'] ?? order?['store_table_id'] ?? '-'} '
+      'table_id=${tableRow?['id'] ?? order?['table_id'] ?? '-'} '
+      'store_table_id=${tableRow?['id'] ?? order?['store_table_id'] ?? '-'} '
       'table_number=$tableNumber '
+      'table_label=$tableTitle '
       'display_label=$tableTitle '
+      'source=visible_snapshot '
+      'orders_total=$orderCount '
       'active_order_found=$hasOrder '
+      'found_in=${hasOrder ? foundIn : 'none'} '
+      'matched_by=$matchedBy '
       'from_db=$hasOrderInDb '
       'from_optimistic=$hasOptimisticItems '
       'order_id=$orderIdForDebug '
@@ -12107,22 +14526,53 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         if (!mounted) return;
         setState(() {
           _invalidateSellerTableOrdersFallbackFuture();
-          _webGarsonClosedTableAt[closedTableNumber] = DateTime.now();
+          _markGarsonTableRecentlyClosed(
+            closedTableNumber,
+            source: 'mobile_close_optimistic',
+          );
         });
       },
       onTableCloseFailed: (closedTableNumber) {
         if (!mounted) return;
-        setState(() => _webGarsonClosedTableAt.remove(closedTableNumber));
+        setState(
+          () => _clearGarsonClosedTableMarker(
+            closedTableNumber,
+            source: 'mobile_close_failed',
+          ),
+        );
       },
       onTableClosed: (closedTableNumber) {
         if (!mounted) return;
         setState(() {
           _invalidateSellerTableOrdersFallbackFuture();
-          _webGarsonClosedTableAt[closedTableNumber] = DateTime.now();
+          _markGarsonTableRecentlyClosed(
+            closedTableNumber,
+            source: 'mobile_close_success',
+          );
           _mobileGarsonDraftItemsByTable.remove(closedTableNumber);
           _mobileGarsonDraftUpdatedAtByTable.remove(closedTableNumber);
           _mobileGarsonOptimisticSentAtByTable.remove(closedTableNumber);
           _mobileGarsonOptimisticItemsByTable.remove(closedTableNumber);
+          // BUG-FIX (Bug 1 — mobile payment path): purge closed table's orders
+          // from _garsonManualTableOrders so the route-pop finally block's
+          // _publishGarsonVisibleSnapshotFromCurrentState doesn't re-insert
+          // stale orders back into board state.
+          final beforeCount = _garsonManualTableOrders.length;
+          _garsonManualTableOrders = _garsonManualTableOrders
+              .where((o) => _garsonTableNumberFromOrder(o) != closedTableNumber)
+              .toList(growable: false);
+          if (_garsonManualTableOrders.length != beforeCount) {
+            _garsonManualTableOrdersSignature = tableOrdersListSignature(
+              _garsonManualTableOrders,
+            );
+            debugPrint(
+              '[GARSON_CLOSE_TABLE_MANUAL_PURGE] '
+              'table=$closedTableNumber '
+              'purged=${beforeCount - _garsonManualTableOrders.length} '
+              'remaining=${_garsonManualTableOrders.length} '
+              'source=on_table_closed_mobile',
+            );
+          }
         });
       },
       onConfirmCustomerKitchenPrint:
@@ -12166,6 +14616,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     await Future<void>.delayed(Duration.zero);
     if (!mounted) return;
     _isGarsonTableRouteOpen = true;
+    _garsonSelectedTableNumber = tableNumber;
+    _garsonSelectedTableId = tableRow?['id']?.toString();
+    _garsonSelectedOrderId = initialOrder?['id']?.toString();
     debugPrint(
       '[SellerNavigation][garson_table_route_lock] '
       'state=open table=$tableNumber '
@@ -12177,16 +14630,53 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         context,
       ).push(MaterialPageRoute<void>(builder: (_) => flowPage));
     } finally {
-      _isGarsonTableRouteOpen = false;
+      _clearSelectedGarsonTableRoute(source: 'garson_table_route_popped');
       debugPrint(
-        '[SellerNavigation][garson_table_route_lock] '
-        'state=closed table=$tableNumber '
-        'parentAtPop=${_selectedModule.name}',
+        '[GARSON_POP_FINALLY] '
+        'table=$tableNumber '
+        'module=${_selectedModule.name} '
+        'isGarsonVisible=$_isGarsonVisible '
+        'boardTables=${_garsonBoardState.tables.length} '
+        'boardOrders=${_garsonBoardState.orders.length} '
+        'lastGoodTables=${_garsonBoardState.lastGoodTables.length} '
+        'lastGoodSections=${_garsonBoardState.lastGoodSections?.sections.length ?? 0} '
+        'storeTables=${_storeTables.length} '
+        'manualOrders=${_garsonManualTableOrders.length}',
       );
       _returnFromGarsonTableToGarsonList(source: 'garson_table_route_popped');
       debugPrint(
-        '[GarsonNavigation][route_popped_parent_restore] '
-        'from=${moduleBeforeOpen.name} to=${_selectedModule.name}',
+        '[GARSON_POP_FINALLY_AFTER_RESTORE] '
+        'module=${_selectedModule.name} '
+        'isGarsonVisible=$_isGarsonVisible '
+        'boardTables=${_garsonBoardState.tables.length} '
+        'boardOrders=${_garsonBoardState.orders.length} '
+        'lastGoodTables=${_garsonBoardState.lastGoodTables.length} '
+        'storeTables=${_storeTables.length} '
+        'manualOrders=${_garsonManualTableOrders.length}',
+      );
+      // After returning from table detail, immediately publish the current
+      // state so the grid card reflects the submitted order without waiting
+      // for the next stream event (which may have been blocked while the
+      // route was open).
+      _publishGarsonVisibleSnapshotFromCurrentState(
+        source: 'garson_table_route_popped',
+      );
+      debugPrint(
+        '[GARSON_POP_FINALLY_AFTER_PUBLISH] '
+        'boardTables=${_garsonBoardState.tables.length} '
+        'boardOrders=${_garsonBoardState.orders.length} '
+        'lastGoodTables=${_garsonBoardState.lastGoodTables.length} '
+        'storeTables=${_storeTables.length} '
+        'sortedNums=${_garsonSortedStoreTableNumbersForUi().length}',
+      );
+      // Also schedule a fresh DB fetch to reconcile any stream events that
+      // were blocked while the table detail route was open.
+      unawaited(
+        _loadGarsonTableOrdersSnapshot(
+          source: 'garson_table_route_popped',
+          showError: false,
+          bypassSignatureGuard: true,
+        ),
       );
     }
   }
@@ -12999,12 +15489,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
     if (selected == null || !mounted) return;
     await _setDashboardRangePreset(selected);
-  }
-
-  String _formatDateShort(DateTime value) {
-    final day = value.day.toString().padLeft(2, '0');
-    final month = value.month.toString().padLeft(2, '0');
-    return '$day.$month.${value.year}';
   }
 
   String _formatChangeLabel(double percent) {
@@ -22109,8 +24593,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   // ─── GARSON MODÜLÜ ────────────────────────────────────────────────────────
 
   Widget _buildGarsonModule() {
-    final sellerId = _authService.currentUser?.id ?? '';
+    final sellerId = _resolveGarsonSellerId();
     _garsonBuildRenderCount += 1;
+    _guardGarsonStaleTableRouteOnBoard(source: 'garson_module_build');
     debugPrint(
       '[GarsonBuild][render] '
       'buildId=$_garsonBuildRenderCount '
@@ -22166,7 +24651,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         future: _getSellerTableOrdersFallbackFuture(sellerId),
                         builder: (context, fallbackSnapshot) {
                           final allOrders = _resolveGarsonTableOrdersForUi(
-                            fallbackSnapshot.data,
+                            null,
+                          );
+                          final uiTables = _garsonVisibleTablesForUi();
+                          _logGarsonBoardRenderSource(
+                            source: 'web_garson_fallback',
                           );
                           if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
                             return const Center(
@@ -22175,29 +24664,40 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           }
                           if (fallbackSnapshot.hasError &&
                               allOrders.isEmpty &&
-                              _storeTables.isEmpty) {
+                              uiTables.isEmpty) {
                             return Center(
                               child: Text('Hata: ${fallbackSnapshot.error}'),
                             );
                           }
                           if (_garsonInitialLoadError != null &&
                               allOrders.isEmpty &&
-                              _storeTables.isEmpty &&
+                              uiTables.isEmpty &&
                               !_isGarsonInitialLoading) {
                             return _buildGarsonInitialLoadErrorState();
                           }
                           if (allOrders.isEmpty &&
-                              _storeTables.isEmpty &&
-                              !_isGarsonInitialLoading) {
+                              uiTables.isEmpty &&
+                              !_isGarsonInitialLoading &&
+                              _shouldShowGarsonEmptyState(
+                                orders: allOrders,
+                                source: 'web_garson_fallback',
+                              )) {
                             return _buildGarsonEmptyState(
+                              title: 'Henüz masa oluşturulmamış',
                               message:
-                                  'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
+                                  'Sistem bölümünden masa ekleyin ya da tekrar deneyin.',
                             );
                           }
-                          if (allOrders.isEmpty && _storeTables.isEmpty) {
+                          if (allOrders.isEmpty &&
+                              uiTables.isEmpty &&
+                              _shouldShowGarsonEmptyState(
+                                orders: allOrders,
+                                source: 'web_garson_fallback_secondary',
+                              )) {
                             return _buildGarsonEmptyState(
+                              title: 'Henüz masa oluşturulmamış',
                               message:
-                                  'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
+                                  'Sistem bölümünden masa ekleyin ya da tekrar deneyin.',
                             );
                           }
 
@@ -22207,20 +24707,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   order['status']?.toString(),
                                 ),
                               )
-                              .toList(growable: false);
-                          orders = orders
-                              .where((order) {
-                                final tableNo = _garsonTableNumberFromOrder(
-                                  order,
-                                );
-                                final closedAt =
-                                    _webGarsonClosedTableAt[tableNo];
-                                if (closedAt == null) return true;
-                                final createdAt = _garsonOrderCreatedAt(
-                                  order['created_at']?.toString(),
-                                );
-                                return createdAt.isAfter(closedAt);
-                              })
+                              .where(
+                                _shouldKeepGarsonOrderVisibleAfterRecentClose,
+                              )
                               .toList(growable: false);
 
                           if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
@@ -22258,29 +24747,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   growable: false,
                                 ),
                               );
-                          if (displayTableNumbers.isEmpty) {
-                            return Center(
-                              child: Text(
-                                'Henüz masa kaydı yok. Sistem bölümünden masa ekleyin.',
-                                style: TextStyle(color: Colors.grey.shade600),
-                              ),
-                            );
+                          final renderBundle = _resolveGarsonRenderBundle(
+                            displayTableNumbers,
+                          );
+                          if (renderBundle.willShowEmpty) {
+                            return _buildGarsonNoPhysicalTablesPlaceholder();
                           }
-
-                          final occupiedTableNumbers = displayTableNumbers
-                              .where(
-                                (tableNo) =>
-                                    (ordersByTable[tableNo]?.isNotEmpty ??
-                                    false),
-                              )
-                              .toSet();
+                          if (renderBundle.willShowLoading &&
+                              !renderBundle.willShowGrid) {
+                            return _buildGarsonAreasLoadingPlaceholder();
+                          }
                           return SingleChildScrollView(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: _buildGarsonGroupedTableGrids(
-                              groups: _garsonTableAreaGroupsForNumbers(
-                                displayTableNumbers,
-                              ),
-                              occupiedTableNumbers: occupiedTableNumbers,
+                              renderBundle: renderBundle,
                               columnsResolver: _webGarsonGridColumns,
                               aspectRatioResolver: _webGarsonGridAspectRatio,
                               sectionPadding: EdgeInsets.zero,
@@ -22288,6 +24768,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 var tableOrders =
                                     ordersByTable[tableNumber] ??
                                     const <Map<String, dynamic>>[];
+                                var usedOptimisticFallback = false;
                                 final opAt =
                                     _mobileGarsonOptimisticSentAtByTable[tableNumber];
                                 final opItems =
@@ -22297,6 +24778,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                     DateTime.now().difference(opAt) <=
                                         const Duration(seconds: 45) &&
                                     tableOrders.isEmpty) {
+                                  usedOptimisticFallback = true;
                                   tableOrders = [
                                     <String, dynamic>{
                                       'status': 'sent',
@@ -22318,6 +24800,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                   tableNumber: tableNumber,
                                   order: order.isEmpty ? null : order,
                                   orderCount: tableOrders.length,
+                                  foundIn: usedOptimisticFallback
+                                      ? 'optimistic'
+                                      : (order.isEmpty
+                                            ? 'none'
+                                            : _garsonOrdersUiSource()),
                                   tableOrders: tableOrders,
                                 );
                               },
@@ -22326,22 +24813,48 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         },
                       );
                     }
-                    final allOrders = _resolveGarsonTableOrdersForUi(
-                      snapshot.data,
+                    final allOrders = _resolveGarsonTableOrdersForUi(null);
+                    final uiTables = _garsonVisibleTablesForUi();
+                    final renderUiTableCount = uiTables.length;
+                    final renderAllOrdersCount = allOrders.length;
+                    final renderStoreTableCount = _storeTables.length;
+                    final renderLastGoodTables =
+                        _garsonBoardState.lastGoodTables.length;
+                    final renderSortedNums =
+                        _garsonSortedStoreTableNumbersForUi().length;
+                    debugPrint(
+                      '[GARSON_WEB_RENDER_CHECK] '
+                      'allOrders=$renderAllOrdersCount '
+                      'uiTables=$renderUiTableCount '
+                      'storeTables=$renderStoreTableCount '
+                      'lastGoodTables=$renderLastGoodTables '
+                      'sortedNums=$renderSortedNums '
+                      'willShowEmpty=${_shouldShowGarsonEmptyState(orders: allOrders, source: 'web_garson_stream')}',
                     );
+                    _logGarsonBoardRenderSource(source: 'web_garson_stream');
                     if (_shouldShowGarsonInitialLoadingUi(allOrders)) {
                       return const Center(child: CircularProgressIndicator());
                     }
                     if (_garsonInitialLoadError != null &&
                         allOrders.isEmpty &&
-                        _storeTables.isEmpty &&
+                        uiTables.isEmpty &&
                         !_isGarsonInitialLoading) {
                       return _buildGarsonInitialLoadErrorState();
                     }
-                    if (allOrders.isEmpty && _storeTables.isEmpty) {
+                    if (allOrders.isEmpty &&
+                        uiTables.isEmpty &&
+                        _shouldShowGarsonEmptyState(
+                          orders: allOrders,
+                          source: 'web_garson_stream',
+                        )) {
+                      debugPrint(
+                        '[GARSON_WEB_RENDER_EMPTY] '
+                        'hitting_empty_state allOrders=$renderAllOrdersCount uiTables=$renderUiTableCount',
+                      );
                       return _buildGarsonEmptyState(
+                        title: 'Henüz masa oluşturulmamış',
                         message:
-                            'Henüz masa/sipariş verisi yok. Yenile’ye bas.',
+                            'Sistem bölümünden masa ekleyin ya da tekrar deneyin.',
                       );
                     }
 
@@ -22351,17 +24864,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             order['status']?.toString(),
                           ),
                         )
-                        .toList(growable: false);
-                    orders = orders
-                        .where((order) {
-                          final tableNo = _garsonTableNumberFromOrder(order);
-                          final closedAt = _webGarsonClosedTableAt[tableNo];
-                          if (closedAt == null) return true;
-                          final createdAt = _garsonOrderCreatedAt(
-                            order['created_at']?.toString(),
-                          );
-                          return createdAt.isAfter(closedAt);
-                        })
+                        .where(_shouldKeepGarsonOrderVisibleAfterRecentClose)
                         .toList(growable: false);
 
                     final ordersByTable = <int, List<Map<String, dynamic>>>{};
@@ -22394,7 +24897,50 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         growable: false,
                       ),
                     );
-                    if (tableNumbers.isEmpty) {
+                    debugPrint(
+                      '[GARSON_WEB_TABLE_NUMBERS] '
+                      'tableNumbers=${tableNumbers.length} '
+                      'ordersByTableKeys=${ordersByTable.keys.length} '
+                      'filteredOrders=${orders.length}',
+                    );
+                    final statusFilteredTableNumbers = tableNumbers
+                        .where((tableNo) {
+                          final tOrders = ordersByTable[tableNo] ?? [];
+                          switch (_garsonStatusFilter) {
+                            case 'occupied':
+                              return tOrders.isNotEmpty;
+                            case 'preparing':
+                              return tOrders.any(
+                                (o) =>
+                                    (o['status']?.toString() ?? '') ==
+                                    'preparing',
+                              );
+                            case 'payment_pending':
+                              return tOrders.any((o) {
+                                final s = (o['status']?.toString() ?? '');
+                                return s == 'ready' || s == 'served';
+                              });
+                            default:
+                              return true;
+                          }
+                        })
+                        .toList(growable: false);
+                    final renderBundle = _resolveGarsonRenderBundle(
+                      tableNumbers,
+                    );
+                    final willShowNoOrderEmpty =
+                        _shouldShowGarsonBoardNoOrderEmpty(
+                          renderBundle: renderBundle,
+                          allTableNumbers: tableNumbers,
+                        );
+                    _logGarsonRouteBranchDecision(
+                      renderBundle: renderBundle,
+                      willShowNoOrderEmpty: willShowNoOrderEmpty,
+                      reason: willShowNoOrderEmpty
+                          ? 'table_detail_empty_allowed'
+                          : 'garson_board_branch',
+                    );
+                    if (willShowNoOrderEmpty) {
                       return Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -22416,53 +24962,42 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         ),
                       );
                     }
+                    debugPrint(
+                      '[GARSON_WEB_RENDER_BUNDLE] '
+                      'totalTableCount=${renderBundle.totalTableCount} '
+                      'occupiedTableCount=${renderBundle.occupiedTableCount} '
+                      'willShowGrid=${renderBundle.willShowGrid} '
+                      'willShowEmpty=${renderBundle.willShowEmpty} '
+                      'willShowLoading=${renderBundle.willShowLoading} '
+                      'decision=${renderBundle.decision.reason} '
+                      'renderSections=${renderBundle.renderSections.length} '
+                      'uiTablesCount=${_garsonVisibleTablesForRender().length} '
+                      'lastGoodSections=${_garsonBoardState.lastGoodSections?.sections.length ?? 0}',
+                    );
+                    if (renderBundle.willShowLoading &&
+                        !renderBundle.willShowGrid) {
+                      return _buildGarsonAreasLoadingPlaceholder();
+                    }
 
-                    final filledCount = tableNumbers
+                    final filledCount = renderBundle.occupiedTableCount;
+                    final preparingCount = renderBundle.renderSections
+                        .expand((section) => section.tables)
                         .where(
-                          (tableNo) =>
-                              (ordersByTable[tableNo]?.isNotEmpty ?? false),
+                          (table) =>
+                              (table.activeOrder?['status']?.toString() ??
+                                  '') ==
+                              'preparing',
                         )
                         .length;
-
-                    final preparingCount = tableNumbers.where((tableNo) {
-                      final tOrders = ordersByTable[tableNo] ?? [];
-                      return tOrders.any(
-                        (o) => (o['status']?.toString() ?? '') == 'preparing',
-                      );
-                    }).length;
-
-                    final paymentPendingCount = tableNumbers.where((tableNo) {
-                      final tOrders = ordersByTable[tableNo] ?? [];
-                      return tOrders.any((o) {
-                        final s = (o['status']?.toString() ?? '');
-                        return s == 'ready' || s == 'served';
-                      });
-                    }).length;
-
-                    // Apply status filter
-                    final displayTableNumbers = tableNumbers
-                        .where((tableNo) {
-                          final tOrders = ordersByTable[tableNo] ?? [];
-                          switch (_garsonStatusFilter) {
-                            case 'occupied':
-                              return tOrders.isNotEmpty;
-                            case 'preparing':
-                              return tOrders.any(
-                                (o) =>
-                                    (o['status']?.toString() ?? '') ==
-                                    'preparing',
-                              );
-                            case 'payment_pending':
-                              return tOrders.any((o) {
-                                final s = (o['status']?.toString() ?? '');
-                                return s == 'ready' || s == 'served';
-                              });
-                            default:
-                              return true;
-                          }
+                    final paymentPendingCount = renderBundle.renderSections
+                        .expand((section) => section.tables)
+                        .where((table) {
+                          final s =
+                              table.activeOrder?['status']?.toString() ?? '';
+                          return s == 'ready' || s == 'served';
                         })
-                        .where(_matchesGarsonAreaFilter)
-                        .toList(growable: false);
+                        .length;
+                    final displayTableNumbers = statusFilteredTableNumbers;
 
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -22529,7 +25064,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             children: [
                               _garsonFilterBadge(
                                 label: 'Toplam Masa',
-                                value: '${tableNumbers.length}',
+                                value: '${renderBundle.totalTableCount}',
                                 filterKey: null,
                                 activeFilter: _garsonStatusFilter,
                                 onTap: () =>
@@ -22582,7 +25117,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         ),
                         const SizedBox(height: 10),
                         Expanded(
-                          child: displayTableNumbers.isEmpty
+                          child:
+                              _garsonStatusFilter != null &&
+                                  displayTableNumbers.isEmpty
                               ? Center(
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
@@ -22611,23 +25148,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 )
                               : Builder(
                                   builder: (context) {
-                                    final occupiedTableNumbers =
-                                        displayTableNumbers
-                                            .where(
-                                              (tableNo) =>
-                                                  (ordersByTable[tableNo]
-                                                      ?.isNotEmpty ??
-                                                  false),
-                                            )
-                                            .toSet();
                                     return SingleChildScrollView(
                                       child: _buildGarsonGroupedTableGrids(
-                                        groups:
-                                            _garsonTableAreaGroupsForNumbers(
-                                              displayTableNumbers,
-                                            ),
-                                        occupiedTableNumbers:
-                                            occupiedTableNumbers,
+                                        renderBundle: renderBundle,
                                         columnsResolver: _webGarsonGridColumns,
                                         aspectRatioResolver:
                                             _webGarsonGridAspectRatio,
@@ -22636,6 +25159,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                           var tableOrders =
                                               ordersByTable[tableNumber] ??
                                               const <Map<String, dynamic>>[];
+                                          var usedOptimisticFallback = false;
                                           final opAt =
                                               _mobileGarsonOptimisticSentAtByTable[tableNumber];
                                           final opItems =
@@ -22645,6 +25169,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                               DateTime.now().difference(opAt) <=
                                                   const Duration(seconds: 45) &&
                                               tableOrders.isEmpty) {
+                                            usedOptimisticFallback = true;
                                             tableOrders = [
                                               <String, dynamic>{
                                                 'status': 'sent',
@@ -22672,6 +25197,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                             tableNumber: tableNumber,
                                             order: selectedOrder,
                                             orderCount: tableOrders.length,
+                                            foundIn: usedOptimisticFallback
+                                                ? 'optimistic'
+                                                : (selectedOrder == null
+                                                      ? 'none'
+                                                      : _garsonOrdersUiSource()),
                                             tableOrders: tableOrders,
                                           );
                                         },
@@ -22807,19 +25337,35 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       valueListenable: _garsonHasPendingRemoteChanges,
       builder: (context, hasPending, _) {
         if (!hasPending) return const SizedBox.shrink();
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFF7ED),
+        if (!shouldShowGarsonPendingChangesChip(state: _garsonUiState)) {
+          return const SizedBox.shrink();
+        }
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: const Color(0xFFF59E0B)),
-          ),
-          child: const Text(
-            'Yeni değişiklik var. Yenile',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFFB45309),
+            onTap: _garsonManualRefreshInProgress
+                ? null
+                : () => unawaited(
+                    _refreshGarsonDataManually(
+                      source: 'garson_manual_refresh_button',
+                    ),
+                  ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF7ED),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: const Color(0xFFF59E0B)),
+              ),
+              child: const Text(
+                'Yeni değişiklik var. Yenile',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFB45309),
+                ),
+              ),
             ),
           ),
         );
@@ -22906,6 +25452,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required int tableNumber,
     required Map<String, dynamic>? order,
     required int orderCount,
+    required String foundIn,
     required List<Map<String, dynamic>> tableOrders,
   }) {
     final hasOrder = orderCount > 0;
@@ -22924,12 +25471,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final tableTitle = tableRow == null
         ? 'Masa $tableNumber'
         : _tableDisplayLabelFromRow(tableRow);
+    final matchedBy = order == null
+        ? 'none'
+        : resolveOrderMatchKindForTable(
+            table: tableRow ?? <String, dynamic>{'table_number': tableNumber},
+            order: order,
+          );
     debugPrint(
       '[GARSON_TABLE_CARD_BIND] '
-      'table_id=${tableRow?['id'] ?? order?['table_id'] ?? order?['store_table_id'] ?? '-'} '
+      'table_id=${tableRow?['id'] ?? order?['table_id'] ?? '-'} '
+      'store_table_id=${tableRow?['id'] ?? order?['store_table_id'] ?? '-'} '
       'table_number=$tableNumber '
+      'table_label=$tableTitle '
       'display_label=$tableTitle '
-      'active_order_found=${hasOrder} '
+      'source=visible_snapshot '
+      'orders_total=$orderCount '
+      'active_order_found=$hasOrder '
+      'found_in=${hasOrder ? foundIn : 'none'} '
+      'matched_by=$matchedBy '
       'order_id=${order?['id'] ?? '-'} '
       'items_count=${cardItems.length} '
       'total=$tableTotal',
@@ -23173,6 +25732,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         onPressed: () => _confirmCloseGarsonTable(
                           tableNumber: tableNumber,
                           existingOrders: tableOrders,
+                          displayLabel: tableTitle,
                         ),
                         style: FilledButton.styleFrom(
                           minimumSize: const Size(0, 34),
@@ -23200,7 +25760,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     void Function(Map<String, dynamic>) onSave,
   ) async {
     final name = item['name']?.toString() ?? '';
-    // TODO(debug): remove before production
     final rawPrice = item['price'];
     debugPrint(
       '[ORDER_NUMERIC_FIELD] field=price value=$rawPrice runtimeType=${rawPrice?.runtimeType}',
@@ -26570,917 +29129,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   Widget _buildFinanceModule() => _buildFinanceModuleImpl();
 
-  DateTimeRange get _financeDateRange {
-    final now = DateTime.now();
-    switch (_financeRangePreset) {
-      case SellerDashboardRangePreset.last7Days:
-        return DateTimeRange(
-          start: DateTime(
-            now.year,
-            now.month,
-            now.day,
-          ).subtract(const Duration(days: 6)),
-          end: now,
-        );
-      case SellerDashboardRangePreset.last30Days:
-      case SellerDashboardRangePreset.monthToDate:
-        return DateTimeRange(
-          start: DateTime(
-            now.year,
-            now.month,
-            now.day,
-          ).subtract(const Duration(days: 29)),
-          end: now,
-        );
-      case SellerDashboardRangePreset.yearToDate:
-        return DateTimeRange(start: DateTime(now.year, 1, 1), end: now);
-      case SellerDashboardRangePreset.custom:
-        return _financeCustomRange ??
-            DateTimeRange(
-              start: DateTime(
-                now.year,
-                now.month,
-                now.day,
-              ).subtract(const Duration(days: 29)),
-              end: now,
-            );
-    }
-  }
-
-  String _financeRangeLabel() {
-    switch (_financeRangePreset) {
-      case SellerDashboardRangePreset.last7Days:
-        return 'Son 7 Gün';
-      case SellerDashboardRangePreset.last30Days:
-      case SellerDashboardRangePreset.monthToDate:
-        return 'Son 30 Gün';
-      case SellerDashboardRangePreset.yearToDate:
-        return 'Bu Yıl';
-      case SellerDashboardRangePreset.custom:
-        if (_isFinanceRollingRangeSelected(90)) return 'Son 3 Ay';
-        if (_isFinanceRollingRangeSelected(180)) return 'Son 6 Ay';
-        final range = _financeDateRange;
-        return '${_formatDateShort(range.start)} - ${_formatDateShort(range.end)}';
-    }
-  }
-
-  Future<void> _setFinanceRangePreset(SellerDashboardRangePreset preset) async {
-    if (preset == SellerDashboardRangePreset.custom) {
-      final picked = await showDialog<DateTimeRange>(
-        context: context,
-        builder: (dialogContext) {
-          return Theme(
-            data: Theme.of(dialogContext).copyWith(
-              colorScheme: Theme.of(
-                dialogContext,
-              ).colorScheme.copyWith(primary: const Color(0xFF7C3AED)),
-            ),
-            child: Dialog(
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 32,
-                vertical: 32,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: SizedBox(
-                width: 720,
-                child: DateRangePickerDialog(
-                  firstDate: DateTime(2023, 1, 1),
-                  lastDate: DateTime.now(),
-                  initialDateRange: _financeCustomRange ?? _financeDateRange,
-                  helpText: 'Finans Tarih Aralığı',
-                  cancelText: 'Vazgeç',
-                  saveText: 'Uygula',
-                ),
-              ),
-            ),
-          );
-        },
-      );
-      if (picked == null || !mounted) return;
-      setState(() {
-        _financeRangePreset = SellerDashboardRangePreset.custom;
-        _financeCustomRange = picked;
-      });
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _financeRangePreset = preset;
-      _financeCustomRange = null;
-    });
-  }
-
-  Future<void> _showFinanceRangeDialog() async {
-    final selected = await showDialog<SellerDashboardRangePreset>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.white,
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: 24,
-            vertical: 24,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Container(
-            width: 360,
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Finans Tarihi',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF111827),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Finans özetini görmek istediğiniz dönemi seçin.',
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                ),
-                const SizedBox(height: 18),
-                ...[
-                  (
-                    SellerDashboardRangePreset.last7Days,
-                    'Son 7 Gün',
-                    Icons.calendar_view_week_rounded,
-                  ),
-                  (
-                    SellerDashboardRangePreset.last30Days,
-                    'Son 30 Gün',
-                    Icons.calendar_month_rounded,
-                  ),
-                  (
-                    SellerDashboardRangePreset.custom,
-                    'Tarih Seç',
-                    Icons.date_range_rounded,
-                  ),
-                ].map((option) {
-                  final isActive = _financeRangePreset == option.$1;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: InkWell(
-                      onTap: () => Navigator.of(context).pop(option.$1),
-                      borderRadius: BorderRadius.circular(14),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? const Color(0xFF7C3AED).withValues(alpha: 0.08)
-                              : const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: isActive
-                                ? const Color(0xFF7C3AED)
-                                : Colors.grey.shade200,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: isActive
-                                    ? const Color(
-                                        0xFF7C3AED,
-                                      ).withValues(alpha: 0.14)
-                                    : Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Icon(
-                                option.$3,
-                                color: isActive
-                                    ? const Color(0xFF7C3AED)
-                                    : Colors.grey.shade700,
-                                size: 19,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                option.$2,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: isActive
-                                      ? const Color(0xFF7C3AED)
-                                      : const Color(0xFF111827),
-                                ),
-                              ),
-                            ),
-                            if (isActive)
-                              const Icon(
-                                Icons.check_circle,
-                                color: Color(0xFF7C3AED),
-                                size: 18,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-
-    if (selected == null || !mounted) return;
-    await _setFinanceRangePreset(selected);
-  }
-
-  Future<void> _setFinanceRollingRange(int days) async {
-    final now = DateTime.now();
-    setState(() {
-      _financeRangePreset = SellerDashboardRangePreset.custom;
-      _financeCustomRange = DateTimeRange(
-        start: DateTime(
-          now.year,
-          now.month,
-          now.day,
-        ).subtract(Duration(days: days - 1)),
-        end: now,
-      );
-    });
-  }
-
-  bool _isFinanceRollingRangeSelected(int days) {
-    final range = _financeDateRange;
-    final difference = range.end.difference(range.start).inDays + 1;
-    return _financeRangePreset == SellerDashboardRangePreset.custom &&
-        difference == days;
-  }
-
-  Map<String, dynamic> _buildFinanceSummary() {
-    final range = _financeDateRange;
-    final cacheKey =
-        '$_ordersVersion|${range.start.toIso8601String()}|${range.end.toIso8601String()}|$_financeTransactionTypeFilter';
-    if (_financeSummaryCacheKey == cacheKey && _financeSummaryCache != null) {
-      return _financeSummaryCache!;
-    }
-
-    const commissionRate = 0.15;
-    final now = DateTime.now();
-    final financeOrders = _dashboardOrdersBetween(range.start, range.end);
-    final allOrders = _sellerOrders;
-    final salesOrders = allOrders
-        .where((order) {
-          final status = _normalizeDashboardOrderStatus(order['status']);
-          return !status.contains('return') && !status.contains('cancel');
-        })
-        .toList(growable: false);
-    final deliveredOrders = salesOrders
-        .where((order) {
-          return _normalizeDashboardOrderStatus(order['status']) == 'delivered';
-        })
-        .toList(growable: false);
-    final pendingOrders = salesOrders
-        .where((order) {
-          final status = _normalizeDashboardOrderStatus(order['status']);
-          return status != 'delivered';
-        })
-        .toList(growable: false);
-    final eligiblePayoutOrders = deliveredOrders
-        .where((order) {
-          final createdAt = _dashboardOrderDate(order);
-          if (createdAt == null) return false;
-          return createdAt.isBefore(now.subtract(const Duration(days: 7)));
-        })
-        .toList(growable: false);
-    final pendingSettlementOrders = deliveredOrders
-        .where((order) {
-          final createdAt = _dashboardOrderDate(order);
-          if (createdAt == null) return true;
-          return !createdAt.isBefore(now.subtract(const Duration(days: 7)));
-        })
-        .toList(growable: false);
-    final returnedOrders = allOrders
-        .where((order) {
-          final status = _normalizeDashboardOrderStatus(order['status']);
-          return status.contains('return') || status.contains('cancel');
-        })
-        .toList(growable: false);
-
-    final totalGrossRevenue = _dashboardSumRevenue(salesOrders);
-    final deliveredGrossRevenue = _dashboardSumRevenue(deliveredOrders);
-    final availableBalance =
-        _dashboardSumRevenue(eligiblePayoutOrders) * (1 - commissionRate);
-    final pendingBalance =
-        (_dashboardSumRevenue(pendingSettlementOrders) +
-            _dashboardSumRevenue(pendingOrders)) *
-        (1 - commissionRate);
-
-    final monthStart = DateTime(now.year, now.month, 1);
-    final previousMonthStart = DateTime(now.year, now.month - 1, 1);
-    final previousMonthEnd = DateTime(now.year, now.month, 0, 23, 59, 59);
-    final monthOrders =
-        _dashboardOrdersBetween(
-              monthStart,
-              DateTime(now.year, now.month, now.day, 23, 59, 59),
-            )
-            .where((order) {
-              final status = _normalizeDashboardOrderStatus(order['status']);
-              return !status.contains('return') && !status.contains('cancel');
-            })
-            .toList(growable: false);
-    final previousMonthOrders =
-        _dashboardOrdersBetween(previousMonthStart, previousMonthEnd)
-            .where((order) {
-              final status = _normalizeDashboardOrderStatus(order['status']);
-              return !status.contains('return') && !status.contains('cancel');
-            })
-            .toList(growable: false);
-    final monthGross = _dashboardSumRevenue(monthOrders);
-    final previousMonthGross = _dashboardSumRevenue(previousMonthOrders);
-    final monthNetRevenue = monthGross * (1 - commissionRate);
-    final previousMonthNetRevenue = previousMonthGross * (1 - commissionRate);
-
-    final periodSales = financeOrders
-        .where((order) {
-          final status = _normalizeDashboardOrderStatus(order['status']);
-          return !status.contains('return') && !status.contains('cancel');
-        })
-        .toList(growable: false);
-    final periodRefundsOrders = financeOrders
-        .where((order) {
-          final status = _normalizeDashboardOrderStatus(order['status']);
-          return status.contains('return') || status.contains('cancel');
-        })
-        .toList(growable: false);
-    final periodGrossRevenue = _dashboardSumRevenue(periodSales);
-    final periodCommission = periodGrossRevenue * commissionRate;
-    final periodRefunds = _dashboardSumRevenue(periodRefundsOrders);
-    final periodNetRevenue = math.max(
-      0.0,
-      periodGrossRevenue - periodCommission - periodRefunds,
-    );
-    final previousFinanceOrders = _dashboardOrdersBetween(
-      range.start.subtract(
-        Duration(days: range.end.difference(range.start).inDays + 1),
-      ),
-      range.start.subtract(const Duration(seconds: 1)),
-    );
-    final previousFinanceSales = previousFinanceOrders
-        .where((order) {
-          final status = _normalizeDashboardOrderStatus(order['status']);
-          return !status.contains('return') && !status.contains('cancel');
-        })
-        .toList(growable: false);
-    final previousGross = _dashboardSumRevenue(previousFinanceSales);
-    final previousCommission = previousGross * commissionRate;
-    final previousRefunds = _dashboardSumRevenue(
-      previousFinanceOrders
-          .where((order) {
-            final status = _normalizeDashboardOrderStatus(order['status']);
-            return status.contains('return') || status.contains('cancel');
-          })
-          .toList(growable: false),
-    );
-    final previousNet = math.max(
-      0.0,
-      previousGross - previousCommission - previousRefunds,
-    );
-
-    final averageOrderValue = periodSales.isEmpty
-        ? 0.0
-        : periodGrossRevenue / periodSales.length;
-    final collectionRate = totalGrossRevenue == 0
-        ? 0.0
-        : (deliveredGrossRevenue / totalGrossRevenue) * 100;
-    final refundRate = totalGrossRevenue == 0
-        ? 0.0
-        : (_dashboardSumRevenue(returnedOrders) / totalGrossRevenue) * 100;
-    final marginRate = periodGrossRevenue == 0
-        ? 0.0
-        : (periodNetRevenue / periodGrossRevenue) * 100;
-
-    final chartPoints = _buildFinanceChartPoints(
-      start: range.start,
-      end: range.end,
-      orders: financeOrders,
-      commissionRate: commissionRate,
-    );
-    final transactions = _buildFinanceTransactions(
-      orders: financeOrders,
-      commissionRate: commissionRate,
-    );
-
-    final summary = {
-      'availableBalance': availableBalance,
-      'pendingBalance': pendingBalance,
-      'monthNetRevenue': monthNetRevenue,
-      'monthOrderCount': monthOrders.length,
-      'totalGrossRevenue': totalGrossRevenue,
-      'totalOrders': salesOrders.length,
-      'deliveredOrders': deliveredOrders.length,
-      'pendingOrders': pendingOrders.length + pendingSettlementOrders.length,
-      'periodGrossRevenue': periodGrossRevenue,
-      'periodNetRevenue': periodNetRevenue,
-      'periodCommission': periodCommission,
-      'periodRefunds': periodRefunds,
-      'averageOrderValue': averageOrderValue,
-      'collectionRate': collectionRate,
-      'refundRate': refundRate,
-      'marginRate': marginRate,
-      'transactions': transactions,
-      'chartPoints': chartPoints,
-      'nextPayoutDate': _formatFinancePayoutDate(_nextPayoutDate()),
-      'monthTrend': _formatChangeLabel(
-        SellerDashboardService.calculateChangePercent(
-          current: monthNetRevenue,
-          previous: previousMonthNetRevenue,
-        ),
-      ),
-      'monthTrendColor':
-          SellerDashboardService.calculateChangePercent(
-                current: monthNetRevenue,
-                previous: previousMonthNetRevenue,
-              ) >=
-              0
-          ? const Color(0xFF16A34A)
-          : const Color(0xFFEF4444),
-      'availableTrend': _formatChangeLabel(
-        SellerDashboardService.calculateChangePercent(
-          current: availableBalance,
-          previous: previousNet,
-        ),
-      ),
-      'availableTrendColor':
-          SellerDashboardService.calculateChangePercent(
-                current: availableBalance,
-                previous: previousNet,
-              ) >=
-              0
-          ? const Color(0xFF16A34A)
-          : const Color(0xFFEF4444),
-      'commissionChange': SellerDashboardService.calculateChangePercent(
-        current: periodCommission,
-        previous: previousCommission,
-      ),
-      'commissionRatePercent': commissionRate * 100,
-    };
-    _financeSummaryCacheKey = cacheKey;
-    _financeSummaryCache = summary;
-    return summary;
-  }
-
-  List<SellerDashboardSeriesPoint> _buildFinanceChartPoints({
-    required DateTime start,
-    required DateTime end,
-    required List<Map<String, dynamic>> orders,
-    required double commissionRate,
-  }) {
-    final totalDays = end.difference(start).inDays + 1;
-    if (totalDays <= 31) {
-      return List.generate(totalDays, (index) {
-        final day = DateTime(
-          start.year,
-          start.month,
-          start.day,
-        ).add(Duration(days: index));
-        final dayOrders = _dashboardOrdersBetween(
-          day,
-          DateTime(day.year, day.month, day.day, 23, 59, 59),
-        );
-        final sales = dayOrders
-            .where((order) {
-              final status = _normalizeDashboardOrderStatus(order['status']);
-              return !status.contains('return') && !status.contains('cancel');
-            })
-            .toList(growable: false);
-        final refunds = dayOrders
-            .where((order) {
-              final status = _normalizeDashboardOrderStatus(order['status']);
-              return status.contains('return') || status.contains('cancel');
-            })
-            .toList(growable: false);
-        final gross = _dashboardSumRevenue(sales);
-        final net = math.max(
-          0.0,
-          gross - (gross * commissionRate) - _dashboardSumRevenue(refunds),
-        );
-        return SellerDashboardSeriesPoint(
-          label: _financeDayLabel(day),
-          revenue: net,
-          orderCount: sales.length,
-        );
-      });
-    }
-
-    final monthStarts = <DateTime>[];
-    var cursor = DateTime(start.year, start.month, 1);
-    final lastMonth = DateTime(end.year, end.month, 1);
-    while (!cursor.isAfter(lastMonth)) {
-      monthStarts.add(cursor);
-      cursor = DateTime(cursor.year, cursor.month + 1, 1);
-    }
-    return monthStarts
-        .map((monthStart) {
-          final monthEnd = DateTime(
-            monthStart.year,
-            monthStart.month + 1,
-            0,
-            23,
-            59,
-            59,
-          );
-          final scopedOrders = _dashboardOrdersBetween(
-            monthStart.isBefore(start) ? start : monthStart,
-            monthEnd.isAfter(end) ? end : monthEnd,
-          );
-          final sales = scopedOrders
-              .where((order) {
-                final status = _normalizeDashboardOrderStatus(order['status']);
-                return !status.contains('return') && !status.contains('cancel');
-              })
-              .toList(growable: false);
-          final refunds = scopedOrders
-              .where((order) {
-                final status = _normalizeDashboardOrderStatus(order['status']);
-                return status.contains('return') || status.contains('cancel');
-              })
-              .toList(growable: false);
-          final gross = _dashboardSumRevenue(sales);
-          final net = math.max(
-            0.0,
-            gross - (gross * commissionRate) - _dashboardSumRevenue(refunds),
-          );
-          return SellerDashboardSeriesPoint(
-            label: _financeMonthLabel(monthStart),
-            revenue: net,
-            orderCount: sales.length,
-          );
-        })
-        .toList(growable: false);
-  }
-
-  String _financeDayLabel(DateTime value) {
-    const labels = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
-    return labels[value.weekday - 1];
-  }
-
-  String _financeMonthLabel(DateTime value) {
-    const labels = [
-      'Oca',
-      'Şub',
-      'Mar',
-      'Nis',
-      'May',
-      'Haz',
-      'Tem',
-      'Ağu',
-      'Eyl',
-      'Eki',
-      'Kas',
-      'Ara',
-    ];
-    return labels[value.month - 1];
-  }
-
-  List<Map<String, dynamic>> _buildFinanceTransactions({
-    required List<Map<String, dynamic>> orders,
-    required double commissionRate,
-  }) {
-    final rows = <Map<String, dynamic>>[];
-    for (final order in orders) {
-      final createdAt = _dashboardOrderDate(order) ?? DateTime.now();
-      final status = _normalizeDashboardOrderStatus(order['status']);
-      final gross =
-          ((order['total_price'] ??
-                      order['totalPrice'] ??
-                      order['total_amount'] ??
-                      order['totalAmount'] ??
-                      0)
-                  as num)
-              .toDouble();
-      final orderId =
-          (order['order_id'] ?? order['orderId'] ?? order['id'] ?? '-')
-              .toString();
-      final productName =
-          (order['product_name'] ?? order['productName'] ?? 'Ürün').toString();
-      if (status.contains('return') || status.contains('cancel')) {
-        rows.add({
-          'type': 'Iade',
-          'title': productName,
-          'subtitle': '#$orderId - İade / iptal işlemi',
-          'amount': -gross,
-          'date': createdAt,
-          'color': const Color(0xFFEF4444),
-          'icon': Icons.replay_circle_filled_outlined,
-          'status': 'İade',
-        });
-        continue;
-      }
-
-      final isDelivered = status == 'delivered';
-      rows.add({
-        'type': isDelivered ? 'Satis' : 'Bekleyen',
-        'title': productName,
-        'subtitle':
-            '#$orderId - ${isDelivered ? 'Tahsil edildi' : _sellerOrderStatusLabel(order['status']?.toString())}',
-        'amount': gross,
-        'date': createdAt,
-        'color': isDelivered
-            ? const Color(0xFF10B981)
-            : const Color(0xFF3B82F6),
-        'icon': isDelivered
-            ? Icons.shopping_bag_outlined
-            : Icons.schedule_outlined,
-        'status': isDelivered ? 'Satış' : 'Bekleyen',
-      });
-      rows.add({
-        'type': 'Komisyon',
-        'title': 'Platform komisyonu',
-        'subtitle': '#$orderId - %15 hizmet bedeli',
-        'amount': -(gross * commissionRate),
-        'date': createdAt.add(const Duration(minutes: 3)),
-        'color': const Color(0xFFF59E0B),
-        'icon': Icons.percent_rounded,
-        'status': 'Komisyon',
-      });
-    }
-
-    rows.sort(
-      (a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime),
-    );
-    if (_financeTransactionTypeFilter == 'Tum Islemler') {
-      return rows;
-    }
-    return rows
-        .where((row) => row['type'] == _financeTransactionTypeFilter)
-        .toList(growable: false);
-  }
-
-  Widget _buildFinanceSummaryCard({
-    required String title,
-    required String value,
-    required String subtitle,
-    required IconData icon,
-    required Color accent,
-    required Color accentSoft,
-    required String trend,
-    required Color trendColor,
-  }) {
-    return _buildOverviewCardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: accentSoft,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: accent, size: 17),
-              ),
-              const Spacer(),
-              Text(
-                trend,
-                style: TextStyle(
-                  color: trendColor,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            style: const TextStyle(
-              color: Color(0xFF94A3B8),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Color(0xFF0F172A),
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              color: Color(0xFF94A3B8),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFinancePerformanceChart(
-    List<SellerDashboardSeriesPoint> chartPoints,
-  ) {
-    final points = chartPoints;
-    final hasData = points.any((point) => point.revenue > 0);
-    final maxRevenue = points.fold<double>(
-      1,
-      (maxValue, point) => point.revenue > maxValue ? point.revenue : maxValue,
-    );
-
-    return Column(
-      children: [
-        SizedBox(
-          height: 230,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SizedBox(
-                width: 54,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: _buildChartYAxisLabels(maxRevenue),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: CustomPaint(
-                        painter: SellerDashboardLineChartPainter(
-                          points: points,
-                          lineColor: const Color(0xFF7C3AED),
-                          maxValue: maxRevenue,
-                          showFullYearMarkers: false,
-                        ),
-                      ),
-                    ),
-                    if (!hasData)
-                      Center(
-                        child: Text(
-                          'Seçili tarih aralığında finans verisi bulunmuyor',
-                          style: TextStyle(
-                            color: Colors.grey.shade400,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: _buildChartXAxisLabels(points),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFinanceFilterDropdown({
-    required String value,
-    required List<String> items,
-    required ValueChanged<String?> onChanged,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: value,
-          isExpanded: true,
-          items: items
-              .map(
-                (item) => DropdownMenuItem<String>(
-                  value: item,
-                  child: Text(_financeFilterLabel(item)),
-                ),
-              )
-              .toList(growable: false),
-          onChanged: onChanged,
-        ),
-      ),
-    );
-  }
-
-  String _financeFilterLabel(String raw) {
-    switch (raw) {
-      case 'Tum Islemler':
-        return 'Tüm İşlemler';
-      case 'Satis':
-        return 'Satış';
-      case 'Bekleyen':
-        return 'Bekleyen';
-      case 'Komisyon':
-        return 'Komisyon';
-      case 'Iade':
-        return 'İade';
-      default:
-        return raw;
-    }
-  }
-
-  Widget _buildFinanceTransactionRow(Map<String, dynamic> transaction) {
-    final amount = transaction['amount'] as double;
-    final color = transaction['color'] as Color;
-    final icon = transaction['icon'] as IconData;
-    final date = transaction['date'] as DateTime;
-    final amountText =
-        '${amount >= 0 ? '+' : '-'}${_formatDashboardCurrency(amount.abs())}';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color, size: 16),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  transaction['title'] as String,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  transaction['subtitle'] as String,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                amountText,
-                style: TextStyle(
-                  color: amount >= 0 ? const Color(0xFF16A34A) : color,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _formatDateShort(date),
-                style: const TextStyle(
-                  color: Color(0xFF94A3B8),
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildFinanceInfoRow(
     String label,
     String value, {
@@ -27554,153 +29202,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         },
       ),
     );
-  }
-
-  Widget _buildFinanceHealthMetric(String label, double value, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  color: Color(0xFF475569),
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            Text(
-              '%${value.toStringAsFixed(1)}',
-              style: TextStyle(
-                color: color,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: LinearProgressIndicator(
-            value: (value / 100).clamp(0.0, 1.0),
-            minHeight: 6,
-            backgroundColor: const Color(0xFFE5E7EB),
-            valueColor: AlwaysStoppedAnimation<Color>(color),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFinanceNoteTile({
-    required Color color,
-    required Color accent,
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: accent, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12.5,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
-                    fontSize: 11.5,
-                    height: 1.45,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  DateTime _nextPayoutDate() {
-    final now = DateTime.now();
-    final monday = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    ).add(Duration(days: (8 - now.weekday) % 7));
-    return monday == DateTime(now.year, now.month, now.day)
-        ? monday.add(const Duration(days: 7))
-        : monday;
-  }
-
-  String _formatFinancePayoutDate(DateTime date) {
-    const months = [
-      'Ocak',
-      'Şubat',
-      'Mart',
-      'Nisan',
-      'Mayıs',
-      'Haziran',
-      'Temmuz',
-      'Ağustos',
-      'Eylül',
-      'Ekim',
-      'Kasım',
-      'Aralık',
-    ];
-    return '${date.day} ${months[date.month - 1]} ${date.year}';
-  }
-
-  void _downloadFinanceReport(List<Map<String, dynamic>> transactions) {
-    final rows = <List<String>>[
-      ['Tip', 'Baslik', 'Aciklama', 'Tutar', 'Tarih'],
-      ...transactions.map((transaction) {
-        return [
-          transaction['type'].toString(),
-          transaction['title'].toString(),
-          transaction['subtitle'].toString(),
-          (transaction['amount'] as double).toStringAsFixed(2),
-          (transaction['date'] as DateTime).toIso8601String(),
-        ];
-      }),
-    ];
-    final csv = rows
-        .map(
-          (row) =>
-              row.map((cell) => '"${cell.replaceAll('"', '""')}"').join(','),
-        )
-        .join('\n');
-
-    BrowserFileDownload.saveBytes(
-      bytes: utf8.encode(csv),
-      fileName: 'finans-raporu-${DateTime.now().millisecondsSinceEpoch}.csv',
-      mimeType: 'text/csv;charset=utf-8',
-    );
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Finans raporu indiriliyor.')));
   }
 
   Widget _buildReviewsModule() {
@@ -29701,7 +31202,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return tickets.where((ticket) {
       if (_selectedSupportTab == 'Açık' &&
           ticket.status != TicketStatus.open &&
-          ticket.status != TicketStatus.in_progress) {
+          ticket.status != TicketStatus.inProgress) {
         return false;
       }
       if (_selectedSupportTab == 'Kapalı' &&
@@ -30028,7 +31529,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     // Sekme filtresine göre göster/gizle
     if (_selectedSupportTab == 'Açık' &&
         ticket.status != TicketStatus.open &&
-        ticket.status != TicketStatus.in_progress) {
+        ticket.status != TicketStatus.inProgress) {
       return const SizedBox.shrink();
     }
     if (_selectedSupportTab == 'Kapalı' &&
@@ -30045,14 +31546,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
     final statusColors = {
       TicketStatus.open: Colors.orange,
-      TicketStatus.in_progress: Colors.blue,
+      TicketStatus.inProgress: Colors.blue,
       TicketStatus.closed: Colors.green,
       TicketStatus.resolved: Colors.green,
     };
 
     final statusText = {
       TicketStatus.open: 'Açık',
-      TicketStatus.in_progress: 'İnceleniyor',
+      TicketStatus.inProgress: 'İnceleniyor',
       TicketStatus.closed: 'Kapalı',
       TicketStatus.resolved: 'Çözüldü',
     };
@@ -30204,13 +31705,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
           // İşlem Butonları
           if (ticket.status == TicketStatus.open ||
-              ticket.status == TicketStatus.in_progress)
+              ticket.status == TicketStatus.inProgress)
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton.icon(
                   onPressed: () {
-                    // TODO: Implement reply or view detail
+                    // For now this action opens the ticket detail dialog.
                     _showSupportTicketDetailDialog(ticket);
                   },
                   icon: const Icon(Icons.visibility, size: 14),
@@ -30525,13 +32026,13 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   void _showSupportTicketDetailDialog(SupportTicket ticket) {
     final statusColors = {
       TicketStatus.open: Colors.orange,
-      TicketStatus.in_progress: Colors.blue,
+      TicketStatus.inProgress: Colors.blue,
       TicketStatus.closed: Colors.green,
       TicketStatus.resolved: Colors.green,
     };
     final statusText = {
       TicketStatus.open: 'Açık',
-      TicketStatus.in_progress: 'İnceleniyor',
+      TicketStatus.inProgress: 'İnceleniyor',
       TicketStatus.closed: 'Kapalı',
       TicketStatus.resolved: 'Çözüldü',
     };
@@ -31637,7 +33138,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           widget.tableOrdersStream ??
           _storeService.getTableOrdersStream(widget.sellerId);
     }
-    // TODO(debug): remove before production
     debugPrint(
       '[WAITER_FLOW_INIT] '
       'sellerId=${widget.sellerId} '
@@ -31647,6 +33147,13 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     );
     if (!widget.debugDisableLiveSync) {
       unawaited(_loadProductsForGarsonFlow());
+      // BUG-FIX (Bug 2): Preload orders via snapshot so _hydratedTableOrders is
+      // populated immediately — before the first stream event arrives. The
+      // realtime stream only covers table_orders; getTableOrdersSnapshot merges
+      // both table_orders AND orders tables. Without this, the detail screen
+      // shows an empty body until the first stream event (or forever when orders
+      // live only in the orders table).
+      unawaited(_preloadTableOrders());
     }
     _bottomIndex = widget.initialTabIndex.clamp(0, 2);
     _pendingInitialOrderId = widget.initialOrderId;
@@ -31693,6 +33200,74 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     super.dispose();
   }
 
+  /// BUG-FIX (Bug 2): Preloads this table's orders via [getTableOrdersSnapshot]
+  /// which merges both the `table_orders` and the `orders` Supabase tables.
+  /// The realtime stream used by the [StreamBuilder] only covers `table_orders`;
+  /// any order recorded only in the `orders` table (e.g. placed via the normal
+  /// customer-facing flow) would never appear in the stream and would leave the
+  /// detail screen permanently empty. By eagerly fetching a snapshot in
+  /// [initState] we populate [_hydratedTableOrders] before the first stream
+  /// event arrives, so the UI is never blank on entry.
+  Future<void> _preloadTableOrders() async {
+    final sellerId = widget.sellerId.trim();
+    if (sellerId.isEmpty) return;
+    try {
+      debugPrint(
+        '[GARSON_DETAIL_PRELOAD] '
+        'table=${widget.tableNumber} sellerId=$sellerId '
+        'action=getTableOrdersSnapshot',
+      );
+      final snapshot = await _storeService.getTableOrdersSnapshot(
+        sellerId,
+        tableNumber: widget.tableNumber,
+      );
+      if (!mounted) return;
+      // getTableOrdersSnapshot already filters by tableNumber when provided,
+      // but we double-check here in case of fallback rows without table_number.
+      final tableOrders = snapshot
+          .where((o) {
+            final n = o['table_number'];
+            final parsed = n is num
+                ? n.toInt()
+                : int.tryParse(n?.toString() ?? '') ?? 0;
+            return parsed == widget.tableNumber || parsed == 0;
+          })
+          .map(_normalizeTableOrder)
+          .toList(growable: false);
+      debugPrint(
+        '[GARSON_DETAIL_PRELOAD] '
+        'table=${widget.tableNumber} sellerId=$sellerId '
+        'snapshot_total=${snapshot.length} '
+        'table_orders=${tableOrders.length}',
+      );
+      if (tableOrders.isEmpty) return;
+      // Single !mounted check covers all synchronous logic below — no further
+      // awaits between here and the setState call.
+      if (!mounted) return;
+      setState(() {
+        // Guard: only apply preload if the stream hasn't already delivered
+        // fresher data. _displayTableOrders syncs _hydratedTableOrders from
+        // the stream whenever it emits non-empty orders, so isEmpty here means
+        // the stream hasn't fired non-empty yet and the preload snapshot is
+        // the best available source.
+        if (_hydratedTableOrders.isEmpty) {
+          _hydratedTableOrders = tableOrders;
+        }
+      });
+      // Defensive: although setState above cannot unmount the widget, an
+      // explicit guard makes the async intent clear for future maintainers.
+      if (!mounted) return;
+      _tryApplyInitialOrder(tableOrders);
+    } catch (error) {
+      debugPrint(
+        '[GARSON_DETAIL_PRELOAD] '
+        'error table=${widget.tableNumber} '
+        'sellerId=$sellerId '
+        'error=$error',
+      );
+    }
+  }
+
   Future<void> _loadProductsForGarsonFlow() async {
     final sellerId = widget.sellerId.trim();
     if (sellerId.isEmpty) return;
@@ -31707,7 +33282,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           })
           .where((product) => product.id.trim().isNotEmpty)
           .toList(growable: false);
-      // TODO(debug): remove before production
       debugPrint(
         '[WAITER_FLOW_FETCH] '
         'sellerId=$sellerId '
@@ -31952,6 +33526,27 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     }
   }
 
+  bool _isFatalPrintTrackingRefreshError(Object error) {
+    final rawCode = () {
+      try {
+        return (error as dynamic).code?.toString().trim() ?? '';
+      } catch (_) {
+        return '';
+      }
+    }();
+    final code = rawCode.toLowerCase();
+    if (code == '400' ||
+        code == '401' ||
+        code == '403' ||
+        code == '404' ||
+        code == '42501') {
+      return true;
+    }
+    final message = error.toString().toLowerCase();
+    return message.contains('permission denied') ||
+        message.contains('print_jobs') && message.contains('400');
+  }
+
   Future<void> _refreshTrackedPrintJobs({required int generation}) async {
     if (_trackedPrintJobIds.isEmpty) return;
     try {
@@ -31965,7 +33560,18 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           .toList(growable: false);
       _evaluateTrackedPrintJobs(jobs, generation: generation);
     } catch (error) {
-      debugPrint('[GarsonPrintTrack] refresh_failed error=$error');
+      final fatal = _isFatalPrintTrackingRefreshError(error);
+      debugPrint('[GarsonPrintTrack] refresh_failed fatal=$fatal error=$error');
+      if (!fatal || !mounted || generation != _printTrackingGeneration) {
+        return;
+      }
+      _cancelPrintTracking();
+      _printTrackingGeneration += 1;
+      _setSubmitFeedback(
+        'Yazdırma sonucu doğrulanamadı. Yazıcı Merkezi\'nden kontrol edin.',
+        tone: _GarsonSubmitFeedbackTone.warning,
+        autoHideAfter: const Duration(seconds: 6),
+      );
     }
   }
 
@@ -32351,15 +33957,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     return _parsePositiveInt(order['revision'], fallback: 1);
   }
 
-  String _tableOrderIdentity(Map<String, dynamic> order) {
-    final id = order['id']?.toString().trim() ?? '';
-    if (id.isNotEmpty) return 'id:$id';
-    final createdAt = order['created_at']?.toString().trim() ?? '';
-    final status = order['status']?.toString().trim() ?? '';
-    final items = jsonEncode(_extractItems(order['items']));
-    return 'fallback:${widget.tableNumber}|$createdAt|$status|$items';
-  }
-
   List<Map<String, dynamic>> _mergeTableOrders(
     Iterable<Map<String, dynamic>> primary,
     Iterable<Map<String, dynamic>> secondary,
@@ -32376,6 +33973,17 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     final normalizedServerOrders = serverOrders
         .map(_normalizeTableOrder)
         .toList(growable: false);
+    // Sink pattern: keep the fallback cache in sync with the freshest stream
+    // data. Without this, a stale preload snapshot could linger as the
+    // fallback after the realtime stream temporarily emits an empty list
+    // (e.g. on reconnect), causing already-shown orders to disappear briefly.
+    // Direct field mutation here is intentional — it must not trigger a
+    // setState rebuild loop, and the value is always consistent with the next
+    // frame since _displayTableOrders is called synchronously inside the
+    // StreamBuilder builder.
+    if (normalizedServerOrders.isNotEmpty) {
+      _hydratedTableOrders = normalizedServerOrders;
+    }
     final baseOrders = normalizedServerOrders.isNotEmpty
         ? normalizedServerOrders
         : _hydratedTableOrders;
@@ -32733,7 +34341,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     SellerProduct product, {
     required List<SellerProduct> selectableProducts,
   }) async {
-    // TODO(debug): remove before production
     debugPrint(
       '[SERVICE_OPEN] '
       'name="${product.name}" '
@@ -34467,7 +36074,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                     MixedServiceOrder.serviceTemplateProductType,
           )
           .length;
-      // TODO(debug): remove before production
       for (final item in items) {
         final rawPrice = item['price'];
         final rawLineTotal = item['line_total'];
@@ -34503,7 +36109,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
             sum +
             MixedServiceOrder.parsePrice(item['line_total'] ?? item['price']),
       );
-      // TODO(debug): remove before production
       debugPrint(
         '[ORDER_PAYLOAD] '
         'regular_count=$regularCount '
@@ -34659,6 +36264,35 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           revision: nextRevision,
           updatedAt: updatedAt,
         );
+        final rpcRaw = dispatchResult.raw;
+        debugPrint(
+          '[GARSON_ORDER_SUBMIT_RPC_RESULT] '
+          'rpc_name=create_table_order_with_print_jobs '
+          'order_id=${dispatchResult.orderId ?? rpcRaw['order_id'] ?? '-'} '
+          'returned_order_status=${rpcRaw['order_status'] ?? rpcRaw['status'] ?? nextStatus} '
+          'returned_table_id=${rpcRaw['table_id'] ?? '-'} '
+          'returned_store_table_id=${rpcRaw['store_table_id'] ?? rpcRaw['table_id'] ?? '-'} '
+          'returned_table_number=${rpcRaw['table_number'] ?? widget.tableNumber} '
+          'returned_items_count=${items.length} '
+          'print_jobs_count=${dispatchResult.printJobCount}',
+        );
+        debugPrint(
+          '[GARSON_ORDER_SUBMIT_DB_RESULT] '
+          'order_id=${submittedOrder['id'] ?? '-'} '
+          'restaurant_id=${widget.sellerId} '
+          'store_id=${widget.sellerId} '
+          'table_id=${submittedOrder['table_id'] ?? submittedOrder['store_table_id'] ?? '-'} '
+          'store_table_id=${submittedOrder['store_table_id'] ?? submittedOrder['table_id'] ?? '-'} '
+          'table_number=${submittedOrder['table_number'] ?? widget.tableNumber} '
+          'display_table_label=${submittedOrder['display_table_label'] ?? submittedOrder['table_display_name'] ?? submittedOrder['table_name'] ?? '-'} '
+          'area_name=${submittedOrder['area_name'] ?? submittedOrder['table_area_name'] ?? '-'} '
+          'area_table_number=${submittedOrder['area_table_number'] ?? '-'} '
+          'status=${resolveGarsonOrderStatusField(submittedOrder)} '
+          'items_count=${garsonExtractActiveOrderItems(submittedOrder).length} '
+          'total=${submittedOrder['total'] ?? submittedOrder['grand_total'] ?? orderTotal} '
+          'created_at=${submittedOrder['created_at'] ?? '-'} '
+          'returned_payload_keys=${submittedOrder.keys.map((key) => key.toString()).join(',')}',
+        );
         debugPrint(
           '[PrintPipeline] table_order_saved_at=${DateTime.now().toIso8601String()} '
           'table=${widget.tableNumber} db_save_ms=$kitchenPerfDbSaveMs '
@@ -34694,7 +36328,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         'direct_print_done_ms': dispatchFeedback.directPrintDoneMs > 0
             ? dispatchFeedback.directPrintDoneMs
             : totalToBridgeMs,
-        if (kitchenPerfDbSaveMs != null) 'db_save_ms': kitchenPerfDbSaveMs,
+        'db_save_ms': kitchenPerfDbSaveMs,
         'ui_reconcile_ms': uiReconcileMs,
         'total_to_bridge_ms': totalToBridgeMs,
         'total_submit_to_print_ms': totalToBridgeMs,
@@ -34723,7 +36357,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         'payload_build_ms': dispatchFeedback.payloadBuildMs,
         'total_submit_to_print_ms': totalToBridgeMs,
         'total_to_bridge_ms': totalToBridgeMs,
-        if (kitchenPerfDbSaveMs != null) 'db_save_ms': kitchenPerfDbSaveMs,
+        'db_save_ms': kitchenPerfDbSaveMs,
         'ui_reconcile_ms': uiReconcileMs,
         'total_ui_done_ms': pipelineWatch.elapsedMilliseconds,
         'physicallyDispatched': dispatchFeedback.physicallyDispatched,
@@ -35034,7 +36668,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                     final isSelectedCard = isAdded || isServiceConfigured;
                     final resolvedKind =
                         MixedServiceOrder.productTypeFromProduct(product);
-                    // TODO(debug): remove before production
                     debugPrint(
                       '[WAITER_SOURCE] '
                       'id=${product.id} name="${product.name}" '
@@ -35054,7 +36687,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                         : usesServiceStepper
                         ? 'service_stepper'
                         : (draftQty > 0 ? 'qty_stepper' : 'Ekle');
-                    // TODO(debug): remove before production
                     debugPrint(
                       '[WAITER_CARD] '
                       'name="${product.name}" '
@@ -35655,11 +37287,24 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       );
       if (mounted) Navigator.of(context).maybePop();
     } catch (error) {
+      debugPrint(
+        '[GARSON_CLOSE_TABLE_AFTER_PAYMENT_FAILED] '
+        'table=${widget.tableNumber} '
+        'paymentMethod=$paymentMethod '
+        'error=$error',
+      );
       if (!mounted) return;
       widget.onTableCloseFailed?.call(widget.tableNumber);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Masa kapatılamadı: $error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Veritabanı hatası: Masa kapatılamadı. '
+            'Bağlantınızı kontrol edip tekrar deneyin.\n'
+            '(${error.toString().length > 120 ? error.toString().substring(0, 120) : error})',
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/features/seller/panel/helpers/seller_panel_module_helpers.dart';
 import 'package:ibul_app/features/seller/panel/models/seller_panel_types.dart';
+import 'package:ibul_app/utils/garson_board_state.dart';
 
 /// Regression tests for the products / garson realtime stream lifecycle.
 ///
@@ -255,6 +256,102 @@ void main() {
   });
 
   group('garson manual refresh policy', () {
+    test('background update cannot clear visible board state', () {
+      final current = GarsonBoardState(
+        tables: const <Map<String, dynamic>>[
+          {'id': 'table-1', 'table_number': 1},
+        ],
+        areas: const <Map<String, dynamic>>[
+          {'id': 'area-1', 'name': 'Bahce'},
+        ],
+        orders: const <Map<String, dynamic>>[
+          {'id': 'order-1', 'table_number': 1, 'status': 'new'},
+        ],
+        lastGoodTables: const <Map<String, dynamic>>[
+          {'id': 'table-1', 'table_number': 1},
+        ],
+        lastGoodAreas: const <Map<String, dynamic>>[
+          {'id': 'area-1', 'name': 'Bahce'},
+        ],
+        lastGoodOrders: const <Map<String, dynamic>>[
+          {'id': 'order-1', 'table_number': 1, 'status': 'new'},
+        ],
+        hasEverLoadedTablesSuccessfully: true,
+        initialLoadStatus: GarsonInitialLoadStatus.loaded,
+      );
+
+      final next = applyBackgroundUpdate(
+        current: current,
+        incomingTables: const <Map<String, dynamic>>[],
+        incomingOrders: const <Map<String, dynamic>>[],
+        source: 'table_orders_stream',
+      );
+
+      expect(next.uiTables, hasLength(1));
+      expect(next.uiOrders, hasLength(1));
+      expect(next.pendingTables, isEmpty);
+      expect(next.pendingOrders, isEmpty);
+      expect(next.hasPendingRemoteChanges, isTrue);
+    });
+
+    test('manual refresh with empty incoming keeps last good tables', () {
+      final current = GarsonBoardState(
+        tables: const <Map<String, dynamic>>[
+          {'id': 'table-1', 'table_number': 11},
+        ],
+        areas: const <Map<String, dynamic>>[
+          {'id': 'area-1', 'name': 'Bahce'},
+        ],
+        orders: const <Map<String, dynamic>>[
+          {'id': 'order-1', 'table_number': 11, 'status': 'new'},
+        ],
+        lastGoodTables: const <Map<String, dynamic>>[
+          {'id': 'table-1', 'table_number': 11},
+        ],
+        lastGoodAreas: const <Map<String, dynamic>>[
+          {'id': 'area-1', 'name': 'Bahce'},
+        ],
+        lastGoodOrders: const <Map<String, dynamic>>[
+          {'id': 'order-1', 'table_number': 11, 'status': 'new'},
+        ],
+        hasEverLoadedTablesSuccessfully: true,
+        hasEverRenderedBoardSuccessfully: true,
+        initialLoadStatus: GarsonInitialLoadStatus.loaded,
+      );
+
+      final next = applyManualRefresh(
+        current: current,
+        tables: const <Map<String, dynamic>>[],
+        areas: const <Map<String, dynamic>>[],
+        orders: const <Map<String, dynamic>>[],
+        source: 'garson_manual_refresh_button',
+      );
+
+      expect(next.uiTables, hasLength(1));
+      expect(next.lastGoodTables, hasLength(1));
+      expect(next.hasEverRenderedBoardSuccessfully, isTrue);
+    });
+
+    test('initial bootstrap with tables seeds visible board state', () {
+      final next = applyInitialBootstrap(
+        current: const GarsonBoardState(),
+        tables: const <Map<String, dynamic>>[
+          {'id': 'table-1', 'table_number': 1},
+          {'id': 'table-2', 'table_number': 2},
+        ],
+        areas: const <Map<String, dynamic>>[
+          {'id': 'area-1', 'name': 'Bahce'},
+        ],
+        orders: const <Map<String, dynamic>>[],
+        source: 'initial_bootstrap',
+      );
+
+      expect(next.tables, hasLength(2));
+      expect(next.lastGoodTables, hasLength(2));
+      expect(next.hasEverLoadedTablesSuccessfully, isTrue);
+      expect(next.initialLoadStatus, GarsonInitialLoadStatus.loaded);
+    });
+
     test('garson active + background products stream publish is blocked', () {
       expect(
         shouldBlockGarsonBackgroundPublish(
@@ -292,8 +389,14 @@ void main() {
     });
 
     test(
-      'garson active + table_orders timeout fallback publish is blocked',
+      'garson active + table_orders stream error fallback may publish',
       () {
+        expect(
+          shouldAutoApplyGarsonVisibleSnapshot(
+            source: 'table_orders_stream_error',
+          ),
+          isTrue,
+        );
         expect(
           shouldBlockGarsonBackgroundPublish(
             selectedModule: SellerModule.garson,
@@ -301,21 +404,28 @@ void main() {
             hasPublishedData: true,
             source: 'table_orders_stream_error',
           ),
-          isTrue,
+          isFalse,
         );
       },
     );
 
-    test('first garson snapshot is allowed before visible data exists', () {
-      expect(
-        shouldBlockGarsonBackgroundPublish(
-          selectedModule: SellerModule.garson,
-          manualRefreshInProgress: false,
-          hasPublishedData: false,
-          source: 'garson_initial_load',
-        ),
-        isFalse,
-      );
+    test('initial garson bootstrap sources are not blocked', () {
+      for (final source in const <String>[
+        'initial_bootstrap',
+        'garson_initial_load',
+        'garson_module_opened',
+      ]) {
+        expect(
+          shouldBlockGarsonBackgroundPublish(
+            selectedModule: SellerModule.garson,
+            manualRefreshInProgress: false,
+            hasPublishedData: false,
+            source: source,
+          ),
+          isFalse,
+          reason: 'source=$source must seed visible Garson state on restart',
+        );
+      }
     });
 
     test('manual refresh in progress bypasses block', () {
@@ -354,13 +464,52 @@ void main() {
         );
         expect(
           shouldAllowGarsonManualRefresh(
-            source: 'garson_initial_visible_seed',
+            source: 'garson_module_opened',
             allowInitialAutoSeed: true,
           ),
           isTrue,
         );
       },
     );
+
+    test('incoming empty tables snapshot preserves visible garson grid', () {
+      expect(
+        shouldPreserveGarsonVisibleDataOnIncomingEmpty(
+          source: 'table_orders_stream',
+          hasVisibleTables: true,
+          hasVisibleOrders: true,
+          hasIncomingTables: false,
+          hasIncomingOrders: false,
+        ),
+        isTrue,
+      );
+    });
+
+    test('manual refresh empty orders snapshot may clear visible order', () {
+      expect(
+        shouldPreserveGarsonVisibleDataOnIncomingEmpty(
+          source: 'mobile_pull_to_refresh',
+          hasVisibleTables: true,
+          hasVisibleOrders: true,
+          hasIncomingTables: true,
+          hasIncomingOrders: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('local table action may clear visible order after close/payment', () {
+      expect(
+        shouldPreserveGarsonVisibleDataOnIncomingEmpty(
+          source: 'garson_local_table_action',
+          hasVisibleTables: true,
+          hasVisibleOrders: true,
+          hasIncomingTables: true,
+          hasIncomingOrders: false,
+        ),
+        isFalse,
+      );
+    });
 
     test('garson initial visible seed only runs once while visible', () {
       expect(
@@ -523,6 +672,198 @@ void main() {
         ]);
         expect(first, reordered);
         expect(changed, isNot(first));
+      },
+    );
+
+    test('ui state falls back to last good tables and orders', () {
+      final state = buildGarsonUiState(
+        visibleTables: const <Map<String, dynamic>>[],
+        visibleAreas: const <Map<String, dynamic>>[],
+        visibleOrders: const <Map<String, dynamic>>[],
+        lastGoodTables: const <Map<String, dynamic>>[
+          {'id': 'table-1', 'table_number': 1},
+          {'id': 'table-2', 'table_number': 2},
+        ],
+        lastGoodAreas: const <Map<String, dynamic>>[
+          {'id': 'area-1', 'name': 'Bahçe'},
+        ],
+        lastGoodOrders: const <Map<String, dynamic>>[
+          {'id': 'order-1', 'table_number': 1},
+        ],
+        pendingIncomingTables: const <Map<String, dynamic>>[],
+        pendingIncomingAreas: const <Map<String, dynamic>>[],
+        pendingIncomingOrders: const <Map<String, dynamic>>[],
+        hasPendingRemoteChanges: true,
+        hasEverLoadedTablesSuccessfully: true,
+        hasEverLoadedOrdersSuccessfully: true,
+        lastAppliedSource: 'initial_bootstrap_success',
+      );
+
+      expect(state.uiTables, hasLength(2));
+      expect(state.uiAreas, hasLength(1));
+      expect(state.uiOrders, hasLength(1));
+      expect(state.uiTablesSource, 'last_good');
+      expect(state.uiOrdersSource, 'last_good');
+      expect(
+        shouldShowGarsonEmptyStateFromUiState(
+          state: state,
+          initialLoading: false,
+          initialBootstrapFinished: true,
+          initialBootstrapFailed: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('empty state only shows before any successful table bootstrap', () {
+      final state = buildGarsonUiState(
+        visibleTables: const <Map<String, dynamic>>[],
+        visibleAreas: const <Map<String, dynamic>>[],
+        visibleOrders: const <Map<String, dynamic>>[],
+        lastGoodTables: const <Map<String, dynamic>>[],
+        lastGoodAreas: const <Map<String, dynamic>>[],
+        lastGoodOrders: const <Map<String, dynamic>>[],
+        pendingIncomingTables: const <Map<String, dynamic>>[],
+        pendingIncomingAreas: const <Map<String, dynamic>>[],
+        pendingIncomingOrders: const <Map<String, dynamic>>[],
+        hasPendingRemoteChanges: false,
+        hasEverLoadedTablesSuccessfully: false,
+        hasEverLoadedOrdersSuccessfully: false,
+        lastAppliedSource: 'none',
+      );
+
+      expect(
+        shouldShowGarsonEmptyStateFromUiState(
+          state: state,
+          initialLoading: false,
+          initialBootstrapFinished: true,
+          initialBootstrapFailed: false,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldShowGarsonEmptyStateFromUiState(
+          state: state,
+          initialLoading: true,
+          initialBootstrapFinished: false,
+          initialBootstrapFailed: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('pending chip stays hidden before first successful tables load', () {
+      final state = buildGarsonUiState(
+        visibleTables: const <Map<String, dynamic>>[],
+        visibleAreas: const <Map<String, dynamic>>[],
+        visibleOrders: const <Map<String, dynamic>>[],
+        lastGoodTables: const <Map<String, dynamic>>[],
+        lastGoodAreas: const <Map<String, dynamic>>[],
+        lastGoodOrders: const <Map<String, dynamic>>[],
+        pendingIncomingTables: const <Map<String, dynamic>>[
+          {'id': 'table-1', 'table_number': 1},
+        ],
+        pendingIncomingAreas: const <Map<String, dynamic>>[],
+        pendingIncomingOrders: const <Map<String, dynamic>>[],
+        hasPendingRemoteChanges: true,
+        hasEverLoadedTablesSuccessfully: false,
+        hasEverLoadedOrdersSuccessfully: false,
+        lastAppliedSource: 'none',
+      );
+
+      expect(shouldShowGarsonPendingChangesChip(state: state), isFalse);
+      expect(
+        resolveGarsonGridLoadState(
+          state: state,
+          initialLoading: false,
+          initialBootstrapFinished: false,
+          initialBootstrapFailed: false,
+        ),
+        GarsonGridLoadState.pendingChangesAvailable,
+      );
+    });
+
+    test('bootstrap success with zero tables becomes loaded_no_tables', () {
+      final state = buildGarsonUiState(
+        visibleTables: const <Map<String, dynamic>>[],
+        visibleAreas: const <Map<String, dynamic>>[],
+        visibleOrders: const <Map<String, dynamic>>[],
+        lastGoodTables: const <Map<String, dynamic>>[],
+        lastGoodAreas: const <Map<String, dynamic>>[],
+        lastGoodOrders: const <Map<String, dynamic>>[],
+        pendingIncomingTables: const <Map<String, dynamic>>[],
+        pendingIncomingAreas: const <Map<String, dynamic>>[],
+        pendingIncomingOrders: const <Map<String, dynamic>>[],
+        hasPendingRemoteChanges: false,
+        hasEverLoadedTablesSuccessfully: false,
+        hasEverLoadedOrdersSuccessfully: true,
+        lastAppliedSource: 'garson_initial_load',
+      );
+
+      expect(
+        resolveGarsonGridLoadState(
+          state: state,
+          initialLoading: false,
+          initialBootstrapFinished: true,
+          initialBootstrapFailed: false,
+        ),
+        GarsonGridLoadState.loadedNoTables,
+      );
+    });
+
+    test('bootstrap failure becomes load_failed instead of empty', () {
+      final state = buildGarsonUiState(
+        visibleTables: const <Map<String, dynamic>>[],
+        visibleAreas: const <Map<String, dynamic>>[],
+        visibleOrders: const <Map<String, dynamic>>[],
+        lastGoodTables: const <Map<String, dynamic>>[],
+        lastGoodAreas: const <Map<String, dynamic>>[],
+        lastGoodOrders: const <Map<String, dynamic>>[],
+        pendingIncomingTables: const <Map<String, dynamic>>[],
+        pendingIncomingAreas: const <Map<String, dynamic>>[],
+        pendingIncomingOrders: const <Map<String, dynamic>>[],
+        hasPendingRemoteChanges: false,
+        hasEverLoadedTablesSuccessfully: false,
+        hasEverLoadedOrdersSuccessfully: false,
+        lastAppliedSource: 'none',
+      );
+
+      expect(
+        resolveGarsonGridLoadState(
+          state: state,
+          initialLoading: false,
+          initialBootstrapFinished: true,
+          initialBootstrapFailed: true,
+        ),
+        GarsonGridLoadState.loadFailed,
+      );
+      expect(
+        shouldShowGarsonEmptyStateFromUiState(
+          state: state,
+          initialLoading: false,
+          initialBootstrapFinished: true,
+          initialBootstrapFailed: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      'board state empty rule only trips before a successful table load',
+      () {
+        final failed = const GarsonBoardState(
+          initialLoadStatus: GarsonInitialLoadStatus.failed,
+        );
+        expect(shouldShowEmptyState(state: failed), isTrue);
+
+        final loadedBefore = const GarsonBoardState(
+          lastGoodTables: <Map<String, dynamic>>[
+            {'id': 'table-1', 'table_number': 1},
+          ],
+          hasEverLoadedTablesSuccessfully: true,
+          initialLoadStatus: GarsonInitialLoadStatus.loaded,
+        );
+        expect(shouldShowEmptyState(state: loadedBefore), isFalse);
       },
     );
   });

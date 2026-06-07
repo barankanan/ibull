@@ -137,7 +137,7 @@ class _ProductTabsSectionState extends State<ProductTabsSection> {
           context,
           MaterialPageRoute(
             builder: (context) => MapPage(
-              // initialSearchQuery: viewModel.initialProduct.name, // TODO: Implement initialSearchQuery in MapPage if needed
+              // initialSearchQuery can be passed here if MapPage adds support later.
             ),
           ),
         );

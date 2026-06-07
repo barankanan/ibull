@@ -6,7 +6,6 @@ import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../core/store_logo_helper.dart';
 import '../services/database_helper.dart';
-import '../services/store_follow_service.dart';
 import '../models/db_product.dart';
 import '../models/product_model.dart';
 import 'business_detail_page.dart';

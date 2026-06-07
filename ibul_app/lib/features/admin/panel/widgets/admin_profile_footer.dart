@@ -29,18 +29,22 @@ class AdminProfileFooter extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                adminName,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-              ),
-              Text(
-                adminEmail,
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
-              ),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  adminName,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  adminEmail,
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
           const Spacer(),
           PremiumPressable(

@@ -3705,6 +3705,7 @@ class OrderService {
           .from('store_sub_admins')
           .select('id')
           .eq('store_id', itemSellerId)
+          .eq('status', 'active')
           .or(filters.join(','))
           .limit(1)
           .maybeSingle();

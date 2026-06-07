@@ -268,7 +268,7 @@ class _IncomeTabState extends State<IncomeTab> {
       child: ListView.separated(
         padding: const EdgeInsets.only(bottom: 8),
         itemCount: _records.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             const Divider(height: 1, indent: 54, color: kFinanceDivider),
         itemBuilder: (_, i) => _incomeTile(_records[i]),
       ),
@@ -412,7 +412,7 @@ class _IncomeTabState extends State<IncomeTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<IncomeType>(
-                  value: selectedType,
+                  initialValue: selectedType,
                   decoration: InputDecoration(
                     labelText: 'Gelir Türü',
                     border: OutlineInputBorder(
@@ -467,7 +467,7 @@ class _IncomeTabState extends State<IncomeTab> {
                   onChanged: (v) => ss(() => isCollected = v),
                   title: const Text('Tahsil Edildi',
                       style: TextStyle(fontSize: 13)),
-                  activeColor: kFinancePrimary,
+                  activeThumbColor: kFinancePrimary,
                   contentPadding: EdgeInsets.zero,
                 ),
               ],
@@ -494,6 +494,7 @@ class _IncomeTabState extends State<IncomeTab> {
       final tax = double.tryParse(taxCtrl.text.replaceAll(',', '.')) ?? 0;
       if (gross <= 0) return;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final record = IncomeRecord(
           id: '',
@@ -516,6 +517,7 @@ class _IncomeTabState extends State<IncomeTab> {
         _load();
         fp.loadOverview();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));

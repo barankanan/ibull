@@ -595,7 +595,6 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
         quantity: nextQuantity,
       );
       _selectionDrafts[product.id] = pendingDraft.copyWith(quantity: 0);
-      // TODO(debug): remove before production
       debugPrint(
         '[ROUND_WRITE] product=${product.name} '
         'activeRound=$_activeRound '
@@ -1282,7 +1281,6 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
           ).any((d) => d.serviceRound == _activeRound)
         : _selectedRowsForProduct(product).isNotEmpty;
     final quantity = selected?.quantity ?? 0;
-    // TODO(debug): remove before production
     debugPrint(
       '[ROUND_CARD_STATE] product=${product.name} '
       'activeRound=$_activeRound '
@@ -1832,7 +1830,6 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
                     final draftsForRound = _selectedItems.values
                         .where((d) => d.serviceRound == round)
                         .toList(growable: false);
-                    // TODO(debug): remove before production
                     debugPrint(
                       '[ROUND_SUMMARY_GROUP] round=$round '
                       'count=${draftsForRound.length} total=$plateTotal',
@@ -1879,7 +1876,6 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
                           ...draftsForRound.map((draft) {
                             final product = _productById(draft.productId);
                             if (product == null) return const SizedBox.shrink();
-                            // TODO(debug): remove before production
                             debugPrint(
                               '[ROUND_SUMMARY_ITEM] product=${product.name} '
                               'itemRound=${draft.serviceRound} '

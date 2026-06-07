@@ -588,6 +588,51 @@ class AuthService {
     }
 
     await _supabase.from('users').upsert(updates, onConflict: 'id');
+    await _activateMatchingSubAdminInvites(user: resolvedUser, phone: phone);
+  }
+
+  Future<void> _activateMatchingSubAdminInvites({
+    required User user,
+    String? phone,
+  }) async {
+    final email = user.email?.trim();
+    final resolvedPhone = (phone ?? user.phone)?.trim();
+    final filters = <String>[];
+    if (email != null && email.isNotEmpty) {
+      filters.add('email.eq.$email');
+    }
+    if (resolvedPhone != null && resolvedPhone.isNotEmpty) {
+      filters.add('phone.eq.$resolvedPhone');
+    }
+    if (filters.isEmpty) return;
+
+    try {
+      final rows = await _supabase
+          .from('store_sub_admins')
+          .select('id')
+          .eq('status', 'invited')
+          .or(filters.join(','));
+      final items = List<Map<String, dynamic>>.from(rows as List<dynamic>);
+      for (final row in items) {
+        final inviteId = row['id']?.toString().trim() ?? '';
+        if (inviteId.isEmpty) continue;
+        await _supabase
+            .from('store_sub_admins')
+            .update({'status': 'active'})
+            .eq('id', inviteId);
+      }
+      if (items.isNotEmpty) {
+        debugPrint(
+          '[SubAdminActivation] activated=${items.length} '
+          'userId=${user.id} email=${email ?? '-'}',
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        '[SubAdminActivation] skipped '
+        'userId=${user.id} error=$error',
+      );
+    }
   }
 
   // Update User Profile (Weight/Height/Name/etc)

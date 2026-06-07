@@ -70,12 +70,14 @@ class AddEthernetPrinterScreen extends StatefulWidget {
     this.existing,
     this.repository,
     this.orchestrator,
+    this.localPrintService,
   });
 
   final String restaurantId;
   final PrinterModel? existing;
   final PrinterRepository? repository;
   final DesktopPrintOrchestrator? orchestrator;
+  final LocalPrintService? localPrintService;
 
   @override
   State<AddEthernetPrinterScreen> createState() =>
@@ -85,7 +87,8 @@ class AddEthernetPrinterScreen extends StatefulWidget {
 class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   late final DesktopPrintOrchestrator _orchestrator =
       widget.orchestrator ?? DesktopPrintOrchestrator();
-  final LocalPrintService _localPrintService = LocalPrintService();
+  late final LocalPrintService _localPrintService = 
+      widget.localPrintService ?? LocalPrintService();
 
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _ipCtrl = TextEditingController();

@@ -477,8 +477,8 @@ class KitchenTicketHeaderResolver {
           break;
         }
       }
-      if (stationId != null && stationId!.trim().isNotEmpty) {
-        final sid = stationId!.trim();
+      if (stationId != null && stationId.trim().isNotEmpty) {
+        final sid = stationId.trim();
         final fromId = productionHeaderLabel(
           stationName: stationNamesById?[sid] ?? '',
           stationCode: stationCodesById?[sid] ?? '',

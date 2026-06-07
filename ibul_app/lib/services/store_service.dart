@@ -1514,11 +1514,34 @@ class StoreService {
     return _tableService.deleteTableOrder(orderId);
   }
 
+  Future<List<Map<String, dynamic>>> getTableOrdersByIds(List<String> ids) {
+    return _tableService.getTableOrdersByIds(ids);
+  }
+
   Future<void> closeTableOrders({
     required String sellerId,
     required int tableNumber,
   }) {
     return _tableService.closeTableOrders(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+    );
+  }
+
+  /// BUG-FIX (Reopen Bug) delegate.  Closes any active customer-facing
+  /// `orders` rows for the given (sellerId, tableNumber) so they don't
+  /// re-appear on the garson board after refresh.  See
+  /// [StoreTableService.closeRestaurantOrdersForTable] for details.
+  ///
+  /// Returns the number of rows actually closed.  A value of `0` is a
+  /// diagnostic signal — callers should treat it as a soft failure and
+  /// warn the user that customer-placed orders may re-surface on
+  /// refresh.
+  Future<int> closeRestaurantOrdersForTable({
+    required String sellerId,
+    required int tableNumber,
+  }) {
+    return _tableService.closeRestaurantOrdersForTable(
       sellerId: sellerId,
       tableNumber: tableNumber,
     );

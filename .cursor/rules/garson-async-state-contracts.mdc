@@ -1,0 +1,174 @@
+---
+description: Garson modülü asenkron senkronizasyon sözleşmeleri (seller_panel_page, garson_* yardımcıları). Masa kapatma, StreamBuilder fallback ve mounted guard kuralları.
+globs: ibul_app/lib/screens/seller_panel_page.dart,ibul_app/lib/utils/garson_*.dart,ibul_app/lib/services/store/store_table_service.dart
+alwaysApply: false
+---
+
+# Garson Modülü — Asenkron & State Sözleşmeleri
+
+## A. Stream Sink Pattern (`_displayTableOrders`)
+
+`StreamBuilder` builder'ı içinden çağrılan her veri normalizasyon metodu,
+stream'den **non-empty** veri geldiğinde local fallback cache'i senkron olarak
+güncellemelidir. `setState` **kesinlikle çağrılmaz** — rebuild loop riskini
+engellemek için doğrudan alan mutasyonu kullanılır.
+
+```dart
+// ✅ DOĞRU
+List<Map<String, dynamic>> _displayTableOrders(
+  List<Map<String, dynamic>> serverOrders,
+) {
+  final normalized = serverOrders.map(_normalizeTableOrder).toList(growable: false);
+  // Stream non-empty emit ettiğinde fallback'i güncelle (sink pattern).
+  // setState yok — StreamBuilder builder içinde rebuild loop oluşturur.
+  if (normalized.isNotEmpty) {
+    _hydratedTableOrders = normalized;
+  }
+  final base = normalized.isNotEmpty ? normalized : _hydratedTableOrders;
+  return _mergeTableOrders(base, _optimisticTableOrders);
+}
+
+// ❌ YANLIŞ — setState ile güncelleme rebuild loop üretir
+if (normalized.isNotEmpty) {
+  setState(() => _hydratedTableOrders = normalized); // YAPMA
+}
+```
+
+**Neden:** Stream reconnect veya geçici boş emit sonrasında `_hydratedTableOrders`
+bayat kalırsa, `_displayTableOrders([])` stale veriyi UI'a yansıtır (siparişler
+anlık kaybolur). Sink pattern bunu engeller.
+
+---
+
+## B. Masa Kapatma — Atomik Çift Temizlik
+
+Bir masa kapatıldığında her iki state katmanı **aynı `setState` içinde** atomik
+olarak temizlenmelidir. İkincil önbellek (`_garsonManualTableOrders`) atlanırsa,
+route pop `finally` bloğundaki `_publishGarsonVisibleSnapshotFromCurrentState`
+stale snapshot okuyarak masayı yeniden "açık" gösterir (flip-flop).
+
+```dart
+// ✅ DOĞRU — tek setState içinde atomik çift temizlik
+setState(() {
+  // 1. Board state (birincil):
+  final next = removeClosedTableOrdersFromBoardState(
+    current: _garsonBoardState,
+    tableNumber: tableNumber,
+    closedOrderId: orderId,
+  );
+  _setGarsonBoardState(next);
+
+  // 2. Manuel önbellek (ikincil) — aynı frame'de temizlenmeli:
+  _garsonManualTableOrders = _garsonManualTableOrders
+      .where((o) => _garsonTableNumberFromOrder(o) != tableNumber)
+      .toList(growable: false);
+  _garsonManualTableOrdersSignature =
+      tableOrdersListSignature(_garsonManualTableOrders);
+});
+
+// ❌ YANLIŞ — iki ayrı setState = aralarında finally tetiklenebilir
+setState(() { _setGarsonBoardState(next); });
+// ... burada route pop finally çalışabilir → flip-flop
+setState(() { _garsonManualTableOrders = ...; });
+```
+
+**Rollback:** Optimistik güncelleme (`_webGarsonClosedTableAt[n]`) yalnızca
+API/RPC başarısı sonrası kalıcı hale gelir. Catch bloğu:
+`setState(() => _webGarsonClosedTableAt.remove(tableNumber))`.
+
+---
+
+## C. Fire-and-Forget Async Fonksiyonlar (Mounted Guards)
+
+`initState`'den `unawaited(...)` ile başlatılan fonksiyonlar şu kurallara uyar:
+
+```dart
+// ✅ DOĞRU kalıp
+Future<void> _preloadTableOrders() async {
+  try {
+    final data = await someService.fetch();   // ← tek await noktası
+    if (!mounted) return;                     // await sonrası HEMEN kontrol
+    setState(() {
+      if (_hydratedTableOrders.isEmpty) {     // idempotent guard
+        _hydratedTableOrders = data;
+      }
+    });
+    if (!mounted) return;                     // setState sonrası savunmacı kontrol
+    _syncFollowUp();                          // post-frame callback içeriyorsa güvenli
+  } catch (e) {
+    debugPrint('[PRELOAD_ERROR] $e');         // asla sessiz yutma
+  }
+}
+```
+
+- Her `await` noktasından **hemen sonra** `if (!mounted) return` ekle.
+- Ardışık `await` olmayan bloklar için tekrar eden `!mounted` kontrolü dead code'dur — kaldır.
+- Hataları sessizce yutma; en az `debugPrint` ile logla.
+
+---
+
+## D. Liste Allocation Politikası
+
+Sabit boyutlu (non-growing) listeler için her zaman `growable: false` kullan:
+
+```dart
+// ✅
+final list = source.where(pred).toList(growable: false);
+final mapped = source.map(fn).toList(growable: false);
+
+// ❌
+final list = source.where(pred).toList(); // varsayılan growable=true
+```
+
+---
+
+## E. Boş-Ekran Self-Heal (Asla Dead-End Yok)
+
+Garson board'unda **hiçbir** boş-ekran (`_buildGarsonNoPhysicalTablesPlaceholder`,
+`_buildGarsonEmptyState`) son nokta olamaz. Masa kapatma → route pop yarışında
+tüm last-good katmanları (`board.tables`, `lastGoodTables`, `lastGoodSections`,
+`_storeTables`) aynı anda çökebilir ve mağazada masa olmasına rağmen "masa yok"
+ekranı görünür. Bu durumda **in-memory bir "daha önce masa gördüm" bayrağına
+güvenME** — State yeniden oluşturulursa o bayrak sıfırlanır.
+
+Bunun yerine zorla katalog yeniden çekme (`_ensureGarsonInitialVisibleData(force: true)`)
+**deneme-tabanlı** tetiklenir. Karar saf fonksiyonda kilitlidir:
+
+```dart
+// garson_board_state.dart — test edilebilir saf karar
+final action = decideGarsonEmptyStateSelfHeal(
+  isGarsonVisible: _isGarsonVisible,
+  isTableRouteOpen: _isGarsonTableRouteOpen,
+  isLoading: _isGarsonInitialLoading || _isLoadingStoreTables,
+  attempts: _garsonEmptyStateSelfHealAttempts,
+  maxAttempts: _garsonEmptyStateSelfHealMax, // 4
+  lastHealAt: _garsonEmptyStateSelfHealAt,
+  now: DateTime.now(),
+); // scheduleReload | showLoading | showEmpty
+```
+
+- En fazla `maxAttempts` deneme + throttle (≥3 sn) → sonsuz reload loop imkânsız.
+- Gerçek masa görülünce deneme bütçesi sıfırlanır (`_recordGarsonCatalogSeen`).
+- Gerçekten masası olmayan mağaza bütçeyi tüketip normal placeholder'a düşer.
+- Yeni boş-ekran eklersen `_maybeScheduleGarsonEmptyStateSelfHeal()` ile sarmala.
+
+---
+
+## F. Masa Kapatma — `orders=0` Yanlış Alarmı
+
+`orders_closed == 0` garson masaları için **normaldir**: garson siparişleri
+`table_orders`'ta yaşar, müşteri `orders` tablosunda satır olmayabilir.
+Kullanıcıya "kapatılamadı" uyarısı **yalnızca** gerçek sessiz-fail riskinde
+gösterilir — yani `auth.uid()` çözülen `seller_id` ile eşleşmediğinde
+(sub-admin/garson RLS senaryosu). Karar saf fonksiyonda:
+
+```dart
+final shouldWarn = shouldWarnGarsonOrdersUntouched(
+  ordersClosed: ordersClosedTotal,
+  hadTableOrders: tableOrders.isNotEmpty,
+  identityMatches: authUid == sellerId, // owner ise true → uyarı yok
+);
+```
+
+Teşhis logu (`[GARSON_CLOSE_PARTIAL_SUCCESS]`, `[GARSON_ORDERS_CLOSE_ZERO]`)
+her durumda yazılır; sadece kullanıcıya gösterilen snackbar koşullanır.

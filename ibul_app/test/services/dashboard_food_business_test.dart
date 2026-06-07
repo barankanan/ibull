@@ -162,7 +162,7 @@ void main() {
     final baseDate = DateTime(now.year, now.month, now.day, 10);
     final baseDateStr = baseDate.toIso8601String();
 
-    Map<String, dynamic> _onlineOrder({
+    Map<String, dynamic> onlineOrder({
       required String id,
       required double amount,
       String status = 'delivered',
@@ -175,7 +175,7 @@ void main() {
       };
     }
 
-    Map<String, dynamic> _tableOrder({
+    Map<String, dynamic> tableOrder({
       required String id,
       required double amount,
       String status = 'closed',
@@ -203,9 +203,9 @@ void main() {
     test(
       'L-1: online + table order on same day sums both in todayRevenue',
       () {
-        final onlineOrder = _onlineOrder(id: 'o1', amount: 100.0);
-        final tableOrder = _tableOrder(id: 't1', amount: 75.0);
-        final orders = [onlineOrder, tableOrder];
+        final onlineOrderData = onlineOrder(id: 'o1', amount: 100.0);
+        final tableOrderData = tableOrder(id: 't1', amount: 75.0);
+        final orders = [onlineOrderData, tableOrderData];
         final metrics = SellerDashboardService.build(
           orders: orders,
           products: const [],
@@ -224,8 +224,8 @@ void main() {
       'L-2: cancelled online order is excluded from revenue',
       () {
         final cancelledOrder =
-            _onlineOrder(id: 'o2', amount: 200.0, status: 'cancelled');
-        final activeOrder = _onlineOrder(id: 'o3', amount: 50.0);
+            onlineOrder(id: 'o2', amount: 200.0, status: 'cancelled');
+        final activeOrder = onlineOrder(id: 'o3', amount: 50.0);
         final metrics = SellerDashboardService.build(
           orders: [cancelledOrder, activeOrder],
           products: const [],
@@ -246,9 +246,9 @@ void main() {
     test(
       'L-4: table order is counted in selectedOrderCount (chart sipariş)',
       () {
-        final tableOrder = _tableOrder(id: 't2', amount: 120.0);
+        final tableOrderData = tableOrder(id: 't2', amount: 120.0);
         final metrics = SellerDashboardService.build(
-          orders: [tableOrder],
+          orders: [tableOrderData],
           products: const [],
           supportTickets: const [],
           sellerQuestions: const [],
@@ -265,7 +265,7 @@ void main() {
       'L-5: closed-table order is included in today revenue',
       () {
         final closedTableOrder =
-            _tableOrder(id: 't3', amount: 300.0, status: 'closed');
+            tableOrder(id: 't3', amount: 300.0, status: 'closed');
         final metrics = SellerDashboardService.build(
           orders: [closedTableOrder],
           products: const [],
@@ -314,7 +314,7 @@ void main() {
   // Mirrors the _mapTableOrderStatus static method in seller_panel_page.dart.
   // Tests are self-contained so they don't depend on the widget tree.
 
-  String _mapStatus(String raw) {
+  String mapStatus(String raw) {
     switch (raw.toLowerCase().trim()) {
       case 'cancelled':
       case 'canceled':
@@ -342,38 +342,38 @@ void main() {
   }
 
   group('Table order status mapping (_mapTableOrderStatus)', () {
-    test('new → new (open table)', () => expect(_mapStatus('new'), 'new'));
-    test('open → new', () => expect(_mapStatus('open'), 'new'));
-    test('active → new', () => expect(_mapStatus('active'), 'new'));
-    test('pending → new', () => expect(_mapStatus('pending'), 'new'));
+    test('new → new (open table)', () => expect(mapStatus('new'), 'new'));
+    test('open → new', () => expect(mapStatus('open'), 'new'));
+    test('active → new', () => expect(mapStatus('active'), 'new'));
+    test('pending → new', () => expect(mapStatus('pending'), 'new'));
 
     test('done → preparing (mutfağa iletilen)',
-        () => expect(_mapStatus('done'), 'preparing'));
-    test('sent → preparing', () => expect(_mapStatus('sent'), 'preparing'));
+        () => expect(mapStatus('done'), 'preparing'));
+    test('sent → preparing', () => expect(mapStatus('sent'), 'preparing'));
     test('kitchen_sent → preparing',
-        () => expect(_mapStatus('kitchen_sent'), 'preparing'));
+        () => expect(mapStatus('kitchen_sent'), 'preparing'));
     test('preparing → preparing',
-        () => expect(_mapStatus('preparing'), 'preparing'));
-    test('ready → preparing', () => expect(_mapStatus('ready'), 'preparing'));
+        () => expect(mapStatus('preparing'), 'preparing'));
+    test('ready → preparing', () => expect(mapStatus('ready'), 'preparing'));
 
     test('closed → delivered (bugün kapanan)',
-        () => expect(_mapStatus('closed'), 'delivered'));
-    test('paid → delivered', () => expect(_mapStatus('paid'), 'delivered'));
+        () => expect(mapStatus('closed'), 'delivered'));
+    test('paid → delivered', () => expect(mapStatus('paid'), 'delivered'));
     test('completed → delivered',
-        () => expect(_mapStatus('completed'), 'delivered'));
+        () => expect(mapStatus('completed'), 'delivered'));
 
     test('cancelled → cancelled (gelirden hariç)',
-        () => expect(_mapStatus('cancelled'), 'cancelled'));
+        () => expect(mapStatus('cancelled'), 'cancelled'));
     test('canceled → cancelled',
-        () => expect(_mapStatus('canceled'), 'cancelled'));
-    test('void → cancelled', () => expect(_mapStatus('void'), 'cancelled'));
+        () => expect(mapStatus('canceled'), 'cancelled'));
+    test('void → cancelled', () => expect(mapStatus('void'), 'cancelled'));
     test('refunded → cancelled',
-        () => expect(_mapStatus('refunded'), 'cancelled'));
+        () => expect(mapStatus('refunded'), 'cancelled'));
     test('deleted → cancelled',
-        () => expect(_mapStatus('deleted'), 'cancelled'));
+        () => expect(mapStatus('deleted'), 'cancelled'));
 
     test('unknown → new (safe default)',
-        () => expect(_mapStatus('unknown_xyz'), 'new'));
+        () => expect(mapStatus('unknown_xyz'), 'new'));
   });
 
   // ── Garson area grouping — "Diğer" must be excluded ──────────────────────

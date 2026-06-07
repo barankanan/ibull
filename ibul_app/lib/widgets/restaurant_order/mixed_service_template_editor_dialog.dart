@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 
@@ -698,7 +697,7 @@ class _MixedServiceTemplateEditorDialogState
                         width: 88,
                         height: 88,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
+                        errorBuilder: (_, error, stackTrace) => Container(
                           width: 88,
                           height: 88,
                           color: const Color(0xFFE5E7EB),

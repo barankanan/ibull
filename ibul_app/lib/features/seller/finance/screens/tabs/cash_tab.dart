@@ -145,7 +145,9 @@ class _CashTabState extends State<CashTab> {
 
   Widget _buildHeader(FinanceProvider fp, List<CashAccount> accounts) {
     double total = 0;
-    for (final a in accounts) total += a.currentBalance;
+    for (final a in accounts) {
+      total += a.currentBalance;
+    }
     return Container(
       padding: const EdgeInsets.all(14),
       color: const Color(0xFFF0FDF4),
@@ -327,7 +329,7 @@ class _CashTabState extends State<CashTab> {
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(vertical: 6),
         itemCount: _movements.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             const Divider(height: 1, indent: 54, color: kFinanceDivider),
         itemBuilder: (_, i) => _movementTile(_movements[i]),
       ),
@@ -394,7 +396,7 @@ class _CashTabState extends State<CashTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<CashAccountType>(
-                  value: selectedType,
+                  initialValue: selectedType,
                   decoration: InputDecoration(
                     labelText: 'Hesap Türü',
                     border: OutlineInputBorder(
@@ -473,6 +475,7 @@ class _CashTabState extends State<CashTab> {
           _loadMovements();
         }
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
@@ -536,7 +539,7 @@ class _CashTabState extends State<CashTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<CashMovementType>(
-                  value: selectedType,
+                  initialValue: selectedType,
                   decoration: InputDecoration(
                     labelText: 'Hareket Türü',
                     border: OutlineInputBorder(
@@ -595,7 +598,7 @@ class _CashTabState extends State<CashTab> {
                 if (selectedType == CashMovementType.transfer) ...[
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
-                    value: targetAccountId,
+                    initialValue: targetAccountId,
                     decoration: InputDecoration(
                       labelText: 'Hedef Hesap',
                       border: OutlineInputBorder(
@@ -669,6 +672,7 @@ class _CashTabState extends State<CashTab> {
         await fp.reloadCashAccounts();
         _loadMovements();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));

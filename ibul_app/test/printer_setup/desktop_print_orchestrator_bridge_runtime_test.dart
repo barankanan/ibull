@@ -248,7 +248,6 @@ class _CountingProbeService extends _ProbeFakeService {
     required super.availability,
     required super.healthBody,
     required super.printers,
-    super.setupStatusBody,
   });
 
   int setupStatusCalls = 0;

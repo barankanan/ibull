@@ -521,7 +521,14 @@ class AppState extends ChangeNotifier {
     for (final list in _productLists) {
       try {
         await _productListService.upsertList(_decorateProductList(list));
-      } catch (_) {}
+      } catch (error) {
+        // Best-effort sync: log the failure but continue syncing the remaining
+        // lists so a single bad list does not block the rest of the batch.
+        debugPrint(
+          '[AppState._syncAllProductListsToRemote] '
+          'upsert=failed listId=${list.id} error=$error',
+        );
+      }
     }
   }
 
@@ -927,12 +934,36 @@ class AppState extends ChangeNotifier {
     return id;
   }
 
-  void deleteProductList(String listId) {
+  /// Optimistically removes the list from local state, then deletes it from
+  /// the remote DB.  On any DB failure the local state is fully restored to
+  /// the pre-deletion snapshot and the exception is rethrown so that the
+  /// calling UI can surface a descriptive error message.
+  Future<void> deleteProductList(String listId) async {
+    // ── Pre-mutation snapshot ────────────────────────────────────────────────
+    final snapshot = List<ProductList>.unmodifiable(_productLists);
+
+    // ── Optimistic local removal ─────────────────────────────────────────────
     _productLists.removeWhere((l) => l.id == listId);
     notifyListeners();
     _persistProductLists();
     _syncPushInterests();
-    unawaited(_productListService.deleteList(listId));
+
+    // ── Remote delete ────────────────────────────────────────────────────────
+    try {
+      await _productListService.deleteList(listId);
+    } catch (error) {
+      debugPrint(
+        '[AppState.deleteProductList] db_delete=failed listId=$listId '
+        'error=$error — rolling back local state',
+      );
+      // ── Snapshot rollback ──────────────────────────────────────────────────
+      _productLists
+        ..clear()
+        ..addAll(snapshot);
+      notifyListeners();
+      _persistProductLists();
+      rethrow;
+    }
   }
 
   void updateProductListVisibility(

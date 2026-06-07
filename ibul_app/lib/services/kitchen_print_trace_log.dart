@@ -50,7 +50,10 @@ void logProductStationMappingCacheHydrate({
       'productNameKeys': productNameKeys,
       'productIdKeys': productIdKeys,
       'fromDisk': fromDisk,
-      if (error != null) 'error': error,
+      ...?switch (error) {
+        final value? => <String, Object?>{'error': value},
+        null => null,
+      },
     },
   );
 }
@@ -174,9 +177,18 @@ void logKitchenWrongPrinterSelected({
     'reason': reason,
     'expectedPrinter': expectedPrinter,
     'actualPrinter': actualPrinter,
-    if (backend != null) 'backend': backend,
-    if (host != null) 'host': host,
-    if (port != null) 'port': port,
+    ...?switch (backend) {
+      final value? => <String, Object?>{'backend': value},
+      null => null,
+    },
+    ...?switch (host) {
+      final value? => <String, Object?>{'host': value},
+      null => null,
+    },
+    ...?switch (port) {
+      final value? => <String, Object?>{'port': value},
+      null => null,
+    },
   });
 }
 

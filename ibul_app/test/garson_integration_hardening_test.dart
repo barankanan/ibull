@@ -851,7 +851,7 @@ void main() {
 
   // ──────────────────────────────────────────────────────────────────────────────
   group('K. OrderPreviewRecord', () {
-    Map<String, dynamic> _row({
+    Map<String, dynamic> row({
       String id = 'ord-001',
       int tableNumber = 5,
       List<Map<String, dynamic>>? items,
@@ -885,46 +885,46 @@ void main() {
 
     group('K1. fromTableOrder — temel alan eşlemesi', () {
       test('orderId ve tableNumber doğru atanır', () {
-        final r = OrderPreviewRecord.fromTableOrder(_row());
+        final r = OrderPreviewRecord.fromTableOrder(row());
         expect(r.orderId, equals('ord-001'));
         expect(r.tableNumber, equals(5));
       });
 
       test('status ve revision doğru atanır', () {
         final r =
-            OrderPreviewRecord.fromTableOrder(_row(status: 'preparing', revision: 3));
+            OrderPreviewRecord.fromTableOrder(row(status: 'preparing', revision: 3));
         expect(r.status, equals('preparing'));
         expect(r.revision, equals(3));
       });
 
       test('grand_total null geldiğinde items toplamından hesaplar', () {
-        final r = OrderPreviewRecord.fromTableOrder(_row());
+        final r = OrderPreviewRecord.fromTableOrder(row());
         // 2×50 + 1×30 = 130
         expect(r.grandTotal, closeTo(130.0, 0.01));
       });
 
       test('grand_total verildiğinde kullanılır', () {
-        final r = OrderPreviewRecord.fromTableOrder(_row(grandTotal: 99.9));
+        final r = OrderPreviewRecord.fromTableOrder(row(grandTotal: 99.9));
         expect(r.grandTotal, closeTo(99.9, 0.01));
       });
 
       test('waiterName ve paymentMethod atanır', () {
         final r = OrderPreviewRecord.fromTableOrder(
-          _row(waiterName: 'Ahmet', paymentMethod: 'card'),
+          row(waiterName: 'Ahmet', paymentMethod: 'card'),
         );
         expect(r.waiterName, equals('Ahmet'));
         expect(r.paymentMethod, equals('card'));
       });
 
       test('createdAt UTC → local dönüştürülür', () {
-        final r = OrderPreviewRecord.fromTableOrder(_row());
+        final r = OrderPreviewRecord.fromTableOrder(row());
         expect(r.createdAt.isUtc, isFalse);
       });
     });
 
     group('K2. shortSummary', () {
       test('2 ürün — "+N daha" eklenmez', () {
-        final r = OrderPreviewRecord.fromTableOrder(_row());
+        final r = OrderPreviewRecord.fromTableOrder(row());
         expect(r.shortSummary, contains('Tavuk'));
         expect(r.shortSummary, contains('Çorba'));
         expect(r.shortSummary, isNot(contains('daha')));
@@ -932,7 +932,7 @@ void main() {
 
       test('3+ ürün — "+N daha" eklenir', () {
         final r = OrderPreviewRecord.fromTableOrder(
-          _row(items: [
+          row(items: [
             {'name': 'A', 'quantity': 1, 'price': 10.0},
             {'name': 'B', 'quantity': 2, 'price': 20.0},
             {'name': 'C', 'quantity': 1, 'price': 15.0},
@@ -942,7 +942,7 @@ void main() {
       });
 
       test('boş items → "Ürün yok"', () {
-        final r = OrderPreviewRecord.fromTableOrder(_row(items: []));
+        final r = OrderPreviewRecord.fromTableOrder(row(items: []));
         expect(r.shortSummary, equals('Ürün yok'));
       });
     });
@@ -950,12 +950,12 @@ void main() {
     group('K3. itemCount', () {
       test('adetlerin toplamını döner', () {
         // 2 + 1 = 3
-        final r = OrderPreviewRecord.fromTableOrder(_row());
+        final r = OrderPreviewRecord.fromTableOrder(row());
         expect(r.itemCount, equals(3));
       });
 
       test('boş liste → 0', () {
-        final r = OrderPreviewRecord.fromTableOrder(_row(items: []));
+        final r = OrderPreviewRecord.fromTableOrder(row(items: []));
         expect(r.itemCount, equals(0));
       });
     });
@@ -963,7 +963,7 @@ void main() {
     group('K4. addedItems / removedItems — lastEditSummary', () {
       test('added listesi doğru döner', () {
         final r = OrderPreviewRecord.fromTableOrder(
-          _row(lastEditSummary: {
+          row(lastEditSummary: {
             'added': [
               {'name': 'Yeni Ürün', 'quantity': 1}
             ],
@@ -976,7 +976,7 @@ void main() {
 
       test('removed listesi doğru döner', () {
         final r = OrderPreviewRecord.fromTableOrder(
-          _row(lastEditSummary: {
+          row(lastEditSummary: {
             'added': <Map<String, dynamic>>[],
             'removed': [
               {'name': 'Silinen Ürün', 'quantity': 2}
@@ -988,7 +988,7 @@ void main() {
       });
 
       test('lastEditSummary null → boş listeler', () {
-        final r = OrderPreviewRecord.fromTableOrder(_row());
+        final r = OrderPreviewRecord.fromTableOrder(row());
         expect(r.addedItems, isEmpty);
         expect(r.removedItems, isEmpty);
       });

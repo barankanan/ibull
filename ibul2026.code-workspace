@@ -1,0 +1,30 @@
+{
+    "folders": [
+        {
+            "name": "ibul2026-root",
+            "path": "."
+        },
+        {
+            "name": "ibul_app",
+            "path": "ibul_app"
+        },
+        {
+            "name": "ihiz_web",
+            "path": "ihiz_web"
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.dart": "dart"
+        },
+        "dart.projectSearchDepth": 5,
+        "dart.analysisExcludedFolders": [
+            "/Users/barankananogullari/Desktop/ibul2026 kopyası 9/.dart_tool",
+            "/Users/barankananogullari/Desktop/ibul2026 kopyası 9/build",
+            "/Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/.dart_tool",
+            "/Users/barankananogullari/Desktop/ibul2026 kopyası 9/ibul_app/build",
+            "/Users/barankananogullari/Desktop/ibul2026 kopyası 9/ihiz_web/.dart_tool",
+            "/Users/barankananogullari/Desktop/ibul2026 kopyası 9/ihiz_web/build"
+        ]
+    }
+}

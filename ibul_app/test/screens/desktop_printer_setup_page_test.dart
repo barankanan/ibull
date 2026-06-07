@@ -216,6 +216,7 @@ class _FakePrintStationService implements PrintStationServicePort {
   bool remoteEnabled;
   bool failNextToggle;
   bool includeReadyPrinter;
+  String? roleMappingCacheToken;
   final List<bool> toggleCalls = <bool>[];
   int patchCalls = 0;
 
@@ -262,6 +263,17 @@ class _FakePrintStationService implements PrintStationServicePort {
   }
 
   @override
+  Future<String> invalidateRoleMappingCacheState({
+    required String restaurantId,
+    Map<String, dynamic>? roleMappings,
+    String source = 'print_station_service',
+  }) async {
+    roleMappingCacheToken =
+        'token-$restaurantId-${roleMappings.hashCode}-$source';
+    return roleMappingCacheToken!;
+  }
+
+  @override
   Future<Map<String, dynamic>?> fetchStationConfig(String restaurantId) async {
     return <String, dynamic>{
       'restaurant_id': restaurantId,
@@ -281,6 +293,11 @@ class _FakePrintStationService implements PrintStationServicePort {
 
   @override
   String normalizeStationPlatform(String? value) => 'macos';
+
+  @override
+  Future<String?> readRoleMappingCacheToken(String restaurantId) async {
+    return roleMappingCacheToken;
+  }
 
   @override
   Future<Map<String, dynamic>?> patchStationConfiguration({
@@ -480,6 +497,15 @@ class _FakePrinterRepository implements PrinterRepositoryPort {
     required bool success,
     String? error,
   }) async {}
+
+  @override
+  Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
+    required String restaurantId,
+    String? stationId,
+    String? stationName,
+  }) async {
+    return null;
+  }
 
   @override
   Future<void> updateAssignedRoles(

@@ -1243,8 +1243,10 @@ class OrderPrintJobService {
       'printer_not_printed_yet': dispatchOutcome.printerNotPrintedYet,
       'print_pending_reason': dispatchOutcome.pendingReason,
       'pending_for_hub_job_ids': dispatchOutcome.pendingForHubJobIds,
-      if (printFailureMessage != null)
-        'print_failure_message': printFailureMessage,
+      ...?switch (printFailureMessage) {
+        final value? => <String, dynamic>{'print_failure_message': value},
+        null => null,
+      },
     };
 
     return OrderPrintJobDispatchResult(
@@ -1628,6 +1630,13 @@ class OrderPrintJobService {
     for (final job in jobs) {
       final printJobId = job['id']?.toString() ?? '';
       if (printJobId.isEmpty) continue;
+
+      if (!await _tryAtomicClaim(printJobId)) {
+        debugPrint(
+          '[GarsonFastKitchen] claim_failed jobId=$printJobId. Skipping direct dispatch since DesktopPrintHub likely claimed it.',
+        );
+        continue;
+      }
 
       final payload = await _payloadWithPrinterConfig(job);
       final safePayload = Map<String, dynamic>.from(payload);

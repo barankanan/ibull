@@ -540,23 +540,6 @@ class PrinterRepository implements PrinterRepositoryPort {
     return null;
   }
 
-  StationPrinterModel? _resolvePrimaryStationPrinterMapping(
-    List<StationPrinterModel> mappings,
-    String stationId,
-  ) {
-    for (final mapping in mappings) {
-      if (mapping.stationId == stationId && mapping.isPrimary) {
-        return mapping;
-      }
-    }
-    for (final mapping in mappings) {
-      if (mapping.stationId == stationId) {
-        return mapping;
-      }
-    }
-    return null;
-  }
-
   ExpectedKitchenPrinterResolution _normalizeExpectedKitchenPrinter({
     required String source,
     required PrinterModel printer,

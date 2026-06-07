@@ -361,11 +361,23 @@ class _SellerCollectionsManagementContentState
     );
 
     if (approved != true) return;
-    _appState.deleteProductList(list.id);
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Liste silindi.')));
+    try {
+      await _appState.deleteProductList(list.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Liste silindi.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Liste silinemedi. Bağlantınızı kontrol edip tekrar deneyin.',
+          ),
+          duration: Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
   @override

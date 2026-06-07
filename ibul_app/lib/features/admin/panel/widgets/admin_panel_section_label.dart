@@ -22,12 +22,15 @@ class AdminPanelSectionLabel extends StatelessWidget {
       children: [
         Icon(icon, size: 15, color: iconColor),
         const SizedBox(width: 6),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.w700,
-            color: textColor,
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              color: textColor,
+            ),
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],

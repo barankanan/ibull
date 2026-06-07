@@ -215,7 +215,7 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 10),
           if (fp.cashAccounts.isNotEmpty) ...[
             DropdownButtonFormField<String?>(
-              value: _defaultCashAccountId,
+              initialValue: _defaultCashAccountId,
               decoration: InputDecoration(
                 labelText: 'Varsayılan Kasa/Hesap',
                 border: OutlineInputBorder(

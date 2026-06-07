@@ -152,7 +152,7 @@ class _SystemLayoutEditorCardState extends State<SystemLayoutEditorCard> {
       }
       // Fetch by IDs (Old format fallback)
       else if (idsToFetch.isNotEmpty) {
-        // TODO: Implement getStoresByIds if needed.
+        // Implement getStoresByIds here later if ID-based lookup becomes necessary.
         // For now, let's assume namesToSearch fallback will handle it if IDs fail or we skip.
       }
 

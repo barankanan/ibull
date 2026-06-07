@@ -9,7 +9,7 @@ extension _SellerPanelSupportModules on _SellerPanelPageState {
         .where(
           (ticket) =>
               ticket.status == TicketStatus.open ||
-              ticket.status == TicketStatus.in_progress,
+              ticket.status == TicketStatus.inProgress,
         )
         .length;
     final resolvedCount = tickets
@@ -132,7 +132,7 @@ extension _SellerPanelSupportModules on _SellerPanelPageState {
         .where(
           (ticket) =>
               ticket.status == TicketStatus.open ||
-              ticket.status == TicketStatus.in_progress,
+              ticket.status == TicketStatus.inProgress,
         )
         .length;
     final resolvedThisMonth = tickets.where((ticket) {

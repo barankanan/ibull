@@ -267,7 +267,7 @@ class SellerDashboardService {
 
     final openSupportTickets = supportTickets.where((ticket) {
       return ticket.status == TicketStatus.open ||
-          ticket.status == TicketStatus.in_progress;
+          ticket.status == TicketStatus.inProgress;
     }).length;
 
     final unansweredQuestions = sellerQuestions.where((question) {

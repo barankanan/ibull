@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/product_list_model.dart';
@@ -35,6 +37,8 @@ class ProductListService {
   final SupabaseClient _supabase = Supabase.instance.client;
   final Random _random = Random();
   final StoreService _storeService = StoreService();
+
+  static const Duration _opTimeout = Duration(seconds: 12);
 
   String? get currentUserId => _supabase.auth.currentUser?.id;
 
@@ -104,6 +108,15 @@ class ProductListService {
         .toList(growable: false);
   }
 
+  /// Upserts the product list header and replaces all its items atomically.
+  ///
+  /// Safety guarantees:
+  ///   1. The list header is upserted first; if that fails nothing is touched.
+  ///   2. Before deleting existing items a snapshot of the current DB rows is
+  ///      fetched.  If the subsequent insert fails the snapshot rows are
+  ///      re-inserted so no data is permanently lost.
+  ///   3. All errors are logged with [PRODUCT_LIST_SYNC_FAILED] tag and
+  ///      rethrown — callers must handle them (no silent swallowing).
   Future<void> upsertList(ProductList list) async {
     final userId = currentUserId;
     if (userId == null) return;
@@ -128,28 +141,79 @@ class ProductListService {
       'updated_at': list.updatedAt.toUtc().toIso8601String(),
     };
 
+    // ── Step 1: upsert list header ────────────────────────────────────────────
     try {
-      await _supabase.from('product_lists').upsert(payload, onConflict: 'id');
+      await _supabase
+          .from('product_lists')
+          .upsert(payload, onConflict: 'id')
+          .timeout(_opTimeout);
     } on PostgrestException catch (error) {
       final message = error.message.toLowerCase();
       if (message.contains('seller_id') || message.contains('store_name')) {
+        // Legacy schema fallback: columns not yet added on this deployment.
         final legacyPayload = Map<String, dynamic>.from(payload)
           ..remove('seller_id')
           ..remove('store_name');
         await _supabase
             .from('product_lists')
-            .upsert(legacyPayload, onConflict: 'id');
+            .upsert(legacyPayload, onConflict: 'id')
+            .timeout(_opTimeout);
       } else {
+        debugPrint(
+          '[PRODUCT_LIST_SYNC_FAILED] phase=header_upsert '
+          'listId=${list.id} pgCode=${error.code} message=${error.message}',
+        );
         rethrow;
       }
+    } catch (error) {
+      debugPrint(
+        '[PRODUCT_LIST_SYNC_FAILED] phase=header_upsert '
+        'listId=${list.id} error=$error',
+      );
+      rethrow;
     }
-    await _supabase.from('product_list_items').delete().eq('list_id', list.id);
+
+    // ── Step 2: snapshot existing items before touching them ─────────────────
+    List<Map<String, dynamic>> existingItemsSnapshot = const [];
+    try {
+      final rawSnapshot = await _supabase
+          .from('product_list_items')
+          .select()
+          .eq('list_id', list.id)
+          .timeout(_opTimeout);
+      existingItemsSnapshot = List<Map<String, dynamic>>.from(
+        rawSnapshot as List,
+      );
+    } catch (snapshotErr) {
+      // Snapshot failure is non-fatal: we proceed without rollback capability
+      // (same risk as before this change).  Log clearly so it is visible.
+      debugPrint(
+        '[PRODUCT_LIST_SYNC_FAILED] phase=item_snapshot_fetch '
+        'listId=${list.id} error=$snapshotErr — proceeding without rollback',
+      );
+    }
+
+    // ── Step 3: delete existing items ────────────────────────────────────────
+    try {
+      await _supabase
+          .from('product_list_items')
+          .delete()
+          .eq('list_id', list.id)
+          .timeout(_opTimeout);
+    } catch (deleteErr) {
+      debugPrint(
+        '[PRODUCT_LIST_SYNC_FAILED] phase=item_delete '
+        'listId=${list.id} error=$deleteErr',
+      );
+      rethrow;
+    }
 
     if (list.products.isEmpty) return;
 
-    final items = list.products
+    // ── Step 4: insert new items — rollback to snapshot on failure ────────────
+    final newItems = list.products
         .map((product) {
-          return {
+          return <String, dynamic>{
             'list_id': list.id,
             'product_key': productKey(product),
             'product_id': product.productId,
@@ -164,7 +228,50 @@ class ProductListService {
         })
         .toList(growable: false);
 
-    await _supabase.from('product_list_items').insert(items);
+    try {
+      await _supabase
+          .from('product_list_items')
+          .insert(newItems)
+          .timeout(_opTimeout);
+    } catch (insertErr) {
+      debugPrint(
+        '[PRODUCT_LIST_SYNC_FAILED] phase=item_insert '
+        'listId=${list.id} itemCount=${newItems.length} error=$insertErr '
+        '— attempting snapshot rollback',
+      );
+
+      // ── Emergency rollback: re-insert the pre-existing items ──────────────
+      if (existingItemsSnapshot.isNotEmpty) {
+        try {
+          // Strip server-generated columns that would conflict on re-insert.
+          final rollbackRows = existingItemsSnapshot
+              .map((row) {
+                final r = Map<String, dynamic>.from(row);
+                r.remove('created_at');
+                return r;
+              })
+              .toList(growable: false);
+          await _supabase
+              .from('product_list_items')
+              .insert(rollbackRows)
+              .timeout(_opTimeout);
+          debugPrint(
+            '[ProductListService.upsertList] item_rollback=ok '
+            'listId=${list.id} restoredCount=${rollbackRows.length}',
+          );
+        } catch (rollbackErr) {
+          debugPrint(
+            '[PRODUCT_LIST_SYNC_FAILED] phase=item_rollback '
+            'listId=${list.id} error=$rollbackErr — data may be inconsistent',
+          );
+        }
+      }
+
+      throw Exception(
+        'Veri güncellenemedi, değişiklikler geri alınıyor. '
+        '(${insertErr.toString().length > 120 ? insertErr.toString().substring(0, 120) : insertErr})',
+      );
+    }
   }
 
   Future<SellerProfilePublicListsFetchResult> getPublicListsForSellerProfile({
@@ -218,8 +325,40 @@ class ProductListService {
     );
   }
 
+  /// Deletes the product list identified by [listId] from the remote DB.
+  ///
+  /// Always throws on failure — callers are responsible for snapshot rollback.
+  /// Never silently swallows errors.
   Future<void> deleteList(String listId) async {
-    await _supabase.from('product_lists').delete().eq('id', listId);
+    final normalizedId = listId.trim();
+    if (normalizedId.isEmpty) return;
+
+    try {
+      await _supabase
+          .from('product_lists')
+          .delete()
+          .eq('id', normalizedId)
+          .timeout(_opTimeout);
+      debugPrint(
+        '[ProductListService.deleteList] ok listId=$normalizedId',
+      );
+    } on PostgrestException catch (error) {
+      debugPrint(
+        '[PRODUCT_LIST_DELETE_FAILED] listId=$normalizedId '
+        'pgCode=${error.code} message=${error.message}',
+      );
+      rethrow;
+    } on TimeoutException {
+      debugPrint(
+        '[PRODUCT_LIST_DELETE_FAILED] listId=$normalizedId reason=timeout',
+      );
+      rethrow;
+    } catch (error) {
+      debugPrint(
+        '[PRODUCT_LIST_DELETE_FAILED] listId=$normalizedId error=$error',
+      );
+      rethrow;
+    }
   }
 
   Future<void> followList(

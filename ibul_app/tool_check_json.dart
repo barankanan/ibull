@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 void main() async {
   // Initialize FFI
   // sqfliteFfiInit();
@@ -12,13 +14,13 @@ void main() async {
   final file = File('ibul_app/assets/urunler.json');
   final content = await file.readAsString();
   
-  print('Content length: ${content.length}');
+  debugPrint('Content length: ${content.length}');
   
   // Simple regex check
   final pattern = RegExp(r'"isim": "iPhone 15 Pro Max (Mavi|Beyaz)".*?"varyant_grup_id": "(.*?)"', multiLine: true, dotAll: true);
   
   final matches = pattern.allMatches(content);
   for (final match in matches) {
-    print('Found: ${match.group(1)} - GroupID: ${match.group(2)}');
+    debugPrint('Found: ${match.group(1)} - GroupID: ${match.group(2)}');
   }
 }

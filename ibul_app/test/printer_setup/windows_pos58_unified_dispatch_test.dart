@@ -360,8 +360,10 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
     String? error,
   }) async {}
 
-  @override
-  Future<void> updatePrinterStatus({required String printerId, required bool isActive}) async {}
+  Future<void> updatePrinterStatus({
+    required String printerId,
+    required bool isActive,
+  }) async {}
 }
 
 class _FakeStationService implements PrintStationServicePort {

@@ -15,7 +15,14 @@ import '../../features/admin/panel/widgets/admin_panel_shell.dart';
 import '../../features/admin/panel/widgets/admin_sidebar.dart';
 
 class AdminPanelPage extends StatefulWidget {
-  const AdminPanelPage({super.key});
+  const AdminPanelPage({
+    super.key,
+    this.authService,
+    this.adminService,
+  });
+
+  final AuthService? authService;
+  final AdminService? adminService;
 
   @override
   State<AdminPanelPage> createState() => _AdminPanelPageState();
@@ -24,8 +31,8 @@ class AdminPanelPage extends StatefulWidget {
 class _AdminPanelPageState extends State<AdminPanelPage> {
   String _selectedMenu = 'Genel Bakış';
   String _selectedIhizMenu = 'Genel Bakış';
-  final AdminService _adminService = AdminService();
-  final AuthService _authService = AuthService();
+  late final AdminService _adminService = widget.adminService ?? AdminService();
+  late final AuthService _authService = widget.authService ?? AuthService();
   bool _isCheckingAccess = true;
   bool _hasAdminAccess = false;
   String _adminName = 'Admin';

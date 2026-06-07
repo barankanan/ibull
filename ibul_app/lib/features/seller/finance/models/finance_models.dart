@@ -927,24 +927,35 @@ class FinanceOverview {
     // Gelir/gider oranı
     if (monthExpense > 0) {
       final ratio = monthIncome / monthExpense;
-      if (ratio < 1.0) score -= 25;
-      else if (ratio < 1.2) score -= 15;
-      else if (ratio < 1.5) score -= 5;
+      if (ratio < 1.0) {
+        score -= 25;
+      } else if (ratio < 1.2) {
+        score -= 15;
+      } else if (ratio < 1.5) {
+        score -= 5;
+      }
     }
 
     // Borç baskısı (aylık gelire oranla)
     if (monthIncome > 0 && totalDebt > 0) {
       final debtMonths = totalDebt / monthIncome;
-      if (debtMonths > 6) score -= 20;
-      else if (debtMonths > 3) score -= 10;
-      else if (debtMonths > 1) score -= 5;
+      if (debtMonths > 6) {
+        score -= 20;
+      } else if (debtMonths > 3) {
+        score -= 10;
+      } else if (debtMonths > 1) {
+        score -= 5;
+      }
     }
 
     // Maaş yükü
     if (monthIncome > 0 && monthSalaryLoad > 0) {
       final salaryRatio = monthSalaryLoad / monthIncome;
-      if (salaryRatio > 0.6) score -= 15;
-      else if (salaryRatio > 0.4) score -= 8;
+      if (salaryRatio > 0.6) {
+        score -= 15;
+      } else if (salaryRatio > 0.4) {
+        score -= 8;
+      }
     }
 
     // Geciken ödemeler

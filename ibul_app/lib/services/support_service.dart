@@ -1,6 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-enum TicketStatus { open, in_progress, closed, resolved }
+enum TicketStatus { open, inProgress, closed, resolved }
 
 enum TicketPriority { low, medium, high }
 

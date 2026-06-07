@@ -284,7 +284,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
       child: ListView.separated(
         padding: const EdgeInsets.only(bottom: 8),
         itemCount: _expenses.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             const Divider(height: 1, indent: 54, color: kFinanceDivider),
         itemBuilder: (_, i) => _expenseTile(_expenses[i]),
       ),
@@ -421,7 +421,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<ExpenseCategory>(
-                  value: selectedCategory,
+                  initialValue: selectedCategory,
                   decoration: InputDecoration(
                     labelText: 'Kategori',
                     border: OutlineInputBorder(
@@ -479,7 +479,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
                   onChanged: (v) => ss(() => isPaid = v),
                   title: const Text('Ödendi',
                       style: TextStyle(fontSize: 13)),
-                  activeColor: kFinancePrimary,
+                  activeThumbColor: kFinancePrimary,
                   contentPadding: EdgeInsets.zero,
                 ),
               ],
@@ -504,6 +504,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
       final amount = double.tryParse(amountCtrl.text.replaceAll(',', '.'));
       if (amount == null || amount <= 0) return;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final expense = Expense(
           id: '',
@@ -522,6 +523,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
         _load();
         fp.loadOverview();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
@@ -553,7 +555,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<Expense>(
-                value: selectedExpense,
+                initialValue: selectedExpense,
                 decoration: InputDecoration(
                   labelText: 'Gider Kaydı',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -581,7 +583,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
               if (cashAccounts.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 DropdownButtonFormField<CashAccount>(
-                  value: selectedAccount,
+                  initialValue: selectedAccount,
                   decoration: InputDecoration(
                     labelText: 'Çıkış Hesabı',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -624,6 +626,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
 
     if (ok == true) {
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         await fp.repo.payExpense(
           expenseId: selectedExpense.id,
@@ -636,6 +639,7 @@ class _ExpenseTabState extends State<ExpenseTab> {
           await fp.reloadCashAccounts();
         }
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red),

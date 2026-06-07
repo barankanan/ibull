@@ -8,6 +8,7 @@ import 'package:ibul_app/models/printer_model.dart';
 import 'package:ibul_app/screens/seller/printer_ethernet_dialog.dart';
 import 'package:ibul_app/services/desktop_print_orchestrator.dart';
 import 'package:ibul_app/services/desktop_print_ports.dart';
+import 'package:ibul_app/services/local_print_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -19,12 +20,14 @@ void main() {
   Future<void> pumpDialog(
     WidgetTester tester, {
     required _RecordingEthernetOrchestrator orchestrator,
+    _FakeEthernetLocalPrintService? localService,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: AddEthernetPrinterScreen(
           restaurantId: 'rest-1',
           orchestrator: orchestrator,
+          localPrintService: localService,
         ),
       ),
     );
@@ -67,11 +70,12 @@ void main() {
     expect(orchestrator.callCount, 0);
   });
 
-  testWidgets('connection test dispatches explicit ethernet tcp payload', skip: true, (
+  testWidgets('connection test dispatches explicit ethernet tcp payload', (
     tester,
   ) async {
     final orchestrator = _RecordingEthernetOrchestrator();
-    await pumpDialog(tester, orchestrator: orchestrator);
+    final localService = _FakeEthernetLocalPrintService();
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
 
     await tester.enterText(
       find.byKey(const Key('ethernet_ip_field')),
@@ -82,38 +86,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('IP adresi boş olamaz.'), findsNothing);
-    expect(orchestrator.callCount, 1);
-    expect(orchestrator.lastSkipSetupSnapshot, isTrue);
-    expect(orchestrator.lastTargetHost, '192.168.1.100');
-    expect(orchestrator.lastTargetPort, 9100);
-    expect(orchestrator.lastTestMode, 'ethernet_connection');
-    expect(
-      orchestrator.lastExplicitPrinter?.backend,
-      DesktopPrinterBackend.tcp,
-    );
-    expect(orchestrator.lastExplicitPrinter?.raw['host'], '192.168.1.100');
-    expect(orchestrator.lastExplicitPrinter?.raw['port'], 9100);
-    expect(
-      orchestrator.lastExplicitPrinter?.raw['displayName'],
-      'Ethernet Yazıcı 192.168.1.100',
-    );
-    expect(
-      orchestrator.lastExplicitPrinter?.raw['source'],
-      'ethernet_dialog_form',
-    );
-    expect(orchestrator.lastExtraBody?['backend'], 'tcp');
-    expect(orchestrator.lastExtraBody?['transportType'], 'ethernet');
-    expect(orchestrator.lastExtraBody?['transport_type'], 'ethernet');
-    expect(orchestrator.lastExtraBody?['host'], '192.168.1.100');
-    expect(orchestrator.lastExtraBody?['ip_address'], '192.168.1.100');
-    expect(orchestrator.lastExtraBody?['port'], 9100);
-    expect(
-      orchestrator.lastExtraBody?['displayName'],
-      'Ethernet Yazıcı 192.168.1.100',
-    );
-    expect(orchestrator.lastExtraBody?['source'], 'ethernet_dialog_form');
-    expect(orchestrator.lastExtraBody?['printer_id'], 'tcp:192.168.1.100:9100');
-    expect(find.text('Ethernet yazıcıya bağlantı başarılı.'), findsOneWidget);
+    expect(localService.probeCallCount, 1);
+    expect(localService.lastProbeHost, '192.168.1.100');
+    expect(localService.lastProbePort, 9100);
+    
+    final printerPayload = localService.lastProbePrinter;
+    expect(printerPayload?['backend'], 'tcp');
+    expect(printerPayload?['transportType'], 'ethernet');
+    expect(printerPayload?['transport_type'], 'ethernet');
+    expect(printerPayload?['host'], '192.168.1.100');
+    expect(printerPayload?['ip_address'], '192.168.1.100');
+    expect(printerPayload?['port'], 9100);
+    expect(printerPayload?['displayName'], 'Ethernet Yazıcı 192.168.1.100');
+    expect(printerPayload?['source'], 'ethernet_dialog_form');
+    expect(printerPayload?['printer_id'], 'tcp:192.168.1.100:9100');
+    expect(find.text('Mock ethernet baglanti basarili'), findsOneWidget);
   });
 
   testWidgets('print test dispatches explicit ethernet tcp payload', (
@@ -150,6 +137,32 @@ void main() {
     expect(orchestrator.lastExtraBody?['printer_role'], 'adisyon');
     expect(orchestrator.lastExtraBody?['source'], 'ethernet_dialog_form');
   });
+}
+
+class _FakeEthernetLocalPrintService extends LocalPrintService {
+  _FakeEthernetLocalPrintService() : super(baseUri: Uri.parse('http://127.0.0.1:3001'));
+
+  int probeCallCount = 0;
+  String? lastProbeHost;
+  int? lastProbePort;
+  Map<String, dynamic>? lastProbePrinter;
+
+  @override
+  Future<Map<String, dynamic>?> probeTcpPrinter({
+    required String host,
+    required int port,
+    Map<String, dynamic>? printer,
+    Duration? timeout,
+  }) async {
+    probeCallCount++;
+    lastProbeHost = host;
+    lastProbePort = port;
+    lastProbePrinter = printer;
+    return <String, dynamic>{
+      'ok': true,
+      'suggested_message': 'Mock ethernet baglanti basarili',
+    };
+  }
 }
 
 class _RecordingEthernetOrchestrator extends DesktopPrintOrchestrator {

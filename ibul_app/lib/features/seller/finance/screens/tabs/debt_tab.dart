@@ -405,7 +405,7 @@ class _DebtTabState extends State<DebtTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<DebtType>(
-                  value: selectedType,
+                  initialValue: selectedType,
                   decoration: InputDecoration(
                     labelText: 'Borç Türü',
                     border: OutlineInputBorder(
@@ -486,6 +486,7 @@ class _DebtTabState extends State<DebtTab> {
       final creditor = creditorCtrl.text.trim();
       if (creditor.isEmpty) return;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final debt = Debt(
           id: '',
@@ -505,6 +506,7 @@ class _DebtTabState extends State<DebtTab> {
         _load();
         fp.loadOverview();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
@@ -542,7 +544,7 @@ class _DebtTabState extends State<DebtTab> {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<Debt>(
-                value: selectedDebt,
+                initialValue: selectedDebt,
                 decoration: InputDecoration(
                   labelText: 'Borç Kaydı',
                   border: OutlineInputBorder(
@@ -579,7 +581,7 @@ class _DebtTabState extends State<DebtTab> {
               if (cashAccounts.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 DropdownButtonFormField<CashAccount>(
-                  value: selectedAccount,
+                  initialValue: selectedAccount,
                   decoration: InputDecoration(
                     labelText: 'Çıkış Hesabı',
                     border: OutlineInputBorder(
@@ -621,6 +623,7 @@ class _DebtTabState extends State<DebtTab> {
       final amount = double.tryParse(amountCtrl.text.replaceAll(',', '.'));
       if (amount == null || amount <= 0) return;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final payment = DebtPayment(
           id: '',
@@ -639,6 +642,7 @@ class _DebtTabState extends State<DebtTab> {
           await fp.reloadCashAccounts();
         }
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red),
@@ -762,7 +766,7 @@ class _DebtDetailSheetState extends State<_DebtDetailSheet> {
                         controller: ctrl,
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         itemCount: _payments.length,
-                        separatorBuilder: (_, __) => const Divider(
+                        separatorBuilder: (_, _) => const Divider(
                             height: 1, color: kFinanceDivider),
                         itemBuilder: (_, i) => _paymentTile(_payments[i]),
                       ),
@@ -871,6 +875,7 @@ class _DebtDetailSheetState extends State<_DebtDetailSheet> {
       final amount = double.tryParse(amountCtrl.text.replaceAll(',', '.'));
       if (amount == null || amount <= 0) return;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final payment = DebtPayment(
           id: '',
@@ -888,6 +893,7 @@ class _DebtDetailSheetState extends State<_DebtDetailSheet> {
         widget.onUpdated();
         fp.loadOverview();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));

@@ -96,9 +96,10 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
     if (widget.initialPrinterLabel?.trim().isNotEmpty == true) {
       _targetPrinterLabel = widget.initialPrinterLabel!.trim();
     }
-    if (_initialTargetPrinter != null) {
-      _applyTargetPrinter(_initialTargetPrinter!);
-      _availablePrinters = <UnifiedPrinterModel>[_initialTargetPrinter!];
+    final initialTargetPrinter = _initialTargetPrinter;
+    if (initialTargetPrinter != null) {
+      _applyTargetPrinter(initialTargetPrinter);
+      _availablePrinters = <UnifiedPrinterModel>[initialTargetPrinter];
     }
     if (_isFlutterTest) {
       _bridgeOk = true;
@@ -171,7 +172,7 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
       setState(() {
         _availablePrinters = _initialTargetPrinter == null
             ? const <UnifiedPrinterModel>[]
-            : <UnifiedPrinterModel>[_initialTargetPrinter!];
+            : <UnifiedPrinterModel>[_initialTargetPrinter];
         _targetPrinterLabel =
             widget.initialPrinterLabel?.trim().isNotEmpty == true
             ? widget.initialPrinterLabel!.trim()
@@ -243,7 +244,7 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
       setState(() {
         _availablePrinters = _initialTargetPrinter == null
             ? const <UnifiedPrinterModel>[]
-            : <UnifiedPrinterModel>[_initialTargetPrinter!];
+            : <UnifiedPrinterModel>[_initialTargetPrinter];
         _targetPrinterLabel =
             widget.initialPrinterLabel?.trim().isNotEmpty == true
             ? widget.initialPrinterLabel!.trim()
@@ -256,7 +257,7 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
     List<UnifiedPrinterModel> printers,
   ) {
     final merged = <UnifiedPrinterModel>[
-      if (_initialTargetPrinter != null) _initialTargetPrinter!,
+      if (_initialTargetPrinter != null) _initialTargetPrinter,
       ...printers,
     ];
     final byId = <String, UnifiedPrinterModel>{};
@@ -459,8 +460,8 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
             _targetPrinterLabel = resolved.displayName;
             _targetPrinterQueue = resolved.queueName;
             _targetPrinterBackend = resolved.backend.value;
-            _targetPrinterHost = (resolved.raw?['ip_address'] as String?) ?? '';
-            _targetPrinterPort = resolved.raw?['port'] as int?;
+            _targetPrinterHost = (resolved.raw['ip_address'] as String?) ?? '';
+            _targetPrinterPort = resolved.raw['port'] as int?;
             _targetExplicitPrinter = resolved;
           });
         }
@@ -743,7 +744,7 @@ class _PrinterTestDialogState extends State<PrinterTestDialog> {
                 DropdownButtonFormField<String>(
                   key: const ValueKey<String>('test_target_printer_dropdown'),
                   isExpanded: true,
-                  value: _matchPrinterByIdentifier(
+                  initialValue: _matchPrinterByIdentifier(
                     _availablePrinters,
                     _targetPrinterId,
                   )?.id,

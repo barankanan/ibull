@@ -257,7 +257,7 @@ class _SalaryTabState extends State<SalaryTab> {
       child: ListView.separated(
         padding: const EdgeInsets.only(bottom: 8),
         itemCount: _employees.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             const Divider(height: 1, indent: 54, color: kFinanceDivider),
         itemBuilder: (_, i) => _employeeTile(_employees[i]),
       ),
@@ -419,7 +419,7 @@ class _SalaryTabState extends State<SalaryTab> {
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<int>(
-                  value: paymentDay,
+                  initialValue: paymentDay,
                   decoration: InputDecoration(
                     labelText: 'Maaş Ödeme Günü',
                     border: OutlineInputBorder(
@@ -467,6 +467,7 @@ class _SalaryTabState extends State<SalaryTab> {
       final base = double.tryParse(baseSalaryCtrl.text.replaceAll(',', '.'));
       if (name.isEmpty || base == null || base <= 0) return;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final emp = FinanceEmployee(
           id: '',
@@ -490,6 +491,7 @@ class _SalaryTabState extends State<SalaryTab> {
         _loadEmployees();
         fp.loadOverview();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
@@ -502,9 +504,10 @@ class _SalaryTabState extends State<SalaryTab> {
     if (_employees.isEmpty) {
       await _loadEmployees();
     }
+    if (!context.mounted) return;
     final activeEmployees = _employees.where((e) => e.isActive).toList(growable: false);
     if (activeEmployees.isEmpty) {
-      if (mounted) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Önce aktif bir çalışan ekleyin.')),
         );
@@ -529,7 +532,7 @@ class _SalaryTabState extends State<SalaryTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<FinanceEmployee>(
-                  value: selectedEmployee,
+                  initialValue: selectedEmployee,
                   decoration: InputDecoration(
                     labelText: 'Çalışan',
                     border: OutlineInputBorder(
@@ -603,6 +606,7 @@ class _SalaryTabState extends State<SalaryTab> {
       final advance = double.tryParse(advanceCtrl.text.replaceAll(',', '.')) ?? 0;
       final netSalary = selectedEmployee.baseSalary + bonus + overtime - deduction - advance;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final record = SalaryRecord(
           id: '',
@@ -625,6 +629,7 @@ class _SalaryTabState extends State<SalaryTab> {
         _loadSalaryRecords();
         fp.loadOverview();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red),
@@ -675,6 +680,7 @@ class _SalaryTabState extends State<SalaryTab> {
 
     if (ok == true) {
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         for (final record in payableRecords) {
           final remaining = record.netSalary - record.paidAmount;
@@ -691,6 +697,7 @@ class _SalaryTabState extends State<SalaryTab> {
         _loadSalaryRecords();
         fp.loadOverview();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red),
@@ -780,7 +787,7 @@ class _SalaryTabState extends State<SalaryTab> {
       child: ListView.separated(
         padding: const EdgeInsets.only(bottom: 8),
         itemCount: _records.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             const Divider(height: 1, indent: 54, color: kFinanceDivider),
         itemBuilder: (_, i) => _salaryRecordTile(_records[i]),
       ),
@@ -1036,6 +1043,7 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
           double.tryParse(amountCtrl.text.replaceAll(',', '.'));
       if (amount == null || amount <= 0) return;
       try {
+        if (!context.mounted) return;
         final fp = context.read<FinanceProvider>();
         final payment = SalaryPayment(
           id: '',
@@ -1050,6 +1058,7 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
         widget.onUpdated();
         fp.loadOverview();
       } catch (e) {
+        if (!context.mounted) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text('Hata: $e'),

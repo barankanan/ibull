@@ -609,7 +609,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
         initialChildSize: 0.72,
         minChildSize: 0.45,
         maxChildSize: 0.92,
-        builder: (_, __) => StoreNotificationsSheet(
+        builder: (_, scrollController) => StoreNotificationsSheet(
           storeId: storeId,
           storeName: storeName,
           notificationsEnabled: _followState.notificationsEnabled,
@@ -8213,7 +8213,6 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
                         final usesServiceStepper =
                             product.usesServiceControlStepper;
                         final isServiceTpl = _isServiceTemplate(product);
-                        // TODO(debug): remove before production
                         debugPrint(
                           '[CUSTOMER_CARD] '
                           'name="${product.name}" '

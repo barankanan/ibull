@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ibul_app/models/desktop_printer_setup_models.dart';
 import 'package:ibul_app/models/printer_model.dart';
 import 'package:ibul_app/services/desktop_print_orchestrator.dart';
 import 'package:ibul_app/services/desktop_print_ports.dart';

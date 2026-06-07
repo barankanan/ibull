@@ -15,7 +15,6 @@ import '../../models/windows_printer_classification.dart';
 import '../../models/printer_model.dart';
 import '../../models/printer_profile.dart';
 import '../../services/desktop_print_orchestrator.dart';
-import '../../services/bridge_manager.dart';
 import '../../services/desktop_print_hub.dart';
 import '../../services/print_station_service.dart';
 import '../../services/printer_repository.dart';

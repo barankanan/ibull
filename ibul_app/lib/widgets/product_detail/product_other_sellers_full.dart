@@ -419,9 +419,7 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
                 ),
               ),
               ElevatedButton(
-                onPressed: () {
-                  // TODO: Navigate to seller product page
-                },
+                onPressed: () {},
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,

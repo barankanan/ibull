@@ -1107,7 +1107,7 @@ void main() {
 
   group('Geçmiş → OrderPreviewRecord tutarlılığı & Adisyon Yazdır veri yolu', () {
     // Full history row helper used by all tests in this group
-    Map<String, dynamic> _histRow({
+    Map<String, dynamic> histRow({
       String id = 'hist-con-1',
       String originalOrderId = 'orig-con-1',
       String paymentMethod = 'card',
@@ -1142,7 +1142,7 @@ void main() {
 
     // 10.1 orderId → originalOrderId eşleşmesi
     test('10.1 fromHistory: orderId == history.originalOrderId', () {
-      final h = TableOrderHistoryRecord.fromMap(_histRow());
+      final h = TableOrderHistoryRecord.fromMap(histRow());
       final preview = OrderPreviewRecord.fromHistory(h);
 
       expect(preview.orderId, h.originalOrderId,
@@ -1152,7 +1152,7 @@ void main() {
     // 10.2 items list preserved verbatim (same length + content)
     test('10.2 fromHistory: items list preserved verbatim', () {
       final sourceItems = _twoItemsDraft();
-      final h = TableOrderHistoryRecord.fromMap(_histRow(items: sourceItems));
+      final h = TableOrderHistoryRecord.fromMap(histRow(items: sourceItems));
       final preview = OrderPreviewRecord.fromHistory(h);
 
       expect(preview.items.length, sourceItems.length,
@@ -1170,7 +1170,7 @@ void main() {
     // 10.3 grandTotal preserved
     test('10.3 fromHistory: grandTotal preserved exactly', () {
       const expectedTotal = 850.0;
-      final h = TableOrderHistoryRecord.fromMap(_histRow(grandTotal: expectedTotal));
+      final h = TableOrderHistoryRecord.fromMap(histRow(grandTotal: expectedTotal));
       final preview = OrderPreviewRecord.fromHistory(h);
 
       expect(preview.grandTotal, closeTo(expectedTotal, 0.001));
@@ -1178,7 +1178,7 @@ void main() {
 
     // 10.4 paymentMethod preserved
     test('10.4 fromHistory: paymentMethod preserved', () {
-      final h = TableOrderHistoryRecord.fromMap(_histRow(paymentMethod: 'cash'));
+      final h = TableOrderHistoryRecord.fromMap(histRow(paymentMethod: 'cash'));
       final preview = OrderPreviewRecord.fromHistory(h);
 
       expect(preview.paymentMethod, 'cash');
@@ -1187,7 +1187,7 @@ void main() {
     // 10.5 closedByName == waiterName (the person who closed the table)
     test('10.5 fromHistory: closedByName == history.waiterName', () {
       const closer = 'Zeynep';
-      final h = TableOrderHistoryRecord.fromMap(_histRow(waiterName: closer));
+      final h = TableOrderHistoryRecord.fromMap(histRow(waiterName: closer));
       final preview = OrderPreviewRecord.fromHistory(h);
 
       expect(preview.closedByName, closer,
@@ -1198,7 +1198,7 @@ void main() {
 
     // 10.6 revision preserved
     test('10.6 fromHistory: revision preserved', () {
-      final h = TableOrderHistoryRecord.fromMap(_histRow(revision: 3));
+      final h = TableOrderHistoryRecord.fromMap(histRow(revision: 3));
       final preview = OrderPreviewRecord.fromHistory(h);
 
       expect(preview.revision, 3);
@@ -1210,7 +1210,7 @@ void main() {
     // is used whether the user taps "Adisyon Yazdır" (initialTab: 0) or
     // "Önizle" (initialTab: 2). Only the initial tab index differs.
     test('10.7 Adisyon Yazdır: same record data as Önizle path, only initialTab differs', () {
-      final h = TableOrderHistoryRecord.fromMap(_histRow());
+      final h = TableOrderHistoryRecord.fromMap(histRow());
 
       // Path called by "Adisyon Yazdır" button (initialTab: 0)
       final adisyonRecord = OrderPreviewRecord.fromHistory(h);
@@ -1234,7 +1234,7 @@ void main() {
     // 10.8 Total item count matches items.quantity sum
     test('10.8 OrderPreviewRecord.itemCount == sum of quantities', () {
       // _twoItemsDraft() has Ciğer Şiş qty:1 + Kuzu Pirzola qty:1 = 2
-      final h = TableOrderHistoryRecord.fromMap(_histRow());
+      final h = TableOrderHistoryRecord.fromMap(histRow());
       final preview = OrderPreviewRecord.fromHistory(h);
 
       // itemCount uses the getter defined on OrderPreviewRecord
