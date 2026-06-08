@@ -890,4 +890,51 @@ void main() {
       }
     });
   });
+
+  group('shouldClearGarsonCatalogAsNonFood — first-open category race', () {
+    test('profile not loaded yet → NEVER clear (category unknown)', () {
+      // The exact regression: on first garson open the profile is still
+      // loading and `_storeCategory == ''`, so isSellerFoodStoreCategory('')
+      // is false. Clearing here wrongly shows "Henüz tanımlı masa yok" and
+      // feeds the bootstrap-retry auto-refresh loop.
+      expect(
+        shouldClearGarsonCatalogAsNonFood(
+          hasLoadedProfile: false,
+          isFoodCategory: false,
+        ),
+        isFalse,
+        reason: 'category is simply not known yet — must keep/fetch catalog',
+      );
+    });
+
+    test('profile loaded + genuinely non-food → clear', () {
+      expect(
+        shouldClearGarsonCatalogAsNonFood(
+          hasLoadedProfile: true,
+          isFoodCategory: false,
+        ),
+        isTrue,
+      );
+    });
+
+    test('profile loaded + food store → keep catalog', () {
+      expect(
+        shouldClearGarsonCatalogAsNonFood(
+          hasLoadedProfile: true,
+          isFoodCategory: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('food category is always safe even before profile resolves', () {
+      expect(
+        shouldClearGarsonCatalogAsNonFood(
+          hasLoadedProfile: false,
+          isFoodCategory: true,
+        ),
+        isFalse,
+      );
+    });
+  });
 }

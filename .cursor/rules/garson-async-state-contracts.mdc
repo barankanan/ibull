@@ -122,35 +122,68 @@ final list = source.where(pred).toList(); // varsayılan growable=true
 
 ---
 
-## E. Boş-Ekran Self-Heal (Asla Dead-End Yok)
+## E. Yenileme YALNIZCA Manuel — Otomatik Reload Yasak
 
-Garson board'unda **hiçbir** boş-ekran (`_buildGarsonNoPhysicalTablesPlaceholder`,
-`_buildGarsonEmptyState`) son nokta olamaz. Masa kapatma → route pop yarışında
-tüm last-good katmanları (`board.tables`, `lastGoodTables`, `lastGoodSections`,
-`_storeTables`) aynı anda çökebilir ve mağazada masa olmasına rağmen "masa yok"
-ekranı görünür. Bu durumda **in-memory bir "daha önce masa gördüm" bayrağına
-güvenME** — State yeniden oluşturulursa o bayrak sıfırlanır.
+Garson board **kullanıcı tetiklemeden asla** kendini görünür şekilde
+yenilememelidir. Tek yenileme yolları:
 
-Bunun yerine zorla katalog yeniden çekme (`_ensureGarsonInitialVisibleData(force: true)`)
-**deneme-tabanlı** tetiklenir. Karar saf fonksiyonda kilitlidir:
+- "Yenile" / "Yeniden Yükle" butonu (`garson_manual_refresh_button`).
+- Mobil pull-to-refresh (`mobile_pull_to_refresh`).
+- İlk açılış / sekme açılışı seed'i (bir kez).
+
+**Kesin yasaklar:**
+
+- Boş-ekran builder'ları (`_buildGarsonNoPhysicalTablesPlaceholder`,
+  `_buildGarsonEmptyState`) build içinden **reload tetikleyemez**. Bunlar
+  son nokta + manuel butondur. (Eskiden burada bir "self-heal" otomatik
+  `_ensureGarsonInitialVisibleData(force: true)` çağırıyordu; board bir an
+  boşalınca reload → masalar gelince sayaç sıfır → tekrar boş frame → ~3 sn'de
+  bir **sonsuz görünür yenileme loop'u** oluşturuyordu. Kaldırıldı, geri eklenmemeli.)
+- Realtime stream (`table_orders_stream`) görünür snapshot'ı **otomatik
+  uygulamaz**; sadece `_markGarsonHasPendingRemoteChanges` ile "değişiklik var"
+  işaretler. Bu, `shouldBlockGarsonBackgroundPublish` + `shouldAutoApplyGarsonVisibleSnapshot`
+  ile zorlanır — `table_orders_stream` allow-list'te DEĞİLDİR, eklenmemeli.
+- `build()` / placeholder / `addPostFrameCallback` içinden `_ensureGarsonInitialVisibleData`
+  veya `_loadStoreTables` **çağırma** (bootstrap retry hariç; o da yalnız ilk
+  başarılı yükleme öncesi: `!_garsonHasEverLoadedTablesSuccessfully`).
+
+**Neden:** Çökme anını otomatik reload ile maskelemek, kararsız board'da
+periyodik kendiliğinden yenilemeye dönüşür. Çökme olursa kullanıcı boş ekranı +
+manuel "Yeniden Yükle" butonunu görür; root-cause ayrı ele alınır.
+
+---
+
+## G. Kategori-Yarışı: `_loadStoreTables` Erken-Çıkış Tuzağı
+
+`isSellerFoodStoreCategory('')` **false** döner. `_loadStoreTables` içindeki
+`if (!_isFoodStoreCategory(_storeCategory))` guard'ı, profil/kategori henüz
+yüklenmemişken (ilk garson açılışında `_storeCategory == ''`) **non-food sanıp
+masaları temizleyip return ederse**, board "Henüz tanımlı masa yok" gösterir ve
+sadece manuel "Yenile" sonrası düzelir. Bu aynı zamanda
+`_garsonHasEverLoadedTablesSuccessfully`'yi hiç `true` yapmadığı için
+`_kickGarsonInitialBootstrapRetryIfNeeded` döngüsünü besler → kendiliğinden
+yenileme. (Owner hesabında + "Yenile" ile masalar gelmesi = tam bu yarış.)
+
+Kural: Bir mağaza **yalnızca profil KESİN çözüldükten sonra** non-food sayılıp
+katalog temizlenebilir.
 
 ```dart
-// garson_board_state.dart — test edilebilir saf karar
-final action = decideGarsonEmptyStateSelfHeal(
-  isGarsonVisible: _isGarsonVisible,
-  isTableRouteOpen: _isGarsonTableRouteOpen,
-  isLoading: _isGarsonInitialLoading || _isLoadingStoreTables,
-  attempts: _garsonEmptyStateSelfHealAttempts,
-  maxAttempts: _garsonEmptyStateSelfHealMax, // 4
-  lastHealAt: _garsonEmptyStateSelfHealAt,
-  now: DateTime.now(),
-); // scheduleReload | showLoading | showEmpty
+if (!_isFoodStoreCategory(_storeCategory)) {
+  if (!_hasLoadedStoreProfile && !_isLoading) {
+    await _loadStoreProfile();        // önce kategoriyi kesinleştir
+    if (!mounted) return;
+  }
+  if (_hasLoadedStoreProfile && !_isFoodStoreCategory(_storeCategory)) {
+    // GERÇEKTEN non-food → temizle + return
+  }
+  // kategori hâlâ bilinmiyor → TEMİZLEME, fetch'e devam et
+}
 ```
 
-- En fazla `maxAttempts` deneme + throttle (≥3 sn) → sonsuz reload loop imkânsız.
-- Gerçek masa görülünce deneme bütçesi sıfırlanır (`_recordGarsonCatalogSeen`).
-- Gerçekten masası olmayan mağaza bütçeyi tüketip normal placeholder'a düşer.
-- Yeni boş-ekran eklersen `_maybeScheduleGarsonEmptyStateSelfHeal()` ile sarmala.
+Ek savunma: `_kickGarsonInitialBootstrapRetryIfNeeded` sabit bir
+`_garsonBootstrapRetryMax` ile sınırlı; yükleme sürekli başarısız olsa bile
+sonsuz görünür yenileme yapamaz, statik boş ekran + manuel butona düşer. Bütçe
+yalnızca kullanıcı manuel "Yenile"ye bastığında sıfırlanır.
 
 ---
 

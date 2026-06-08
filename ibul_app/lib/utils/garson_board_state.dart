@@ -679,53 +679,6 @@ bool shouldWarnGarsonOrdersUntouched({
   return !identityMatches;
 }
 
-/// Outcome of the garson empty-state self-heal decision.
-enum GarsonEmptyStateSelfHealAction {
-  /// A recovery is already in flight (or throttled) — caller should render a
-  /// loading placeholder but must NOT schedule another reload.
-  showLoading,
-
-  /// Caller should schedule a forced catalog re-fetch and render loading.
-  scheduleReload,
-
-  /// No recovery possible/appropriate — caller should render the real empty
-  /// state (genuinely empty store, or budget exhausted, or not on garson).
-  showEmpty,
-}
-
-/// Pure decision for the empty-table self-heal.
-///
-/// The garson board keeps several last-good layers, but a close→pop race can
-/// momentarily collapse all of them at once and surface a dead-end "no tables"
-/// screen even though the store genuinely has tables.  Rather than trusting an
-/// in-memory "we had tables" flag (which resets if the State is recreated
-/// during navigation), we attempt a forced catalog re-fetch up to
-/// [maxAttempts] times.  A transient collapse recovers on the first attempt; a
-/// genuinely empty store exhausts the budget and then shows the real empty
-/// state.  A [throttle] guarantees we can never spin into a tight reload loop.
-GarsonEmptyStateSelfHealAction decideGarsonEmptyStateSelfHeal({
-  required bool isGarsonVisible,
-  required bool isTableRouteOpen,
-  required bool isLoading,
-  required int attempts,
-  required int maxAttempts,
-  required DateTime? lastHealAt,
-  required DateTime now,
-  Duration throttle = const Duration(seconds: 3),
-}) {
-  if (!isGarsonVisible && !isTableRouteOpen) {
-    return GarsonEmptyStateSelfHealAction.showEmpty;
-  }
-  if (isLoading) return GarsonEmptyStateSelfHealAction.showLoading;
-  if (attempts >= maxAttempts) {
-    return GarsonEmptyStateSelfHealAction.showEmpty;
-  }
-  if (lastHealAt != null && now.difference(lastHealAt) < throttle) {
-    return GarsonEmptyStateSelfHealAction.showLoading;
-  }
-  return GarsonEmptyStateSelfHealAction.scheduleReload;
-}
-
 /// Removes all orders belonging to [tableNumber] from board state orders and
 /// lastGoodOrders. Tables and areas are never touched.
 GarsonBoardState removeClosedTableOrdersFromBoardState({

@@ -789,6 +789,22 @@ String tableOrdersDashboardSignature(List<Map<String, dynamic>> orders) {
 }
 
 /// Returns true when the store category indicates a food/restaurant business.
+/// Whether `_loadStoreTables` may treat the store as non-food and CLEAR the
+/// garson catalog.
+///
+/// Guards the "Henüz tanımlı masa yok" first-open race: because
+/// [isSellerFoodStoreCategory] returns false for an empty category string, the
+/// catalog must NOT be cleared while the store profile is still loading (the
+/// category is simply not known yet). Only a definitively-resolved profile
+/// (`hasLoadedProfile == true`) whose category is not food may clear it.
+bool shouldClearGarsonCatalogAsNonFood({
+  required bool hasLoadedProfile,
+  required bool isFoodCategory,
+}) {
+  if (!hasLoadedProfile) return false;
+  return !isFoodCategory;
+}
+
 /// This is the single source of truth for the food-business check.
 /// Dashboard behaviour (metrics, cards, charts) branches on this flag.
 bool isSellerFoodStoreCategory(String? category) {

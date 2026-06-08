@@ -602,21 +602,13 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   bool _garsonInitialBootstrapFinished = false;
   bool _garsonInitialBootstrapFailed = false;
   bool _garsonBootstrapRetryQueued = false;
-  // Largest physical-table catalog size observed during this session. Used to
-  // gate the empty-state self-heal: if we have ever seen >0 tables but every
-  // in-memory layer is now empty, the "Henüz tanımlı masa yok" screen is a
-  // transient wipe (not a genuinely empty store) and we auto re-fetch instead
-  // of dead-ending. Stays 0 for stores that truly have no tables.
-  int _garsonMaxCatalogTablesSeen = 0;
-  // Throttle for the empty-state self-heal so the placeholder can never spin
-  // into a tight reload loop.
-  DateTime? _garsonEmptyStateSelfHealAt;
-  // Number of consecutive auto-recover attempts made from the empty-table
-  // placeholder. Reset to 0 the moment a non-empty catalog is observed. Caps
-  // the self-heal so a store that is *genuinely* empty stops retrying and the
-  // placeholder becomes the final state after [_garsonEmptyStateSelfHealMax].
-  int _garsonEmptyStateSelfHealAttempts = 0;
-  static const int _garsonEmptyStateSelfHealMax = 4;
+  // Hard cap on automatic bootstrap re-fetches. The retry only exists to cover
+  // the very first load racing ahead of auth/profile readiness. If the catalog
+  // genuinely cannot be loaded it MUST NOT keep auto-refreshing forever (the
+  // user explicitly requires manual-only refresh) — after this many attempts
+  // we stop and let the manual "Yenile" button take over.
+  int _garsonBootstrapRetryCount = 0;
+  static const int _garsonBootstrapRetryMax = 3;
   bool _isGarsonInitialLoading = false;
   String? _garsonInitialLoadError;
   int _garsonManualRefreshGeneration = 0;
@@ -2318,6 +2310,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     });
     try {
       _garsonManualRefreshGeneration += 1;
+      // A user-initiated refresh re-arms the bootstrap budget so that, if this
+      // refresh succeeds, the catalog is back; and if a future first-load race
+      // happens again, the (bounded) auto-bootstrap can still cover it once.
+      _garsonBootstrapRetryCount = 0;
       await Future.wait<void>(<Future<void>>[
         _loadStoreTables(
           silent: false,
@@ -4776,21 +4772,45 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       }
     }
     if (!_isFoodStoreCategory(_storeCategory)) {
-      if (mounted && _storeTables.isNotEmpty) {
-        setState(() {
-          _storeTables = <Map<String, dynamic>>[];
-          _storeTableAreas = <Map<String, dynamic>>[];
-          _garsonPendingIncomingTables = <Map<String, dynamic>>[];
-          _garsonPendingIncomingTableAreas = <Map<String, dynamic>>[];
-          _storeTablesSignature = null;
-          _storeTableAreasSignature = null;
-        });
-        _logSellerPanelStateUpdate(
-          'store_tables_cleared_non_food_store',
-          note: 'silent=$silent',
-        );
+      // CRITICAL race fix: `isSellerFoodStoreCategory('')` returns false, so on
+      // the very first garson open — before the store profile has loaded and
+      // `_storeCategory` is still empty — this guard used to bail and CLEAR the
+      // catalog, surfacing "Henüz tanımlı masa yok" until a manual refresh.
+      // That same dead-end also kept `_garsonHasEverLoadedTablesSuccessfully`
+      // false, which fed the bootstrap-retry auto-refresh loop. Only treat the
+      // store as non-food once the profile has DEFINITIVELY resolved.
+      if (!_hasLoadedStoreProfile && !_isLoading) {
+        await _loadStoreProfile();
+        if (!mounted) return;
       }
-      return;
+      if (shouldClearGarsonCatalogAsNonFood(
+        hasLoadedProfile: _hasLoadedStoreProfile,
+        isFoodCategory: _isFoodStoreCategory(_storeCategory),
+      )) {
+        if (mounted && _storeTables.isNotEmpty) {
+          setState(() {
+            _storeTables = <Map<String, dynamic>>[];
+            _storeTableAreas = <Map<String, dynamic>>[];
+            _garsonPendingIncomingTables = <Map<String, dynamic>>[];
+            _garsonPendingIncomingTableAreas = <Map<String, dynamic>>[];
+            _storeTablesSignature = null;
+            _storeTableAreasSignature = null;
+          });
+          _logSellerPanelStateUpdate(
+            'store_tables_cleared_non_food_store',
+            note: 'silent=$silent',
+          );
+        }
+        return;
+      }
+      // Category still unresolved (profile load in flight or failed). Do NOT
+      // clear/bail — fall through and fetch so an owner's tables are never
+      // hidden behind a transient empty-category window.
+      debugPrint(
+        '[GARSON_CATEGORY_PENDING] proceeding with store_tables fetch '
+        'category=${_storeCategory.isEmpty ? '-' : _storeCategory} '
+        'hasLoadedProfile=$_hasLoadedStoreProfile source=$source',
+      );
     }
     if (sellerId.isEmpty) return;
 
@@ -5114,41 +5134,26 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     return const <Map<String, dynamic>>[];
   }
 
-  void _recordGarsonCatalogSeen(int count) {
-    if (count > _garsonMaxCatalogTablesSeen) {
-      _garsonMaxCatalogTablesSeen = count;
-    }
-    if (count > 0) {
-      // A real catalog is back on screen — clear the self-heal budget so a
-      // future collapse gets a fresh set of recovery attempts.
-      _garsonEmptyStateSelfHealAttempts = 0;
-    }
-  }
-
   List<int> _garsonSortedStoreTableNumbersForUi() {
     final visibleTables = _garsonVisibleTablesForUi();
     if (visibleTables.isNotEmpty) {
-      final numbers = visibleTables
+      return visibleTables
           .map(_tableNumberFromRow)
           .where((n) => n > 0)
           .toSet()
           .toList(growable: false)
         ..sort();
-      _recordGarsonCatalogSeen(numbers.length);
-      return numbers;
     }
     // Fallback 1: _storeTables is the raw data loaded from the server and is
     // never cleared by order operations. Use it when boardState.uiTables is
     // transiently empty (e.g., between a close and the next refresh).
     if (_storeTables.isNotEmpty) {
-      final numbers = _storeTables
+      return _storeTables
           .map(_tableNumberFromRow)
           .where((n) => n > 0)
           .toSet()
           .toList(growable: false)
         ..sort();
-      _recordGarsonCatalogSeen(numbers.length);
-      return numbers;
     }
     // Fallback 2 — Last-known-good guard: if _storeTables was transiently
     // cleared (module switch, seller change) but we have a cached snapshot
@@ -5161,14 +5166,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         '[GARSON_BLANK_GUARD] using lastGoodTables as table source '
         'lastGoodCount=${lastGood.length}',
       );
-      final numbers = lastGood
+      return lastGood
           .map(_tableNumberFromRow)
           .where((n) => n > 0)
           .toSet()
           .toList(growable: false)
         ..sort();
-      _recordGarsonCatalogSeen(numbers.length);
-      return numbers;
     }
     return const <int>[];
   }
@@ -5244,7 +5247,18 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     if (_garsonHasEverLoadedTablesSuccessfully) return;
     if (_garsonVisibleTablesForUi().isNotEmpty) return;
     if (_isGarsonInitialLoading || _garsonBootstrapRetryQueued) return;
+    // Hard cap: never let the bootstrap retry become a perpetual auto-refresh.
+    // Once exhausted the board shows a static empty state + manual "Yenile".
+    if (_garsonBootstrapRetryCount >= _garsonBootstrapRetryMax) {
+      debugPrint(
+        '[GARSON_BOOTSTRAP_RETRY_EXHAUSTED] '
+        'count=$_garsonBootstrapRetryCount/$_garsonBootstrapRetryMax '
+        'source=$source reason=manual_refresh_only_from_here',
+      );
+      return;
+    }
     _garsonBootstrapRetryQueued = true;
+    _garsonBootstrapRetryCount++;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _garsonBootstrapRetryQueued = false;
       if (!mounted) return;
@@ -5307,14 +5321,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     required String title,
     required String message,
   }) {
-    // Same self-heal as the "no physical tables" placeholder: if the catalog
-    // collapsed transiently (e.g. open table → enter order → back → close
-    // leaving the board state momentarily reset), auto re-fetch instead of
-    // dead-ending on this screen. Genuinely empty stores fall through after
-    // the attempt budget is spent.
-    if (_maybeScheduleGarsonEmptyStateSelfHeal()) {
-      return _buildGarsonAreasLoadingPlaceholder();
-    }
+    // Manual-only: this empty state must NOT auto-refresh. The user reloads
+    // via the "Yeniden Yükle" button below.
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -5522,74 +5530,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   /// Replaces the previous `SizedBox.shrink()` which presented as a fully
   /// blank screen (Toplam Masa: 0 + no widget below).  The user is given an
   /// actionable next step instead of a silent failure.
-  /// Self-heal trigger for the empty-table placeholder.
   ///
-  /// The garson board carries multiple last-good layers (board.tables,
-  /// board.lastGoodTables, board.lastGoodSections, `_storeTables`).  In rare
-  /// races — e.g. a close that pops the table route while a transient empty
-  /// `store_tables` snapshot lands AND the layers are momentarily all empty —
-  /// every layer can collapse at once, surfacing "Henüz tanımlı masa yok"
-  /// even though the store genuinely has tables.  Rather than dead-ending on
-  /// that screen and forcing the user to hit "Yeniden Yükle", we auto re-fetch
-  /// the catalog from the server.
-  ///
-  /// Returns `true` while a recovery is in progress (caller should show a
-  /// loading placeholder instead of the dead-end "no tables" screen).
-  ///
-  /// Strategy: rather than trusting any in-memory "we had tables before" flag
-  /// (those reset if the State is recreated during the close→pop navigation,
-  /// which is exactly the failure we keep hitting), we simply attempt a forced
-  /// catalog re-fetch up to [_garsonEmptyStateSelfHealMax] times.  A transient
-  /// collapse recovers on the first attempt; a store that is genuinely empty
-  /// exhausts the budget and then shows the real placeholder.  The attempt
-  /// budget resets the instant a non-empty catalog is observed
-  /// (see [_recordGarsonCatalogSeen]), and a 3s throttle guarantees we can
-  /// never spin into a tight loop.
-  bool _maybeScheduleGarsonEmptyStateSelfHeal() {
-    final action = decideGarsonEmptyStateSelfHeal(
-      isGarsonVisible: _isGarsonVisible,
-      isTableRouteOpen: _isGarsonTableRouteOpen,
-      isLoading: _isGarsonInitialLoading || _isLoadingStoreTables,
-      attempts: _garsonEmptyStateSelfHealAttempts,
-      maxAttempts: _garsonEmptyStateSelfHealMax,
-      lastHealAt: _garsonEmptyStateSelfHealAt,
-      now: DateTime.now(),
-    );
-    switch (action) {
-      case GarsonEmptyStateSelfHealAction.showEmpty:
-        return false;
-      case GarsonEmptyStateSelfHealAction.showLoading:
-        return true;
-      case GarsonEmptyStateSelfHealAction.scheduleReload:
-        _garsonEmptyStateSelfHealAt = DateTime.now();
-        _garsonEmptyStateSelfHealAttempts++;
-        debugPrint(
-          '[GARSON_EMPTY_STATE_SELF_HEAL] '
-          'attempt=$_garsonEmptyStateSelfHealAttempts/$_garsonEmptyStateSelfHealMax '
-          'max_catalog_seen=$_garsonMaxCatalogTablesSeen '
-          'store_tables=${_storeTables.length} '
-          'board_tables=${_garsonBoardState.tables.length} '
-          'last_good_tables=${_garsonBoardState.lastGoodTables.length} '
-          'reason=catalog_collapsed_auto_refetch',
-        );
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          unawaited(
-            _ensureGarsonInitialVisibleData(
-              source: 'garson_empty_state_self_heal',
-              force: true,
-            ),
-          );
-        });
-        return true;
-    }
-  }
-
+  /// NOTE: This screen is intentionally a manual-only dead-end. It must NEVER
+  /// auto-trigger a refresh — the user explicitly requires that the garson
+  /// board only reloads when the "Yenile" button is pressed. A previous
+  /// self-heal that auto-refetched here caused a periodic reload loop.
   Widget _buildGarsonNoPhysicalTablesPlaceholder() {
-    final isRecovering = _maybeScheduleGarsonEmptyStateSelfHeal();
-    if (isRecovering) {
-      return _buildGarsonAreasLoadingPlaceholder();
-    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 24, 12, 24),
       child: _mobileSurfaceCard(
