@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:ibul_app/utils/order_status_constants.dart';
+
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 
@@ -208,7 +210,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
 
   bool _isDeliveredStatus(String rawStatus) {
     final status = rawStatus.trim().toLowerCase();
-    return status == 'delivered' || status == 'teslim edildi';
+    return OrderStatusConstants.isEcommerceTerminal(status) || status == 'teslim edildi';
   }
 
   bool _isRefundStatus(String rawStatus) {
@@ -216,7 +218,7 @@ class _FinanceAdminPageState extends State<FinanceAdminPage> {
     return status.contains('refund') ||
         status.contains('return') ||
         status.contains('iade') ||
-        status == 'cancelled' ||
+        status == OrderStatusConstants.ecommerceCancelled ||
         status == 'iptal edildi';
   }
 

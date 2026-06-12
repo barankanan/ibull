@@ -17,20 +17,20 @@ import '../widgets/revenue_card.dart';
 import '../widgets/status_chip.dart';
 import '../widgets/summary_stat_card.dart';
 
-const List<DropdownMenuItem<String>> _kStatusItems = [
+final List<DropdownMenuItem<String>> _kStatusItems = [
   DropdownMenuItem(value: 'Tum', child: Text('Tum')),
   DropdownMenuItem(value: 'active', child: Text('active')),
-  DropdownMenuItem(value: 'approved', child: Text('approved')),
+  DropdownMenuItem<String>(value: CampaignStatus.approved.dbValue, child: Text('approved')),
   DropdownMenuItem(value: 'pending_review', child: Text('pending_review')),
   DropdownMenuItem(value: 'paused', child: Text('paused')),
-  DropdownMenuItem(value: 'rejected', child: Text('rejected')),
+  DropdownMenuItem<String>(value: CampaignStatus.rejected.dbValue, child: Text('rejected')),
 ];
 
-const List<DropdownMenuItem<String>> _kReviewItems = [
+final List<DropdownMenuItem<String>> _kReviewItems = [
   DropdownMenuItem(value: 'Tum', child: Text('Tum')),
-  DropdownMenuItem(value: 'pending', child: Text('pending')),
-  DropdownMenuItem(value: 'approved', child: Text('approved')),
-  DropdownMenuItem(value: 'rejected', child: Text('rejected')),
+  DropdownMenuItem<String>(value: CampaignReviewStatus.pending.dbValue, child: Text('pending')),
+  DropdownMenuItem<String>(value: CampaignStatus.approved.dbValue, child: Text('approved')),
+  DropdownMenuItem<String>(value: CampaignStatus.rejected.dbValue, child: Text('rejected')),
   DropdownMenuItem(
     value: 'changes_requested',
     child: Text('changes_requested'),
@@ -1271,7 +1271,7 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
 
   bool _isPendingAdminApproval(_AdminCampaignRow row) {
     return row.campaign.status == CampaignStatus.pendingReview ||
-        row.reviewLabel == 'pending';
+        row.reviewLabel == CampaignReviewStatus.pending.dbValue;
   }
 
   List<AdCampaign> _filteredCampaigns(AdsDashboardSnapshot snapshot) {
@@ -1319,18 +1319,18 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
   String _reviewLabelForCampaign(AdCampaign campaign, String? rawReviewStatus) {
     final resolvedStatus = rawReviewStatus?.trim();
     if ((resolvedStatus ?? '').isNotEmpty) {
-      return resolvedStatus ?? 'pending';
+      return resolvedStatus ?? CampaignReviewStatus.pending.dbValue;
     }
     if (campaign.status == CampaignStatus.pendingReview) {
-      return 'pending';
+      return CampaignReviewStatus.pending.dbValue;
     }
     if (campaign.status == CampaignStatus.rejected) {
-      return 'rejected';
+      return CampaignReviewStatus.rejected.dbValue;
     }
     if (campaign.status == CampaignStatus.draft) {
       return 'changes_requested';
     }
-    return 'approved';
+    return CampaignReviewStatus.approved.dbValue;
   }
 
   String _humanizeToken(String value) {

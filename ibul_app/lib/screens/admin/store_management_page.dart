@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/utils/order_status_constants.dart';
+
 
 import '../../ads/presentation/pages/admin_ads_manager_page.dart';
 import '../../services/admin_service.dart';
@@ -631,7 +633,7 @@ class _StoreManagementPageState extends State<StoreManagementPage>
             final userId = (app['user_id'] ?? '').toString();
             final alreadyStoreOwner =
                 userId.isNotEmpty && storeSellerIds.contains(userId);
-            return status == 'pending' && !alreadyStoreOwner;
+            return status == AdminApprovalStatusConstants.pending && !alreadyStoreOwner;
           }).toList();
           return Column(
             children: [
@@ -1194,7 +1196,7 @@ class _StoreManagementPageState extends State<StoreManagementPage>
 
   Widget _buildDeletionCard(Map<String, dynamic> request) {
     final status = (request['status'] ?? 'pending').toString();
-    final isPending = status == 'pending';
+    final isPending = status == AdminApprovalStatusConstants.pending;
     final sellerId = (request['seller_id'] ?? '-').toString();
     final reason = (request['reason'] ?? 'Sebep belirtilmemiş').toString();
 
@@ -1475,7 +1477,7 @@ class _StoreManagementPageState extends State<StoreManagementPage>
 
   Widget _buildLocationRequestCard(Map<String, dynamic> request) {
     final status = (request['status'] ?? 'pending').toString();
-    final isPending = status == 'pending';
+    final isPending = status == AdminApprovalStatusConstants.pending;
     final requestedLat = (request['requested_lat'] as num?)?.toDouble();
     final requestedLng = (request['requested_lng'] as num?)?.toDouble();
     final currentLat = (request['current_lat'] as num?)?.toDouble();

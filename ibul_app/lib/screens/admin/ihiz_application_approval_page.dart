@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/utils/order_status_constants.dart';
+
 import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../../services/admin_service.dart';
@@ -17,16 +19,16 @@ class _IhizApplicationApprovalPageState
   String _statusFilter = 'pending';
   final Set<String> _updatingIds = <String>{};
   static const List<(String label, String value)> _topFilters = [
-    ('Başvurular', 'pending'),
-    ('Kullanıcılar', 'approved'),
-    ('Red Edilenler', 'rejected'),
+    ('Başvurular', AdminApprovalStatusConstants.pending),
+    ('Kullanıcılar', AdminApprovalStatusConstants.approved),
+    ('Red Edilenler', AdminApprovalStatusConstants.rejected),
   ];
 
   String _statusLabel(String status) {
     switch (status) {
-      case 'approved':
+      case AdminApprovalStatusConstants.approved:
         return 'Onaylı';
-      case 'rejected':
+      case AdminApprovalStatusConstants.rejected:
         return 'Reddedildi';
       default:
         return 'Beklemede';
@@ -35,9 +37,9 @@ class _IhizApplicationApprovalPageState
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'approved':
+      case AdminApprovalStatusConstants.approved:
         return const Color(0xFF065F46);
-      case 'rejected':
+      case AdminApprovalStatusConstants.rejected:
         return const Color(0xFF991B1B);
       default:
         return const Color(0xFF92400E);
@@ -105,9 +107,9 @@ class _IhizApplicationApprovalPageState
         rejectionReason: rejectionReason,
       );
       if (!mounted) return false;
-      final message = status == 'approved'
+      final message = status == AdminApprovalStatusConstants.approved
           ? 'Başvuru onaylandı.'
-          : (status == 'rejected'
+          : (status == AdminApprovalStatusConstants.rejected
                 ? 'Başvuru reddedildi.'
                 : 'Başvuru durumu güncellendi.');
       ScaffoldMessenger.of(
@@ -145,9 +147,9 @@ class _IhizApplicationApprovalPageState
           statusLabel: _statusLabel,
           statusColor: _statusColor,
           askRejectReason: _askRejectReason,
-          onApprove: (targetRow) => _updateStatus(targetRow, 'approved'),
+          onApprove: (targetRow) => _updateStatus(targetRow, AdminApprovalStatusConstants.approved),
           onReject: (targetRow, reason) =>
-              _updateStatus(targetRow, 'rejected', rejectionReason: reason),
+              _updateStatus(targetRow, AdminApprovalStatusConstants.rejected, rejectionReason: reason),
         );
       },
     );
@@ -332,7 +334,7 @@ class _IhizApplicationApprovalPageState
                             ),
                           ],
                           const SizedBox(height: 14),
-                          if (status == 'pending')
+                          if (status == AdminApprovalStatusConstants.pending)
                             Wrap(
                               spacing: 10,
                               runSpacing: 10,
@@ -385,7 +387,7 @@ class _IhizApplicationApprovalPageState
                                 ),
                                 const SizedBox(width: 12),
                                 Text(
-                                  status == 'approved'
+                                  status == AdminApprovalStatusConstants.approved
                                       ? 'Onay tarihi: ${_formatDate(row['approved_at'])}'
                                       : 'Durum güncellendi',
                                   style: const TextStyle(
@@ -1019,7 +1021,7 @@ class _IhizApplicationDetailDialogState
     final trust = _trustScore100();
     final autoVerified = _autoVerified();
     final statusColor = widget.statusColor(status);
-    final isPending = status == 'pending';
+    final isPending = status == AdminApprovalStatusConstants.pending;
 
     return Dialog(
       backgroundColor: Colors.white,

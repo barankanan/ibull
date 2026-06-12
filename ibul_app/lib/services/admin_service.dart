@@ -1,3 +1,4 @@
+import 'package:ibul_app/utils/order_status_constants.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
@@ -1130,7 +1131,7 @@ class AdminService {
         return AdminSystemLogEntry(
           title: businessName,
           subtitle: 'Satici basvurusu • $status',
-          level: status == 'pending' ? 'warning' : 'info',
+          level: status == AdminApprovalStatusConstants.pending ? 'warning' : 'info',
           occurredAt:
               DateTime.tryParse((row['created_at'] ?? '').toString()) ?? now,
         );
@@ -2899,9 +2900,9 @@ class AdminService {
     String? rejectionReason,
   }) async {
     final normalizedStatus = status.trim();
-    if (normalizedStatus != 'approved' &&
-        normalizedStatus != 'rejected' &&
-        normalizedStatus != 'pending') {
+    if (normalizedStatus != AdminApprovalStatusConstants.approved &&
+        normalizedStatus != AdminApprovalStatusConstants.rejected &&
+        normalizedStatus != AdminApprovalStatusConstants.pending) {
       throw Exception('Gecersiz IHIZ basvuru durumu: $status');
     }
 
@@ -2919,10 +2920,10 @@ class AdminService {
       'status': normalizedStatus,
       'updated_at': nowIso,
     };
-    if (normalizedStatus == 'approved') {
+    if (normalizedStatus == AdminApprovalStatusConstants.approved) {
       updates['approved_at'] = nowIso;
       updates['rejection_reason'] = null;
-    } else if (normalizedStatus == 'rejected') {
+    } else if (normalizedStatus == AdminApprovalStatusConstants.rejected) {
       updates['approved_at'] = null;
       updates['rejection_reason'] = rejectionReason?.trim();
     } else {
@@ -2942,7 +2943,7 @@ class AdminService {
         await _supabase
             .from('users')
             .update({
-              'is_ihiz_approved': normalizedStatus == 'approved',
+              'is_ihiz_approved': normalizedStatus == AdminApprovalStatusConstants.approved,
               'updated_at': nowIso,
             })
             .eq('id', userId);
@@ -3117,7 +3118,7 @@ class AdminService {
     if (rejectionReason != null && rejectionReason.trim().isNotEmpty) {
       updates['rejection_reason'] = rejectionReason.trim();
     }
-    if (status == 'approved') {
+    if (status == AdminApprovalStatusConstants.approved) {
       updates['approved_at'] = DateTime.now().toIso8601String();
 
       // Onaylandığında, satıcı için 'stores' tablosunda otomatik bir kayıt oluşturmalıyız
@@ -3196,7 +3197,7 @@ class AdminService {
         'is_seller_approved': true,
         'updated_at': DateTime.now().toIso8601String(),
       }, onConflict: 'id');
-    } else if (status == 'rejected') {
+    } else if (status == AdminApprovalStatusConstants.rejected) {
       final app = await _supabase
           .from('seller_applications')
           .select('user_id, email')
@@ -3243,7 +3244,7 @@ class AdminService {
     await _supabase
         .from('store_deletion_requests')
         .update({
-          'status': 'approved',
+          'status': AdminApprovalStatusConstants.approved,
           'approved_at': DateTime.now().toIso8601String(),
         })
         .eq('id', requestId);
@@ -3266,7 +3267,7 @@ class AdminService {
     await _supabase
         .from('store_deletion_requests')
         .update({
-          'status': 'rejected',
+          'status': AdminApprovalStatusConstants.rejected,
           'rejected_at': DateTime.now().toIso8601String(),
           'admin_note': adminNote,
         })
@@ -3323,7 +3324,7 @@ class AdminService {
     await _supabase
         .from('store_location_change_requests')
         .update({
-          'status': 'approved',
+          'status': AdminApprovalStatusConstants.approved,
           'approved_at': DateTime.now().toIso8601String(),
         })
         .eq('id', requestId)
@@ -3337,7 +3338,7 @@ class AdminService {
     await _supabase
         .from('store_location_change_requests')
         .update({
-          'status': 'rejected',
+          'status': AdminApprovalStatusConstants.rejected,
           'rejected_at': DateTime.now().toIso8601String(),
           'admin_note': adminNote,
         })

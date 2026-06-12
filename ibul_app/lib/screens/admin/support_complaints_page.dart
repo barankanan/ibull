@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/utils/order_status_constants.dart';
+
 
 import '../../services/admin_service.dart';
 import '../../services/product_question_service.dart';
@@ -234,7 +236,7 @@ class _AdminSupportComplaintsPageState
         .where((ticket) => ticket.status != TicketStatus.closed)
         .length;
     final pendingDeletion = deletionRequests
-        .where((request) => _readStatus(request) == 'pending')
+        .where((request) => _readStatus(request) == AdminApprovalStatusConstants.pending)
         .length;
     final unansweredQuestions = questions
         .where((question) => _isQuestionUnanswered(question))
@@ -388,7 +390,7 @@ class _AdminSupportComplaintsPageState
     final complaintSignals =
         supportTickets.where((ticket) => _isComplaintLike(ticket)).length +
         deletionRequests
-            .where((request) => _readStatus(request) == 'pending')
+            .where((request) => _readStatus(request) == AdminApprovalStatusConstants.pending)
             .length;
 
     return Row(
@@ -549,7 +551,7 @@ class _AdminSupportComplaintsPageState
         .where((question) => _isQuestionUnanswered(question))
         .length;
     final pendingDeletion = deletionRequests
-        .where((request) => _readStatus(request) == 'pending')
+        .where((request) => _readStatus(request) == AdminApprovalStatusConstants.pending)
         .length;
 
     final maxValue = _isCourierOnly
@@ -854,7 +856,7 @@ class _AdminSupportComplaintsPageState
         .take(3)
         .toList();
     final pendingDeletion = deletionRequests
-        .where((request) => _readStatus(request) == 'pending')
+        .where((request) => _readStatus(request) == AdminApprovalStatusConstants.pending)
         .take(3)
         .toList();
     final unansweredQuestions = questions
@@ -986,7 +988,7 @@ class _AdminSupportComplaintsPageState
           ] else ...[
             _infoMetric(
               'Bekleyen kapatma',
-              '${deletionRequests.where((request) => _readStatus(request) == 'pending').length}',
+              '${deletionRequests.where((request) => _readStatus(request) == AdminApprovalStatusConstants.pending).length}',
               const Color(0xFFEF4444),
             ),
             _infoMetric(
@@ -1204,7 +1206,7 @@ class _AdminSupportComplaintsPageState
 
   Widget _buildDeletionCard(_AdminFeedItem item) {
     final request = item.raw as Map<String, dynamic>;
-    final isPending = _readStatus(request) == 'pending';
+    final isPending = _readStatus(request) == AdminApprovalStatusConstants.pending;
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(18),
@@ -1542,9 +1544,9 @@ class _AdminSupportComplaintsPageState
 
   String _deletionStatusLabel(String status) {
     switch (status) {
-      case 'approved':
+      case AdminApprovalStatusConstants.approved:
         return 'Onaylandi';
-      case 'rejected':
+      case AdminApprovalStatusConstants.rejected:
         return 'Reddedildi';
       default:
         return 'Onay Bekliyor';
@@ -1552,7 +1554,7 @@ class _AdminSupportComplaintsPageState
   }
 
   String _readStatus(Map<String, dynamic> row) {
-    return row['status']?.toString().toLowerCase() ?? 'pending';
+    return row['status']?.toString().toLowerCase() ?? AdminApprovalStatusConstants.pending;
   }
 
   DateTime _parseDate(dynamic value) {

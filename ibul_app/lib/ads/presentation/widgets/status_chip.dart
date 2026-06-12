@@ -22,14 +22,14 @@ class StatusChip extends StatelessWidget {
     String label;
     switch (normalized) {
       case 'active':
-      case 'approved':
+      case 'approved': // CampaignStatus.approved.dbValue
       case 'succeeded':
         bg = const Color(0xFFDCFCE7);
         fg = const Color(0xFF15803D);
         icon = Icons.check_circle_outline;
         label = normalized == 'approved' ? 'Onaylandi' : 'Aktif';
         break;
-      case 'pending':
+      case 'pending': // CampaignStatus.pendingReview.dbValue
       case 'pending_review':
       case 'scheduled':
         bg = const Color(0xFFFFF7ED);
@@ -52,7 +52,7 @@ class StatusChip extends StatelessWidget {
           _ => 'Duraklatildi',
         };
         break;
-      case 'rejected':
+      case 'rejected': // CampaignStatus.rejected.dbValue
       case 'failed':
         bg = const Color(0xFFFEE2E2);
         fg = const Color(0xFFB91C1C);

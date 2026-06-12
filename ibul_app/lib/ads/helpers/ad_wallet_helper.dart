@@ -89,7 +89,7 @@ class AdWalletHelper {
     required String id,
     required AdCampaign campaign,
     required AdWalletTransaction transaction,
-    String status = 'approved',
+    String status = 'approved', // Default approved status
     double taxRate = 0.2,
     double platformFeeRate = 0.06,
   }) {
@@ -169,13 +169,13 @@ class AdWalletHelper {
         (record) => !record.recordedAt.isBefore(startOfMonth),
       ),
       pendingPayments: records
-          .where((record) => record.sourceStatus == 'pending')
+          .where((record) => record.sourceStatus == CampaignReviewStatus.pending.dbValue)
           .fold<double>(0, (sum, record) => sum + record.grossAmount),
       approvedPayments: records
-          .where((record) => record.sourceStatus == 'approved')
+          .where((record) => record.sourceStatus == CampaignStatus.approved.dbValue)
           .fold<double>(0, (sum, record) => sum + record.grossAmount),
       refundedPayments: records
-          .where((record) => record.sourceStatus == 'refunded')
+          .where((record) => record.sourceStatus == WalletTransactionStatus.refunded.dbValue)
           .fold<double>(0, (sum, record) => sum + record.grossAmount),
       walletTopUps: availableBalance(walletTransactions),
       currency: records.isNotEmpty ? records.first.currency : 'TRY',
@@ -200,7 +200,7 @@ class AdWalletHelper {
           .where((item) => item.type == WalletTransactionType.refund)
           .fold<double>(0, (sum, item) => sum + item.amount),
       'approved_revenue_total': records
-          .where((item) => item.sourceStatus == 'approved')
+          .where((item) => item.sourceStatus == CampaignStatus.approved.dbValue)
           .fold<double>(0, (sum, item) => sum + item.grossAmount),
     };
   }

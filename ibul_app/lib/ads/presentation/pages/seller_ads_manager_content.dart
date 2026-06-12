@@ -69,20 +69,20 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
     'draft',
     'pending_review',
     'active',
-    'approved',
+    CampaignStatus.approved.dbValue,
     'paused',
     'scheduled',
-    'rejected',
+    CampaignStatus.rejected.dbValue,
     'stopped',
   };
   DateTimeRange? _dateRange;
 
-  List<AdCampaign> _campaigns = const <AdCampaign>[];
-  List<AdCampaign> _tableCampaigns = const <AdCampaign>[];
-  List<AdMetrics> _dailyMetrics = const <AdMetrics>[];
-  Map<String, AdMetrics> _metricsByCampaign = const <String, AdMetrics>{};
+  List<AdCampaign> _campaigns = <AdCampaign>[];
+  List<AdCampaign> _tableCampaigns = <AdCampaign>[];
+  List<AdMetrics> _dailyMetrics = <AdMetrics>[];
+  Map<String, AdMetrics> _metricsByCampaign = <String, AdMetrics>{};
   Map<String, AdHealthScore> _healthByCampaign =
-      const <String, AdHealthScore>{};
+      <String, AdHealthScore>{};
   AdRevenueOverview? _revenueOverview;
   bool _isLoadingCampaigns = true;
   bool _isLoadingTable = true;
@@ -199,15 +199,15 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       });
       if (mergedCampaigns.isEmpty) {
         setState(() {
-          _tableCampaigns = const <AdCampaign>[];
+          _tableCampaigns = <AdCampaign>[];
           _tableTotalCount = 0;
           _tablePageIndex = 0;
           _isLoadingTable = false;
           _selectionMode = false;
           _selectedCampaignIds.clear();
-          _dailyMetrics = const <AdMetrics>[];
-          _metricsByCampaign = const <String, AdMetrics>{};
-          _healthByCampaign = const <String, AdHealthScore>{};
+          _dailyMetrics = <AdMetrics>[];
+          _metricsByCampaign = <String, AdMetrics>{};
+          _healthByCampaign = <String, AdHealthScore>{};
           _revenueOverview = _buildFallbackRevenueOverview(mergedCampaigns);
           _auxiliaryWarning = null;
         });
@@ -219,7 +219,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       debugPrint('Seller ads load error details: $error\n$stackTrace');
       if (!mounted || token != _campaignLoadToken) return;
       final mergedCampaigns = _mergeCampaigns(
-        remoteCampaigns: const <AdCampaign>[],
+        remoteCampaigns: <AdCampaign>[],
         preferSessionOrder: false,
       );
       setState(() {
@@ -243,9 +243,9 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
     if (campaigns.isEmpty) {
       if (!mounted) return;
       setState(() {
-        _dailyMetrics = const <AdMetrics>[];
-        _metricsByCampaign = const <String, AdMetrics>{};
-        _healthByCampaign = const <String, AdHealthScore>{};
+        _dailyMetrics = <AdMetrics>[];
+        _metricsByCampaign = <String, AdMetrics>{};
+        _healthByCampaign = <String, AdHealthScore>{};
         _revenueOverview = _buildFallbackRevenueOverview(campaigns);
         _auxiliaryWarning = null;
       });
@@ -295,7 +295,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       final healthByCampaign = <String, AdHealthScore>{};
       for (final campaign in campaigns) {
         final campaignMetrics =
-            groupedMetrics[campaign.id] ?? const <AdMetrics>[];
+            groupedMetrics[campaign.id] ?? <AdMetrics>[];
         metricsByCampaign[campaign.id] = AdMetricsHelper.merge(
           campaignMetrics,
           campaignId: campaign.id,
@@ -318,9 +318,9 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       debugPrint('Seller ads aux load error details: $error\n$stackTrace');
       if (!mounted || token != _auxLoadToken) return;
       setState(() {
-        _dailyMetrics = const <AdMetrics>[];
-        _metricsByCampaign = const <String, AdMetrics>{};
-        _healthByCampaign = const <String, AdHealthScore>{};
+        _dailyMetrics = <AdMetrics>[];
+        _metricsByCampaign = <String, AdMetrics>{};
+        _healthByCampaign = <String, AdHealthScore>{};
         _revenueOverview ??= fallbackRevenue;
         _auxiliaryWarning = warningMessage.isEmpty
             ? 'Metrikler su an yuklenemedi. Kampanya listesi gosterilmeye devam ediyor.'
@@ -649,7 +649,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
     final start = safePage * pageSize;
     final end = start + pageSize;
     final items = start >= sorted.length
-        ? const <AdCampaign>[]
+        ? <AdCampaign>[]
         : sorted.sublist(start, end > sorted.length ? sorted.length : end);
     return AdCampaignPage(
       items: items,
@@ -660,7 +660,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
   }
 
   bool _isMetricSortColumn(String columnId) {
-    return const <String>{
+    return <String>{
       'spend',
       'impressions',
       'cpm',
@@ -889,7 +889,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
         normalized.id,
         () => AdMetricsHelper.buildHealthScore(
           campaignId: normalized.id,
-          metrics: const <AdMetrics>[],
+          metrics: <AdMetrics>[],
           isPendingReview: normalized.status == CampaignStatus.pendingReview,
         ),
       );
@@ -919,12 +919,12 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       sellerId: _effectiveSellerId,
       campaigns: campaigns,
       aggregateMetrics: _aggregateMetrics(campaigns, _metricsByCampaign),
-      insights: const [],
+      insights: [],
       healthScores: _healthByCampaign.values.toList(growable: false),
       revenueOverview: revenueOverview,
-      reviews: const [],
-      walletTransactions: const [],
-      topPlacementResults: const [],
+      reviews: [],
+      walletTransactions: [],
+      topPlacementResults: [],
       generatedAt: DateTime.now(),
     );
   }
@@ -1100,7 +1100,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
             color: Color(0x050F172A),
             blurRadius: 16,
@@ -1274,7 +1274,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
             color: Colors.white,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: const Color(0xFFE2E8F0)),
-            boxShadow: const [
+            boxShadow: [
               BoxShadow(
                 color: Color(0x040F172A),
                 blurRadius: 12,
@@ -1352,7 +1352,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
               ),
               _filterDropdown(
                 label: 'Reklam turu',
-                value: _resolvedDropdownValue(_typeFilter, const <String>[
+                value: _resolvedDropdownValue(_typeFilter, <String>[
                   'Tum',
                   'product_boost',
                   'store_boost',
@@ -1360,7 +1360,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
                   'geo_push',
                 ]),
                 width: dropdownWidth,
-                items: const [
+                items: [
                   'Tum',
                   'product_boost',
                   'store_boost',
@@ -1374,7 +1374,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
               ),
               _filterDropdown(
                 label: 'Hedef',
-                value: _resolvedDropdownValue(_objectiveFilter, const <String>[
+                value: _resolvedDropdownValue(_objectiveFilter, <String>[
                   'Tum',
                   'product_views',
                   'store_visits',
@@ -1385,7 +1385,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
                   'drive_nearby_traffic',
                 ]),
                 width: dropdownWidth,
-                items: const [
+                items: [
                   'Tum',
                   'product_views',
                   'store_visits',
@@ -1441,14 +1441,14 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
     );
   }
 
-  List<(String, String)> get _statusFilterEntries => const <(String, String)>[
+  List<(String, String)> get _statusFilterEntries => <(String, String)>[
     ('draft', 'Taslak'),
     ('pending_review', 'Onay bekliyor'),
     ('active', 'Aktif'),
-    ('approved', 'Onaylandi'),
+    (CampaignStatus.approved.dbValue, 'Onaylandi'),
     ('paused', 'Duraklatildi'),
     ('scheduled', 'Planlandi'),
-    ('rejected', 'Reddedildi'),
+    (CampaignStatus.rejected.dbValue, 'Reddedildi'),
     ('stopped', 'Durduruldu'),
   ];
 
@@ -1707,7 +1707,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
             color: Color(0x050F172A),
             blurRadius: 16,
@@ -2068,7 +2068,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
             color: Color(0x050F172A),
             blurRadius: 16,
@@ -2269,7 +2269,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
   }
 
   void _handleColumnMenuSelection(String columnId) {
-    if (const <String>{
+    if (<String>{
       'add_to_carts',
       'favorites',
       'questions',
