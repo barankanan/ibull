@@ -6,10 +6,25 @@ import 'package:flutter/material.dart';
 // ─────────────────────────────────────────
 
 enum CashAccountType {
-  cash('cash', 'Nakit Kasa', Icons.account_balance_wallet_rounded, Color(0xFF10B981)),
-  bank('bank', 'Banka Hesabı', Icons.account_balance_rounded, Color(0xFF3B82F6)),
+  cash(
+    'cash',
+    'Nakit Kasa',
+    Icons.account_balance_wallet_rounded,
+    Color(0xFF10B981),
+  ),
+  bank(
+    'bank',
+    'Banka Hesabı',
+    Icons.account_balance_rounded,
+    Color(0xFF3B82F6),
+  ),
   pos('pos', 'POS Hesabı', Icons.point_of_sale_rounded, Color(0xFF8B5CF6)),
-  courier('courier', 'Kurye Kasası', Icons.delivery_dining_rounded, Color(0xFFF59E0B)),
+  courier(
+    'courier',
+    'Kurye Kasası',
+    Icons.delivery_dining_rounded,
+    Color(0xFFF59E0B),
+  ),
   branch('branch', 'Şube Kasası', Icons.storefront_rounded, Color(0xFF06B6D4)),
   partner('partner', 'Ortak Hesabı', Icons.people_rounded, Color(0xFFEC4899));
 
@@ -19,9 +34,8 @@ enum CashAccountType {
   final IconData icon;
   final Color color;
 
-  static CashAccountType fromValue(String v) =>
-      CashAccountType.values.firstWhere((e) => e.value == v,
-          orElse: () => CashAccountType.cash);
+  static CashAccountType fromValue(String v) => CashAccountType.values
+      .firstWhere((e) => e.value == v, orElse: () => CashAccountType.cash);
 }
 
 enum CashMovementType {
@@ -39,9 +53,8 @@ enum CashMovementType {
   final String value;
   final String label;
 
-  static CashMovementType fromValue(String v) =>
-      CashMovementType.values.firstWhere((e) => e.value == v,
-          orElse: () => CashMovementType.other);
+  static CashMovementType fromValue(String v) => CashMovementType.values
+      .firstWhere((e) => e.value == v, orElse: () => CashMovementType.other);
 }
 
 enum IncomeType {
@@ -56,9 +69,10 @@ enum IncomeType {
   final String value;
   final String label;
 
-  static IncomeType fromValue(String v) =>
-      IncomeType.values.firstWhere((e) => e.value == v,
-          orElse: () => IncomeType.other);
+  static IncomeType fromValue(String v) => IncomeType.values.firstWhere(
+    (e) => e.value == v,
+    orElse: () => IncomeType.other,
+  );
 }
 
 enum ExpenseCategory {
@@ -82,9 +96,8 @@ enum ExpenseCategory {
   final String value;
   final String label;
 
-  static ExpenseCategory fromValue(String v) =>
-      ExpenseCategory.values.firstWhere((e) => e.value == v,
-          orElse: () => ExpenseCategory.other);
+  static ExpenseCategory fromValue(String v) => ExpenseCategory.values
+      .firstWhere((e) => e.value == v, orElse: () => ExpenseCategory.other);
 }
 
 enum DebtType {
@@ -101,9 +114,10 @@ enum DebtType {
   final String value;
   final String label;
 
-  static DebtType fromValue(String v) =>
-      DebtType.values.firstWhere((e) => e.value == v,
-          orElse: () => DebtType.other);
+  static DebtType fromValue(String v) => DebtType.values.firstWhere(
+    (e) => e.value == v,
+    orElse: () => DebtType.other,
+  );
 }
 
 enum DebtStatus {
@@ -118,9 +132,10 @@ enum DebtStatus {
   final String label;
   final Color color;
 
-  static DebtStatus fromValue(String v) =>
-      DebtStatus.values.firstWhere((e) => e.value == v,
-          orElse: () => DebtStatus.active);
+  static DebtStatus fromValue(String v) => DebtStatus.values.firstWhere(
+    (e) => e.value == v,
+    orElse: () => DebtStatus.active,
+  );
 }
 
 enum SalaryStatus {
@@ -133,9 +148,10 @@ enum SalaryStatus {
   final String label;
   final Color color;
 
-  static SalaryStatus fromValue(String v) =>
-      SalaryStatus.values.firstWhere((e) => e.value == v,
-          orElse: () => SalaryStatus.pending);
+  static SalaryStatus fromValue(String v) => SalaryStatus.values.firstWhere(
+    (e) => e.value == v,
+    orElse: () => SalaryStatus.pending,
+  );
 }
 
 enum ReconciliationStatus {
@@ -148,9 +164,8 @@ enum ReconciliationStatus {
   final String label;
   final Color color;
 
-  static ReconciliationStatus fromValue(String v) =>
-      ReconciliationStatus.values.firstWhere((e) => e.value == v,
-          orElse: () => ReconciliationStatus.open);
+  static ReconciliationStatus fromValue(String v) => ReconciliationStatus.values
+      .firstWhere((e) => e.value == v, orElse: () => ReconciliationStatus.open);
 }
 
 // ─────────────────────────────────────────
@@ -185,30 +200,30 @@ class FinanceSupplier {
   final DateTime createdAt;
 
   factory FinanceSupplier.fromJson(Map<String, dynamic> j) => FinanceSupplier(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        name: j['name'] as String,
-        contactName: j['contact_name'] as String?,
-        phone: j['phone'] as String?,
-        email: j['email'] as String?,
-        address: j['address'] as String?,
-        taxNumber: j['tax_number'] as String?,
-        notes: j['notes'] as String?,
-        isActive: (j['is_active'] as bool?) ?? true,
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    name: j['name'] as String,
+    contactName: j['contact_name'] as String?,
+    phone: j['phone'] as String?,
+    email: j['email'] as String?,
+    address: j['address'] as String?,
+    taxNumber: j['tax_number'] as String?,
+    notes: j['notes'] as String?,
+    isActive: (j['is_active'] as bool?) ?? true,
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'name': name,
-        if (contactName != null) 'contact_name': contactName,
-        if (phone != null) 'phone': phone,
-        if (email != null) 'email': email,
-        if (address != null) 'address': address,
-        if (taxNumber != null) 'tax_number': taxNumber,
-        if (notes != null) 'notes': notes,
-        'is_active': isActive,
-      };
+    'seller_id': sellerId,
+    'name': name,
+    if (contactName != null) 'contact_name': contactName,
+    if (phone != null) 'phone': phone,
+    if (email != null) 'email': email,
+    if (address != null) 'address': address,
+    if (taxNumber != null) 'tax_number': taxNumber,
+    if (notes != null) 'notes': notes,
+    'is_active': isActive,
+  };
 }
 
 class CashAccount {
@@ -241,32 +256,34 @@ class CashAccount {
   final DateTime createdAt;
 
   factory CashAccount.fromJson(Map<String, dynamic> j) => CashAccount(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        name: j['name'] as String,
-        accountType: CashAccountType.fromValue(j['account_type'] as String? ?? 'cash'),
-        bankName: j['bank_name'] as String?,
-        iban: j['iban'] as String?,
-        currency: j['currency'] as String? ?? 'TRY',
-        currentBalance: _toDouble(j['current_balance']),
-        isDefault: (j['is_default'] as bool?) ?? false,
-        isActive: (j['is_active'] as bool?) ?? true,
-        notes: j['notes'] as String?,
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    name: j['name'] as String,
+    accountType: CashAccountType.fromValue(
+      j['account_type'] as String? ?? 'cash',
+    ),
+    bankName: j['bank_name'] as String?,
+    iban: j['iban'] as String?,
+    currency: j['currency'] as String? ?? 'TRY',
+    currentBalance: _toDouble(j['current_balance']),
+    isDefault: (j['is_default'] as bool?) ?? false,
+    isActive: (j['is_active'] as bool?) ?? true,
+    notes: j['notes'] as String?,
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'name': name,
-        'account_type': accountType.value,
-        if (bankName != null) 'bank_name': bankName,
-        if (iban != null) 'iban': iban,
-        'currency': currency,
-        'current_balance': currentBalance,
-        'is_default': isDefault,
-        'is_active': isActive,
-        if (notes != null) 'notes': notes,
-      };
+    'seller_id': sellerId,
+    'name': name,
+    'account_type': accountType.value,
+    if (bankName != null) 'bank_name': bankName,
+    if (iban != null) 'iban': iban,
+    'currency': currency,
+    'current_balance': currentBalance,
+    'is_default': isDefault,
+    'is_active': isActive,
+    if (notes != null) 'notes': notes,
+  };
 }
 
 class CashMovement {
@@ -303,32 +320,34 @@ class CashMovement {
   bool get isIn => direction == 'in';
 
   factory CashMovement.fromJson(Map<String, dynamic> j) => CashMovement(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        accountId: j['account_id'] as String,
-        movementType: CashMovementType.fromValue(j['movement_type'] as String? ?? 'other'),
-        amount: _toDouble(j['amount']),
-        direction: j['direction'] as String? ?? 'in',
-        referenceId: j['reference_id'] as String?,
-        referenceType: j['reference_type'] as String?,
-        description: j['description'] as String?,
-        documentUrl: j['document_url'] as String?,
-        movementDate: DateTime.parse(j['movement_date'] as String),
-        createdAt: DateTime.parse(j['created_at'] as String),
-        accountName: j['finance_cash_accounts']?['name'] as String?,
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    accountId: j['account_id'] as String,
+    movementType: CashMovementType.fromValue(
+      j['movement_type'] as String? ?? 'other',
+    ),
+    amount: _toDouble(j['amount']),
+    direction: j['direction'] as String? ?? 'in',
+    referenceId: j['reference_id'] as String?,
+    referenceType: j['reference_type'] as String?,
+    description: j['description'] as String?,
+    documentUrl: j['document_url'] as String?,
+    movementDate: DateTime.parse(j['movement_date'] as String),
+    createdAt: DateTime.parse(j['created_at'] as String),
+    accountName: j['finance_cash_accounts']?['name'] as String?,
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'account_id': accountId,
-        'movement_type': movementType.value,
-        'amount': amount,
-        'direction': direction,
-        if (referenceId != null) 'reference_id': referenceId,
-        if (referenceType != null) 'reference_type': referenceType,
-        if (description != null) 'description': description,
-        'movement_date': movementDate.toIso8601String().substring(0, 10),
-      };
+    'seller_id': sellerId,
+    'account_id': accountId,
+    'movement_type': movementType.value,
+    'amount': amount,
+    'direction': direction,
+    if (referenceId != null) 'reference_id': referenceId,
+    if (referenceType != null) 'reference_type': referenceType,
+    if (description != null) 'description': description,
+    'movement_date': movementDate.toIso8601String().substring(0, 10),
+  };
 }
 
 class IncomeRecord {
@@ -369,40 +388,40 @@ class IncomeRecord {
   final DateTime createdAt;
 
   factory IncomeRecord.fromJson(Map<String, dynamic> j) => IncomeRecord(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        incomeType: IncomeType.fromValue(j['income_type'] as String? ?? 'other'),
-        source: j['source'] as String?,
-        grossAmount: _toDouble(j['gross_amount']),
-        netAmount: _toDouble(j['net_amount']),
-        taxAmount: _toDouble(j['tax_amount']),
-        isCollected: (j['is_collected'] as bool?) ?? false,
-        collectedAt: j['collected_at'] != null
-            ? DateTime.parse(j['collected_at'] as String)
-            : null,
-        accountId: j['account_id'] as String?,
-        periodMonth: j['period_month'] as int?,
-        periodYear: j['period_year'] as int?,
-        description: j['description'] as String?,
-        documentUrl: j['document_url'] as String?,
-        incomeDate: DateTime.parse(j['income_date'] as String),
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    incomeType: IncomeType.fromValue(j['income_type'] as String? ?? 'other'),
+    source: j['source'] as String?,
+    grossAmount: _toDouble(j['gross_amount']),
+    netAmount: _toDouble(j['net_amount']),
+    taxAmount: _toDouble(j['tax_amount']),
+    isCollected: (j['is_collected'] as bool?) ?? false,
+    collectedAt: j['collected_at'] != null
+        ? DateTime.parse(j['collected_at'] as String)
+        : null,
+    accountId: j['account_id'] as String?,
+    periodMonth: j['period_month'] as int?,
+    periodYear: j['period_year'] as int?,
+    description: j['description'] as String?,
+    documentUrl: j['document_url'] as String?,
+    incomeDate: DateTime.parse(j['income_date'] as String),
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'income_type': incomeType.value,
-        if (source != null) 'source': source,
-        'gross_amount': grossAmount,
-        'net_amount': netAmount,
-        'tax_amount': taxAmount,
-        'is_collected': isCollected,
-        if (accountId != null) 'account_id': accountId,
-        if (periodMonth != null) 'period_month': periodMonth,
-        if (periodYear != null) 'period_year': periodYear,
-        if (description != null) 'description': description,
-        'income_date': incomeDate.toIso8601String().substring(0, 10),
-      };
+    'seller_id': sellerId,
+    'income_type': incomeType.value,
+    if (source != null) 'source': source,
+    'gross_amount': grossAmount,
+    'net_amount': netAmount,
+    'tax_amount': taxAmount,
+    'is_collected': isCollected,
+    if (accountId != null) 'account_id': accountId,
+    if (periodMonth != null) 'period_month': periodMonth,
+    if (periodYear != null) 'period_year': periodYear,
+    if (description != null) 'description': description,
+    'income_date': incomeDate.toIso8601String().substring(0, 10),
+  };
 }
 
 class Expense {
@@ -446,42 +465,42 @@ class Expense {
       !isPaid && dueDate != null && dueDate!.isBefore(DateTime.now());
 
   factory Expense.fromJson(Map<String, dynamic> j) => Expense(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        category: ExpenseCategory.fromValue(j['category'] as String? ?? 'other'),
-        supplierId: j['supplier_id'] as String?,
-        supplierName: j['finance_suppliers']?['name'] as String?,
-        amount: _toDouble(j['amount']),
-        isPaid: (j['is_paid'] as bool?) ?? false,
-        paidAt: j['paid_at'] != null
-            ? DateTime.parse(j['paid_at'] as String)
-            : null,
-        dueDate: j['due_date'] != null
-            ? DateTime.parse(j['due_date'] as String)
-            : null,
-        accountId: j['account_id'] as String?,
-        description: j['description'] as String?,
-        documentUrl: j['document_url'] as String?,
-        expenseDate: DateTime.parse(j['expense_date'] as String),
-        isRecurring: (j['is_recurring'] as bool?) ?? false,
-        recurringInterval: j['recurring_interval'] as String?,
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    category: ExpenseCategory.fromValue(j['category'] as String? ?? 'other'),
+    supplierId: j['supplier_id'] as String?,
+    supplierName: j['finance_suppliers']?['name'] as String?,
+    amount: _toDouble(j['amount']),
+    isPaid: (j['is_paid'] as bool?) ?? false,
+    paidAt: j['paid_at'] != null
+        ? DateTime.parse(j['paid_at'] as String)
+        : null,
+    dueDate: j['due_date'] != null
+        ? DateTime.parse(j['due_date'] as String)
+        : null,
+    accountId: j['account_id'] as String?,
+    description: j['description'] as String?,
+    documentUrl: j['document_url'] as String?,
+    expenseDate: DateTime.parse(j['expense_date'] as String),
+    isRecurring: (j['is_recurring'] as bool?) ?? false,
+    recurringInterval: j['recurring_interval'] as String?,
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'category': category.value,
-        if (supplierId != null) 'supplier_id': supplierId,
-        'amount': amount,
-        'is_paid': isPaid,
-        if (dueDate != null)
-          'due_date': dueDate!.toIso8601String().substring(0, 10),
-        if (accountId != null) 'account_id': accountId,
-        if (description != null) 'description': description,
-        'expense_date': expenseDate.toIso8601String().substring(0, 10),
-        'is_recurring': isRecurring,
-        if (recurringInterval != null) 'recurring_interval': recurringInterval,
-      };
+    'seller_id': sellerId,
+    'category': category.value,
+    if (supplierId != null) 'supplier_id': supplierId,
+    'amount': amount,
+    'is_paid': isPaid,
+    if (dueDate != null)
+      'due_date': dueDate!.toIso8601String().substring(0, 10),
+    if (accountId != null) 'account_id': accountId,
+    if (description != null) 'description': description,
+    'expense_date': expenseDate.toIso8601String().substring(0, 10),
+    'is_recurring': isRecurring,
+    if (recurringInterval != null) 'recurring_interval': recurringInterval,
+  };
 }
 
 class Debt {
@@ -514,37 +533,38 @@ class Debt {
   final DateTime createdAt;
 
   double get remainingAmount => originalAmount - paidAmount;
-  double get paidPercent =>
-      originalAmount > 0 ? (paidAmount / originalAmount * 100).clamp(0, 100) : 0;
+  double get paidPercent => originalAmount > 0
+      ? (paidAmount / originalAmount * 100).clamp(0, 100)
+      : 0;
 
   factory Debt.fromJson(Map<String, dynamic> j) => Debt(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        debtType: DebtType.fromValue(j['debt_type'] as String? ?? 'other'),
-        creditorName: j['creditor_name'] as String,
-        supplierId: j['supplier_id'] as String?,
-        originalAmount: _toDouble(j['original_amount']),
-        paidAmount: _toDouble(j['paid_amount']),
-        startDate: DateTime.parse(j['start_date'] as String),
-        dueDate: j['due_date'] != null
-            ? DateTime.parse(j['due_date'] as String)
-            : null,
-        status: DebtStatus.fromValue(j['status'] as String? ?? 'active'),
-        description: j['description'] as String?,
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    debtType: DebtType.fromValue(j['debt_type'] as String? ?? 'other'),
+    creditorName: j['creditor_name'] as String,
+    supplierId: j['supplier_id'] as String?,
+    originalAmount: _toDouble(j['original_amount']),
+    paidAmount: _toDouble(j['paid_amount']),
+    startDate: DateTime.parse(j['start_date'] as String),
+    dueDate: j['due_date'] != null
+        ? DateTime.parse(j['due_date'] as String)
+        : null,
+    status: DebtStatus.fromValue(j['status'] as String? ?? 'active'),
+    description: j['description'] as String?,
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'debt_type': debtType.value,
-        'creditor_name': creditorName,
-        if (supplierId != null) 'supplier_id': supplierId,
-        'original_amount': originalAmount,
-        'start_date': startDate.toIso8601String().substring(0, 10),
-        if (dueDate != null)
-          'due_date': dueDate!.toIso8601String().substring(0, 10),
-        if (description != null) 'description': description,
-      };
+    'seller_id': sellerId,
+    'debt_type': debtType.value,
+    'creditor_name': creditorName,
+    if (supplierId != null) 'supplier_id': supplierId,
+    'original_amount': originalAmount,
+    'start_date': startDate.toIso8601String().substring(0, 10),
+    if (dueDate != null)
+      'due_date': dueDate!.toIso8601String().substring(0, 10),
+    if (description != null) 'description': description,
+  };
 }
 
 class DebtPayment {
@@ -569,24 +589,24 @@ class DebtPayment {
   final DateTime createdAt;
 
   factory DebtPayment.fromJson(Map<String, dynamic> j) => DebtPayment(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        debtId: j['debt_id'] as String,
-        amount: _toDouble(j['amount']),
-        paymentDate: DateTime.parse(j['payment_date'] as String),
-        accountId: j['account_id'] as String?,
-        description: j['description'] as String?,
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    debtId: j['debt_id'] as String,
+    amount: _toDouble(j['amount']),
+    paymentDate: DateTime.parse(j['payment_date'] as String),
+    accountId: j['account_id'] as String?,
+    description: j['description'] as String?,
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'debt_id': debtId,
-        'amount': amount,
-        'payment_date': paymentDate.toIso8601String().substring(0, 10),
-        if (accountId != null) 'account_id': accountId,
-        if (description != null) 'description': description,
-      };
+    'seller_id': sellerId,
+    'debt_id': debtId,
+    'amount': amount,
+    'payment_date': paymentDate.toIso8601String().substring(0, 10),
+    if (accountId != null) 'account_id': accountId,
+    if (description != null) 'description': description,
+  };
 }
 
 class FinanceEmployee {
@@ -619,35 +639,35 @@ class FinanceEmployee {
   final DateTime createdAt;
 
   factory FinanceEmployee.fromJson(Map<String, dynamic> j) => FinanceEmployee(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        fullName: j['full_name'] as String,
-        position: j['position'] as String?,
-        baseSalary: _toDouble(j['base_salary']),
-        paymentDay: (j['payment_day'] as int?) ?? 1,
-        isActive: (j['is_active'] as bool?) ?? true,
-        hireDate: j['hire_date'] != null
-            ? DateTime.parse(j['hire_date'] as String)
-            : null,
-        phone: j['phone'] as String?,
-        iban: j['iban'] as String?,
-        notes: j['notes'] as String?,
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    fullName: j['full_name'] as String,
+    position: j['position'] as String?,
+    baseSalary: _toDouble(j['base_salary']),
+    paymentDay: (j['payment_day'] as int?) ?? 1,
+    isActive: (j['is_active'] as bool?) ?? true,
+    hireDate: j['hire_date'] != null
+        ? DateTime.parse(j['hire_date'] as String)
+        : null,
+    phone: j['phone'] as String?,
+    iban: j['iban'] as String?,
+    notes: j['notes'] as String?,
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'full_name': fullName,
-        if (position != null) 'position': position,
-        'base_salary': baseSalary,
-        'payment_day': paymentDay,
-        'is_active': isActive,
-        if (hireDate != null)
-          'hire_date': hireDate!.toIso8601String().substring(0, 10),
-        if (phone != null) 'phone': phone,
-        if (iban != null) 'iban': iban,
-        if (notes != null) 'notes': notes,
-      };
+    'seller_id': sellerId,
+    'full_name': fullName,
+    if (position != null) 'position': position,
+    'base_salary': baseSalary,
+    'payment_day': paymentDay,
+    'is_active': isActive,
+    if (hireDate != null)
+      'hire_date': hireDate!.toIso8601String().substring(0, 10),
+    if (phone != null) 'phone': phone,
+    if (iban != null) 'iban': iban,
+    if (notes != null) 'notes': notes,
+  };
 }
 
 class SalaryRecord {
@@ -687,39 +707,40 @@ class SalaryRecord {
   final String? notes;
   final DateTime createdAt;
 
-  double get remainingAmount => (netSalary - paidAmount).clamp(0, double.infinity);
+  double get remainingAmount =>
+      (netSalary - paidAmount).clamp(0, double.infinity);
 
   factory SalaryRecord.fromJson(Map<String, dynamic> j) => SalaryRecord(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        employeeId: j['employee_id'] as String,
-        employeeName: j['finance_employees']?['full_name'] as String?,
-        periodMonth: j['period_month'] as int,
-        periodYear: j['period_year'] as int,
-        baseSalary: _toDouble(j['base_salary']),
-        bonus: _toDouble(j['bonus']),
-        overtime: _toDouble(j['overtime']),
-        deduction: _toDouble(j['deduction']),
-        advanceDeduction: _toDouble(j['advance_deduction']),
-        netSalary: _toDouble(j['net_salary']),
-        status: SalaryStatus.fromValue(j['status'] as String? ?? 'pending'),
-        paidAmount: _toDouble(j['paid_amount']),
-        notes: j['notes'] as String?,
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    employeeId: j['employee_id'] as String,
+    employeeName: j['finance_employees']?['full_name'] as String?,
+    periodMonth: j['period_month'] as int,
+    periodYear: j['period_year'] as int,
+    baseSalary: _toDouble(j['base_salary']),
+    bonus: _toDouble(j['bonus']),
+    overtime: _toDouble(j['overtime']),
+    deduction: _toDouble(j['deduction']),
+    advanceDeduction: _toDouble(j['advance_deduction']),
+    netSalary: _toDouble(j['net_salary']),
+    status: SalaryStatus.fromValue(j['status'] as String? ?? 'pending'),
+    paidAmount: _toDouble(j['paid_amount']),
+    notes: j['notes'] as String?,
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'employee_id': employeeId,
-        'period_month': periodMonth,
-        'period_year': periodYear,
-        'base_salary': baseSalary,
-        'bonus': bonus,
-        'overtime': overtime,
-        'deduction': deduction,
-        'advance_deduction': advanceDeduction,
-        if (notes != null) 'notes': notes,
-      };
+    'seller_id': sellerId,
+    'employee_id': employeeId,
+    'period_month': periodMonth,
+    'period_year': periodYear,
+    'base_salary': baseSalary,
+    'bonus': bonus,
+    'overtime': overtime,
+    'deduction': deduction,
+    'advance_deduction': advanceDeduction,
+    if (notes != null) 'notes': notes,
+  };
 }
 
 class SalaryPayment {
@@ -744,15 +765,15 @@ class SalaryPayment {
   final DateTime createdAt;
 
   factory SalaryPayment.fromJson(Map<String, dynamic> j) => SalaryPayment(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        salaryRecordId: j['salary_record_id'] as String,
-        amount: _toDouble(j['amount']),
-        paymentDate: DateTime.parse(j['payment_date'] as String),
-        accountId: j['account_id'] as String?,
-        description: j['description'] as String?,
-        createdAt: DateTime.parse(j['created_at'] as String),
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    salaryRecordId: j['salary_record_id'] as String,
+    amount: _toDouble(j['amount']),
+    paymentDate: DateTime.parse(j['payment_date'] as String),
+    accountId: j['account_id'] as String?,
+    description: j['description'] as String?,
+    createdAt: DateTime.parse(j['created_at'] as String),
+  );
 }
 
 class ReconciliationNote {
@@ -802,7 +823,8 @@ class ReconciliationNote {
             ? _toDouble(j['actual_amount'])
             : null,
         status: ReconciliationStatus.fromValue(
-            j['status'] as String? ?? 'open'),
+          j['status'] as String? ?? 'open',
+        ),
         responsiblePerson: j['responsible_person'] as String?,
         dueDate: j['due_date'] != null
             ? DateTime.parse(j['due_date'] as String)
@@ -812,18 +834,18 @@ class ReconciliationNote {
       );
 
   Map<String, dynamic> toInsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        'subject': subject,
-        'note_date': noteDate.toIso8601String().substring(0, 10),
-        if (relatedAccountId != null) 'related_account_id': relatedAccountId,
-        if (expectedAmount != null) 'expected_amount': expectedAmount,
-        if (actualAmount != null) 'actual_amount': actualAmount,
-        'status': status.value,
-        if (responsiblePerson != null) 'responsible_person': responsiblePerson,
-        if (dueDate != null)
-          'due_date': dueDate!.toIso8601String().substring(0, 10),
-        if (description != null) 'description': description,
-      };
+    'seller_id': sellerId,
+    'subject': subject,
+    'note_date': noteDate.toIso8601String().substring(0, 10),
+    if (relatedAccountId != null) 'related_account_id': relatedAccountId,
+    if (expectedAmount != null) 'expected_amount': expectedAmount,
+    if (actualAmount != null) 'actual_amount': actualAmount,
+    'status': status.value,
+    if (responsiblePerson != null) 'responsible_person': responsiblePerson,
+    if (dueDate != null)
+      'due_date': dueDate!.toIso8601String().substring(0, 10),
+    if (description != null) 'description': description,
+  };
 }
 
 class CompanySettings {
@@ -856,34 +878,126 @@ class CompanySettings {
   final String? defaultCashAccountId;
 
   factory CompanySettings.fromJson(Map<String, dynamic> j) => CompanySettings(
-        id: j['id'] as String,
-        sellerId: j['seller_id'] as String,
-        companyName: j['company_name'] as String?,
-        taxNumber: j['tax_number'] as String?,
-        taxOffice: j['tax_office'] as String?,
-        address: j['address'] as String?,
-        phone: j['phone'] as String?,
-        email: j['email'] as String?,
-        fiscalYearStart: (j['fiscal_year_start'] as int?) ?? 1,
-        defaultCurrency: j['default_currency'] as String? ?? 'TRY',
-        platformCommissionRate: _toDouble(j['platform_commission_rate'] ?? 0.15),
-        defaultCashAccountId: j['default_cash_account_id'] as String?,
-      );
+    id: j['id'] as String,
+    sellerId: j['seller_id'] as String,
+    companyName: j['company_name'] as String?,
+    taxNumber: j['tax_number'] as String?,
+    taxOffice: j['tax_office'] as String?,
+    address: j['address'] as String?,
+    phone: j['phone'] as String?,
+    email: j['email'] as String?,
+    fiscalYearStart: (j['fiscal_year_start'] as int?) ?? 1,
+    defaultCurrency: j['default_currency'] as String? ?? 'TRY',
+    platformCommissionRate: _toDouble(j['platform_commission_rate'] ?? 0.15),
+    defaultCashAccountId: j['default_cash_account_id'] as String?,
+  );
 
   Map<String, dynamic> toUpsertJson(String sellerId) => {
-        'seller_id': sellerId,
-        if (companyName != null) 'company_name': companyName,
-        if (taxNumber != null) 'tax_number': taxNumber,
-        if (taxOffice != null) 'tax_office': taxOffice,
-        if (address != null) 'address': address,
-        if (phone != null) 'phone': phone,
-        if (email != null) 'email': email,
-        'fiscal_year_start': fiscalYearStart,
-        'default_currency': defaultCurrency,
-        'platform_commission_rate': platformCommissionRate,
-        if (defaultCashAccountId != null)
-          'default_cash_account_id': defaultCashAccountId,
-      };
+    'seller_id': sellerId,
+    if (companyName != null) 'company_name': companyName,
+    if (taxNumber != null) 'tax_number': taxNumber,
+    if (taxOffice != null) 'tax_office': taxOffice,
+    if (address != null) 'address': address,
+    if (phone != null) 'phone': phone,
+    if (email != null) 'email': email,
+    'fiscal_year_start': fiscalYearStart,
+    'default_currency': defaultCurrency,
+    'platform_commission_rate': platformCommissionRate,
+    if (defaultCashAccountId != null)
+      'default_cash_account_id': defaultCashAccountId,
+  };
+}
+
+// ─────────────────────────────────────────
+// Gerçek satış (order_items + table_orders) raporlama modelleri
+// ─────────────────────────────────────────
+enum SalesChannel {
+  online('Online'),
+  garson('Garson'),
+  both('Online + Garson');
+
+  const SalesChannel(this.label);
+  final String label;
+}
+
+class SoldProduct {
+  SoldProduct({
+    required this.name,
+    this.quantity = 0,
+    this.revenue = 0,
+    this.online = false,
+    this.garson = false,
+  });
+
+  final String name;
+  int quantity;
+  double revenue;
+  bool online;
+  bool garson;
+
+  SalesChannel get channel {
+    if (online && garson) return SalesChannel.both;
+    if (garson) return SalesChannel.garson;
+    return SalesChannel.online;
+  }
+}
+
+class SalesBreakdown {
+  const SalesBreakdown({
+    this.onlineRevenue = 0,
+    this.garsonRevenue = 0,
+    this.onlineOrderCount = 0,
+    this.garsonOrderCount = 0,
+    this.products = const [],
+  });
+
+  final double onlineRevenue;
+  final double garsonRevenue;
+  final int onlineOrderCount;
+  final int garsonOrderCount;
+  final List<SoldProduct> products;
+
+  double get totalRevenue => onlineRevenue + garsonRevenue;
+  int get totalOrderCount => onlineOrderCount + garsonOrderCount;
+  int get totalQuantity => products.fold<int>(0, (sum, p) => sum + p.quantity);
+
+  static const empty = SalesBreakdown();
+}
+
+/// Tek bir günün satış cirosu + sipariş adedi ("Gelir & Sipariş" grafiği için).
+class DailySalesPoint {
+  const DailySalesPoint({
+    required this.date,
+    required this.revenue,
+    required this.orderCount,
+  });
+
+  final DateTime date;
+  final double revenue;
+  final int orderCount;
+}
+
+/// Bugünkü gelir dökümü satırı (masa / online / manuel).
+class TodayIncomeLine {
+  const TodayIncomeLine({
+    required this.label,
+    required this.amount,
+    required this.source,
+    this.detail,
+    this.occurredAt,
+    this.paymentMethod,
+    this.reference,
+    this.tableNumber,
+  });
+
+  final String label;
+  final double amount;
+  final String source;
+  final String? detail;
+  final DateTime? occurredAt;
+  final String? paymentMethod;
+  final String? reference;
+  final int? tableNumber;
 }
 
 // ─────────────────────────────────────────
@@ -919,6 +1033,34 @@ class FinanceOverview {
   double get monthNetIncome => monthIncome - monthExpense;
   double get monthNetPosition => monthIncome - monthExpense - monthSalaryLoad;
   double get totalLiquidity => totalCashBalance + totalBankBalance;
+
+  FinanceOverview copyWith({
+    double? totalCashBalance,
+    double? totalBankBalance,
+    double? pendingCollections,
+    double? pendingPayments,
+    double? totalDebt,
+    double? monthSalaryLoad,
+    double? monthIncome,
+    double? monthExpense,
+    int? overduePayments,
+    int? upcomingPayments,
+    int? overdueDebts,
+  }) {
+    return FinanceOverview(
+      totalCashBalance: totalCashBalance ?? this.totalCashBalance,
+      totalBankBalance: totalBankBalance ?? this.totalBankBalance,
+      pendingCollections: pendingCollections ?? this.pendingCollections,
+      pendingPayments: pendingPayments ?? this.pendingPayments,
+      totalDebt: totalDebt ?? this.totalDebt,
+      monthSalaryLoad: monthSalaryLoad ?? this.monthSalaryLoad,
+      monthIncome: monthIncome ?? this.monthIncome,
+      monthExpense: monthExpense ?? this.monthExpense,
+      overduePayments: overduePayments ?? this.overduePayments,
+      upcomingPayments: upcomingPayments ?? this.upcomingPayments,
+      overdueDebts: overdueDebts ?? this.overdueDebts,
+    );
+  }
 
   /// Finans sağlığı puanı: 0–100
   int get healthScore {
@@ -989,18 +1131,18 @@ class FinanceOverview {
   }
 
   factory FinanceOverview.fromJson(Map<String, dynamic> j) => FinanceOverview(
-        totalCashBalance: _toDouble(j['total_cash_balance']),
-        totalBankBalance: _toDouble(j['total_bank_balance']),
-        pendingCollections: _toDouble(j['pending_collections']),
-        pendingPayments: _toDouble(j['pending_payments']),
-        totalDebt: _toDouble(j['total_debt']),
-        monthSalaryLoad: _toDouble(j['month_salary_load']),
-        monthIncome: _toDouble(j['month_income']),
-        monthExpense: _toDouble(j['month_expense']),
-        overduePayments: (j['overdue_payments'] as num?)?.toInt() ?? 0,
-        upcomingPayments: (j['upcoming_payments'] as num?)?.toInt() ?? 0,
-        overdueDebts: (j['overdue_debts'] as num?)?.toInt() ?? 0,
-      );
+    totalCashBalance: _toDouble(j['total_cash_balance']),
+    totalBankBalance: _toDouble(j['total_bank_balance']),
+    pendingCollections: _toDouble(j['pending_collections']),
+    pendingPayments: _toDouble(j['pending_payments']),
+    totalDebt: _toDouble(j['total_debt']),
+    monthSalaryLoad: _toDouble(j['month_salary_load']),
+    monthIncome: _toDouble(j['month_income']),
+    monthExpense: _toDouble(j['month_expense']),
+    overduePayments: (j['overdue_payments'] as num?)?.toInt() ?? 0,
+    upcomingPayments: (j['upcoming_payments'] as num?)?.toInt() ?? 0,
+    overdueDebts: (j['overdue_debts'] as num?)?.toInt() ?? 0,
+  );
 
   static const empty = FinanceOverview(
     totalCashBalance: 0,

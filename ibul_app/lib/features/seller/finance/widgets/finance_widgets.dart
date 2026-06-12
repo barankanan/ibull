@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'package:intl/intl.dart';
 
+import '../models/finance_models.dart';
+
 // ─────────────────────────────────────────
 // Ortak renk & sabit tanımlar
 // ─────────────────────────────────────────
@@ -261,7 +263,9 @@ class FinKpiCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: kFinanceDivider),
+          border: Border.all(
+            color: onTap != null ? color.withValues(alpha: 0.35) : kFinanceDivider,
+          ),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.04),
@@ -299,6 +303,8 @@ class FinKpiCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (onTap != null)
+                  Icon(Icons.chevron_right_rounded, size: 18, color: color),
               ],
             ),
             const SizedBox(height: 8),
@@ -722,6 +728,211 @@ class _TrendPainter extends CustomPainter {
   @override
   bool shouldRepaint(_TrendPainter old) =>
       old.points != points || old.maxVal != maxVal;
+}
+
+// ─────────────────────────────────────────
+// Gelir & Sipariş Grafiği (günlük ciro barları + sipariş adedi çizgisi)
+// Genel Bakış'taki grafiğin finans karşılığı.
+// ─────────────────────────────────────────
+
+class FinSalesChart extends StatelessWidget {
+  const FinSalesChart({
+    super.key,
+    required this.points,
+    this.height = 200,
+    this.embedded = false,
+  });
+
+  final List<DailySalesPoint> points;
+  final double height;
+  final bool embedded;
+
+  @override
+  Widget build(BuildContext context) {
+    final totalRevenue =
+        points.fold<double>(0, (s, p) => s + p.revenue);
+    final totalOrders = points.fold<int>(0, (s, p) => s + p.orderCount);
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!embedded) ...[
+          Row(
+            children: [
+              const Icon(Icons.show_chart_rounded,
+                  size: 16, color: kFinancePrimary),
+              const SizedBox(width: 6),
+              const Text(
+                'Gelir & Sipariş Grafiği',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+              ),
+              const Spacer(),
+              _legendDot(kFinanceAccent, 'Gelir'),
+              const SizedBox(width: 10),
+              _legendDot(const Color(0xFF3B82F6), 'Sipariş'),
+            ],
+          ),
+          const SizedBox(height: 6),
+        ] else ...[
+          Row(
+            children: [
+              _legendDot(kFinanceAccent, 'Gelir'),
+              const SizedBox(width: 10),
+              _legendDot(const Color(0xFF3B82F6), 'Sipariş'),
+              const Spacer(),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
+        Row(
+          children: [
+            _miniStat('Toplam Ciro', fmtCurrency(totalRevenue),
+                kFinanceAccent),
+            const SizedBox(width: 16),
+            _miniStat('Sipariş', '$totalOrders adet',
+                const Color(0xFF3B82F6)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: height,
+          child: totalRevenue <= 0 && totalOrders <= 0
+              ? const Center(
+                  child: Text(
+                    'Bu dönemde kapatılmış masa veya online satış yok.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 12, color: Color(0xFF94A3B8)),
+                  ),
+                )
+              : CustomPaint(
+                  painter: _SalesChartPainter(points: points),
+                  child: const SizedBox.expand(),
+                ),
+        ),
+      ],
+    );
+
+    if (embedded) return content;
+
+    return FinSurfaceCard(
+      padding: const EdgeInsets.all(14),
+      child: content,
+    );
+  }
+
+  Widget _legendDot(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(label,
+            style: const TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+      ],
+    );
+  }
+
+  Widget _miniStat(String label, String value, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8))),
+        Text(value,
+            style: TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w800, color: color)),
+      ],
+    );
+  }
+}
+
+class _SalesChartPainter extends CustomPainter {
+  _SalesChartPainter({required this.points});
+
+  final List<DailySalesPoint> points;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.isEmpty) return;
+    final n = points.length;
+    const bottomMargin = 18.0;
+    final h = size.height - bottomMargin;
+    final w = size.width;
+
+    final maxRevenue = points.fold<double>(
+        1, (m, p) => p.revenue > m ? p.revenue : m);
+    final maxOrders = points.fold<int>(
+        1, (m, p) => p.orderCount > m ? p.orderCount : m);
+
+    // ── Günlük ciro barları ──
+    final slot = w / n;
+    final barWidth = (slot * 0.55).clamp(2.0, 22.0);
+    final barPaint = Paint()..style = PaintingStyle.fill;
+    for (var i = 0; i < n; i++) {
+      final p = points[i];
+      final barH = (p.revenue / maxRevenue).clamp(0.0, 1.0) * (h - 4);
+      final cx = slot * i + slot / 2;
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(cx - barWidth / 2, h - barH, barWidth, barH),
+        const Radius.circular(3),
+      );
+      barPaint.shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFF34D399), Color(0xFF059669)],
+      ).createShader(Rect.fromLTWH(cx - barWidth / 2, h - barH, barWidth, barH));
+      canvas.drawRRect(rect, barPaint);
+    }
+
+    // ── Sipariş adedi çizgisi ──
+    final linePaint = Paint()
+      ..color = const Color(0xFF3B82F6)
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final dotPaint = Paint()..color = const Color(0xFF3B82F6);
+    final path = Path();
+    double xAt(int i) => slot * i + slot / 2;
+    double yAt(int orders) =>
+        h - (orders / maxOrders).clamp(0.0, 1.0) * (h - 6);
+    for (var i = 0; i < n; i++) {
+      final px = xAt(i);
+      final py = yAt(points[i].orderCount);
+      if (i == 0) {
+        path.moveTo(px, py);
+      } else {
+        path.lineTo(px, py);
+      }
+    }
+    canvas.drawPath(path, linePaint);
+    for (var i = 0; i < n; i++) {
+      canvas.drawCircle(
+          Offset(xAt(i), yAt(points[i].orderCount)), 2.4, dotPaint);
+    }
+
+    // ── X ekseni etiketleri (yer varsa) ──
+    final maxLabels = (w / 28).floor().clamp(1, n);
+    final step = (n / maxLabels).ceil();
+    for (var i = 0; i < n; i += step) {
+      final label = '${points[i].date.day}';
+      final tp = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: const TextStyle(fontSize: 9, color: Color(0xFF94A3B8)),
+        ),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(xAt(i) - tp.width / 2, h + 4));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SalesChartPainter old) => old.points != points;
 }
 
 // ─────────────────────────────────────────

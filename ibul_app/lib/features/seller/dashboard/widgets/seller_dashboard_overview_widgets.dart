@@ -405,3 +405,343 @@ class SellerDashboardPerformanceCard extends StatelessWidget {
     );
   }
 }
+
+/// Tek kartta günlük / aylık kazanç özeti — Genel Bakış ve Finans modülünde ortak.
+class EarningsSummaryCard extends StatelessWidget {
+  const EarningsSummaryCard({
+    super.key,
+    required this.dailyValue,
+    required this.monthlyValue,
+    required this.dayLabel,
+    required this.monthLabel,
+    required this.monthOptions,
+    required this.selectedMonth,
+    required this.formatMonthOption,
+    required this.onPickDay,
+    required this.onMonthChanged,
+    this.loading = false,
+    this.wrapInShell = true,
+  });
+
+  final String dailyValue;
+  final String monthlyValue;
+  final String dayLabel;
+  final String monthLabel;
+  final List<DateTime> monthOptions;
+  final DateTime selectedMonth;
+  final String Function(DateTime month) formatMonthOption;
+  final VoidCallback onPickDay;
+  final ValueChanged<DateTime> onMonthChanged;
+  final bool loading;
+  final bool wrapInShell;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF6366F1).withValues(alpha: 0.28),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.payments_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Kazanç Özeti',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F172A),
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Seçili gün ve ay için satış cirosu',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              alignment: WrapAlignment.end,
+              children: [
+                _FilterPill(
+                  icon: Icons.calendar_today_rounded,
+                  label: dayLabel,
+                  onTap: loading ? null : onPickDay,
+                ),
+                _MonthFilterPill(
+                  value: selectedMonth,
+                  options: monthOptions,
+                  formatLabel: formatMonthOption,
+                  onChanged: loading ? null : onMonthChanged,
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: loading
+              ? const SizedBox(
+                  height: 96,
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                )
+              : IntrinsicHeight(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _StatColumn(
+                          label: 'Günlük Kazanç',
+                          value: dailyValue,
+                          caption: dayLabel,
+                          accent: const Color(0xFF3B82F6),
+                          icon: Icons.wb_sunny_outlined,
+                        ),
+                      ),
+                      Container(
+                        width: 1,
+                        margin: const EdgeInsets.symmetric(vertical: 16),
+                        color: const Color(0xFFE2E8F0),
+                      ),
+                      Expanded(
+                        child: _StatColumn(
+                          label: 'Aylık Kazanç',
+                          value: monthlyValue,
+                          caption: monthLabel,
+                          accent: const Color(0xFF10B981),
+                          icon: Icons.calendar_month_outlined,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+      ],
+    );
+
+    if (!wrapInShell) return content;
+
+    return SellerDashboardCardShell(
+      padding: const EdgeInsets.all(20),
+      child: content,
+    );
+  }
+}
+
+class _FilterPill extends StatelessWidget {
+  const _FilterPill({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 13, color: const Color(0xFF64748B)),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF334155),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MonthFilterPill extends StatelessWidget {
+  const _MonthFilterPill({
+    required this.value,
+    required this.options,
+    required this.formatLabel,
+    required this.onChanged,
+  });
+
+  final DateTime value;
+  final List<DateTime> options;
+  final String Function(DateTime month) formatLabel;
+  final ValueChanged<DateTime>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<DateTime>(
+          value: options.firstWhere(
+            (m) => m.year == value.year && m.month == value.month,
+            orElse: () => options.first,
+          ),
+          isDense: true,
+          icon: const Icon(Icons.expand_more_rounded, size: 18),
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF334155),
+          ),
+          items: options
+              .map(
+                (month) => DropdownMenuItem(
+                  value: month,
+                  child: Text(formatLabel(month)),
+                ),
+              )
+              .toList(growable: false),
+          onChanged: onChanged == null
+              ? null
+              : (selected) {
+                  if (selected != null) onChanged!(selected);
+                },
+        ),
+      ),
+    );
+  }
+}
+
+class _StatColumn extends StatelessWidget {
+  const _StatColumn({
+    required this.label,
+    required this.value,
+    required this.caption,
+    required this.accent,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final String caption;
+  final Color accent;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, size: 14, color: accent),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF94A3B8),
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF0F172A),
+              letterSpacing: -0.5,
+              height: 1.1,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            caption,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: accent.withValues(alpha: 0.85),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

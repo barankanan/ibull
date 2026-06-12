@@ -6,6 +6,8 @@ import '../../models/finance_models.dart';
 import '../../providers/finance_provider.dart';
 import '../../widgets/finance_widgets.dart';
 
+/// Çalışanlar + maaş kayıtları tek bir Excel benzeri tabloda birleşik.
+/// Her satır = bir çalışan, seçili ayın maaş kartı bilgileriyle.
 class SalaryTab extends StatefulWidget {
   const SalaryTab({super.key});
 
@@ -14,14 +16,13 @@ class SalaryTab extends StatefulWidget {
 }
 
 class _SalaryTabState extends State<SalaryTab> {
-  int _selectedSegment = 0; // 0 = employees, 1 = salary records
   List<FinanceEmployee> _employees = [];
-  List<SalaryRecord> _records = [];
+  Map<String, SalaryRecord> _recordByEmployee = {};
   bool _loading = false;
   String? _error;
   int? _scheduledQuickActionId;
+  bool _loadedOnce = false;
 
-  // Month/year for salary records view
   final _now = DateTime.now();
   late int _selectedMonth;
   late int _selectedYear;
@@ -36,44 +37,40 @@ class _SalaryTabState extends State<SalaryTab> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_employees.isEmpty && !_loading) _loadEmployees();
+    if (!_loadedOnce && !_loading) _load();
   }
 
-  Future<void> _loadEmployees() async {
+  Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final repo = context.read<FinanceProvider>().repo;
-      _employees = await repo.getEmployees();
+      final results = await Future.wait([
+        repo.getEmployees(),
+        repo.getSalaryRecords(year: _selectedYear, month: _selectedMonth),
+      ]);
+      _employees = results[0] as List<FinanceEmployee>;
+      final records = results[1] as List<SalaryRecord>;
+      _recordByEmployee = {for (final r in records) r.employeeId: r};
+      _loadedOnce = true;
       setState(() {});
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _loadSalaryRecords() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final repo = context.read<FinanceProvider>().repo;
-      _records = await repo.getSalaryRecords(
-          year: _selectedYear, month: _selectedMonth);
-      setState(() {});
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      setState(() => _loading = false);
-    }
-  }
+  SalaryRecord? _recordFor(FinanceEmployee e) => _recordByEmployee[e.id];
 
-  double get _totalNetSalary =>
-      _employees.fold(0, (s, e) => s + e.baseSalary);
+  double _net(FinanceEmployee e) => _recordFor(e)?.netSalary ?? e.baseSalary;
+  double _advance(FinanceEmployee e) => _recordFor(e)?.advanceDeduction ?? 0;
+  double _bonus(FinanceEmployee e) => _recordFor(e)?.bonus ?? 0;
+  double _paid(FinanceEmployee e) => _recordFor(e)?.paidAmount ?? 0;
+  double _remaining(FinanceEmployee e) =>
+      (_net(e) - _paid(e)).clamp(0, double.infinity);
 
   @override
   Widget build(BuildContext context) {
@@ -82,10 +79,25 @@ class _SalaryTabState extends State<SalaryTab> {
 
     return Column(
       children: [
-        _buildSegmentControl(),
-        _buildMiniToolbar(),
-        if (_selectedSegment == 0) _buildEmployeeContent(),
-        if (_selectedSegment == 1) _buildSalaryContent(),
+        _buildMonthSelector(),
+        if (_employees.isNotEmpty) _buildSummaryBar(),
+        _buildToolbar(),
+        Expanded(
+          child: _loading
+              ? const FinLoadingOverlay()
+              : _error != null
+                  ? FinErrorCard(message: _error!, onRetry: _load)
+                  : _employees.isEmpty
+                      ? FinEmptyState(
+                          message: 'Çalışan bulunamadı',
+                          icon: Icons.person_add_outlined,
+                          action: () => _showEmployeeDialog(),
+                          actionLabel: 'Çalışan Ekle',
+                        )
+                      : _buildTable(),
+        ),
+        FinAddButton(
+            label: 'Çalışan Ekle', onTap: () => _showEmployeeDialog()),
       ],
     );
   }
@@ -101,132 +113,92 @@ class _SalaryTabState extends State<SalaryTab> {
       _scheduledQuickActionId = null;
       if (!accepted) return;
       if (event.action == FinanceQuickActions.salaryAddEmployee) {
-          _showAddEmployeeDialog(context);
-          return;
+        _showEmployeeDialog();
+        return;
       }
-      setState(() => _selectedSegment = 1);
-      await _loadSalaryRecords();
-      if (!mounted) return;
       if (event.action == FinanceQuickActions.salaryAddRecord) {
-          _showAddSalaryRecordDialog(context);
-          return;
+        _pickEmployeeThenEditSalary();
+        return;
       }
-      _showBulkPaymentDialog(context);
+      _showBulkPaymentDialog();
     });
   }
 
-  Widget _buildMiniToolbar() {
-    return FinMiniToolbar(
-      children: [
-        FinToolbarAction(
-          label: 'Personel Ekle',
-          icon: Icons.person_add_alt_1_rounded,
-          onTap: () => _showAddEmployeeDialog(context),
-          primary: _selectedSegment == 0,
-        ),
-        FinToolbarAction(
-          label: 'Maaş Kaydı Ekle',
-          icon: Icons.note_add_rounded,
-          onTap: () {
-            setState(() => _selectedSegment = 1);
-            _loadSalaryRecords().then((_) {
-              if (mounted) _showAddSalaryRecordDialog(context);
-            });
-          },
-          primary: _selectedSegment == 1,
-        ),
-        FinToolbarAction(
-          label: 'Toplu Ödeme',
-          icon: Icons.payments_rounded,
-          onTap: () {
-            setState(() => _selectedSegment = 1);
-            _loadSalaryRecords().then((_) {
-              if (mounted) _showBulkPaymentDialog(context);
-            });
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSegmentControl() {
+  // ── MONTH SELECTOR ────────────────────────
+  Widget _buildMonthSelector() {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       color: const Color(0xFFF8FAFC),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Expanded(
-            child: SegmentedButton<int>(
-              selected: {_selectedSegment},
-              onSelectionChanged: (val) {
-                setState(() => _selectedSegment = val.first);
-                if (val.first == 0) {
-                  _loadEmployees();
+          IconButton(
+            icon: const Icon(Icons.chevron_left),
+            onPressed: () {
+              setState(() {
+                if (_selectedMonth == 1) {
+                  _selectedMonth = 12;
+                  _selectedYear--;
                 } else {
-                  _loadSalaryRecords();
+                  _selectedMonth--;
                 }
-              },
-              segments: const [
-                ButtonSegment(
-                    value: 0,
-                    label: Text('Çalışanlar'),
-                    icon: Icon(Icons.people_outline)),
-                ButtonSegment(
-                    value: 1,
-                    label: Text('Maaş Kayıtları'),
-                    icon: Icon(Icons.receipt_long_outlined)),
-              ],
-              style: SegmentedButton.styleFrom(
-                selectedBackgroundColor: kFinancePrimary,
-                selectedForegroundColor: Colors.white,
-              ),
+              });
+              _load();
+            },
+          ),
+          GestureDetector(
+            onTap: _load,
+            child: Text(
+              fmtMonth(_selectedMonth, _selectedYear),
+              style:
+                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  // ── EMPLOYEES ──────────────────────────────
-  Widget _buildEmployeeContent() {
-    return Expanded(
-      child: Column(
-        children: [
-          if (_employees.isNotEmpty) _buildEmployeeSummaryBar(),
-          Expanded(
-            child: _loading
-                ? const FinLoadingOverlay()
-                : _error != null
-                    ? FinErrorCard(message: _error!, onRetry: _loadEmployees)
-                    : _employees.isEmpty
-                        ? FinEmptyState(
-                            message: 'Çalışan bulunamadı',
-                            icon: Icons.person_add_outlined,
-                            action: () => _showAddEmployeeDialog(context),
-                            actionLabel: 'Çalışan Ekle',
-                          )
-                        : _buildEmployeeList(),
+          IconButton(
+            icon: const Icon(Icons.chevron_right),
+            onPressed: () {
+              setState(() {
+                if (_selectedMonth == 12) {
+                  _selectedMonth = 1;
+                  _selectedYear++;
+                } else {
+                  _selectedMonth++;
+                }
+              });
+              _load();
+            },
           ),
-          FinAddButton(
-              label: 'Çalışan Ekle',
-              onTap: () => _showAddEmployeeDialog(context)),
         ],
       ),
     );
   }
 
-  Widget _buildEmployeeSummaryBar() {
+  Widget _buildSummaryBar() {
     final active = _employees.where((e) => e.isActive).length;
+    final totalNet = _employees.fold<double>(0, (s, e) => s + _net(e));
+    final totalAdvance = _employees.fold<double>(0, (s, e) => s + _advance(e));
+    final totalPaid = _employees.fold<double>(0, (s, e) => s + _paid(e));
+    final totalRemaining =
+        (totalNet - totalPaid).clamp(0, double.infinity).toDouble();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       color: const Color(0xFFF0F9FF),
-      child: Row(
-        children: [
-          _chip('Aktif', '$active çalışan', const Color(0xFF0369A1)),
-          const SizedBox(width: 8),
-          _chip('Aylık Yük', fmtCurrency(_totalNetSalary),
-              kFinancePrimary),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _chip('Aktif', '$active çalışan', const Color(0xFF0369A1)),
+            const SizedBox(width: 8),
+            _chip('Net Maaş', fmtCurrency(totalNet), kFinancePrimary),
+            const SizedBox(width: 8),
+            _chip('Avans', fmtCurrency(totalAdvance), const Color(0xFFF59E0B)),
+            const SizedBox(width: 8),
+            _chip('Ödenen', fmtCurrency(totalPaid), const Color(0xFF10B981)),
+            const SizedBox(width: 8),
+            _chip('Kalan', fmtCurrency(totalRemaining),
+                const Color(0xFFEF4444)),
+          ],
+        ),
       ),
     );
   }
@@ -250,149 +222,677 @@ class _SalaryTabState extends State<SalaryTab> {
     );
   }
 
-  Widget _buildEmployeeList() {
+  Widget _buildToolbar() {
+    return FinMiniToolbar(
+      children: [
+        FinToolbarAction(
+          label: 'Çalışan Ekle',
+          icon: Icons.person_add_alt_1_rounded,
+          onTap: () => _showEmployeeDialog(),
+          primary: true,
+        ),
+        FinToolbarAction(
+          label: 'Toplu Ödeme',
+          icon: Icons.payments_rounded,
+          onTap: () => _showBulkPaymentDialog(),
+        ),
+      ],
+    );
+  }
+
+  // ── EXCEL TABLE ───────────────────────────
+  Widget _buildTable() {
     return RefreshIndicator(
       color: kFinancePrimary,
-      onRefresh: _loadEmployees,
-      child: ListView.separated(
-        padding: const EdgeInsets.only(bottom: 8),
-        itemCount: _employees.length,
-        separatorBuilder: (_, _) =>
-            const Divider(height: 1, indent: 54, color: kFinanceDivider),
-        itemBuilder: (_, i) => _employeeTile(_employees[i]),
-      ),
-    );
-  }
-
-  Widget _employeeTile(FinanceEmployee e) {
-    return ListTile(
-      dense: true,
-      leading: CircleAvatar(
-        radius: 18,
-        backgroundColor: kFinancePrimary.withValues(alpha: 0.1),
-        child: Text(
-          e.fullName.isNotEmpty ? e.fullName[0].toUpperCase() : '?',
-          style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: kFinancePrimary),
+      onRefresh: _load,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 860),
+            child: DataTable(
+              headingRowColor:
+                  WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+              headingRowHeight: 42,
+              dataRowMinHeight: 46,
+              dataRowMaxHeight: 58,
+              horizontalMargin: 12,
+              columnSpacing: 16,
+              headingTextStyle: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF475569)),
+              dataTextStyle:
+                  const TextStyle(fontSize: 12, color: Color(0xFF0F172A)),
+              columns: const [
+                DataColumn(label: Text('Çalışan')),
+                DataColumn(label: Text('Pozisyon')),
+                DataColumn(label: Text('Net Maaş'), numeric: true),
+                DataColumn(label: Text('Prim'), numeric: true),
+                DataColumn(label: Text('Avans'), numeric: true),
+                DataColumn(label: Text('Ödenen'), numeric: true),
+                DataColumn(label: Text('Kalan'), numeric: true),
+                DataColumn(label: Text('Durum')),
+                DataColumn(label: Text('İşlem')),
+              ],
+              rows: _employees.map(_buildRow).toList(growable: false),
+            ),
+          ),
         ),
       ),
-      title: Row(
-        children: [
-          Text(e.fullName,
-              style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600)),
-          const SizedBox(width: 6),
-          if (!e.isActive)
-            FinStatusBadge(
-                label: 'Pasif', color: const Color(0xFF94A3B8)),
-        ],
-      ),
-      subtitle: Text(
-        [
-          if (e.position != null) e.position!,
-          'Ödeme Günü: ${e.paymentDay}',
-        ].join('  •  '),
-        style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
-      ),
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            fmtCurrency(e.baseSalary),
-            style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: kFinancePrimary),
-          ),
-          Text(
-            'brüt maaş',
-            style: const TextStyle(fontSize: 9, color: Color(0xFF94A3B8)),
-          ),
-        ],
-      ),
-      onTap: () => _showEmployeeOptions(e),
     );
   }
 
-  void _showEmployeeOptions(FinanceEmployee e) {
-    showModalBottomSheet(
+  DataRow _buildRow(FinanceEmployee e) {
+    final record = _recordFor(e);
+    final remaining = _remaining(e);
+    return DataRow(
+      cells: [
+        DataCell(
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 13,
+                backgroundColor: kFinancePrimary.withValues(alpha: 0.1),
+                child: Text(
+                  e.fullName.isNotEmpty ? e.fullName[0].toUpperCase() : '?',
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: kFinancePrimary),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(e.fullName,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: e.isActive
+                          ? const Color(0xFF0F172A)
+                          : const Color(0xFF94A3B8))),
+            ],
+          ),
+          onTap: () => _openDetail(e),
+        ),
+        DataCell(Text(e.position ?? '-')),
+        DataCell(Text(fmtCurrency(_net(e)),
+            style: const TextStyle(fontWeight: FontWeight.w700))),
+        DataCell(Text(fmtCurrency(_bonus(e)),
+            style: const TextStyle(color: Color(0xFF3B82F6)))),
+        DataCell(Text(fmtCurrency(_advance(e)),
+            style: const TextStyle(color: Color(0xFFF59E0B)))),
+        DataCell(Text(fmtCurrency(_paid(e)),
+            style: const TextStyle(
+                color: Color(0xFF10B981), fontWeight: FontWeight.w700))),
+        DataCell(Text(
+          fmtCurrency(remaining),
+          style: TextStyle(
+              color: remaining > 0
+                  ? const Color(0xFFEF4444)
+                  : const Color(0xFF94A3B8),
+              fontWeight: FontWeight.w700),
+        )),
+        DataCell(record != null
+            ? FinStatusBadge(label: record.status.label, color: record.status.color)
+            : (e.isActive
+                ? FinStatusBadge(
+                    label: 'Kayıt Yok', color: const Color(0xFF94A3B8))
+                : FinStatusBadge(
+                    label: 'Pasif', color: const Color(0xFF94A3B8)))),
+        DataCell(_rowMenu(e)),
+      ],
+    );
+  }
+
+  Widget _rowMenu(FinanceEmployee e) {
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert_rounded, size: 18),
+      tooltip: 'İşlemler',
+      onSelected: (value) {
+        switch (value) {
+          case 'edit_salary':
+            _showEditSalaryDialog(e);
+            break;
+          case 'pay':
+            _payEmployee(e);
+            break;
+          case 'edit_employee':
+            _showEmployeeDialog(existing: e);
+            break;
+          case 'history':
+            _openDetail(e);
+            break;
+          case 'toggle':
+            _toggleActive(e);
+            break;
+          case 'delete':
+            _deleteEmployee(e);
+            break;
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(
+            value: 'edit_salary',
+            child: Row(children: [
+              Icon(Icons.tune_rounded, size: 16, color: kFinancePrimary),
+              SizedBox(width: 8),
+              Text('Maaş / Prim / Avans Düzenle'),
+            ])),
+        const PopupMenuItem(
+            value: 'pay',
+            child: Row(children: [
+              Icon(Icons.payments_rounded, size: 16, color: Color(0xFF10B981)),
+              SizedBox(width: 8),
+              Text('Ödeme Yap'),
+            ])),
+        const PopupMenuItem(
+            value: 'history',
+            child: Row(children: [
+              Icon(Icons.history_rounded, size: 16, color: Color(0xFF64748B)),
+              SizedBox(width: 8),
+              Text('Ödeme Geçmişi'),
+            ])),
+        const PopupMenuItem(
+            value: 'edit_employee',
+            child: Row(children: [
+              Icon(Icons.badge_outlined, size: 16, color: Color(0xFF64748B)),
+              SizedBox(width: 8),
+              Text('Çalışan Bilgileri'),
+            ])),
+        PopupMenuItem(
+            value: 'toggle',
+            child: Row(children: [
+              Icon(e.isActive
+                  ? Icons.person_off_outlined
+                  : Icons.person_add_outlined,
+                  size: 16,
+                  color: const Color(0xFFF59E0B)),
+              const SizedBox(width: 8),
+              Text(e.isActive ? 'Pasife Al' : 'Aktive Et'),
+            ])),
+        const PopupMenuItem(
+            value: 'delete',
+            child: Row(children: [
+              Icon(Icons.delete_outline, size: 16, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Sil'),
+            ])),
+      ],
+    );
+  }
+
+  // ── ENSURE / EDIT SALARY RECORD ───────────
+  /// Çalışan için seçili ayın maaş kaydını döndürür; yoksa oluşturur.
+  Future<SalaryRecord?> _ensureRecord(FinanceEmployee e) async {
+    final existing = _recordFor(e);
+    if (existing != null) return existing;
+    final fp = context.read<FinanceProvider>();
+    final created = await fp.repo.createSalaryRecord(SalaryRecord(
+      id: '',
+      sellerId: fp.sellerId,
+      employeeId: e.id,
+      employeeName: e.fullName,
+      periodYear: _selectedYear,
+      periodMonth: _selectedMonth,
+      baseSalary: e.baseSalary,
+      netSalary: e.baseSalary,
+      status: SalaryStatus.pending,
+      createdAt: DateTime.now(),
+    ));
+    _recordByEmployee[e.id] = created;
+    return created;
+  }
+
+  Future<void> _pickEmployeeThenEditSalary() async {
+    final active = _employees.where((e) => e.isActive).toList(growable: false);
+    if (active.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Önce aktif bir çalışan ekleyin.')));
+      }
+      return;
+    }
+    FinanceEmployee selected = active.first;
+    final ok = await showDialog<bool>(
       context: context,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(top: 8, bottom: 12),
-              decoration: BoxDecoration(
-                  color: const Color(0xFFCBD5E1),
-                  borderRadius: BorderRadius.circular(2)),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) => AlertDialog(
+          title: const Text('Maaş Kaydı — Çalışan Seç',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          content: DropdownButtonFormField<FinanceEmployee>(
+            initialValue: selected,
+            decoration: InputDecoration(
+              labelText: 'Çalışan',
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            ListTile(
-              leading: Icon(
-                  e.isActive ? Icons.person_off_outlined : Icons.person_add_outlined,
-                  color: e.isActive ? Colors.orange : kFinancePrimary),
-              title: Text(e.isActive ? 'Pasife Al' : 'Aktive Et'),
-              onTap: () async {
-                Navigator.pop(context);
-                try {
-                  final fp = context.read<FinanceProvider>();
-                  await fp.repo.updateEmployee(e.id, {'is_active': !e.isActive});
-                  _loadEmployees();
-                  fp.loadOverview();
-                } catch (err) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('$err')));
-                  }
-                }
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Sil'),
-              onTap: () async {
-                Navigator.pop(context);
-                try {
-                  final fp = context.read<FinanceProvider>();
-                  await fp.repo.updateEmployee(e.id, {'is_active': false});
-                  _loadEmployees();
-                  fp.loadOverview();
-                } catch (err) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('$err')));
-                  }
-                }
-              },
+            items: active
+                .map((e) => DropdownMenuItem(value: e, child: Text(e.fullName)))
+                .toList(growable: false),
+            onChanged: (v) => ss(() => selected = v ?? selected),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('İptal')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: kFinancePrimary),
+              child: const Text('Devam'),
             ),
           ],
         ),
       ),
     );
+    if (ok == true && mounted) _showEditSalaryDialog(selected);
   }
 
-  Future<void> _showAddEmployeeDialog(BuildContext context) async {
-    final nameCtrl = TextEditingController();
-    final positionCtrl = TextEditingController();
-    final baseSalaryCtrl = TextEditingController();
-    final netSalaryCtrl = TextEditingController();
-    final phoneCtrl = TextEditingController();
-    final ibanCtrl = TextEditingController();
-    int paymentDay = 1;
+  Future<void> _showEditSalaryDialog(FinanceEmployee e) async {
+    final record = _recordFor(e);
+    final bonusCtrl =
+        TextEditingController(text: (record?.bonus ?? 0).toStringAsFixed(2));
+    final overtimeCtrl = TextEditingController(
+        text: (record?.overtime ?? 0).toStringAsFixed(2));
+    final deductionCtrl = TextEditingController(
+        text: (record?.deduction ?? 0).toStringAsFixed(2));
+    final advanceCtrl = TextEditingController(
+        text: (record?.advanceDeduction ?? 0).toStringAsFixed(2));
+
+    double computeNet() {
+      final b = double.tryParse(bonusCtrl.text.replaceAll(',', '.')) ?? 0;
+      final o = double.tryParse(overtimeCtrl.text.replaceAll(',', '.')) ?? 0;
+      final d = double.tryParse(deductionCtrl.text.replaceAll(',', '.')) ?? 0;
+      final a = double.tryParse(advanceCtrl.text.replaceAll(',', '.')) ?? 0;
+      final net = e.baseSalary + b + o - d - a;
+      return net < 0 ? 0 : net;
+    }
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, ss) => AlertDialog(
-          title: const Text('Çalışan Ekle',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          title: Text('${e.fullName} — ${fmtMonth(_selectedMonth, _selectedYear)}',
+              style:
+                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: kFinancePrimary.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Brüt Maaş',
+                          style: TextStyle(fontSize: 12)),
+                      Text(fmtCurrency(e.baseSalary),
+                          style: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                FinTextField(
+                  controller: bonusCtrl,
+                  label: 'Prim',
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  prefixText: '₺',
+                ),
+                const SizedBox(height: 10),
+                FinTextField(
+                  controller: overtimeCtrl,
+                  label: 'Mesai',
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  prefixText: '₺',
+                ),
+                const SizedBox(height: 10),
+                FinTextField(
+                  controller: deductionCtrl,
+                  label: 'Kesinti',
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  prefixText: '₺',
+                ),
+                const SizedBox(height: 10),
+                FinTextField(
+                  controller: advanceCtrl,
+                  label: 'Nakit Avans',
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  prefixText: '₺',
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Net Maaş',
+                          style: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w700)),
+                      Text(fmtCurrency(computeNet()),
+                          key: ValueKey(
+                              '${bonusCtrl.text}-${overtimeCtrl.text}-${deductionCtrl.text}-${advanceCtrl.text}'),
+                          style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF10B981))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('İptal')),
+            FilledButton(
+              onPressed: () {
+                ss(() {}); // net önizlemeyi tazele
+                Navigator.pop(ctx, true);
+              },
+              style: FilledButton.styleFrom(backgroundColor: kFinancePrimary),
+              child: const Text('Kaydet'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (ok != true) return;
+    final bonus = double.tryParse(bonusCtrl.text.replaceAll(',', '.')) ?? 0;
+    final overtime =
+        double.tryParse(overtimeCtrl.text.replaceAll(',', '.')) ?? 0;
+    final deduction =
+        double.tryParse(deductionCtrl.text.replaceAll(',', '.')) ?? 0;
+    final advance = double.tryParse(advanceCtrl.text.replaceAll(',', '.')) ?? 0;
+
+    try {
+      if (!mounted) return;
+      final fp = context.read<FinanceProvider>();
+      if (record != null) {
+        // Net maaş DB trigger'ı ile yeniden hesaplanır.
+        await fp.repo.updateSalaryRecord(record.id, {
+          'bonus': bonus,
+          'overtime': overtime,
+          'deduction': deduction,
+          'advance_deduction': advance,
+        });
+      } else {
+        final net = (e.baseSalary + bonus + overtime - deduction - advance)
+            .clamp(0, double.infinity)
+            .toDouble();
+        await fp.repo.createSalaryRecord(SalaryRecord(
+          id: '',
+          sellerId: fp.sellerId,
+          employeeId: e.id,
+          employeeName: e.fullName,
+          periodYear: _selectedYear,
+          periodMonth: _selectedMonth,
+          baseSalary: e.baseSalary,
+          bonus: bonus,
+          overtime: overtime,
+          deduction: deduction,
+          advanceDeduction: advance,
+          netSalary: net,
+          status: SalaryStatus.pending,
+          createdAt: DateTime.now(),
+        ));
+      }
+      await _load();
+      fp.loadOverview();
+    } catch (err) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Hata: $err'), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  // ── PAYMENT ───────────────────────────────
+  Future<void> _payEmployee(FinanceEmployee e) async {
+    SalaryRecord? record;
+    try {
+      record = await _ensureRecord(e);
+    } catch (err) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Hata: $err'), backgroundColor: Colors.red));
+      }
+      return;
+    }
+    if (record == null || !mounted) return;
+    await _showPaymentDialog(record);
+  }
+
+  Future<void> _showPaymentDialog(SalaryRecord r) async {
+    final remaining = (r.netSalary - r.paidAmount).clamp(0, double.infinity);
+    final amountCtrl =
+        TextEditingController(text: remaining.toStringAsFixed(2));
+    DateTime paymentDate = DateTime.now();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) => AlertDialog(
+          title: Text('${r.employeeName ?? 'Çalışan'} — Maaş Ödemesi',
+              style:
+                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FinTextField(
+                controller: amountCtrl,
+                label: 'Ödeme Tutarı',
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                prefixText: '₺',
+              ),
+              const SizedBox(height: 10),
+              InkWell(
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: ctx,
+                    initialDate: paymentDate,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime(2100),
+                  );
+                  if (picked != null) ss(() => paymentDate = picked);
+                },
+                child: InputDecorator(
+                  decoration: InputDecoration(
+                    labelText: 'Ödeme Tarihi',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 14),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(fmtDate(paymentDate),
+                          style: const TextStyle(fontSize: 13)),
+                      const Icon(Icons.calendar_today_rounded,
+                          size: 16, color: kFinancePrimary),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('İptal')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: kFinancePrimary),
+              child: const Text('Kaydet'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (ok != true) return;
+    final amount = double.tryParse(amountCtrl.text.replaceAll(',', '.'));
+    if (amount == null || amount <= 0) return;
+    try {
+      if (!mounted) return;
+      final fp = context.read<FinanceProvider>();
+      await fp.repo.createSalaryPayment(SalaryPayment(
+        id: '',
+        sellerId: fp.sellerId,
+        salaryRecordId: r.id,
+        amount: amount,
+        paymentDate: paymentDate,
+        createdAt: DateTime.now(),
+      ));
+      await _load();
+      fp.loadOverview();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  Future<void> _showBulkPaymentDialog() async {
+    final payable = _employees
+        .where((e) => _recordFor(e) != null && _remaining(e) > 0)
+        .toList(growable: false);
+    if (payable.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Toplu ödeme için açık maaş kaydı bulunamadı.')));
+      return;
+    }
+    final totalRemaining =
+        payable.fold<double>(0, (s, e) => s + _remaining(e));
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Toplu Maaş Ödemesi',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: Text(
+          '${payable.length} çalışan için toplam ${fmtCurrency(totalRemaining)} ödeme oluşturulacak.',
+          style: const TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('İptal')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: kFinancePrimary),
+            child: const Text('Ödemeleri Oluştur'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    try {
+      if (!mounted) return;
+      final fp = context.read<FinanceProvider>();
+      for (final e in payable) {
+        final record = _recordFor(e)!;
+        await fp.repo.createSalaryPayment(SalaryPayment(
+          id: '',
+          sellerId: fp.sellerId,
+          salaryRecordId: record.id,
+          amount: _remaining(e),
+          paymentDate: DateTime.now(),
+          createdAt: DateTime.now(),
+        ));
+      }
+      await _load();
+      fp.loadOverview();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  // ── EMPLOYEE CRUD ─────────────────────────
+  Future<void> _toggleActive(FinanceEmployee e) async {
+    try {
+      final fp = context.read<FinanceProvider>();
+      await fp.repo.updateEmployee(e.id, {'is_active': !e.isActive});
+      await _load();
+      fp.loadOverview();
+    } catch (err) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$err')));
+      }
+    }
+  }
+
+  Future<void> _deleteEmployee(FinanceEmployee e) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Çalışanı Sil'),
+        content: Text('${e.fullName} pasife alınacak. Devam edilsin mi?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('İptal')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      if (!mounted) return;
+      final fp = context.read<FinanceProvider>();
+      await fp.repo.updateEmployee(e.id, {'is_active': false});
+      await _load();
+      fp.loadOverview();
+    } catch (err) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$err')));
+      }
+    }
+  }
+
+  Future<void> _showEmployeeDialog({FinanceEmployee? existing}) async {
+    final nameCtrl = TextEditingController(text: existing?.fullName ?? '');
+    final positionCtrl =
+        TextEditingController(text: existing?.position ?? '');
+    final baseSalaryCtrl = TextEditingController(
+        text: existing != null ? existing.baseSalary.toStringAsFixed(2) : '');
+    final phoneCtrl = TextEditingController(text: existing?.phone ?? '');
+    final ibanCtrl = TextEditingController(text: existing?.iban ?? '');
+    int paymentDay = existing?.paymentDay ?? 1;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) => AlertDialog(
+          title: Text(existing == null ? 'Çalışan Ekle' : 'Çalışan Düzenle',
+              style:
+                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -405,14 +905,6 @@ class _SalaryTabState extends State<SalaryTab> {
                 FinTextField(
                   controller: baseSalaryCtrl,
                   label: 'Brüt Maaş',
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  prefixText: '₺',
-                ),
-                const SizedBox(height: 10),
-                FinTextField(
-                  controller: netSalaryCtrl,
-                  label: 'Net Maaş',
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   prefixText: '₺',
@@ -453,144 +945,6 @@ class _SalaryTabState extends State<SalaryTab> {
                 child: const Text('İptal')),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              style:
-                  FilledButton.styleFrom(backgroundColor: kFinancePrimary),
-              child: const Text('Kaydet'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (ok == true) {
-      final name = nameCtrl.text.trim();
-      final base = double.tryParse(baseSalaryCtrl.text.replaceAll(',', '.'));
-      if (name.isEmpty || base == null || base <= 0) return;
-      try {
-        if (!context.mounted) return;
-        final fp = context.read<FinanceProvider>();
-        final emp = FinanceEmployee(
-          id: '',
-          sellerId: fp.sellerId,
-          fullName: name,
-          position: positionCtrl.text.trim().isNotEmpty
-              ? positionCtrl.text.trim()
-              : null,
-          baseSalary: base,
-          paymentDay: paymentDay,
-          phone: phoneCtrl.text.trim().isNotEmpty
-              ? phoneCtrl.text.trim()
-              : null,
-          iban: ibanCtrl.text.trim().isNotEmpty
-              ? ibanCtrl.text.trim()
-              : null,
-          isActive: true,
-          createdAt: DateTime.now(),
-        );
-        await fp.repo.createEmployee(emp);
-        _loadEmployees();
-        fp.loadOverview();
-      } catch (e) {
-        if (!context.mounted) return;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
-        }
-      }
-    }
-  }
-
-  Future<void> _showAddSalaryRecordDialog(BuildContext context) async {
-    if (_employees.isEmpty) {
-      await _loadEmployees();
-    }
-    if (!context.mounted) return;
-    final activeEmployees = _employees.where((e) => e.isActive).toList(growable: false);
-    if (activeEmployees.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Önce aktif bir çalışan ekleyin.')),
-        );
-      }
-      return;
-    }
-
-    FinanceEmployee selectedEmployee = activeEmployees.first;
-    final bonusCtrl = TextEditingController(text: '0');
-    final overtimeCtrl = TextEditingController(text: '0');
-    final deductionCtrl = TextEditingController(text: '0');
-    final advanceCtrl = TextEditingController(text: '0');
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => AlertDialog(
-          title: const Text('Maaş Kaydı Ekle',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<FinanceEmployee>(
-                  initialValue: selectedEmployee,
-                  decoration: InputDecoration(
-                    labelText: 'Çalışan',
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                    contentPadding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  ),
-                  items: activeEmployees
-                      .map((employee) => DropdownMenuItem(
-                            value: employee,
-                            child: Text(employee.fullName,
-                                style: const TextStyle(fontSize: 13)),
-                          ))
-                      .toList(growable: false),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setModalState(() => selectedEmployee = value);
-                    }
-                  },
-                ),
-                const SizedBox(height: 10),
-                FinTextField(
-                  controller: bonusCtrl,
-                  label: 'Prim',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  prefixText: '₺',
-                ),
-                const SizedBox(height: 10),
-                FinTextField(
-                  controller: overtimeCtrl,
-                  label: 'Mesai',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  prefixText: '₺',
-                ),
-                const SizedBox(height: 10),
-                FinTextField(
-                  controller: deductionCtrl,
-                  label: 'Kesinti',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  prefixText: '₺',
-                ),
-                const SizedBox(height: 10),
-                FinTextField(
-                  controller: advanceCtrl,
-                  label: 'Avans',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  prefixText: '₺',
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('İptal'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
               style: FilledButton.styleFrom(backgroundColor: kFinancePrimary),
               child: const Text('Kaydet'),
             ),
@@ -599,253 +953,95 @@ class _SalaryTabState extends State<SalaryTab> {
       ),
     );
 
-    if (ok == true) {
-      final bonus = double.tryParse(bonusCtrl.text.replaceAll(',', '.')) ?? 0;
-      final overtime = double.tryParse(overtimeCtrl.text.replaceAll(',', '.')) ?? 0;
-      final deduction = double.tryParse(deductionCtrl.text.replaceAll(',', '.')) ?? 0;
-      final advance = double.tryParse(advanceCtrl.text.replaceAll(',', '.')) ?? 0;
-      final netSalary = selectedEmployee.baseSalary + bonus + overtime - deduction - advance;
-      try {
-        if (!context.mounted) return;
-        final fp = context.read<FinanceProvider>();
-        final record = SalaryRecord(
+    if (ok != true) return;
+    final name = nameCtrl.text.trim();
+    final base = double.tryParse(baseSalaryCtrl.text.replaceAll(',', '.'));
+    if (name.isEmpty || base == null || base < 0) return;
+    try {
+      if (!mounted) return;
+      final fp = context.read<FinanceProvider>();
+      if (existing != null) {
+        await fp.repo.updateEmployee(existing.id, {
+          'full_name': name,
+          'position': positionCtrl.text.trim().isNotEmpty
+              ? positionCtrl.text.trim()
+              : null,
+          'base_salary': base,
+          'payment_day': paymentDay,
+          'phone':
+              phoneCtrl.text.trim().isNotEmpty ? phoneCtrl.text.trim() : null,
+          'iban':
+              ibanCtrl.text.trim().isNotEmpty ? ibanCtrl.text.trim() : null,
+        });
+      } else {
+        await fp.repo.createEmployee(FinanceEmployee(
           id: '',
           sellerId: fp.sellerId,
-          employeeId: selectedEmployee.id,
-          employeeName: selectedEmployee.fullName,
-          periodYear: _selectedYear,
-          periodMonth: _selectedMonth,
-          baseSalary: selectedEmployee.baseSalary,
-          bonus: bonus,
-          overtime: overtime,
-          deduction: deduction,
-          advanceDeduction: advance,
-          netSalary: netSalary,
-          paidAmount: 0,
-          status: SalaryStatus.pending,
+          fullName: name,
+          position: positionCtrl.text.trim().isNotEmpty
+              ? positionCtrl.text.trim()
+              : null,
+          baseSalary: base,
+          paymentDay: paymentDay,
+          phone:
+              phoneCtrl.text.trim().isNotEmpty ? phoneCtrl.text.trim() : null,
+          iban: ibanCtrl.text.trim().isNotEmpty ? ibanCtrl.text.trim() : null,
+          isActive: true,
           createdAt: DateTime.now(),
-        );
-        await fp.repo.createSalaryRecord(record);
-        _loadSalaryRecords();
-        fp.loadOverview();
-      } catch (e) {
-        if (!context.mounted) return;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red),
-          );
-        }
+        ));
+      }
+      await _load();
+      fp.loadOverview();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red));
       }
     }
   }
 
-  Future<void> _showBulkPaymentDialog(BuildContext context) async {
-    final payableRecords = _records
-        .where((record) => record.netSalary - record.paidAmount > 0)
-        .toList(growable: false);
-    if (payableRecords.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Toplu ödeme için açık maaş kaydı bulunamadı.')),
-      );
+  // ── PAYMENT HISTORY DETAIL ────────────────
+  void _openDetail(FinanceEmployee e) {
+    final record = _recordFor(e);
+    if (record == null) {
+      _showEditSalaryDialog(e);
       return;
     }
-
-    final totalRemaining = payableRecords.fold<double>(
-      0,
-      (sum, record) => sum + (record.netSalary - record.paidAmount),
-    );
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Toplu Maaş Ödemesi',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-        content: Text(
-          '${payableRecords.length} kayıt için toplam ${fmtCurrency(totalRemaining)} ödeme oluşturulacak.',
-          style: const TextStyle(fontSize: 13),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('İptal'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: kFinancePrimary),
-            child: const Text('Ödemeleri Oluştur'),
-          ),
-        ],
-      ),
-    );
-
-    if (ok == true) {
-      try {
-        if (!context.mounted) return;
-        final fp = context.read<FinanceProvider>();
-        for (final record in payableRecords) {
-          final remaining = record.netSalary - record.paidAmount;
-          final payment = SalaryPayment(
-            id: '',
-            sellerId: fp.sellerId,
-            salaryRecordId: record.id,
-            amount: remaining,
-            paymentDate: DateTime.now(),
-            createdAt: DateTime.now(),
-          );
-          await fp.repo.createSalaryPayment(payment);
-        }
-        _loadSalaryRecords();
-        fp.loadOverview();
-      } catch (e) {
-        if (!context.mounted) return;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Hata: $e'), backgroundColor: Colors.red),
-          );
-        }
-      }
-    }
-  }
-
-  // ── SALARY RECORDS ─────────────────────────
-  Widget _buildSalaryContent() {
-    return Expanded(
-      child: Column(
-        children: [
-          _buildMonthSelector(),
-          Expanded(
-            child: _loading
-                ? const FinLoadingOverlay()
-                : _error != null
-                    ? FinErrorCard(
-                        message: _error!, onRetry: _loadSalaryRecords)
-                    : _records.isEmpty
-                        ? FinEmptyState(
-                            message:
-                                '${fmtMonth(_selectedMonth, _selectedYear)} için maaş kaydı yok',
-                            icon: Icons.receipt_long_outlined,
-                          )
-                        : _buildRecordList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMonthSelector() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      color: const Color(0xFFF8FAFC),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.chevron_left),
-            onPressed: () {
-              setState(() {
-                if (_selectedMonth == 1) {
-                  _selectedMonth = 12;
-                  _selectedYear--;
-                } else {
-                  _selectedMonth--;
-                }
-              });
-              _loadSalaryRecords();
-            },
-          ),
-          GestureDetector(
-            onTap: _loadSalaryRecords,
-            child: Text(
-              fmtMonth(_selectedMonth, _selectedYear),
-              style: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w700),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.chevron_right),
-            onPressed: () {
-              setState(() {
-                if (_selectedMonth == 12) {
-                  _selectedMonth = 1;
-                  _selectedYear++;
-                } else {
-                  _selectedMonth++;
-                }
-              });
-              _loadSalaryRecords();
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecordList() {
-    return RefreshIndicator(
-      color: kFinancePrimary,
-      onRefresh: _loadSalaryRecords,
-      child: ListView.separated(
-        padding: const EdgeInsets.only(bottom: 8),
-        itemCount: _records.length,
-        separatorBuilder: (_, _) =>
-            const Divider(height: 1, indent: 54, color: kFinanceDivider),
-        itemBuilder: (_, i) => _salaryRecordTile(_records[i]),
-      ),
-    );
-  }
-
-  Widget _salaryRecordTile(SalaryRecord r) {
-    return ListTile(
-      dense: true,
-      leading: CircleAvatar(
-        radius: 18,
-        backgroundColor: r.status.color.withValues(alpha: 0.1),
-        child: Icon(Icons.person_rounded, color: r.status.color, size: 16),
-      ),
-      title: Row(
-        children: [
-          Text(r.employeeName ?? 'Çalışan',
-              style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600)),
-          const SizedBox(width: 6),
-          FinStatusBadge(label: r.status.label, color: r.status.color),
-        ],
-      ),
-      subtitle: Text(
-        'Net: ${fmtCurrency(r.netSalary)}',
-        style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
-      ),
-      trailing: Text(
-        fmtCurrency(r.paidAmount),
-        style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF10B981)),
-      ),
-      onTap: () => _showSalaryRecordDetail(r),
-    );
-  }
-
-  void _showSalaryRecordDetail(SalaryRecord r) {
+    // Modal sheets attach to the root navigator (above the FinanceProvider
+    // created in FinanceShell), so capture it here and re-expose it to the sheet.
+    final fp = context.read<FinanceProvider>();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) =>
-          _SalaryRecordDetailSheet(record: r, onUpdated: _loadSalaryRecords),
+      builder: (_) => ChangeNotifierProvider<FinanceProvider>.value(
+        value: fp,
+        child: _SalaryRecordDetailSheet(
+          record: record,
+          onAddPayment: () {
+            Navigator.pop(context);
+            _showPaymentDialog(record);
+          },
+          onUpdated: _load,
+        ),
+      ),
     );
   }
 }
 
 // ─────────────────────────────────────────
-// Salary Record Detail Sheet
+// Salary Record Detail Sheet (ödeme geçmişi)
 // ─────────────────────────────────────────
 class _SalaryRecordDetailSheet extends StatefulWidget {
-  const _SalaryRecordDetailSheet(
-      {required this.record, required this.onUpdated});
+  const _SalaryRecordDetailSheet({
+    required this.record,
+    required this.onAddPayment,
+    required this.onUpdated,
+  });
 
   final SalaryRecord record;
+  final VoidCallback onAddPayment;
   final VoidCallback onUpdated;
 
   @override
@@ -870,7 +1066,7 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
       _payments = await fp.repo.getSalaryPayments(widget.record.id);
       setState(() {});
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -879,7 +1075,7 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
     final r = widget.record;
     return DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.7,
+      initialChildSize: 0.6,
       maxChildSize: 0.95,
       builder: (_, ctrl) => Column(
         children: [
@@ -896,11 +1092,9 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    r.employeeName ?? 'Çalışan',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w800),
-                  ),
+                  child: Text(r.employeeName ?? 'Çalışan',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w800)),
                 ),
                 FinStatusBadge(label: r.status.label, color: r.status.color),
               ],
@@ -910,15 +1104,12 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
               children: [
-                _chip('Net Maaş', fmtCurrency(r.netSalary),
-                    kFinancePrimary),
+                _chip('Net Maaş', fmtCurrency(r.netSalary), kFinancePrimary),
                 const SizedBox(width: 8),
                 _chip('Ödenen', fmtCurrency(r.paidAmount),
                     const Color(0xFF10B981)),
                 const SizedBox(width: 8),
-                _chip(
-                    'Kalan',
-                    fmtCurrency(r.netSalary - r.paidAmount),
+                _chip('Kalan', fmtCurrency(r.netSalary - r.paidAmount),
                     r.status.color),
               ],
             ),
@@ -930,15 +1121,14 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('Ödemeler',
-                    style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700)),
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                 TextButton.icon(
-                  onPressed: () => _showAddPaymentDialog(context),
+                  onPressed: widget.onAddPayment,
                   icon: const Icon(Icons.add, size: 14),
                   label: const Text('Ödeme Ekle',
                       style: TextStyle(fontSize: 12)),
-                  style:
-                      TextButton.styleFrom(foregroundColor: kFinancePrimary),
+                  style: TextButton.styleFrom(foregroundColor: kFinancePrimary),
                 ),
               ],
             ),
@@ -972,8 +1162,8 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
         child: Column(
           children: [
             Text(label,
-                style: const TextStyle(
-                    fontSize: 9, color: Color(0xFF94A3B8))),
+                style:
+                    const TextStyle(fontSize: 9, color: Color(0xFF94A3B8))),
             Text(val,
                 style: TextStyle(
                     fontSize: 12,
@@ -995,76 +1185,8 @@ class _SalaryRecordDetailSheetState extends State<_SalaryRecordDetailSheet> {
               fontSize: 13,
               fontWeight: FontWeight.w700,
               color: Color(0xFF10B981))),
-      subtitle: Text(
-        fmtDate(p.paymentDate),
-        style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
-      ),
+      subtitle: Text(fmtDate(p.paymentDate),
+          style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8))),
     );
-  }
-
-  Future<void> _showAddPaymentDialog(BuildContext context) async {
-    final amountCtrl = TextEditingController(
-        text: (widget.record.netSalary - widget.record.paidAmount)
-            .toStringAsFixed(2));
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Maaş Ödemesi Ekle',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FinTextField(
-              controller: amountCtrl,
-              label: 'Ödeme Tutarı',
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              prefixText: '₺',
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('İptal')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style:
-                FilledButton.styleFrom(backgroundColor: kFinancePrimary),
-            child: const Text('Kaydet'),
-          ),
-        ],
-      ),
-    );
-
-    if (ok == true) {
-      final amount =
-          double.tryParse(amountCtrl.text.replaceAll(',', '.'));
-      if (amount == null || amount <= 0) return;
-      try {
-        if (!context.mounted) return;
-        final fp = context.read<FinanceProvider>();
-        final payment = SalaryPayment(
-          id: '',
-          sellerId: fp.sellerId,
-          salaryRecordId: widget.record.id,
-          amount: amount,
-          paymentDate: DateTime.now(),
-          createdAt: DateTime.now(),
-        );
-        await fp.repo.createSalaryPayment(payment);
-        _load();
-        widget.onUpdated();
-        fp.loadOverview();
-      } catch (e) {
-        if (!context.mounted) return;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('Hata: $e'),
-              backgroundColor: Colors.red));
-        }
-      }
-    }
   }
 }

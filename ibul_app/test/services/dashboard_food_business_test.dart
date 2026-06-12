@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/features/seller/panel/helpers/seller_panel_module_helpers.dart';
 import 'package:ibul_app/services/seller_dashboard_service.dart';
+import 'package:ibul_app/utils/garson_table_metrics.dart';
 
 // ignore_for_file: avoid_redundant_argument_values
 
@@ -110,15 +111,12 @@ void main() {
 
   group('DashboardOrderMetric.fromTableOrder', () {
     test('new table order is revenue eligible', () {
-      final metric = DashboardOrderMetric.fromTableOrder(
-        {
-          'id': 't1',
-          'status': 'new',
-          'table_number': 4,
-          'created_at': '2026-05-25T10:00:00Z',
-        },
-        computedTotal: 250.0,
-      );
+      final metric = DashboardOrderMetric.fromTableOrder({
+        'id': 't1',
+        'status': 'new',
+        'table_number': 4,
+        'created_at': '2026-05-25T10:00:00Z',
+      }, computedTotal: 250.0);
       expect(metric.source, 'table');
       expect(metric.isCancelled, isFalse);
       expect(metric.isPaidOrRevenueEligible, isTrue);
@@ -127,29 +125,23 @@ void main() {
     });
 
     test('closed table order is revenue eligible', () {
-      final metric = DashboardOrderMetric.fromTableOrder(
-        {
-          'id': 't2',
-          'status': 'closed',
-          'table_number': 5,
-          'created_at': '2026-05-25T10:00:00Z',
-        },
-        computedTotal: 180.0,
-      );
+      final metric = DashboardOrderMetric.fromTableOrder({
+        'id': 't2',
+        'status': 'closed',
+        'table_number': 5,
+        'created_at': '2026-05-25T10:00:00Z',
+      }, computedTotal: 180.0);
       expect(metric.isCancelled, isFalse);
       expect(metric.isPaidOrRevenueEligible, isTrue);
     });
 
     test('cancelled table order is NOT revenue eligible', () {
-      final metric = DashboardOrderMetric.fromTableOrder(
-        {
-          'id': 't3',
-          'status': 'cancelled',
-          'table_number': 2,
-          'created_at': '2026-05-25T10:00:00Z',
-        },
-        computedTotal: 100.0,
-      );
+      final metric = DashboardOrderMetric.fromTableOrder({
+        'id': 't3',
+        'status': 'cancelled',
+        'table_number': 2,
+        'created_at': '2026-05-25T10:00:00Z',
+      }, computedTotal: 100.0);
       expect(metric.isCancelled, isTrue);
       expect(metric.isPaidOrRevenueEligible, isFalse);
     });
@@ -200,48 +192,45 @@ void main() {
       };
     }
 
-    test(
-      'L-1: online + table order on same day sums both in todayRevenue',
-      () {
-        final onlineOrderData = onlineOrder(id: 'o1', amount: 100.0);
-        final tableOrderData = tableOrder(id: 't1', amount: 75.0);
-        final orders = [onlineOrderData, tableOrderData];
-        final metrics = SellerDashboardService.build(
-          orders: orders,
-          products: const [],
-          supportTickets: const [],
-          sellerQuestions: const [],
-          campaigns: const [],
-          rangeStart: baseDate,
-          rangeEnd: baseDate,
-          storeRating: 0,
-        );
-        expect(metrics.todayRevenue, closeTo(175.0, 0.01));
-      },
-    );
+    test('L-1: online + table order on same day sums both in todayRevenue', () {
+      final onlineOrderData = onlineOrder(id: 'o1', amount: 100.0);
+      final tableOrderData = tableOrder(id: 't1', amount: 75.0);
+      final orders = [onlineOrderData, tableOrderData];
+      final metrics = SellerDashboardService.build(
+        orders: orders,
+        products: const [],
+        supportTickets: const [],
+        sellerQuestions: const [],
+        campaigns: const [],
+        rangeStart: baseDate,
+        rangeEnd: baseDate,
+        storeRating: 0,
+      );
+      expect(metrics.todayRevenue, closeTo(175.0, 0.01));
+    });
 
-    test(
-      'L-2: cancelled online order is excluded from revenue',
-      () {
-        final cancelledOrder =
-            onlineOrder(id: 'o2', amount: 200.0, status: 'cancelled');
-        final activeOrder = onlineOrder(id: 'o3', amount: 50.0);
-        final metrics = SellerDashboardService.build(
-          orders: [cancelledOrder, activeOrder],
-          products: const [],
-          supportTickets: const [],
-          sellerQuestions: const [],
-          campaigns: const [],
-          rangeStart: baseDate,
-          rangeEnd: baseDate,
-          storeRating: 0,
-        );
-        // SellerDashboardService sums all orders including cancelled ones
-        // (revenue filtering for display is a UI-level concern in the panel).
-        // What we verify: activeOrder IS counted.
-        expect(metrics.todayRevenue, greaterThanOrEqualTo(50.0));
-      },
-    );
+    test('L-2: cancelled online order is excluded from revenue', () {
+      final cancelledOrder = onlineOrder(
+        id: 'o2',
+        amount: 200.0,
+        status: 'cancelled',
+      );
+      final activeOrder = onlineOrder(id: 'o3', amount: 50.0);
+      final metrics = SellerDashboardService.build(
+        orders: [cancelledOrder, activeOrder],
+        products: const [],
+        supportTickets: const [],
+        sellerQuestions: const [],
+        campaigns: const [],
+        rangeStart: baseDate,
+        rangeEnd: baseDate,
+        storeRating: 0,
+      );
+      // SellerDashboardService sums all orders including cancelled ones
+      // (revenue filtering for display is a UI-level concern in the panel).
+      // What we verify: activeOrder IS counted.
+      expect(metrics.todayRevenue, greaterThanOrEqualTo(50.0));
+    });
 
     test(
       'L-4: table order is counted in selectedOrderCount (chart sipariş)',
@@ -261,53 +250,50 @@ void main() {
       },
     );
 
-    test(
-      'L-5: closed-table order is included in today revenue',
-      () {
-        final closedTableOrder =
-            tableOrder(id: 't3', amount: 300.0, status: 'closed');
-        final metrics = SellerDashboardService.build(
-          orders: [closedTableOrder],
-          products: const [],
-          supportTickets: const [],
-          sellerQuestions: const [],
-          campaigns: const [],
-          rangeStart: baseDate,
-          rangeEnd: baseDate,
-          storeRating: 0,
-        );
-        expect(metrics.todayRevenue, closeTo(300.0, 0.01));
-      },
-    );
+    test('L-5: closed-table order is included in today revenue', () {
+      final closedTableOrder = tableOrder(
+        id: 't3',
+        amount: 300.0,
+        status: 'closed',
+      );
+      final metrics = SellerDashboardService.build(
+        orders: [closedTableOrder],
+        products: const [],
+        supportTickets: const [],
+        sellerQuestions: const [],
+        campaigns: const [],
+        rangeStart: baseDate,
+        rangeEnd: baseDate,
+        storeRating: 0,
+      );
+      expect(metrics.todayRevenue, closeTo(300.0, 0.01));
+    });
   });
 
   // ── Category branching ────────────────────────────────────────────────────
 
   group('Category branching (L-7, L-8)', () {
-    test(
-      'L-7: Yemek category activates food business mode',
-      () {
-        expect(isSellerFoodStoreCategory('Yemek'), isTrue,
-            reason: 'Yemek should be identified as food business');
-      },
-    );
+    test('L-7: Yemek category activates food business mode', () {
+      expect(
+        isSellerFoodStoreCategory('Yemek'),
+        isTrue,
+        reason: 'Yemek should be identified as food business',
+      );
+    });
 
-    test(
-      'L-8: Elektronik category does NOT activate food business mode',
-      () {
-        expect(isSellerFoodStoreCategory('Elektronik'), isFalse,
-            reason: 'Elektronik must remain ecommerce dashboard');
-      },
-    );
+    test('L-8: Elektronik category does NOT activate food business mode', () {
+      expect(
+        isSellerFoodStoreCategory('Elektronik'),
+        isFalse,
+        reason: 'Elektronik must remain ecommerce dashboard',
+      );
+    });
 
-    test(
-      'Unknown/empty category returns false (safe fallback)',
-      () {
-        expect(isSellerFoodStoreCategory(''), isFalse);
-        expect(isSellerFoodStoreCategory(null), isFalse);
-        expect(isSellerFoodStoreCategory('bilinmiyor'), isFalse);
-      },
-    );
+    test('Unknown/empty category returns false (safe fallback)', () {
+      expect(isSellerFoodStoreCategory(''), isFalse);
+      expect(isSellerFoodStoreCategory(null), isFalse);
+      expect(isSellerFoodStoreCategory('bilinmiyor'), isFalse);
+    });
   });
 
   // ── Table order status mapping ────────────────────────────────────────────
@@ -347,33 +333,53 @@ void main() {
     test('active → new', () => expect(mapStatus('active'), 'new'));
     test('pending → new', () => expect(mapStatus('pending'), 'new'));
 
-    test('done → preparing (mutfağa iletilen)',
-        () => expect(mapStatus('done'), 'preparing'));
+    test(
+      'done → preparing (mutfağa iletilen)',
+      () => expect(mapStatus('done'), 'preparing'),
+    );
     test('sent → preparing', () => expect(mapStatus('sent'), 'preparing'));
-    test('kitchen_sent → preparing',
-        () => expect(mapStatus('kitchen_sent'), 'preparing'));
-    test('preparing → preparing',
-        () => expect(mapStatus('preparing'), 'preparing'));
+    test(
+      'kitchen_sent → preparing',
+      () => expect(mapStatus('kitchen_sent'), 'preparing'),
+    );
+    test(
+      'preparing → preparing',
+      () => expect(mapStatus('preparing'), 'preparing'),
+    );
     test('ready → preparing', () => expect(mapStatus('ready'), 'preparing'));
 
-    test('closed → delivered (bugün kapanan)',
-        () => expect(mapStatus('closed'), 'delivered'));
+    test(
+      'closed → delivered (bugün kapanan)',
+      () => expect(mapStatus('closed'), 'delivered'),
+    );
     test('paid → delivered', () => expect(mapStatus('paid'), 'delivered'));
-    test('completed → delivered',
-        () => expect(mapStatus('completed'), 'delivered'));
+    test(
+      'completed → delivered',
+      () => expect(mapStatus('completed'), 'delivered'),
+    );
 
-    test('cancelled → cancelled (gelirden hariç)',
-        () => expect(mapStatus('cancelled'), 'cancelled'));
-    test('canceled → cancelled',
-        () => expect(mapStatus('canceled'), 'cancelled'));
+    test(
+      'cancelled → cancelled (gelirden hariç)',
+      () => expect(mapStatus('cancelled'), 'cancelled'),
+    );
+    test(
+      'canceled → cancelled',
+      () => expect(mapStatus('canceled'), 'cancelled'),
+    );
     test('void → cancelled', () => expect(mapStatus('void'), 'cancelled'));
-    test('refunded → cancelled',
-        () => expect(mapStatus('refunded'), 'cancelled'));
-    test('deleted → cancelled',
-        () => expect(mapStatus('deleted'), 'cancelled'));
+    test(
+      'refunded → cancelled',
+      () => expect(mapStatus('refunded'), 'cancelled'),
+    );
+    test(
+      'deleted → cancelled',
+      () => expect(mapStatus('deleted'), 'cancelled'),
+    );
 
-    test('unknown → new (safe default)',
-        () => expect(mapStatus('unknown_xyz'), 'new'));
+    test(
+      'unknown → new (safe default)',
+      () => expect(mapStatus('unknown_xyz'), 'new'),
+    );
   });
 
   // ── Garson area grouping — "Diğer" must be excluded ──────────────────────
@@ -388,10 +394,13 @@ void main() {
       final areaId = (row['area_id']?.toString().trim() ?? '');
       final areaName = (row['area_name']?.toString().trim() ?? '');
       final key = areaId.isEmpty ? 'other' : 'id:$areaId';
-      expect(key, 'other',
-          reason:
-              'Tables with no area_id must land in the other bucket so they '
-              'can be filtered out from the garson screen');
+      expect(
+        key,
+        'other',
+        reason:
+            'Tables with no area_id must land in the other bucket so they '
+            'can be filtered out from the garson screen',
+      );
       expect(areaName, isEmpty);
     });
 
@@ -400,6 +409,69 @@ void main() {
       final areaId = (row['area_id']?.toString().trim() ?? '');
       final key = areaId.isEmpty ? 'other' : 'id:$areaId';
       expect(key, isNot('other'));
+    });
+  });
+
+  group('computeGarsonActiveTableMetrics', () {
+    test('all tables closed or cancelled keeps open table count at 0', () {
+      final now = DateTime.now();
+      final metrics = computeGarsonActiveTableMetrics(
+        now: now,
+        orders: const [
+          {
+            'id': 'c1',
+            'table_number': 1,
+            'status': 'closed',
+            'created_at': '2026-06-09T10:00:00Z',
+          },
+          {
+            'id': 'c2',
+            'table_number': 2,
+            'status': 'archived',
+            'created_at': '2026-06-09T10:00:00Z',
+          },
+          {
+            'id': 'c3',
+            'table_number': 3,
+            'status': 'cancelled',
+            'created_at': '2026-06-09T10:00:00Z',
+          },
+        ],
+      );
+
+      expect(metrics.openTableCount, 0);
+      expect(metrics.sentToKitchenCount, 0);
+    });
+
+    test('same open table is counted once even with multiple active rows', () {
+      final now = DateTime.now();
+      final localIso = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        14,
+      ).toUtc().toIso8601String();
+      final metrics = computeGarsonActiveTableMetrics(
+        now: now,
+        orders: [
+          {
+            'id': 'o1',
+            'table_number': 8,
+            'status': 'new',
+            'created_at': localIso,
+          },
+          {
+            'id': 'o2',
+            'table_number': 8,
+            'status': 'sent',
+            'created_at': localIso,
+          },
+        ],
+      );
+
+      expect(metrics.openTableCount, 1);
+      expect(metrics.sentToKitchenCount, 1);
+      expect(metrics.todayActiveOrderCount, 2);
     });
   });
 }

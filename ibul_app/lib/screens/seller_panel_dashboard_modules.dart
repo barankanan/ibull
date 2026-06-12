@@ -8,7 +8,7 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
     final pendingTasks = _dashboardPendingTasks(metrics, statusCounts);
     final isFoodBusiness = _isFoodStoreCategory(_storeCategory);
     final totalOrderCount = _combinedDashboardOrders.length;
-    final deliveredCount = statusCounts['delivered'] ?? 0;
+    final deliveredCount = statusCounts[OrderStatusConstants.ecommerceDelivered] ?? 0;
     final completionRate = totalOrderCount == 0
         ? 0.0
         : (deliveredCount / totalOrderCount) * 100;
@@ -31,6 +31,8 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
           ),
           const SizedBox(height: 8),
           _buildMobileDashboardTopCards(metrics),
+          const SizedBox(height: 12),
+          _buildEarningsCard(),
           const SizedBox(height: 12),
           _buildMobileSectionTitle('Gelir Ve Sipariş', icon: Icons.show_chart),
           const SizedBox(height: 8),
@@ -93,30 +95,30 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
                           ),
                           _mobileBadge(
                             'Online Yeni',
-                            '${statusCounts['new'] ?? 0}',
+                            '${statusCounts[OrderStatusConstants.ecommerceNew] ?? 0}',
                           ),
                         ]
                       : [
-                          _mobileBadge('Yeni', '${statusCounts['new'] ?? 0}'),
+                          _mobileBadge('Yeni', '${statusCounts[OrderStatusConstants.ecommerceNew] ?? 0}'),
                           _mobileBadge(
                             'Hazırlanıyor',
-                            '${statusCounts['preparing'] ?? 0}',
+                            '${statusCounts[OrderStatusConstants.ecommercePreparing] ?? 0}',
                           ),
                           _mobileBadge(
                             'Kargoya Hazır',
-                            '${statusCounts['ready_to_ship'] ?? 0}',
+                            '${statusCounts[OrderStatusConstants.ecommerceReadyToShip] ?? 0}',
                           ),
                           _mobileBadge(
                             'Kargoda',
-                            '${statusCounts['shipped'] ?? 0}',
+                            '${statusCounts[OrderStatusConstants.ecommerceShipped] ?? 0}',
                           ),
                           _mobileBadge(
                             'Tamamlandı',
-                            '${statusCounts['delivered'] ?? 0}',
+                            '${statusCounts[OrderStatusConstants.ecommerceDelivered] ?? 0}',
                           ),
                           _mobileBadge(
                             'İade',
-                            '${statusCounts['returns'] ?? 0}',
+                            '${statusCounts[OrderStatusConstants.ecommerceReturns] ?? 0}',
                           ),
                         ],
                 ),
@@ -271,10 +273,10 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
           'iconColor': const Color(0xFF2563EB),
           'iconBackground': const Color(0xFFE8F0FF),
           'title': 'Yeni Sipariş',
-          'value': '${statusCounts['new'] ?? 0}',
+          'value': '${statusCounts[OrderStatusConstants.ecommerceNew] ?? 0}',
           'subtitle': 'Aksiyon gerekli',
           'trend':
-              '+${_dashboardTodayStatusCount(const ['new', 'confirmed'])}',
+              '+${_dashboardTodayStatusCount(const [OrderStatusConstants.ecommerceNew, OrderStatusConstants.ecommerceConfirmed])}',
           'trendColor': const Color(0xFF16A34A),
         },
         {
@@ -282,10 +284,10 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
           'iconColor': const Color(0xFFF59E0B),
           'iconBackground': const Color(0xFFFFF4DB),
           'title': 'Hazırlanıyor',
-          'value': '${statusCounts['preparing'] ?? 0}',
+          'value': '${statusCounts[OrderStatusConstants.ecommercePreparing] ?? 0}',
           'subtitle': 'Devam ediyor',
           'trend':
-              '+${_dashboardTodayStatusCount(const ['preparing', 'ready_to_ship'])}',
+              '+${_dashboardTodayStatusCount(const [OrderStatusConstants.ecommercePreparing, OrderStatusConstants.ecommerceReadyToShip])}',
           'trendColor': const Color(0xFF16A34A),
         },
         {
@@ -293,7 +295,7 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
           'iconColor': const Color(0xFF22C55E),
           'iconBackground': const Color(0xFFDCFCE7),
           'title': 'Kargoya Hazır',
-          'value': '${statusCounts['ready_to_ship'] ?? 0}',
+          'value': '${statusCounts[OrderStatusConstants.ecommerceReadyToShip] ?? 0}',
           'subtitle': 'Gönderilmeli',
           'trend': '${metrics.lowStockProducts} risk',
           'trendColor': const Color(0xFF16A34A),
@@ -303,10 +305,10 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
           'iconColor': const Color(0xFF7C3AED),
           'iconBackground': const Color(0xFFF1E8FF),
           'title': 'Kargoda',
-          'value': '${statusCounts['shipped'] ?? 0}',
+          'value': '${statusCounts[OrderStatusConstants.ecommerceShipped] ?? 0}',
           'subtitle': 'Takipte',
           'trend':
-              '+${_dashboardTodayStatusCount(const ['shipped', 'transfer', 'branch', 'out_for_delivery'])}',
+              '+${_dashboardTodayStatusCount(const [OrderStatusConstants.ecommerceShipped, OrderStatusConstants.ecommerceTransfer, OrderStatusConstants.ecommerceBranch, OrderStatusConstants.ecommerceOutForDelivery])}',
           'trendColor': const Color(0xFF16A34A),
         },
         {
@@ -314,10 +316,10 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
           'iconColor': const Color(0xFF10B981),
           'iconBackground': const Color(0xFFDCFCE7),
           'title': 'Bugün Teslim',
-          'value': '${_dashboardTodayStatusCount(const ['delivered'])}',
+          'value': '${_dashboardTodayStatusCount(const [OrderStatusConstants.ecommerceDelivered])}',
           'subtitle': 'Tamamlandı',
           'trend':
-              '+${math.max(0, _dashboardTodayStatusCount(const ['delivered']) - 1)}',
+              '+${math.max(0, _dashboardTodayStatusCount(const [OrderStatusConstants.ecommerceDelivered]) - 1)}',
           'trendColor': const Color(0xFF16A34A),
         },
         {
@@ -325,9 +327,9 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
           'iconColor': const Color(0xFFEF4444),
           'iconBackground': const Color(0xFFFFE5E5),
           'title': 'İade / İptal',
-          'value': '${statusCounts['returns'] ?? 0}',
+          'value': '${statusCounts[OrderStatusConstants.ecommerceReturns] ?? 0}',
           'subtitle': 'İnceleniyor',
-          'trend': '-${statusCounts['returns'] ?? 0}',
+          'trend': '-${statusCounts[OrderStatusConstants.ecommerceReturns] ?? 0}',
           'trendColor': const Color(0xFFEF4444),
         },
       ];
@@ -459,6 +461,8 @@ extension _SellerPanelDashboardModules on _SellerPanelPageState {
                 .toList(growable: false),
             minItemWidth: 250,
           ),
+          const SizedBox(height: 12),
+          _buildEarningsCard(),
           const SizedBox(height: 20),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,

@@ -1,4 +1,5 @@
 import '../models/seller_product.dart';
+import '../utils/order_status_constants.dart';
 import 'campaign_service.dart';
 import 'support_service.dart';
 
@@ -31,15 +32,12 @@ class DashboardOrderMetric {
   final String? tableName;
 
   static DashboardOrderMetric fromOnlineOrder(Map<String, dynamic> order) {
-    final status =
-        (order['status'] ?? '').toString().trim().toLowerCase();
-    final isCancelled = status.contains('cancel') ||
-        status.contains('return') ||
-        status.contains('refund') ||
-        status.contains('iptal') ||
-        status.contains('iade');
+    final status = (order['status'] ?? '').toString().trim().toLowerCase();
+    final isCancelled = OrderStatusConstants.isCancelledStatus(status);
     final amount =
-        (order['total_price'] ??
+        (order['grand_total'] ??
+                order['grandTotal'] ??
+                order['total_price'] ??
                 order['totalPrice'] ??
                 order['total_amount'] ??
                 order['totalAmount'] ??
@@ -51,8 +49,8 @@ class DashboardOrderMetric {
       status: status,
       createdAt:
           DateTime.tryParse(
-                (order['created_at'] ?? order['createdAt'])?.toString() ?? '',
-              )?.toLocal() ??
+            (order['created_at'] ?? order['createdAt'])?.toString() ?? '',
+          )?.toLocal() ??
           DateTime.now(),
       totalAmount: amount.toDouble(),
       isCancelled: isCancelled,
@@ -64,16 +62,17 @@ class DashboardOrderMetric {
     Map<String, dynamic> order, {
     required double computedTotal,
   }) {
-    final rawStatus =
-        (order['status'] ?? 'new').toString().trim().toLowerCase();
-    final isCancelled = rawStatus == 'cancelled';
+    final rawStatus = (order['status'] ?? 'new')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final isCancelled = OrderStatusConstants.isCancelledStatus(rawStatus);
     return DashboardOrderMetric(
       id: order['id']?.toString() ?? '',
       source: 'table',
       status: rawStatus,
       createdAt:
-          DateTime.tryParse(order['created_at']?.toString() ?? '')
-              ?.toLocal() ??
+          DateTime.tryParse(order['created_at']?.toString() ?? '')?.toLocal() ??
           DateTime.now(),
       totalAmount: computedTotal,
       isCancelled: isCancelled,
@@ -243,10 +242,16 @@ class SellerDashboardService {
       previousMonthStart,
       previousMonthEnd,
     );
+    final selectedRevenueEligibleOrders = _revenueEligibleOrders(
+      selectedOrders,
+    );
+    final previousRevenueEligibleOrders = _revenueEligibleOrders(
+      previousOrders,
+    );
 
     final pendingOrders = orders.where((order) {
       final status = _normalizedStatus(order['status']);
-      return !_isClosedStatus(status);
+      return !OrderStatusConstants.isTerminalStatus(status);
     }).length;
 
     final activeProducts = products.where((product) {
@@ -259,8 +264,8 @@ class SellerDashboardService {
 
     final selectedRevenue = _sumRevenue(selectedOrders);
     final previousRevenue = _sumRevenue(previousOrders);
-    final selectedOrderCount = selectedOrders.length;
-    final deliveredOrders = selectedOrders.where((order) {
+    final selectedOrderCount = selectedRevenueEligibleOrders.length;
+    final deliveredOrders = selectedRevenueEligibleOrders.where((order) {
       final status = _normalizedStatus(order['status']);
       return status == 'delivered' || status == 'teslim edildi';
     }).length;
@@ -302,7 +307,7 @@ class SellerDashboardService {
       selectedRevenue: selectedRevenue,
       previousRevenue: previousRevenue,
       selectedOrderCount: selectedOrderCount,
-      previousOrderCount: previousOrders.length,
+      previousOrderCount: previousRevenueEligibleOrders.length,
       averageOrderValue: selectedOrderCount == 0
           ? 0
           : selectedRevenue / selectedOrderCount,
@@ -363,7 +368,7 @@ class SellerDashboardService {
         return SellerDashboardSeriesPoint(
           label: _dayLabel(day),
           revenue: _sumRevenue(dailyOrders),
-          orderCount: dailyOrders.length,
+          orderCount: _revenueEligibleOrders(dailyOrders).length,
         );
       });
     }
@@ -387,9 +392,21 @@ class SellerDashboardService {
           return SellerDashboardSeriesPoint(
             label: _monthLabel(monthStart),
             revenue: _sumRevenue(monthlyOrders),
-            orderCount: monthlyOrders.length,
+            orderCount: _revenueEligibleOrders(monthlyOrders).length,
           );
         })
+        .toList(growable: false);
+  }
+
+  static List<Map<String, dynamic>> _revenueEligibleOrders(
+    List<Map<String, dynamic>> orders,
+  ) {
+    return orders
+        .where(
+          (order) => !OrderStatusConstants.isCancelledStatus(
+            order['status']?.toString(),
+          ),
+        )
         .toList(growable: false);
   }
 
@@ -445,7 +462,12 @@ class SellerDashboardService {
 
   static double _sumRevenue(List<Map<String, dynamic>> orders) {
     return orders.fold<double>(0, (sum, order) {
+      if (OrderStatusConstants.isCancelledStatus(order['status']?.toString())) {
+        return sum;
+      }
       final amount =
+          order['grand_total'] ??
+          order['grandTotal'] ??
           order['total_price'] ??
           order['totalPrice'] ??
           order['total_amount'] ??
@@ -463,13 +485,6 @@ class SellerDashboardService {
 
   static String _normalizedStatus(dynamic status) {
     return (status ?? '').toString().trim().toLowerCase();
-  }
-
-  static bool _isClosedStatus(String status) {
-    return status == 'delivered' ||
-        status == 'teslim edildi' ||
-        status == 'cancelled' ||
-        status == 'iptal edildi';
   }
 
   static DateTime _startOfDay(DateTime value) =>
