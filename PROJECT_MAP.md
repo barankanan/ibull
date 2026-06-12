@@ -619,7 +619,41 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 # Update Log
 
-## 2026-06-12
+## 2026-06-13 (store grid birebir search hizalama)
+
+- `ibul_app/lib/screens/business_detail_page.dart`: `_buildProductGrid` artık `SearchResultsPage` ile aynı delegate kullanıyor — mobil (`<=900px`): 2 kolon, `0.70`, `crossAxisSpacing: 10`, `tight: true`; web (`>900px`): `maxCrossAxisExtent: 250`, `0.82`, `tight: false`. Eski `>=600 → 4 kolon` mantığı kaldırıldı.
+- `ibul_app/lib/widgets/product_card.dart`: Grid hücresinde kart gövdesi tam yüksekliği doldurur; görsel alanı `Expanded` ile kalan boşluğu absorbe eder (alt beyaz boşluk kalkar).
+
+## 2026-06-13 (store product grid spacing)
+
+- `ibul_app/lib/screens/business_detail_page.dart`: Store ürün grid'i arama sonuçlarıyla hizalandı — `ProductCard(tight: true, margin: EdgeInsets.zero)`, mobil `childAspectRatio` `0.66` → `0.70`, web/tablet `0.76` → `0.80`.
+
+## 2026-06-13 (product card grid spacing)
+
+- `ibul_app/lib/widgets/product_card.dart`: Sabit kart yüksekliği (`312/300/276`) kaldırıldı; görsel yüksekliği genişliğe göre hesaplanıyor, grid hücresi sınırlıysa gövde yüksekliği düşülerek taşma önleniyor.
+- `ibul_app/lib/screens/search_results_page.dart`: Mobil grid `childAspectRatio` `0.65` → `0.70`, web grid `0.65` → `0.82`; kartlar `Align(topCenter)` ile hizalanıyor.
+- `ibul_app/lib/screens/business_detail_page.dart`: Store ürün grid oranları `0.60–0.72` → `0.66–0.76`; kart üst hizalı.
+- `ibul_app/lib/screens/product_search_result_page.dart`: Legacy arama grid oranı `0.48` → `0.68` (aşırı uzun hücre boşluğu giderildi).
+
+## 2026-06-12 (order detail / account summary)
+
+- `ibul_app/lib/utils/dynamic_value_helpers.dart` eklendi: Supabase JSON map alanları için `readString`, `readNullableString`, `readInt`, `readDouble`, `normalizeOrderIdentityFields` ve ürün başlığı fallback yardımcıları.
+- `ibul_app/lib/services/order_service.dart` seller/customer order fetch sonuçlarında `order_number`, `tracking_number`, `product_code`, `product_name` gibi kimlik alanları normalize ediliyor; restoran online sipariş detayında double→String runtime hatası bu katmanda önlenir.
+- `ibul_app/lib/screens/seller_panel_page.dart` `_openSellerOrderDetail` ve mobil detay sheet açılışında order map normalize edilir.
+- `ibul_app/lib/screens/account_page.dart` Hesap Özeti > Son Siparişler kartı: ürün görseli + ürün adı başlık, alt satırda sipariş no ve takip no ayrı gösterilir; teknik kod ana başlıkta kullanılmaz.
+
+## 2026-06-12 (food order Online → cart)
+
+- Yemek siparişi akışında `ProductCard` > Sipariş Ver > **Online** → `_navigateToOnlineCart` → `AppState.addToCart` → `HomeScreen(initialIndex: 3)` / `CartPage` sepet hydrate yolu.
+- **1. kırılma (önceki):** Supabase / `jsonDecode` sepet JSON'unda `price` double gelirken `Product.fromJson` doğrudan `String` alana yazıyordu.
+- **2. kırılma (devam eden crash):** Aynı Online akışında sepet persist/hydrate zincirinde iki ek tip hatası:
+  - `app_state_auth.dart` local/remote koleksiyon yükünde `addresses` / `savedCards` için `Map<String, String>.from(e)` — örn. `lat`/`lng`/`postal_code` double gelince `double → String` patlıyor.
+  - Supabase ürün/satır JSON'unda snake_case alanlar (`old_price`, `variant_group_id`, `main_category` vb.) ve `fromDBProduct` içinde `additional_info` / `faq` güvensiz map dönüşümü.
+- Düzeltmeler:
+  - `dynamic_value_helpers.dart`: `readStringMap`, `readStringList`, `normalizeProductCartItem`
+  - `app_state_auth.dart`: cart hydrate öncesi `normalizeProductCartItem`, adres/kart map'leri `readStringMap`
+  - `product_model.dart`: snake_case alias + güvenli `fromDBProduct` alanları
+  - `cart_page.dart`: web satıcı puanı `Text` için `readString`
 
 - İlk `PROJECT_MAP.md` oluşturuldu.
 - Repo yapısı dört ana çalışma alanı olarak haritalandı:

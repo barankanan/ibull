@@ -781,7 +781,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                                   gridDelegate:
                                       const SliverGridDelegateWithMaxCrossAxisExtent(
                                         maxCrossAxisExtent: 250,
-                                        childAspectRatio: 0.65,
+                                        childAspectRatio: 0.82,
                                         mainAxisSpacing: 16,
                                         crossAxisSpacing: 16,
                                       ),
@@ -856,7 +856,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
   Widget _buildWebSameDaySection(List<Product> sameDayProducts) {
     const maxCrossAxisExtent = 250.0;
     const spacing = 16.0;
-    const childAspectRatio = 0.65;
+    const childAspectRatio = 0.82;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1084,7 +1084,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
               cacheExtent: 900,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                childAspectRatio: 0.65,
+                childAspectRatio: 0.70,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 10,
               ),
@@ -1096,14 +1096,17 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                   scope: 'mobile-results',
                   index: index,
                   product: product,
-                  child: ProductCard(
-                    product: product,
-                    compact: false,
-                    tight: true,
-                    margin: EdgeInsets.zero,
-                    imagePriority: index < aboveFoldCount
-                        ? OptimizedImagePriority.high
-                        : OptimizedImagePriority.lazy,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ProductCard(
+                      product: product,
+                      compact: false,
+                      tight: true,
+                      margin: EdgeInsets.zero,
+                      imagePriority: index < aboveFoldCount
+                          ? OptimizedImagePriority.high
+                          : OptimizedImagePriority.lazy,
+                    ),
                   ),
                 );
               },

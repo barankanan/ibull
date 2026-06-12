@@ -236,7 +236,10 @@ class _ProductCardState extends State<ProductCard> {
     final logicalWidth =
         widget.width ??
         (widget.compact ? 160.0 : (widget.tight ? 188.0 : 198.0));
-    final logicalHeight = height ?? (logicalWidth / (aspectRatio ?? 1.0));
+    final logicalHeight =
+        height != null && height.isFinite
+        ? height
+        : (logicalWidth / (aspectRatio ?? 1.0));
     final cacheWidth = (logicalWidth * devicePixelRatio).round().clamp(
       160,
       widget.compact ? 320 : 520,
@@ -298,44 +301,46 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
-  double _resolveCardHeight(BoxConstraints constraints) {
-    final preferredHeight = widget.compact
-        ? 276.0
-        : (widget.tight ? 300.0 : 312.0);
-
-    if (constraints.maxHeight.isFinite) {
-      return math.min(constraints.maxHeight, preferredHeight);
+  double _resolveFixedBodyHeight() {
+    if (widget.compact) {
+      return 6 + 24 + 6 + 5 + 14 + 2 + 12 + 5 + 34 + 6 + 28;
     }
-
-    return preferredHeight;
+    if (widget.tight) {
+      return 3 + 24 + 3 + 14 + 2 + 12 + 3 + 36 + 4 + 30;
+    }
+    return 5 + 24 + 5 + 14 + 2 + 14 + 5 + 36 + 6 + 34;
   }
 
-  double _resolveImageHeight(BoxConstraints constraints, double cardHeight) {
+  double _resolveImageHeight(BoxConstraints constraints) {
     final fallbackWidth = widget.width ?? (widget.compact ? 180.0 : 198.0);
     final availableWidth =
         constraints.maxWidth.isFinite && constraints.maxWidth > 0
         ? constraints.maxWidth
         : fallbackWidth;
-    final verticalPadding = widget.compact ? 16.0 : (widget.tight ? 8.0 : 16.0);
-    final innerHeight = math.max(0.0, cardHeight - verticalPadding);
-    final idealImageHeight = widget.compact
-        ? availableWidth * 0.72
-        : availableWidth * 0.74;
-    final reservedHeight = widget.compact
-        ? 112.0
-        : (widget.tight ? 146.0 : 150.0);
-    final maxImageHeight = math.max(
-      widget.compact ? 92.0 : (widget.tight ? 72.0 : 118.0),
-      innerHeight - reservedHeight,
-    );
+    final horizontalPadding = widget.compact ? 16.0 : (widget.tight ? 8.0 : 16.0);
+    final contentWidth = math.max(0.0, availableWidth - horizontalPadding);
+    final imageRatio = widget.compact ? 0.72 : (widget.tight ? 0.70 : 0.72);
+    final minHeight = widget.compact ? 92.0 : (widget.tight ? 72.0 : 100.0);
+    final maxHeight = widget.compact ? 145.0 : 132.0;
 
-    return math.min(
-      widget.compact ? 145.0 : 155.0,
-      math.max(
-        widget.compact ? 92.0 : (widget.tight ? 72.0 : 118.0),
-        math.min(idealImageHeight, maxImageHeight),
-      ),
-    );
+    final naturalImageHeight =
+        (contentWidth * imageRatio).clamp(minHeight, maxHeight).toDouble();
+
+    if (!constraints.maxHeight.isFinite) {
+      return naturalImageHeight;
+    }
+
+    final verticalPadding = widget.compact ? 16.0 : (widget.tight ? 8.0 : 16.0);
+    const layoutSlack = 6.0;
+    final innerMaxHeight = constraints.maxHeight - verticalPadding;
+    final maxImageForCell =
+        innerMaxHeight - _resolveFixedBodyHeight() - layoutSlack;
+
+    if (maxImageForCell >= minHeight) {
+      return math.min(naturalImageHeight, maxImageForCell);
+    }
+
+    return math.max(56.0, maxImageForCell);
   }
 
   // Normal card for home page (new design like screenshot)
@@ -347,18 +352,21 @@ class _ProductCardState extends State<ProductCard> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isTight = widget.tight;
-        final cardHeight = _resolveCardHeight(constraints);
-        final imageHeight = _resolveImageHeight(constraints, cardHeight);
+        final fillCellHeight = constraints.maxHeight.isFinite;
+        final imageHeight =
+            fillCellHeight ? null : _resolveImageHeight(constraints);
         final padding = isTight ? 4.0 : 8.0;
 
         return SizedBox(
           width: widget.width,
-          height: cardHeight,
+          height: fillCellHeight ? constraints.maxHeight : null,
           child: PremiumPressable(
             hoverLift: 2,
             hoverScale: 1.008,
             pressedScale: 0.982,
             child: Container(
+              width: double.infinity,
+              height: fillCellHeight ? double.infinity : null,
               margin: widget.margin ?? const EdgeInsets.only(right: 12),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(18),
@@ -386,12 +394,22 @@ class _ProductCardState extends State<ProductCard> {
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
+                        mainAxisSize: fillCellHeight
+                            ? MainAxisSize.max
+                            : MainAxisSize.min,
                         children: [
-                          _buildNormalImageSection(
-                            isFavorite: isFavorite,
-                            imageHeight: imageHeight,
-                          ),
+                          if (fillCellHeight)
+                            Expanded(
+                              child: _buildNormalImageSection(
+                                isFavorite: isFavorite,
+                                fillAvailable: true,
+                              ),
+                            )
+                          else
+                            _buildNormalImageSection(
+                              isFavorite: isFavorite,
+                              imageHeight: imageHeight!,
+                            ),
                           SizedBox(height: isTight ? 3 : 5),
                           _buildCampaignBadge(),
                           SizedBox(height: isTight ? 3 : 5),
@@ -423,11 +441,12 @@ class _ProductCardState extends State<ProductCard> {
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cardHeight = _resolveCardHeight(constraints);
-        final imageHeight = _resolveImageHeight(constraints, cardHeight);
+        final imageHeight = _resolveImageHeight(constraints);
+        final boundedHeight =
+            constraints.maxHeight.isFinite ? constraints.maxHeight : null;
 
         return SizedBox(
-          height: cardHeight,
+          height: boundedHeight,
           child: PremiumPressable(
             hoverLift: 2,
             hoverScale: 1.008,
@@ -478,19 +497,21 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
-  // Normal image section with AspectRatio (for home page)
+  // Normal image section (for home page)
   Widget _buildNormalImageSection({
     required bool isFavorite,
-    required double imageHeight,
+    double? imageHeight,
+    bool fillAvailable = false,
   }) {
     return Stack(
+      fit: fillAvailable ? StackFit.expand : StackFit.loose,
       children: [
         // Product Image - Wrapped in GestureDetector to ensure tap is caught
         GestureDetector(
           onTap: _onCardTap,
           behavior: HitTestBehavior.opaque,
           child: _buildOptimizedCardImage(
-            height: imageHeight,
+            height: fillAvailable ? double.infinity : imageHeight!,
             borderRadius: BorderRadius.circular(14),
             fallbackIconSize: 40,
           ),

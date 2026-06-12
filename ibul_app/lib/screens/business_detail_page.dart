@@ -2874,9 +2874,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                     children: [
                       _buildWebCategoryBar(),
                       const SizedBox(height: 16),
-                      _buildProductGrid(
-                        aspectRatioOverride: 0.60,
-                      ), // Aspect ratio düşürüldü (0.68 -> 0.60) kart boyu uzadı
+                      _buildProductGrid(),
                     ],
                   ),
                 ),
@@ -3691,7 +3689,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     );
   }
 
-  // Product Grid Widget
+  // Product Grid Widget — delegate/props aligned with SearchResultsPage grids.
   Widget _buildProductGrid({double? aspectRatioOverride}) {
     if (_isLoadingProducts) {
       return const Center(
@@ -3702,37 +3700,8 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       );
     }
 
-    final screenWidth = MediaQuery.of(context).size.width;
-    int crossAxisCount = 2;
-    double childAspectRatio = 0.62;
-    double crossAxisSpacing = 12;
-    double mainAxisSpacing = 12;
-    double horizontalPadding = 12;
-
-    if (screenWidth < 360) {
-      crossAxisCount = 2;
-      childAspectRatio = 0.60;
-      crossAxisSpacing = 8;
-      mainAxisSpacing = 10;
-      horizontalPadding = 8;
-    } else if (screenWidth >= 600) {
-      crossAxisCount = 4;
-      childAspectRatio = 0.72;
-      crossAxisSpacing = 16;
-      mainAxisSpacing = 16;
-      horizontalPadding = 12;
-    } else {
-      crossAxisCount = 2;
-      childAspectRatio = 0.62;
-      crossAxisSpacing = 12;
-      mainAxisSpacing = 12;
-      horizontalPadding = 12;
-    }
-
-    // Override aspect ratio if provided (e.g., Tüm Ürünler dikey azaltma)
-    if (aspectRatioOverride != null) {
-      childAspectRatio = aspectRatioOverride;
-    }
+    // SearchResultsPage uses width > 900 for web grid; keep the same breakpoint.
+    final useSearchWebGrid = MediaQuery.of(context).size.width > 900;
 
     // Kategori filtresi uygula
     List<Product> displayProducts = _filteredProducts;
@@ -3771,33 +3740,58 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     String businessCategory = widget.business['category']?.toString() ?? '';
     businessCategory = businessCategory.toLowerCase().trim();
 
-    bool isFoodSeller =
+    final isFoodSeller =
         businessCategory.contains('yemek') ||
         businessCategory.contains('restoran') ||
         businessCategory.contains('kafe') ||
         businessCategory.contains('cafe');
 
+    Widget buildGridItem(Product product, {required bool tight}) {
+      final normalized = product.tags.isEmpty
+          ? product.copyWith(tags: ['Ücretsiz Kargo'])
+          : product;
+      return Align(
+        alignment: Alignment.topCenter,
+        child: ProductCard(
+          product: normalized,
+          compact: false,
+          tight: tight,
+          margin: EdgeInsets.zero,
+          forceFoodOrderButton: isFoodSeller,
+        ),
+      );
+    }
+
+    if (useSearchWebGrid) {
+      return GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 250,
+          childAspectRatio: aspectRatioOverride ?? 0.82,
+          mainAxisSpacing: 16,
+          crossAxisSpacing: 16,
+        ),
+        itemCount: displayProducts.length,
+        itemBuilder: (context, index) =>
+            buildGridItem(displayProducts[index], tight: false),
+      );
+    }
+
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        crossAxisSpacing: crossAxisSpacing,
-        mainAxisSpacing: mainAxisSpacing,
-        childAspectRatio: childAspectRatio,
+        crossAxisCount: 2,
+        childAspectRatio: aspectRatioOverride ?? 0.70,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 10,
       ),
       itemCount: displayProducts.length,
-      itemBuilder: (context, index) {
-        final product = displayProducts[index];
-        final normalized = product.tags.isEmpty
-            ? product.copyWith(tags: ['Ücretsiz Kargo'])
-            : product;
-        return ProductCard(
-          product: normalized,
-          forceFoodOrderButton: isFoodSeller,
-        );
-      },
+      itemBuilder: (context, index) =>
+          buildGridItem(displayProducts[index], tight: true),
     );
   }
 
