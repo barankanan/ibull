@@ -3,6 +3,7 @@ import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/constants.dart';
 import '../widgets/common/video_player_widget.dart';
+import '../utils/order_status_constants.dart';
 
 class ShipmentTrackingPage extends StatelessWidget {
   final Map<String, dynamic> order;
@@ -433,16 +434,16 @@ class ShipmentTrackingPage extends StatelessWidget {
     if (_isIhizShipment()) {
       final step = (item['shipment_step']?.toString().isNotEmpty ?? false)
           ? item['shipment_step'].toString().toLowerCase()
-          : item['status']?.toString().toLowerCase() ?? 'confirmed';
+          : item['status']?.toString().toLowerCase() ?? OrderStatusConstants.ecommerceConfirmed;
       final int activeIndex;
-      if (step == 'delivered') {
+      if (step == OrderStatusConstants.ecommerceDelivered) {
         activeIndex = 3;
-      } else if (step == 'out_for_delivery' ||
-          step == 'branch' ||
-          step == 'transfer' ||
-          step == 'shipped') {
+      } else if (step == OrderStatusConstants.ecommerceOutForDelivery ||
+          step == OrderStatusConstants.ecommerceBranch ||
+          step == OrderStatusConstants.ecommerceTransfer ||
+          step == OrderStatusConstants.ecommerceShipped) {
         activeIndex = 2;
-      } else if (step == 'ready_to_ship' || step == 'preparing') {
+      } else if (step == OrderStatusConstants.ecommerceReadyToShip || step == OrderStatusConstants.ecommercePreparing) {
         activeIndex = 1;
       } else {
         activeIndex = 0;
@@ -482,16 +483,16 @@ class ShipmentTrackingPage extends StatelessWidget {
 
     final step = (item['shipment_step']?.toString().isNotEmpty ?? false)
         ? item['shipment_step'].toString()
-        : item['status']?.toString() ?? 'confirmed';
+        : item['status']?.toString() ?? OrderStatusConstants.ecommerceConfirmed;
     const order = [
-      'confirmed',
-      'preparing',
-      'ready_to_ship',
-      'shipped',
-      'transfer',
-      'branch',
-      'out_for_delivery',
-      'delivered',
+      OrderStatusConstants.ecommerceConfirmed,
+      OrderStatusConstants.ecommercePreparing,
+      OrderStatusConstants.ecommerceReadyToShip,
+      OrderStatusConstants.ecommerceShipped,
+      OrderStatusConstants.ecommerceTransfer,
+      OrderStatusConstants.ecommerceBranch,
+      OrderStatusConstants.ecommerceOutForDelivery,
+      OrderStatusConstants.ecommerceDelivered,
     ];
     final activeIndex = order
         .indexOf(step.toLowerCase())
@@ -568,12 +569,12 @@ class ShipmentTrackingPage extends StatelessWidget {
 
   String _statusLabel(String? status) {
     switch ((status ?? '').toLowerCase()) {
-      case 'new':
-      case 'confirmed':
+      case OrderStatusConstants.ecommerceNew:
+      case OrderStatusConstants.ecommerceConfirmed:
         return 'Siparişiniz Alındı';
-      case 'preparing':
+      case OrderStatusConstants.ecommercePreparing:
         return 'Siparişiniz Hazırlanıyor';
-      case 'ready_to_ship':
+      case OrderStatusConstants.ecommerceReadyToShip:
         final deliveryType =
             (item['delivery_type'] ?? order['delivery_type'] ?? '')
                 .toString()
@@ -590,17 +591,17 @@ class ShipmentTrackingPage extends StatelessWidget {
         return _isIhizShipment()
             ? 'İHız kurye çağrısı açıldı'
             : 'Sevkiyat operasyonu başlatıldı';
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return 'Kargoya Verildi';
-      case 'transfer':
+      case OrderStatusConstants.ecommerceTransfer:
         return 'Transfer Aşamasında';
-      case 'branch':
+      case OrderStatusConstants.ecommerceBranch:
         return 'Şubede';
-      case 'out_for_delivery':
+      case OrderStatusConstants.ecommerceOutForDelivery:
         return 'Dağıtıma Çıktı';
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return 'Teslim Edildi';
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return 'İptal Edildi';
       default:
         return 'Sipariş Takip Ediliyor';
@@ -609,9 +610,9 @@ class ShipmentTrackingPage extends StatelessWidget {
 
   Color _statusColor(String? status) {
     switch ((status ?? '').toLowerCase()) {
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return Colors.green;
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return Colors.red;
       default:
         return AppColors.primary;

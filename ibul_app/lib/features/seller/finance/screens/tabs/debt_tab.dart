@@ -374,12 +374,20 @@ class _DebtTabState extends State<DebtTab> {
   // Debt Detail Sheet (with payment history)
   // ─────────────────────────────────────────
   void _showDebtDetail(BuildContext context, Debt d) {
+    // Modal sheets attach to the root navigator/overlay, which is ABOVE the
+    // ChangeNotifierProvider<FinanceProvider> created inside FinanceShell. We
+    // capture the provider here (this State IS under it) and re-expose it to the
+    // sheet subtree so its context.read<FinanceProvider>() calls resolve.
+    final fp = context.read<FinanceProvider>();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) => _DebtDetailSheet(debt: d, onUpdated: _load),
+      builder: (_) => ChangeNotifierProvider<FinanceProvider>.value(
+        value: fp,
+        child: _DebtDetailSheet(debt: d, onUpdated: _load),
+      ),
     );
   }
 

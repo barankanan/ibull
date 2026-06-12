@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/order_status_constants.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/user_identity.dart';
 import '../core/constants.dart';
@@ -438,7 +439,7 @@ class _AccountPageState extends State<AccountPage> {
         final orders = snapshot.data ?? const <Map<String, dynamic>>[];
         final waitingOrders = orders.where((order) {
           final status = (order['status'] ?? '').toString().toLowerCase();
-          return status != 'delivered' && status != 'cancelled';
+          return status != OrderStatusConstants.ecommerceDelivered && status != OrderStatusConstants.ecommerceCancelled;
         }).length;
         final recentOrders = orders.take(3).toList(growable: false);
         final firstAddress = appState.deliveryAddresses.isNotEmpty
@@ -801,15 +802,15 @@ class _AccountPageState extends State<AccountPage> {
 
   String _statusLabel(String? status) {
     switch ((status ?? '').toLowerCase()) {
-      case 'confirmed':
+      case OrderStatusConstants.ecommerceConfirmed:
         return 'Onaylandı';
-      case 'preparing':
+      case OrderStatusConstants.ecommercePreparing:
         return 'Hazırlanıyor';
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return 'Kargoda';
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return 'Teslim Edildi';
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return 'İptal';
       default:
         return status ?? '-';
@@ -818,15 +819,15 @@ class _AccountPageState extends State<AccountPage> {
 
   Color _statusColor(String? status) {
     switch ((status ?? '').toLowerCase()) {
-      case 'confirmed':
+      case OrderStatusConstants.ecommerceConfirmed:
         return Colors.orange;
-      case 'preparing':
+      case OrderStatusConstants.ecommercePreparing:
         return Colors.blue;
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return Colors.purple;
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return Colors.green;
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return Colors.red;
       default:
         return Colors.grey;

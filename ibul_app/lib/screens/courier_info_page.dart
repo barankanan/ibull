@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/order_status_constants.dart';
 
 class CourierInfoPage extends StatelessWidget {
   const CourierInfoPage({super.key, required this.trackingData});
@@ -228,22 +229,22 @@ class CourierInfoPage extends StatelessWidget {
 
   String _normalizeStatus(String raw) {
     final value = raw.trim().toLowerCase();
-    if (value == 'shipped') return 'out_for_delivery';
+    if (value == OrderStatusConstants.ecommerceShipped) return OrderStatusConstants.ecommerceOutForDelivery;
     return value;
   }
 
   String _courierRoleTitle(String status) {
-    if (status == 'delivered') return 'Teslim Eden Kurye';
+    if (status == OrderStatusConstants.ecommerceDelivered) return 'Teslim Eden Kurye';
     return 'Ürünü Teslim Alan Kurye';
   }
 
   String _statusTitle(String status) {
     switch (status) {
-      case 'out_for_delivery':
+      case OrderStatusConstants.ecommerceOutForDelivery:
         return 'Dağıtımda';
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return 'Teslim Edildi';
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return 'İptal Edildi';
       default:
         return 'Güncellendi';

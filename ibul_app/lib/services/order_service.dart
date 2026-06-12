@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/runtime_config.dart';
+import '../utils/order_status_constants.dart';
 import 'supabase_service.dart';
 
 class OrderService {
@@ -251,8 +252,8 @@ class OrderService {
         'quantity': quantity,
         'unit_price': unitPrice,
         'total_price': totalPrice,
-        'status': 'new',
-        'shipment_step': 'confirmed',
+        'status': OrderStatusConstants.ecommerceNew,
+        'shipment_step': OrderStatusConstants.ecommerceConfirmed,
         'cargo_company': 'ihız',
         'tracking_number': _buildTrackingNumber(orderNumber, i),
         'created_at': now.toIso8601String(),
@@ -283,7 +284,7 @@ class OrderService {
     final baseOrderInsert = <String, dynamic>{
       'user_id': userId,
       'order_number': orderNumber,
-      'status': 'confirmed',
+      'status': OrderStatusConstants.ecommerceConfirmed,
       'payment_method': 'card',
       'payment_card_name': paymentCard['name']?.toString() ?? 'Kart',
       'payment_card_last4': _last4FromMaskedCard(
@@ -354,7 +355,7 @@ class OrderService {
             .map(
               (item) => <String, dynamic>{
                 'order_item_id': item['id'],
-                'status': 'confirmed',
+                'status': OrderStatusConstants.ecommerceConfirmed,
                 'title': 'Siparişiniz Alındı',
                 'description':
                     'Sipariş kaydı oluşturuldu ve satıcının onayına gönderildi.',
@@ -565,7 +566,7 @@ class OrderService {
       final baseInsert = <String, dynamic>{
         'user_id': normalizedSellerId,
         'order_number': orderNumber,
-        'status': 'confirmed',
+        'status': OrderStatusConstants.ecommerceConfirmed,
         'payment_method': 'external',
         'payment_card_name': 'Harici kanal',
         'payment_card_last4': '0000',
@@ -629,8 +630,8 @@ class OrderService {
             'quantity': safeQuantity,
             'unit_price': safeUnitPrice,
             'total_price': totalPrice,
-            'status': 'ready_to_ship',
-            'shipment_step': 'ready_to_ship',
+            'status': OrderStatusConstants.ecommerceReadyToShip,
+            'shipment_step': OrderStatusConstants.ecommerceReadyToShip,
             'cargo_company': cargoCompany,
             'tracking_number': trackingNumber,
             'created_at': now.toIso8601String(),
@@ -647,7 +648,7 @@ class OrderService {
       try {
         await _supabase.from('order_item_status_history').insert({
           'order_item_id': insertedItem['id'],
-          'status': 'ready_to_ship',
+          'status': OrderStatusConstants.ecommerceReadyToShip,
           'title': 'Harici sipariş İHIZ akışına eklendi',
           'description':
               'Satıcı panelinden girilen harici sipariş kurye havuzuna hazırlandı.',
@@ -850,7 +851,7 @@ class OrderService {
     }
 
     final currentStatus = (itemRow['status'] ?? '').toString().toLowerCase();
-    if (currentStatus != 'delivered' && !_isReturnFlowStatus(currentStatus)) {
+    if (currentStatus != OrderStatusConstants.ecommerceDelivered && !_isReturnFlowStatus(currentStatus)) {
       throw Exception(
         'Bu ürün için iade talebi yalnızca teslim edilen siparişlerde açılabilir.',
       );
@@ -1373,7 +1374,7 @@ class OrderService {
           status == 'picked_up' ||
           status == 'pickedup' ||
           status == 'in_transit' ||
-          status == 'delivered' ||
+          status == OrderStatusConstants.ecommerceDelivered ||
           status == 'completed' ||
           assignedCourierId.isNotEmpty ||
           row['picked_up_at'] != null ||
@@ -1559,7 +1560,7 @@ class OrderService {
     String sellerBody;
     if (approveSellerRejection) {
       nextRequestStatus = 'cancelled_by_ibul';
-      nextOrderStatus = 'delivered';
+      nextOrderStatus = OrderStatusConstants.ecommerceDelivered;
       historyTitle = 'İBUL iade dosyasını kapattı';
       buyerTitle = 'İadeniz reddedildi';
       buyerBody =
@@ -2102,7 +2103,7 @@ class OrderService {
           ...item,
           'order_number': fallbackNumber,
           'order_total_amount': item['total_price'] ?? item['unit_price'] ?? 0,
-          'order_status': item['status'] ?? 'new',
+          'order_status': item['status'] ?? OrderStatusConstants.ecommerceNew,
           'customer_id': null,
           'customer_name': 'Musteri bilgisi sinirli',
           'customer_email': null,
@@ -2126,7 +2127,7 @@ class OrderService {
         ...item,
         'order_number': order['order_number'] ?? '-',
         'order_total_amount': order['total_amount'] ?? 0,
-        'order_status': order['status'] ?? 'confirmed',
+        'order_status': order['status'] ?? OrderStatusConstants.ecommerceConfirmed,
         'customer_id': customerId,
         'customer_name':
             deliveryAddress['fullName']?.toString() ??
@@ -2263,7 +2264,7 @@ class OrderService {
         return 'return_approved';
       case 'seller_rejected':
       case 'closed_by_ibul':
-        return 'delivered';
+        return OrderStatusConstants.ecommerceDelivered;
       default:
         return 'return_requested';
     }
@@ -3057,9 +3058,9 @@ class OrderService {
     ).map((e) => (e['status'] ?? '').toString().toLowerCase()).toList();
     if (statuses.isEmpty) return;
 
-    String orderStatus = 'confirmed';
-    if (statuses.every((s) => s == 'delivered')) {
-      orderStatus = 'delivered';
+    String orderStatus = OrderStatusConstants.ecommerceConfirmed;
+    if (statuses.every((s) => s == OrderStatusConstants.ecommerceDelivered)) {
+      orderStatus = OrderStatusConstants.ecommerceDelivered;
     } else if (statuses.every(
       (s) => s == 'returned' || s == 'return_received' || s == 'refunded',
     )) {
@@ -3068,18 +3069,18 @@ class OrderService {
       orderStatus = 'return_requested';
     } else if (statuses.any(
       (s) =>
-          s == 'shipped' ||
-          s == 'transfer' ||
-          s == 'branch' ||
-          s == 'out_for_delivery',
+          s == OrderStatusConstants.ecommerceShipped ||
+          s == OrderStatusConstants.ecommerceTransfer ||
+          s == OrderStatusConstants.ecommerceBranch ||
+          s == OrderStatusConstants.ecommerceOutForDelivery,
     )) {
-      orderStatus = 'shipped';
-    } else if (statuses.any((s) => s == 'preparing' || s == 'ready_to_ship')) {
-      orderStatus = 'preparing';
-    } else if (statuses.any((s) => s == 'confirmed')) {
-      orderStatus = 'confirmed';
-    } else if (statuses.any((s) => s == 'cancelled')) {
-      orderStatus = 'cancelled';
+      orderStatus = OrderStatusConstants.ecommerceShipped;
+    } else if (statuses.any((s) => s == OrderStatusConstants.ecommercePreparing || s == OrderStatusConstants.ecommerceReadyToShip)) {
+      orderStatus = OrderStatusConstants.ecommercePreparing;
+    } else if (statuses.any((s) => s == OrderStatusConstants.ecommerceConfirmed)) {
+      orderStatus = OrderStatusConstants.ecommerceConfirmed;
+    } else if (statuses.any((s) => s == OrderStatusConstants.ecommerceCancelled)) {
+      orderStatus = OrderStatusConstants.ecommerceCancelled;
     }
 
     await _supabase
@@ -3093,25 +3094,25 @@ class OrderService {
 
   String _shipmentStepFromStatus(String status) {
     switch (status.toLowerCase()) {
-      case 'confirmed':
-      case 'new':
-        return 'confirmed';
-      case 'preparing':
-        return 'preparing';
-      case 'ready_to_ship':
-        return 'ready_to_ship';
-      case 'shipped':
-        return 'shipped';
-      case 'transfer':
-        return 'transfer';
-      case 'branch':
-        return 'branch';
-      case 'out_for_delivery':
-        return 'out_for_delivery';
-      case 'delivered':
-        return 'delivered';
-      case 'cancelled':
-        return 'cancelled';
+      case OrderStatusConstants.ecommerceConfirmed:
+      case OrderStatusConstants.ecommerceNew:
+        return OrderStatusConstants.ecommerceConfirmed;
+      case OrderStatusConstants.ecommercePreparing:
+        return OrderStatusConstants.ecommercePreparing;
+      case OrderStatusConstants.ecommerceReadyToShip:
+        return OrderStatusConstants.ecommerceReadyToShip;
+      case OrderStatusConstants.ecommerceShipped:
+        return OrderStatusConstants.ecommerceShipped;
+      case OrderStatusConstants.ecommerceTransfer:
+        return OrderStatusConstants.ecommerceTransfer;
+      case OrderStatusConstants.ecommerceBranch:
+        return OrderStatusConstants.ecommerceBranch;
+      case OrderStatusConstants.ecommerceOutForDelivery:
+        return OrderStatusConstants.ecommerceOutForDelivery;
+      case OrderStatusConstants.ecommerceDelivered:
+        return OrderStatusConstants.ecommerceDelivered;
+      case OrderStatusConstants.ecommerceCancelled:
+        return OrderStatusConstants.ecommerceCancelled;
       case 'return_requested':
         return 'return_requested';
       case 'return_approved':
@@ -3124,29 +3125,29 @@ class OrderService {
       case 'returned':
         return 'returned';
       default:
-        return 'confirmed';
+        return OrderStatusConstants.ecommerceConfirmed;
     }
   }
 
   String _statusTitle(String step) {
     switch (step) {
-      case 'confirmed':
+      case OrderStatusConstants.ecommerceConfirmed:
         return 'Sipariş kabul edildi';
-      case 'preparing':
+      case OrderStatusConstants.ecommercePreparing:
         return 'Sipariş hazırlanıyor';
-      case 'ready_to_ship':
+      case OrderStatusConstants.ecommerceReadyToShip:
         return 'Sevkiyat operasyonu başlatıldı';
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return 'Sipariş kargoya verildi';
-      case 'transfer':
+      case OrderStatusConstants.ecommerceTransfer:
         return 'Kargo transfer aşamasında';
-      case 'branch':
+      case OrderStatusConstants.ecommerceBranch:
         return 'Kargo şubeye ulaştı';
-      case 'out_for_delivery':
+      case OrderStatusConstants.ecommerceOutForDelivery:
         return 'Sipariş dağıtıma çıktı';
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return 'Sipariş teslim edildi';
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return 'Sipariş iptal edildi';
       case 'return_requested':
         return 'İade talebi alındı';
@@ -3166,23 +3167,23 @@ class OrderService {
 
   String _statusDescription(String step, {required String cargoCompany}) {
     switch (step) {
-      case 'confirmed':
+      case OrderStatusConstants.ecommerceConfirmed:
         return 'Satıcı siparişinizi kabul etti.';
-      case 'preparing':
+      case OrderStatusConstants.ecommercePreparing:
         return 'Satıcı siparişinizi paketleme hazırlığına aldı.';
-      case 'ready_to_ship':
+      case OrderStatusConstants.ecommerceReadyToShip:
         return 'Siparişiniz sevkiyat operasyonuna alındı.';
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return 'Paket $cargoCompany kargo firmasına teslim edildi.';
-      case 'transfer':
+      case OrderStatusConstants.ecommerceTransfer:
         return 'Paket transfer merkezinde ilerliyor.';
-      case 'branch':
+      case OrderStatusConstants.ecommerceBranch:
         return 'Paket teslimat şubesine ulaştı.';
-      case 'out_for_delivery':
+      case OrderStatusConstants.ecommerceOutForDelivery:
         return 'Kurye paketinizi dağıtıma çıkardı.';
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return 'Sipariş başarıyla teslim edildi.';
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return 'Sipariş iptal edildi.';
       case 'return_requested':
         return 'Müşteri iade talebi oluşturdu. İHız iade operasyonuna aktarıldı.';
@@ -3227,14 +3228,14 @@ class OrderService {
 
   String _notificationTitle(String step, {required String storeName}) {
     switch (step) {
-      case 'preparing':
-      case 'ready_to_ship':
+      case OrderStatusConstants.ecommercePreparing:
+      case OrderStatusConstants.ecommerceReadyToShip:
         return storeName;
-      case 'shipped':
-      case 'transfer':
-      case 'branch':
-      case 'out_for_delivery':
-      case 'delivered':
+      case OrderStatusConstants.ecommerceShipped:
+      case OrderStatusConstants.ecommerceTransfer:
+      case OrderStatusConstants.ecommerceBranch:
+      case OrderStatusConstants.ecommerceOutForDelivery:
+      case OrderStatusConstants.ecommerceDelivered:
         return storeName;
       case 'returned':
       case 'refunded':
@@ -3258,9 +3259,9 @@ class OrderService {
         ? 'ürününüz'
         : productName.trim();
     switch (step) {
-      case 'preparing':
+      case OrderStatusConstants.ecommercePreparing:
         return "$storeName mağazamızdan aldığınız ($normalizedProductName) siparişiniz hazırlanıyor.";
-      case 'ready_to_ship':
+      case OrderStatusConstants.ecommerceReadyToShip:
         final mode = (deliveryMode ?? '').toLowerCase();
         if (mode == 'courier') {
           return "$storeName mağazamızdan aldığınız ($normalizedProductName) ürünü için İHız kurye çağrısı açıldı. Kurye paketi teslim aldığında takip numarası paylaşılacaktır.";
@@ -3278,7 +3279,7 @@ class OrderService {
           return "$storeName mağazamızdan aldığınız ($normalizedProductName) ürünü için anlaşmalı kargo firması adres alımı bekleniyor.";
         }
         return "$storeName mağazamızdan aldığınız ($normalizedProductName) ürünü sevkiyat operasyonuna alındı.";
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         final tracking = (trackingNumber ?? '').trim().isEmpty
             ? '-'
             : trackingNumber!.trim();
@@ -3296,11 +3297,11 @@ class OrderService {
           return "$storeName mağazamızdan aldığınız $normalizedProductName ürünü İHız kuryemiz tarafından teslim alınmıştır, $shortCode ile takip edebilirsiniz, $tracking ile ürünün detaylı bilgilerini görebilirsiniz.";
         }
         return "$storeName mağazamızdan aldığınız ($normalizedProductName) ürünü $deliveryLabel teslim edilmiştir. $tracking ile takip edebilirsiniz.";
-      case 'transfer':
-      case 'branch':
-      case 'out_for_delivery':
+      case OrderStatusConstants.ecommerceTransfer:
+      case OrderStatusConstants.ecommerceBranch:
+      case OrderStatusConstants.ecommerceOutForDelivery:
         return "$storeName mağazamızdan aldığınız ($normalizedProductName) siparişinizin teslimat süreci güncellendi.";
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return "$storeName mağazamızdan aldığınız $normalizedProductName ürünü, İHız tarafından teslim edilmiştir.";
       case 'returned':
       case 'refunded':
@@ -3317,12 +3318,12 @@ class OrderService {
 
   bool _shouldSendCustomerTrackingNotification(String shipmentStep) {
     final normalized = shipmentStep.trim().toLowerCase();
-    return normalized == 'shipped' ||
-        normalized == 'out_for_delivery' ||
-        normalized == 'delivered' ||
+    return normalized == OrderStatusConstants.ecommerceShipped ||
+        normalized == OrderStatusConstants.ecommerceOutForDelivery ||
+        normalized == OrderStatusConstants.ecommerceDelivered ||
         normalized == 'returned' ||
         normalized == 'refunded' ||
-        normalized == 'cancelled';
+        normalized == OrderStatusConstants.ecommerceCancelled;
   }
 
   String _deliveryModeLabel({
@@ -3338,7 +3339,7 @@ class OrderService {
         return '$cargoCompany şube teslim';
       case 'branch_company_pickup':
         return '$cargoCompany adresten alım';
-      case 'branch':
+      case OrderStatusConstants.ecommerceBranch:
         return cargoCompany;
       default:
         return cargoCompany;
@@ -3858,7 +3859,7 @@ class OrderService {
         final normalizedStatus = _shipmentStepFromStatus(
           item['shipment_step']?.toString() ??
               item['status']?.toString() ??
-              'confirmed',
+              OrderStatusConstants.ecommerceConfirmed,
         );
         if (!_shouldSendCustomerTrackingNotification(normalizedStatus)) {
           continue;

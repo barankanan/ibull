@@ -11,16 +11,44 @@ import '../../models/restaurant_ops_models.dart';
 ///   - [TableTransferType.partial]       — checkbox-based item selection
 ///   - [TableTransferType.customerBased] — groups items by "customer" label
 ///
+/// Target tables are described by [TransferTargetTable] so the picker can show
+/// each table's real label (e.g. "Bahçe 3"), group them by area (Salon, Bahçe,
+/// Teras …) and highlight occupied tables in red.
+///
 /// Usage:
 /// ```dart
 /// final result = await TransferTableModal.show(
 ///   context,
 ///   tableNumber: 3,
-///   availableTableNumbers: [1, 2, 4, 5],
+///   availableTables: targets,
 ///   allItems: flatItemList,  // flattened from all table_orders
 /// );
 /// if (result != null) { /* perform transfer */ }
 /// ```
+
+/// Describes a single table the order can be transferred to.
+class TransferTargetTable {
+  const TransferTargetTable({
+    required this.tableNumber,
+    required this.label,
+    this.areaName = '',
+    this.isOccupied = false,
+  });
+
+  /// Canonical seller-wide table number (matches `store_tables.table_number`).
+  final int tableNumber;
+
+  /// Human label to render on the chip (e.g. "Bahçe 3", "Salon 1").
+  final String label;
+
+  /// Area this table belongs to (e.g. "Salon", "Bahçe", "Teras").
+  /// Empty string → grouped under a generic "Diğer" bucket.
+  final String areaName;
+
+  /// True when the table currently has at least one active (non-closed) order.
+  final bool isOccupied;
+}
+
 class TransferTableResult {
   const TransferTableResult({
     required this.toTable,
@@ -38,12 +66,18 @@ class TransferTableResult {
 class TransferTableModal extends StatefulWidget {
   const TransferTableModal._({
     required this.tableNumber,
-    required this.availableTableNumbers,
+    required this.availableTables,
     required this.allItems,
+    this.sourceLabel,
   });
 
   final int tableNumber;
-  final List<int> availableTableNumbers;
+
+  /// Source table label shown in the header (e.g. "Bahçe 3").
+  final String? sourceLabel;
+
+  /// Tables the current order can be transferred to.
+  final List<TransferTargetTable> availableTables;
 
   /// Flat list of all order items currently on this table.
   /// Each map must have at minimum: 'id', 'name', 'quantity', 'price'.
@@ -52,8 +86,9 @@ class TransferTableModal extends StatefulWidget {
   static Future<TransferTableResult?> show(
     BuildContext context, {
     required int tableNumber,
-    required List<int> availableTableNumbers,
+    required List<TransferTargetTable> availableTables,
     required List<Map<String, dynamic>> allItems,
+    String? sourceLabel,
   }) {
     return showModalBottomSheet<TransferTableResult>(
       context: context,
@@ -62,8 +97,9 @@ class TransferTableModal extends StatefulWidget {
       backgroundColor: Colors.transparent,
       builder: (_) => TransferTableModal._(
         tableNumber: tableNumber,
-        availableTableNumbers: availableTableNumbers,
+        availableTables: availableTables,
         allItems: allItems,
+        sourceLabel: sourceLabel,
       ),
     );
   }
@@ -79,6 +115,29 @@ class _TransferTableModalState extends State<TransferTableModal> {
   final TextEditingController _noteController = TextEditingController();
 
   static const _primaryColor = Color(0xFF2563EB);
+  static const _occupiedColor = Color(0xFFDC2626);
+
+  /// Tables grouped by area, preserving the incoming order of areas and tables.
+  List<MapEntry<String, List<TransferTargetTable>>> get _tablesByArea {
+    final grouped = <String, List<TransferTargetTable>>{};
+    final order = <String>[];
+    for (final table in widget.availableTables) {
+      final area = table.areaName.trim().isEmpty ? 'Diğer' : table.areaName.trim();
+      if (!grouped.containsKey(area)) {
+        grouped[area] = <TransferTargetTable>[];
+        order.add(area);
+      }
+      grouped[area]!.add(table);
+    }
+    return order.map((area) => MapEntry(area, grouped[area]!)).toList();
+  }
+
+  TransferTargetTable? get _selectedTable {
+    for (final table in widget.availableTables) {
+      if (table.tableNumber == _targetTable) return table;
+    }
+    return null;
+  }
 
   @override
   void dispose() {
@@ -218,7 +277,7 @@ class _TransferTableModalState extends State<TransferTableModal> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Masa Aktar — Masa ${widget.tableNumber}',
+                  'Masa Aktar — ${widget.sourceLabel?.trim().isNotEmpty == true ? widget.sourceLabel!.trim() : 'Masa ${widget.tableNumber}'}',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
@@ -247,68 +306,145 @@ class _TransferTableModalState extends State<TransferTableModal> {
   }
 
   Widget _buildTargetTableSelector() {
+    final groups = _tablesByArea;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Hedef Masa',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF111827),
-          ),
+        Row(
+          children: [
+            const Text(
+              'Hedef Masa',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF111827),
+              ),
+            ),
+            const Spacer(),
+            if (widget.availableTables.any((t) => t.isOccupied))
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 9,
+                    height: 9,
+                    decoration: const BoxDecoration(
+                      color: _occupiedColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  const Text(
+                    'Dolu',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: _occupiedColor,
+                    ),
+                  ),
+                ],
+              ),
+          ],
         ),
         const SizedBox(height: 8),
-        widget.availableTableNumbers.isEmpty
-            ? Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF9C3),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFFDE68A)),
-                ),
-                child: const Text(
-                  'Aktarılabilecek başka masa bulunamadı.',
-                  style: TextStyle(fontSize: 12),
-                ),
-              )
-            : Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: widget.availableTableNumbers.map((n) {
-                  final selected = _targetTable == n;
-                  return GestureDetector(
-                    onTap: () => setState(() => _targetTable = n),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? _primaryColor
-                            : const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: selected
-                              ? _primaryColor
-                              : const Color(0xFFE2E8F0),
-                        ),
-                      ),
-                      child: Text(
-                        'Masa $n',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: selected
-                              ? Colors.white
-                              : const Color(0xFF374151),
-                        ),
-                      ),
+        if (groups.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF9C3),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFFDE68A)),
+            ),
+            child: const Text(
+              'Aktarılabilecek başka masa bulunamadı.',
+              style: TextStyle(fontSize: 12),
+            ),
+          )
+        else
+          ...groups.map((entry) {
+            final area = entry.key;
+            final tables = entry.value;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    area,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                      color: Colors.grey.shade500,
                     ),
-                  );
-                }).toList(),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: tables.map(_buildTargetTableChip).toList(),
+                  ),
+                ],
               ),
+            );
+          }),
       ],
+    );
+  }
+
+  Widget _buildTargetTableChip(TransferTargetTable table) {
+    final selected = _targetTable == table.tableNumber;
+    final occupied = table.isOccupied;
+
+    final Color background;
+    final Color borderColor;
+    final Color textColor;
+    if (selected) {
+      background = occupied ? _occupiedColor : _primaryColor;
+      borderColor = background;
+      textColor = Colors.white;
+    } else if (occupied) {
+      background = const Color(0xFFFEF2F2);
+      borderColor = const Color(0xFFFECACA);
+      textColor = _occupiedColor;
+    } else {
+      background = const Color(0xFFF1F5F9);
+      borderColor = const Color(0xFFE2E8F0);
+      textColor = const Color(0xFF374151);
+    }
+
+    return GestureDetector(
+      onTap: () => setState(() => _targetTable = table.tableNumber),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: borderColor),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (occupied) ...[
+              Icon(
+                Icons.circle,
+                size: 8,
+                color: selected ? Colors.white : _occupiedColor,
+              ),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              table.label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: textColor,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -592,7 +728,7 @@ class _TransferTableModalState extends State<TransferTableModal> {
         label: Text(
           _targetTable == null
               ? 'Hedef masa seçin'
-              : 'Masa $_targetTable\'e Aktar',
+              : '${_selectedTable?.label ?? 'Masa $_targetTable'}\'e Aktar',
         ),
         style: FilledButton.styleFrom(
           backgroundColor: _primaryColor,
