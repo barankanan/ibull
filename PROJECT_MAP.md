@@ -222,6 +222,16 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Risk notu:` UI + API + state + QR katmanlarını aynı dosyada topluyor; etki alanı geniş.
 - `Durum:` kısmi
 
+## `ibul_app/lib/services/location_access_service.dart`
+
+- `Dosya yolu:` `ibul_app/lib/services/location_access_service.dart`
+- `Amaç:` Konum izni isteme ve mevcut konum okuma akışını tek noktada toplar; paralel `requestPermission` çağrılarını in-flight Future ile engeller.
+- `Bağlı olduğu dosyalar:` `geolocator`.
+- `Bu dosyayı kullanan dosyalar:` `map_page.dart`, `nearby_sellers_map_page.dart`.
+- `Değişirse etkilenecek yerler:` harita açılışı, yakın lokasyon akışı, konum merkezleme, yakın mağaza mesafe sıralaması.
+- `Risk notu:` İzin verildikten sonra konum alınamazsa UI katmanı hata mesajını göstermeye devam eder; proximity notification mantığı bu servisten bağımsızdır.
+- `Durum:` net
+
 ## `ibul_app/lib/screens/map_page.dart`
 
 - `Dosya yolu:` `ibul_app/lib/screens/map_page.dart`
@@ -229,7 +239,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` `AppState`, `StoreService`, `SupabaseService`, `PushNotificationService`, `BusinessDetailPage`, map/filter widget’ları.
 - `Bu dosyayı kullanan dosyalar:` route `/map`, `home_screen.dart`, `web_header.dart`, `list_detail_page.dart`, `product_search_result_page.dart`, `visual_intelligence_result_page.dart`.
 - `Değişirse etkilenecek yerler:` store proximity, harita arama, business detail yönlendirmeleri.
-- `Risk notu:` canlı konum sync ve bildirim mantığı mevcut; yan etki alanı yalnız UI değil.
+- `Risk notu:` canlı konum sync ve bildirim mantığı mevcut; yan etki alanı yalnız UI değil. Konum izni/konum okuma `LocationAccessService` üzerinden tekilleştirildi; IndexedStack + push edilen ikinci `MapPage` izin yarışı bu katmanda engellenir. Geri butonu: desktop geniş layout veya `product != null` ile push edilmiş yakın lokasyon akışında (`Navigator.canPop`) gösterilir; standalone harita sekmesinde mobilde gizli kalır.
 - `Durum:` kısmi
 
 ## `ibul_app/lib/screens/seller_login_page.dart`
@@ -618,6 +628,17 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - Prod `table_order_history` şemasında `archived_at` kolonu görünmüyor; başka ortamda legacy kolon olup olmadığı doğrulanmalı.
 
 # Update Log
+
+## 2026-06-13 (product detail nearby map back button)
+
+- `ibul_app/lib/screens/map_page.dart`: Ürün detayından `MapPage(product: …)` ile push edilen yakın lokasyon akışında mobil/tablet sol üst geri butonu gösterilir (`product != null && Navigator.canPop`); IndexedStack’teki standalone harita sekmesinde geri butonu görünmez. Desktop geniş layout (`>=1100px`) davranışı aynı kalır.
+- Ürün detayı yakın lokasyon navigasyonu: `product_info_section_mobile.dart` → `MapPage(product, initialSearchQuery)`; ayrı `NearbySellersMapPage` route’u kullanılmıyor.
+
+## 2026-06-13 (location permission gate)
+
+- `ibul_app/lib/services/location_access_service.dart` eklendi: `Geolocator.requestPermission` çağrıları tek in-flight Future ile serialize edilir; konum okuma bu servis üzerinden yapılır.
+- `ibul_app/lib/screens/map_page.dart`: Harita açılışı ve “konumuma git” akışı artık `LocationAccessService` kullanıyor; IndexedStack’teki arka plan `MapPage` ile push edilen `MapPage` aynı anda izin isteyemez.
+- `ibul_app/lib/screens/nearby_sellers_map_page.dart`: Yakın mağaza haritası konum init/polling akışı aynı servise taşındı.
 
 ## 2026-06-13 (store grid birebir search hizalama)
 

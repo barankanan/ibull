@@ -13,6 +13,7 @@ import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../core/store_logo_helper.dart';
 import '../models/product_model.dart';
+import '../services/location_access_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/store_service.dart';
 import '../services/supabase_service.dart';
@@ -552,34 +553,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
   Future<Position?> _getFreshCurrentPosition() async {
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return null;
-
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return null;
-      }
-
-      final settings = kIsWeb
-          ? const LocationSettings(
-              accuracy: LocationAccuracy.medium,
-              timeLimit: Duration(seconds: 20),
-            )
-          : const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              timeLimit: Duration(seconds: 12),
-            );
-
-      try {
-        return await Geolocator.getCurrentPosition(locationSettings: settings);
-      } catch (_) {
-        return await Geolocator.getLastKnownPosition();
-      }
+      return await LocationAccessService.instance.getCurrentPosition();
     } catch (_) {
       return null;
     }
@@ -629,9 +603,11 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   // _businesses is now an instance variable, initialized in initState
 
   Future<void> _checkLocationPermissionAndStart() async {
+    final locationAccess = LocationAccessService.instance;
+
     if (kIsWeb) {
       try {
-        final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        final serviceEnabled = await locationAccess.isLocationServiceEnabled();
         if (!serviceEnabled) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -648,7 +624,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
         Position? position;
         try {
-          position = await Geolocator.getCurrentPosition(
+          position = await locationAccess.getCurrentPosition(
             locationSettings: const LocationSettings(
               accuracy: LocationAccuracy.medium,
               timeLimit: Duration(seconds: 30),
@@ -656,9 +632,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           );
         } catch (e) {
           debugPrint('Primary location fetch failed: $e');
-          try {
-            position = await Geolocator.getLastKnownPosition();
-          } catch (_) {}
         }
 
         if (mounted && position != null) {
@@ -715,11 +688,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     }
 
     try {
-      bool serviceEnabled;
-      LocationPermission permission;
-
-      // Test if location services are enabled.
-      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      final serviceEnabled = await locationAccess.isLocationServiceEnabled();
       if (!serviceEnabled) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -737,17 +706,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         return;
       }
 
-      permission = await Geolocator.checkPermission();
+      final permission = await locationAccess.ensurePermission();
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Konum izni reddedildi.')),
-            );
-          }
-          return;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Konum izni reddedildi.')),
+          );
         }
+        return;
       }
 
       if (permission == LocationPermission.deniedForever) {
@@ -779,12 +745,20 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         return;
       }
 
-      // Get initial position
-      final position = await Geolocator.getCurrentPosition(
+      final position = await locationAccess.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
         ),
+        requestPermissionIfNeeded: false,
       );
+      if (position == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Konum alınamadı.')),
+          );
+        }
+        return;
+      }
 
       if (mounted) {
         setState(() {
@@ -820,12 +794,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         }
 
         try {
-          final position = await Geolocator.getCurrentPosition(
+          final position = await LocationAccessService.instance.getCurrentPosition(
             locationSettings: const LocationSettings(
               accuracy: LocationAccuracy.medium,
               timeLimit: Duration(seconds: 8),
             ),
+            requestPermissionIfNeeded: false,
           );
+          if (position == null) return;
 
           if (mounted) {
             _handleLocationUpdate(
@@ -1708,10 +1684,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     );
   }
 
+  bool get _openedFromProductDetail => widget.product != null;
+
   @override
   Widget build(BuildContext context) {
     final isWebLayout = MediaQuery.of(context).size.width >= 1100;
-    final shouldShowBackButton = isWebLayout;
+    final shouldShowBackButton =
+        isWebLayout ||
+        (_openedFromProductDetail && Navigator.canPop(context));
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Stack(
