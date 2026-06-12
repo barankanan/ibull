@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import '../utils/order_status_constants.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -71,25 +72,25 @@ class OrderDetailPage extends StatelessWidget {
         .toList();
     if (itemStatuses.isEmpty) return _status;
     if (itemStatuses.any(_isReturnFlowStatus)) return 'return_requested';
-    if (itemStatuses.every((status) => status == 'delivered')) {
-      return 'delivered';
+    if (itemStatuses.every((status) => status == OrderStatusConstants.ecommerceDelivered)) {
+      return OrderStatusConstants.ecommerceDelivered;
     }
-    if (itemStatuses.any((status) => status == 'cancelled')) {
-      return 'cancelled';
+    if (itemStatuses.any((status) => status == OrderStatusConstants.ecommerceCancelled)) {
+      return OrderStatusConstants.ecommerceCancelled;
     }
     if (itemStatuses.any(
       (status) =>
-          status == 'shipped' ||
-          status == 'transfer' ||
-          status == 'branch' ||
-          status == 'out_for_delivery',
+          status == OrderStatusConstants.ecommerceShipped ||
+          status == OrderStatusConstants.ecommerceTransfer ||
+          status == OrderStatusConstants.ecommerceBranch ||
+          status == OrderStatusConstants.ecommerceOutForDelivery,
     )) {
-      return 'shipped';
+      return OrderStatusConstants.ecommerceShipped;
     }
     if (itemStatuses.any(
-      (status) => status == 'preparing' || status == 'ready_to_ship',
+      (status) => status == OrderStatusConstants.ecommercePreparing || status == OrderStatusConstants.ecommerceReadyToShip,
     )) {
-      return 'preparing';
+      return OrderStatusConstants.ecommercePreparing;
     }
     return _status;
   }
@@ -424,7 +425,7 @@ class OrderDetailPage extends StatelessWidget {
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
     final itemStatus = (item['status'] ?? '').toString().toLowerCase();
-    final canRequestReturn = itemStatus == 'delivered';
+    final canRequestReturn = itemStatus == OrderStatusConstants.ecommerceDelivered;
     final isReturnFlow = _isReturnFlowStatus(itemStatus);
     final canScheduleReturnPickup = itemStatus == 'return_approved';
     final returnButtonLabel = canScheduleReturnPickup
@@ -915,21 +916,20 @@ class OrderDetailPage extends StatelessWidget {
 
   String _statusLabel(String status) {
     switch (status.toLowerCase()) {
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return 'Siparişiniz Kargoda';
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return 'Sipariş Teslim Edildi';
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return 'Sipariş İptal Edildi';
       case 'return_requested':
       case 'return_approved':
       case 'return_shipped_back':
       case 'return_received':
-      case 'returned':
-      case 'refunded':
+      case OrderStatusConstants.ecommerceReturns:
         return 'İade Süreci Başlatıldı';
-      case 'preparing':
-      case 'confirmed':
+      case OrderStatusConstants.ecommercePreparing:
+      case OrderStatusConstants.ecommerceConfirmed:
       default:
         return 'Siparişiniz Hazırlanıyor';
     }
@@ -937,21 +937,20 @@ class OrderDetailPage extends StatelessWidget {
 
   Color _statusColor(String status) {
     switch (status.toLowerCase()) {
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return Colors.orange;
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return Colors.green;
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return Colors.red;
       case 'return_requested':
       case 'return_approved':
       case 'return_shipped_back':
       case 'return_received':
-      case 'returned':
-      case 'refunded':
+      case OrderStatusConstants.ecommerceReturns:
         return const Color(0xFFFF8A00);
-      case 'preparing':
-      case 'confirmed':
+      case OrderStatusConstants.ecommercePreparing:
+      case OrderStatusConstants.ecommerceConfirmed:
       default:
         return Colors.green;
     }
@@ -959,21 +958,20 @@ class OrderDetailPage extends StatelessWidget {
 
   IconData _statusIcon(String status) {
     switch (status.toLowerCase()) {
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return Icons.local_shipping;
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return Icons.check_circle;
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return Icons.cancel;
       case 'return_requested':
       case 'return_approved':
       case 'return_shipped_back':
       case 'return_received':
-      case 'returned':
-      case 'refunded':
+      case OrderStatusConstants.ecommerceReturns:
         return Icons.assignment_return_rounded;
-      case 'preparing':
-      case 'confirmed':
+      case OrderStatusConstants.ecommercePreparing:
+      case OrderStatusConstants.ecommerceConfirmed:
       default:
         return Icons.inventory_2;
     }
@@ -985,8 +983,7 @@ class OrderDetailPage extends StatelessWidget {
       case 'return_approved':
       case 'return_shipped_back':
       case 'return_received':
-      case 'returned':
-      case 'refunded':
+      case OrderStatusConstants.ecommerceReturns:
         return true;
       default:
         return false;

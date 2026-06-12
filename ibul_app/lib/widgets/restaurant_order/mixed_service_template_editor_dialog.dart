@@ -127,8 +127,18 @@ class _MixedServiceTemplateEditorDialogState
   String get _summaryTotalLabel =>
       _isMenuTemplate ? 'Menü Toplamı' : 'Servis Önizleme Toplamı';
 
-  String get _serviceFlowInfoText =>
-      'Servis kurgusu bu havuz üzerinden çalışır. Ürünler garson ekranında doğrudan eklenmez; seçim yapıldıktan sonra siparişe girer.';
+  String get _pricingInfoText {
+    final manualAllowed =
+        _pricingMode == MixedServiceOrder.manualAllowedPriceMode;
+    if (_isMenuTemplate) {
+      return manualAllowed
+          ? 'Menü toplamı seçilen ürünlerden hesaplanır; siparişte manuel fiyat girilebilir.'
+          : 'Menü fiyatı seçilen ürün toplamlarından otomatik hesaplanır.';
+    }
+    return manualAllowed
+        ? 'Servis toplamı seçilen ürünlerden hesaplanır; garson "Servisi Aç" ekranında fiyatı manuel değiştirebilir.'
+        : 'Servis fiyatı garson ekranında seçilen ürünlerin toplamından otomatik hesaplanır.';
+  }
 
   List<SellerProduct> get _selectableProducts =>
       widget.products
@@ -154,21 +164,47 @@ class _MixedServiceTemplateEditorDialogState
     return _selectedProducts.fold<double>(0, (sum, product) {
       final draft = _selectedItems[product.id];
       if (draft == null) return sum;
-      final double unitPrice;
-      if (!product.usesPortionLikeStepper &&
-          product.resolvedPricingType == ProductPricingType.portion) {
-        unitPrice =
-            product.effectiveBaseUnitPrice *
-            (draft.selectedServiceAmount ?? 1.0);
-      } else {
-        unitPrice = MixedServiceOrder.productUnitPriceForSelection(
-          product,
-          selectedServiceAmount: draft.selectedServiceAmount,
-          selectedWeightGrams: draft.selectedWeightGrams,
-        );
-      }
-      return sum + (unitPrice * draft.quantity);
+      return sum + (_effectivePoolUnitPrice(product, draft) * draft.quantity);
     });
+  }
+
+  /// Bir havuz ürününün otomatik hesaplanan birim fiyatı (porsiyon/gramaja
+  /// göre). Özel fiyat girilmemişse bu kullanılır.
+  double _autoUnitPriceForDraft(SellerProduct product, _TemplateChildDraft draft) {
+    if (!product.usesPortionLikeStepper &&
+        product.resolvedPricingType == ProductPricingType.portion) {
+      return product.effectiveBaseUnitPrice *
+          (draft.selectedServiceAmount ?? 1.0);
+    }
+    return MixedServiceOrder.productUnitPriceForSelection(
+      product,
+      selectedServiceAmount: draft.selectedServiceAmount,
+      selectedWeightGrams: draft.selectedWeightGrams,
+    );
+  }
+
+  /// Özel fiyat varsa onu, yoksa otomatik fiyatı döndürür.
+  double _effectivePoolUnitPrice(
+    SellerProduct product,
+    _TemplateChildDraft draft,
+  ) {
+    final custom = draft.customUnitPrice;
+    if (custom != null && custom > 0) return custom;
+    return _autoUnitPriceForDraft(product, draft);
+  }
+
+  /// Bir ürünün otomatik porsiyon/gramaj etiketi (örn. "Yarım Porsiyon").
+  String _autoLabelForDraft(SellerProduct product, _TemplateChildDraft draft) {
+    if (!product.usesServiceControlStepper &&
+        product.resolvedPricingType == ProductPricingType.portion) {
+      final amount = draft.selectedServiceAmount ?? 1.0;
+      return ProductPriceCalculator.formatPortionLabel(amount);
+    }
+    return MixedServiceOrder.productAmountLabelForSelection(
+      product,
+      selectedServiceAmount: draft.selectedServiceAmount,
+      selectedWeightGrams: draft.selectedWeightGrams,
+    );
   }
 
   bool get _canSubmit {
@@ -187,20 +223,18 @@ class _MixedServiceTemplateEditorDialogState
     final templateConfig = widget.initialProduct == null
         ? null
         : MixedServiceOrder.templateConfigFromProduct(widget.initialProduct!);
-    _pricingMode = _isMenuTemplate
-        ? MixedServiceOrder.normalizeTemplatePricingMode(
-            templateConfig?['pricing_mode']?.toString(),
-          )
-        : (templateConfig?['pricing_mode']?.toString().trim().isNotEmpty ??
-              false)
-        ? templateConfig!['pricing_mode'].toString().trim()
-        : MixedServiceOrder.autoSumPriceMode;
+    _pricingMode = MixedServiceOrder.normalizeTemplatePricingMode(
+      templateConfig?['pricing_mode']?.toString(),
+    );
 
     for (final item in MixedServiceOrder.normalizeTemplateItems(
       templateConfig?['template_items'],
     )) {
       final productId = item['product_id']?.toString() ?? '';
       if (productId.isEmpty) continue;
+      final manualPrice =
+          (item['manual_unit_price'] as num?)?.toDouble() ??
+          (item['manualUnitPrice'] as num?)?.toDouble();
       _selectedItems[productId] = _TemplateChildDraft(
         quantity: (item['quantity'] as num?)?.toInt() ?? 1,
         selectedServiceAmount:
@@ -214,6 +248,13 @@ class _MixedServiceTemplateEditorDialogState
           item['service_round'],
         ),
         note: item['note']?.toString() ?? '',
+        customUnitPrice: (manualPrice != null && manualPrice > 0)
+            ? manualPrice
+            : null,
+        customLabel:
+            item['custom_option_label']?.toString().trim() ??
+            item['customOptionLabel']?.toString().trim() ??
+            '',
       );
     }
 
@@ -312,16 +353,33 @@ class _MixedServiceTemplateEditorDialogState
     final isPortionType =
         product.usesPortionLikeStepper ||
         product.resolvedPricingType == ProductPricingType.portion;
+    final isWeightType =
+        product.resolvedServiceControlType ==
+        ProductServiceControlType.weightStepper;
+    final nextAmount = isPortionType ? selectedServiceAmount : null;
+    final nextGrams = isWeightType ? selectedWeightGrams : null;
     setState(() {
       _selectionDrafts[product.id] = current.copyWith(
         quantity: 1,
-        selectedServiceAmount: isPortionType ? selectedServiceAmount : null,
-        selectedWeightGrams:
-            product.resolvedServiceControlType ==
-                ProductServiceControlType.weightStepper
-            ? selectedWeightGrams
-            : null,
+        selectedServiceAmount: nextAmount,
+        selectedWeightGrams: nextGrams,
       );
+      // Ürün zaten havuzdaysa porsiyon/gramaj değişimini havuza da uygula ki
+      // fiyat ve önizleme toplamı anında otomatik güncellensin. Porsiyon
+      // değiştiğinde özel fiyat sıfırlanır; böylece fiyat otomatik hesaplanır.
+      final pooled = _selectedItems[product.id];
+      if (pooled != null) {
+        _selectedItems[product.id] = pooled.copyWith(
+          quantity: pooled.quantity <= 0 ? 1 : pooled.quantity,
+          selectedServiceAmount: isPortionType
+              ? nextAmount
+              : pooled.selectedServiceAmount,
+          selectedWeightGrams: isWeightType
+              ? nextGrams
+              : pooled.selectedWeightGrams,
+          clearCustomUnitPrice: true,
+        );
+      }
     });
   }
 
@@ -410,6 +468,116 @@ class _MixedServiceTemplateEditorDialogState
     });
   }
 
+  /// Havuzdaki bir ürün için özel fiyat ve etiket düzenleme penceresi.
+  Future<void> _editPoolItemCustomization(SellerProduct product) async {
+    final existing =
+        _selectedItems[product.id] ?? const _TemplateChildDraft(quantity: 1);
+    final autoPrice = _autoUnitPriceForDraft(product, existing);
+    final effectivePrice = _effectivePoolUnitPrice(product, existing);
+    final autoLabel = _autoLabelForDraft(product, existing);
+    final priceController = TextEditingController(
+      text: effectivePrice.toStringAsFixed(2),
+    );
+    final labelController = TextEditingController(text: existing.customLabel);
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(product.name),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Otomatik fiyat: ${_formatMoney(autoPrice)}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: priceController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'Özel fiyat',
+                  prefixText: '₺',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: labelController,
+                decoration: InputDecoration(
+                  labelText: 'Özel etiket',
+                  hintText: autoLabel.trim().isEmpty
+                      ? 'Örn: Tek Şiş, Çift Şiş'
+                      : 'Örn: Tek Şiş (otomatik: $autoLabel)',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(<String, dynamic>{
+                    'reset': true,
+                  }),
+              child: const Text('Otomatiğe dön'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(<String, dynamic>{
+                    'price': priceController.text,
+                    'label': labelController.text,
+                  }),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+              child: const Text('Kaydet'),
+            ),
+          ],
+        );
+      },
+    );
+
+    priceController.dispose();
+    labelController.dispose();
+    if (result == null || !mounted) return;
+
+    setState(() {
+      final base =
+          _selectedItems[product.id] ?? const _TemplateChildDraft(quantity: 1);
+      final safeQty = base.quantity <= 0 ? 1 : base.quantity;
+      if (result['reset'] == true) {
+        _selectedItems[product.id] = base.copyWith(
+          quantity: safeQty,
+          clearCustomUnitPrice: true,
+          customLabel: '',
+        );
+      } else {
+        final enteredPrice = MixedServiceOrder.parsePrice(result['price']);
+        final enteredLabel = (result['label']?.toString() ?? '').trim();
+        final isCustomPrice =
+            enteredPrice > 0 && (enteredPrice - autoPrice).abs() > 0.001;
+        _selectedItems[product.id] = base.copyWith(
+          quantity: safeQty,
+          customUnitPrice: isCustomPrice ? enteredPrice : null,
+          clearCustomUnitPrice: !isCustomPrice,
+          customLabel: enteredLabel,
+        );
+      }
+      _coverProductId ??= product.id;
+    });
+  }
+
   double _previewUnitPriceForProduct(SellerProduct product) {
     final draft = _selectionDraftForProduct(product);
     if (!product.usesPortionLikeStepper &&
@@ -440,6 +608,24 @@ class _MixedServiceTemplateEditorDialogState
     }
     final basePrice = product.effectiveBaseUnitPrice;
     return ProductPriceCalculator.formatCurrency(basePrice);
+  }
+
+  Widget _buildCustomizeButton(SellerProduct product) {
+    return OutlinedButton.icon(
+      onPressed: () => _editPoolItemCustomization(product),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        foregroundColor: AppColors.primary,
+        side: const BorderSide(color: Color(0xFFE5E7EB)),
+      ),
+      icon: const Icon(Icons.tune_rounded, size: 16),
+      label: const Text(
+        'Fiyat / Etiket',
+        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+      ),
+    );
   }
 
   Widget _buildSelectionStepper(SellerProduct product) {
@@ -523,20 +709,22 @@ class _MixedServiceTemplateEditorDialogState
             serviceRound: draft.serviceRound,
             note: draft.note.trim(),
           );
-          double unitPriceSnapshot = MixedServiceOrder.parsePrice(
-            payload['unit_price'],
-          );
-          if (!product.usesPortionLikeStepper &&
-              product.resolvedPricingType == ProductPricingType.portion) {
-            final amount = draft.selectedServiceAmount ?? 1.0;
-            unitPriceSnapshot = product.effectiveBaseUnitPrice * amount;
-          }
+          final hasCustomPrice =
+              draft.customUnitPrice != null && draft.customUnitPrice! > 0;
+          final unitPriceSnapshot = _effectivePoolUnitPrice(product, draft);
           final safeQty = draft.quantity <= 0 ? 1 : draft.quantity;
+          final customLabel = draft.customLabel.trim();
           return <String, dynamic>{
             ...payload,
             'unit_price': unitPriceSnapshot,
             'unit_price_snapshot': unitPriceSnapshot,
             'line_total': unitPriceSnapshot * safeQty,
+            if (hasCustomPrice) 'manual_unit_price': draft.customUnitPrice,
+            if (customLabel.isNotEmpty) ...<String, dynamic>{
+              'custom_option_label': customLabel,
+              'selected_option_label': customLabel,
+              'amount_label': customLabel,
+            },
           };
         })
         .toList(growable: false);
@@ -624,11 +812,7 @@ class _MixedServiceTemplateEditorDialogState
         name: _nameController.text.trim(),
         description: widget.initialProduct?.description?.trim() ?? '',
         coverImageUrl: _resolvedCoverImageUrl(),
-        pricingMode: _isMenuTemplate
-            ? _pricingMode
-            : widget.initialProduct == null
-            ? MixedServiceOrder.autoSumPriceMode
-            : _pricingMode,
+        pricingMode: _pricingMode,
         fixedPrice: _currentTotal,
         templateItems: _templateItemsForSubmit(),
       ),
@@ -813,6 +997,13 @@ class _MixedServiceTemplateEditorDialogState
               final draft = _selectedItems[product.id];
               final imageUrl = product.imageUrl?.trim() ?? '';
               final previewPrice = _previewUnitPriceForProduct(product);
+              final displayPrice = draft != null
+                  ? _effectivePoolUnitPrice(product, draft)
+                  : previewPrice;
+              final poolCustomLabel = draft?.customLabel.trim() ?? '';
+              final hasCustomPrice =
+                  draft?.customUnitPrice != null &&
+                  (draft?.customUnitPrice ?? 0) > 0;
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: LayoutBuilder(
@@ -879,9 +1070,13 @@ class _MixedServiceTemplateEditorDialogState
                                 if (!compact) _buildSelectionStepper(product),
                                 if (!compact)
                                   _InfoPill(
-                                    label: _formatMoney(previewPrice),
+                                    label:
+                                        '${_formatMoney(displayPrice)}${hasCustomPrice ? ' • Özel' : ''}',
                                     emphasized: true,
                                   ),
+                                if (poolCustomLabel.isNotEmpty)
+                                  _InfoPill(label: poolCustomLabel),
+                                if (draft != null) _buildCustomizeButton(product),
                                 if (draft != null)
                                   _InfoPill(label: _selectedPillLabel),
                               ],
@@ -945,9 +1140,14 @@ class _MixedServiceTemplateEditorDialogState
                               Expanded(child: _buildSelectionStepper(product)),
                               const SizedBox(width: 10),
                               _InfoPill(
-                                label: _formatMoney(previewPrice),
+                                label:
+                                    '${_formatMoney(displayPrice)}${hasCustomPrice ? ' • Özel' : ''}',
                                 emphasized: true,
                               ),
+                              if (draft != null) ...[
+                                const SizedBox(width: 8),
+                                _buildCustomizeButton(product),
+                              ],
                               const SizedBox(width: 10),
                               SizedBox(
                                 width: 120,
@@ -1098,77 +1298,59 @@ class _MixedServiceTemplateEditorDialogState
                     ),
                     const SizedBox(height: 12),
                     _buildCoverImageSection(),
-                    if (_isMenuTemplate) ...[
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children:
-                            const <String>[
-                                  MixedServiceOrder.autoSumPriceMode,
-                                  MixedServiceOrder.manualAllowedPriceMode,
-                                ]
-                                .map((mode) {
-                                  final selected = _pricingMode == mode;
-                                  return ChoiceChip(
-                                    label: Text(_pricingModeLabel(mode)),
-                                    selected: selected,
-                                    onSelected: (_) {
-                                      setState(() {
-                                        _pricingMode = mode;
-                                      });
-                                    },
-                                  );
-                                })
-                                .toList(growable: false),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Fiyatlandırma',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF111827),
                       ),
-                      const SizedBox(height: 10),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: Text(
-                          _pricingMode ==
-                                  MixedServiceOrder.manualAllowedPriceMode
-                              ? 'Menü toplamı child item fiyatlarından hesaplanır, siparişte manuel fiyat override açık kalır.'
-                              : 'Menü fiyatı child item toplamlarından otomatik hesaplanır.',
-                          style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF64748B),
-                          ),
-                        ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children:
+                          const <String>[
+                                MixedServiceOrder.autoSumPriceMode,
+                                MixedServiceOrder.manualAllowedPriceMode,
+                              ]
+                              .map((mode) {
+                                final selected = _pricingMode == mode;
+                                return ChoiceChip(
+                                  label: Text(_pricingModeLabel(mode)),
+                                  selected: selected,
+                                  onSelected: (_) {
+                                    setState(() {
+                                      _pricingMode = mode;
+                                    });
+                                  },
+                                );
+                              })
+                              .toList(growable: false),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
                       ),
-                    ] else ...[
-                      const SizedBox(height: 10),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: Text(
-                          _serviceFlowInfoText,
-                          style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF64748B),
-                          ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Text(
+                        _pricingInfoText,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF64748B),
                         ),
                       ),
-                    ],
+                    ),
                     const SizedBox(height: 10),
                     TextField(
                       controller: _searchController,
@@ -1276,6 +1458,8 @@ class _TemplateChildDraft {
     this.selectedWeightGrams,
     this.serviceRound = 1,
     this.note = '',
+    this.customUnitPrice,
+    this.customLabel = '',
   });
 
   final int quantity;
@@ -1284,12 +1468,21 @@ class _TemplateChildDraft {
   final int serviceRound;
   final String note;
 
+  /// Satıcının elle girdiği özel birim fiyat (null = otomatik hesap).
+  final double? customUnitPrice;
+
+  /// Satıcının elle girdiği özel etiket, örn. "Tek Şiş" (boş = otomatik).
+  final String customLabel;
+
   _TemplateChildDraft copyWith({
     int? quantity,
     double? selectedServiceAmount,
     int? selectedWeightGrams,
     int? serviceRound,
     String? note,
+    double? customUnitPrice,
+    bool clearCustomUnitPrice = false,
+    String? customLabel,
   }) {
     return _TemplateChildDraft(
       quantity: quantity ?? this.quantity,
@@ -1298,6 +1491,10 @@ class _TemplateChildDraft {
       selectedWeightGrams: selectedWeightGrams ?? this.selectedWeightGrams,
       serviceRound: serviceRound ?? this.serviceRound,
       note: note ?? this.note,
+      customUnitPrice: clearCustomUnitPrice
+          ? null
+          : (customUnitPrice ?? this.customUnitPrice),
+      customLabel: customLabel ?? this.customLabel,
     );
   }
 }

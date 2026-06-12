@@ -22,6 +22,7 @@ Future<Map<String, dynamic>?> showMixedServiceDialog({
   String? headerImageUrl,
   bool showItemNameField = true,
   String? noteHintText,
+  Map<String, Map<String, dynamic>>? templateChildDefaults,
 }) {
   return showDialog<Map<String, dynamic>>(
     context: context,
@@ -36,6 +37,7 @@ Future<Map<String, dynamic>?> showMixedServiceDialog({
         headerImageUrl: headerImageUrl,
         showItemNameField: showItemNameField,
         noteHintText: noteHintText,
+        templateChildDefaults: templateChildDefaults,
         availablePricingModes:
             availablePricingModes ??
             const <String>[
@@ -59,6 +61,7 @@ class _MixedServiceDialog extends StatefulWidget {
     this.headerImageUrl,
     this.showItemNameField = true,
     this.noteHintText,
+    this.templateChildDefaults,
   });
 
   final List<SellerProduct> products;
@@ -71,6 +74,11 @@ class _MixedServiceDialog extends StatefulWidget {
   final String? headerImageUrl;
   final bool showItemNameField;
   final String? noteHintText;
+
+  /// Servis havuzunda her ürün için kaydedilmiş varsayılan porsiyon/gramaj
+  /// seçimi (productId -> {selected_service_amount, selected_weight_grams}).
+  /// Garson bir ürünü seçtiğinde bu değerlerle başlar.
+  final Map<String, Map<String, dynamic>>? templateChildDefaults;
 
   @override
   State<_MixedServiceDialog> createState() => _MixedServiceDialogState();
@@ -155,13 +163,11 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
     return _selectedItems.values.fold<double>(0, (sum, draft) {
       final product = _productById(draft.productId);
       if (product == null) return sum;
-      final selectionSnapshot =
-          MixedServiceOrder.childSelectionSnapshotForProduct(
-            product,
-            quantity: draft.quantity,
-            selectedServiceAmount: draft.selectedServiceAmount,
-            selectedWeightGrams: draft.selectedWeightGrams,
-          );
+      final selectionSnapshot = _effectiveSnapshot(
+        product,
+        draft,
+        quantity: draft.quantity,
+      );
       return sum +
           MixedServiceOrder.parsePrice(selectionSnapshot['line_total']);
     });
@@ -192,11 +198,10 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
         .fold<double>(0, (sum, draft) {
           final product = _productById(draft.productId);
           if (product == null) return sum;
-          final snap = MixedServiceOrder.childSelectionSnapshotForProduct(
+          final snap = _effectiveSnapshot(
             product,
+            draft,
             quantity: draft.quantity,
-            selectedServiceAmount: draft.selectedServiceAmount,
-            selectedWeightGrams: draft.selectedWeightGrams,
           );
           return sum + MixedServiceOrder.parsePrice(snap['line_total']);
         });
@@ -416,6 +421,31 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
     return base.copyWith(serviceRound: round);
   }
 
+  /// Porsiyon fiyatlı ama porsiyon stepper'ı olmayan ürün ("implicit portion").
+  bool _isImplicitPortion(SellerProduct product) =>
+      !product.usesServiceControlStepper &&
+      product.resolvedPricingType == ProductPricingType.portion;
+
+  double? _templateDefaultAmount(SellerProduct product) {
+    final raw = widget.templateChildDefaults?[product.id];
+    return (raw?['selected_service_amount'] as num?)?.toDouble();
+  }
+
+  int? _templateDefaultGrams(SellerProduct product) {
+    final raw = widget.templateChildDefaults?[product.id];
+    return (raw?['selected_weight_grams'] as num?)?.toInt();
+  }
+
+  double? _templateDefaultUnitPrice(SellerProduct product) {
+    final raw = widget.templateChildDefaults?[product.id];
+    return (raw?['unit_price_snapshot'] as num?)?.toDouble();
+  }
+
+  String? _templateDefaultLabel(SellerProduct product) {
+    final raw = widget.templateChildDefaults?[product.id];
+    return raw?['selected_option_label']?.toString();
+  }
+
   _SelectedChildDraft _selectionDraftForProduct(SellerProduct product) {
     final fromDrafts = _selectionDrafts[product.id];
     if (fromDrafts != null) return fromDrafts;
@@ -423,21 +453,65 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
     if (selected != null) {
       return selected.copyWith(quantity: 0);
     }
+    final defaultAmount = _templateDefaultAmount(product);
+    final defaultGrams = _templateDefaultGrams(product);
+    final templatePrice = _templateDefaultUnitPrice(product);
+    final templateLabel = _templateDefaultLabel(product);
+    final hasOverride =
+        (templatePrice != null && templatePrice > 0) ||
+        ((templateLabel ?? '').trim().isNotEmpty);
     return _SelectedChildDraft(
       productId: product.id,
       quantity: 0,
       selectedServiceAmount: product.usesPortionLikeStepper
-          ? product.resolvedDefaultServiceAmount
+          ? (defaultAmount ?? product.resolvedDefaultServiceAmount)
+          : _isImplicitPortion(product)
+          ? (defaultAmount ?? 1.0)
           : null,
       selectedWeightGrams:
           product.resolvedServiceControlType ==
               ProductServiceControlType.weightStepper
-          ? product.resolvedDefaultWeightGrams
+          ? (defaultGrams ?? product.resolvedDefaultWeightGrams)
           : null,
+      templateUnitPrice: templatePrice,
+      templateLabel: templateLabel,
+      overrideActive: hasOverride,
       // Default to the currently active plate so that opening a product
       // in "plate-2 mode" and clicking + immediately sends it to plate 2.
       serviceRound: _tableCount > 0 ? _tableCount : 1,
     );
+  }
+
+  /// Servis havuzundaki kayıtlı fiyat/etiketi uygulayan snapshot. Garson
+  /// porsiyon/gramajı değiştirmediyse ([overrideActive]) havuzdaki değerler
+  /// aynen kullanılır; aksi halde üründen yeniden hesaplanır.
+  Map<String, dynamic> _effectiveSnapshot(
+    SellerProduct product,
+    _SelectedChildDraft draft, {
+    required int quantity,
+  }) {
+    final snap = Map<String, dynamic>.from(
+      MixedServiceOrder.childSelectionSnapshotForProduct(
+        product,
+        quantity: quantity,
+        selectedServiceAmount: draft.selectedServiceAmount,
+        selectedWeightGrams: draft.selectedWeightGrams,
+      ),
+    );
+    if (draft.overrideActive) {
+      final price = draft.templateUnitPrice;
+      if (price != null && price > 0) {
+        final safeQty = quantity <= 0 ? 1 : quantity;
+        snap['unit_price'] = price;
+        snap['line_total'] = price * safeQty;
+      }
+      final label = draft.templateLabel?.trim() ?? '';
+      if (label.isNotEmpty) {
+        snap['selected_option_label'] = label;
+        snap['amount_label'] = label;
+      }
+    }
+    return snap;
   }
 
   void _applyTableCount(int nextCount) {
@@ -536,6 +610,10 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
     List<String>? selectedAttrs,
   }) {
     final current = _selectionDraftForProduct(product);
+    // Garson porsiyon/gramajı değiştirirse havuzdaki kayıtlı fiyat/etiket artık
+    // geçerli değildir; fiyat üründen yeniden hesaplanmalı.
+    final optionChanged =
+        selectedServiceAmount != null || selectedWeightGrams != null;
     final next = current.copyWith(
       selectedServiceAmount:
           selectedServiceAmount ?? current.selectedServiceAmount,
@@ -543,6 +621,7 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
       serviceRound: serviceRound ?? current.serviceRound,
       note: note ?? current.note,
       selectedAttrs: selectedAttrs ?? current.selectedAttrs,
+      overrideActive: optionChanged ? false : current.overrideActive,
     );
     setState(() {
       // When the user changes the plate selector for an already-added item,
@@ -722,11 +801,12 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
                   16,
                   12,
                   16,
-                  16 + MediaQuery.of(ctx).viewInsets.bottom,
+                  16 + (MediaQuery.maybeOf(ctx)?.viewInsets.bottom ?? 0),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
@@ -880,6 +960,9 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
                       const SizedBox(height: 12),
                     ],
                     TextField(
+                      key: ValueKey<String>(
+                        'mixed-service-popup-note-${product.id}',
+                      ),
                       controller: noteController,
                       maxLines: 2,
                       decoration: InputDecoration(
@@ -917,6 +1000,7 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
                       ),
                     ),
                   ],
+                ),
                 ),
               ),
             );
@@ -981,16 +1065,33 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
         .map((draft) {
           final product = _productById(draft.productId);
           if (product == null) return null;
-          return MixedServiceOrder.buildChildItemPayload(
-            product,
-            quantity: draft.quantity,
-            selectedServiceAmount: draft.selectedServiceAmount,
-            selectedWeightGrams: draft.selectedWeightGrams,
-            serviceRound: draft.serviceRound,
-            note: draft.note.trim(),
-            attributes: draft.selectedAttrs,
-            localRowId: draft.localRowId,
+          final payload = Map<String, dynamic>.from(
+            MixedServiceOrder.buildChildItemPayload(
+              product,
+              quantity: draft.quantity,
+              selectedServiceAmount: draft.selectedServiceAmount,
+              selectedWeightGrams: draft.selectedWeightGrams,
+              serviceRound: draft.serviceRound,
+              note: draft.note.trim(),
+              attributes: draft.selectedAttrs,
+              localRowId: draft.localRowId,
+            ),
           );
+          if (draft.overrideActive) {
+            final price = draft.templateUnitPrice;
+            if (price != null && price > 0) {
+              final safeQty = draft.quantity <= 0 ? 1 : draft.quantity;
+              payload['unit_price'] = price;
+              payload['unit_price_snapshot'] = price;
+              payload['line_total'] = price * safeQty;
+            }
+            final label = draft.templateLabel?.trim() ?? '';
+            if (label.isNotEmpty) {
+              payload['selected_option_label'] = label;
+              payload['amount_label'] = label;
+            }
+          }
+          return payload;
         })
         .whereType<Map<String, dynamic>>()
         .toList(growable: false);
@@ -1290,13 +1391,11 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
     );
     final imageUrl = product.imageUrl?.trim() ?? '';
     final effectiveDraft = selected ?? draft;
-    final selectionSnapshot =
-        MixedServiceOrder.childSelectionSnapshotForProduct(
-          product,
-          quantity: quantity > 0 ? quantity : 1,
-          selectedServiceAmount: effectiveDraft.selectedServiceAmount,
-          selectedWeightGrams: effectiveDraft.selectedWeightGrams,
-        );
+    final selectionSnapshot = _effectiveSnapshot(
+      product,
+      effectiveDraft,
+      quantity: quantity > 0 ? quantity : 1,
+    );
     final amountLabel =
         selectionSnapshot['selected_option_label']?.toString() ?? '';
     final unitPrice = MixedServiceOrder.parsePrice(
@@ -1882,15 +1981,11 @@ class _MixedServiceDialogState extends State<_MixedServiceDialog> {
                               'itemRoundLabel=Tabak ${draft.serviceRound} '
                               'qty=${draft.quantity}',
                             );
-                            final snap =
-                                MixedServiceOrder.childSelectionSnapshotForProduct(
-                                  product,
-                                  quantity: draft.quantity,
-                                  selectedServiceAmount:
-                                      draft.selectedServiceAmount,
-                                  selectedWeightGrams:
-                                      draft.selectedWeightGrams,
-                                );
+                            final snap = _effectiveSnapshot(
+                              product,
+                              draft,
+                              quantity: draft.quantity,
+                            );
                             final amountLbl =
                                 snap['selected_option_label']
                                     ?.toString()
@@ -2224,6 +2319,9 @@ class _SelectedChildDraft {
     this.serviceRound = 1,
     this.note = '',
     this.selectedAttrs = const <String>[],
+    this.templateUnitPrice,
+    this.templateLabel,
+    this.overrideActive = false,
   });
 
   final String localRowId;
@@ -2235,6 +2333,14 @@ class _SelectedChildDraft {
   final String note;
   final List<String> selectedAttrs;
 
+  /// Servis havuzunda kaydedilmiş birim fiyat ve etiket. [overrideActive] true
+  /// olduğu sürece garson ekranı bu değerleri aynen kullanır (yarım porsiyon /
+  /// özel fiyat / özel etiket). Garson porsiyon/gramajı değiştirince devre dışı
+  /// kalır ve fiyat üründen yeniden hesaplanır.
+  final double? templateUnitPrice;
+  final String? templateLabel;
+  final bool overrideActive;
+
   _SelectedChildDraft copyWith({
     String? localRowId,
     String? productId,
@@ -2244,6 +2350,9 @@ class _SelectedChildDraft {
     int? serviceRound,
     String? note,
     List<String>? selectedAttrs,
+    double? templateUnitPrice,
+    String? templateLabel,
+    bool? overrideActive,
   }) {
     return _SelectedChildDraft(
       localRowId: localRowId ?? this.localRowId,
@@ -2255,6 +2364,9 @@ class _SelectedChildDraft {
       serviceRound: serviceRound ?? this.serviceRound,
       note: note ?? this.note,
       selectedAttrs: selectedAttrs ?? this.selectedAttrs,
+      templateUnitPrice: templateUnitPrice ?? this.templateUnitPrice,
+      templateLabel: templateLabel ?? this.templateLabel,
+      overrideActive: overrideActive ?? this.overrideActive,
     );
   }
 }

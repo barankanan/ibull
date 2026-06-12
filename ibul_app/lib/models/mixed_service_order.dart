@@ -281,16 +281,31 @@ class MixedServiceOrder {
               map['selected_pricing_type']?.toString() ??
               map['selectedPricingType']?.toString() ??
               ((selectedWeightGrams ?? 0) > 0 ? 'kg' : 'portion');
-          final selectedOptionLabel = _storedChildOptionLabel(
+          final autoOptionLabel = _storedChildOptionLabel(
             map,
             selectedServiceAmount: selectedServiceAmount,
             selectedWeightGrams: selectedWeightGrams,
           );
-          final resolvedUnitPrice = unitPriceSnapshot > 0
+          // Satıcının havuzda elle girdiği özel etiket (örn. "Tek Şiş") ve
+          // özel fiyat. Boşsa otomatik hesaplanan değer kullanılır.
+          final customOptionLabel =
+              (map['custom_option_label']?.toString().trim() ??
+                  map['customOptionLabel']?.toString().trim() ??
+                  '');
+          final manualUnitPrice = parsePrice(
+            map['manual_unit_price'] ?? map['manualUnitPrice'],
+          );
+          final autoUnitPrice = unitPriceSnapshot > 0
               ? unitPriceSnapshot
               : explicitLineTotal > 0
               ? (explicitLineTotal / quantity).toDouble()
               : 0.0;
+          final effectiveUnitPrice = manualUnitPrice > 0
+              ? manualUnitPrice
+              : autoUnitPrice;
+          final effectiveOptionLabel = customOptionLabel.isNotEmpty
+              ? customOptionLabel
+              : autoOptionLabel;
           return <String, dynamic>{
             childLocalRowIdKey: localRowId,
             'product_id': productId,
@@ -301,13 +316,14 @@ class MixedServiceOrder {
                 map['name']?.toString() ??
                 '-',
             'quantity': quantity,
-            'unit_price_snapshot': resolvedUnitPrice,
-            'line_total': explicitLineTotal > 0
-                ? explicitLineTotal
-                : childItemLineTotal(
-                    unitPrice: resolvedUnitPrice,
-                    quantity: quantity,
-                  ),
+            'unit_price_snapshot': effectiveUnitPrice,
+            'line_total': childItemLineTotal(
+              unitPrice: effectiveUnitPrice,
+              quantity: quantity,
+            ),
+            if (manualUnitPrice > 0) 'manual_unit_price': manualUnitPrice,
+            if (customOptionLabel.isNotEmpty)
+              'custom_option_label': customOptionLabel,
             'selected_pricing_type': selectedPricingType,
             'selected_portion_value': selectedServiceAmount,
             'service_control_type':
@@ -315,8 +331,8 @@ class MixedServiceOrder {
                 map['serviceControlType']?.toString(),
             'selected_service_amount': selectedServiceAmount,
             'selected_weight_grams': selectedWeightGrams,
-            'selected_option_label': selectedOptionLabel,
-            'amount_label': selectedOptionLabel,
+            'selected_option_label': effectiveOptionLabel,
+            'amount_label': effectiveOptionLabel,
             'service_round': normalizeServiceRound(map['service_round']),
             'note': map['note']?.toString() ?? map['notes']?.toString() ?? '',
             'station_id':
@@ -911,6 +927,14 @@ class MixedServiceOrder {
     );
   }
 
+  /// Porsiyon fiyatlı ama porsiyon stepper'ı OLMAYAN ürünler ("implicit
+  /// portion"). Servis havuzunda bunlara da yarım/tam porsiyon seçilebildiği
+  /// için fiyat ve etiketin garson ekranına taşınması gerekir.
+  static bool _usesImplicitPortion(SellerProduct product) {
+    return !product.usesServiceControlStepper &&
+        product.resolvedPricingType == ProductPricingType.portion;
+  }
+
   static Map<String, dynamic> childSelectionSnapshotForProduct(
     SellerProduct product, {
     int quantity = 1,
@@ -926,16 +950,28 @@ class MixedServiceOrder {
       product,
       selectedWeightGrams: selectedWeightGrams,
     );
-    final unitPrice = productUnitPriceForSelection(
-      product,
-      selectedServiceAmount: resolvedPortion,
-      selectedWeightGrams: resolvedWeight,
-    );
-    final optionLabel = productAmountLabelForSelection(
-      product,
-      selectedServiceAmount: resolvedPortion,
-      selectedWeightGrams: resolvedWeight,
-    );
+    final double unitPrice;
+    final String optionLabel;
+    if (_usesImplicitPortion(product)) {
+      // Stepper yokken porsiyon fiyatı, baz birim fiyat * seçilen porsiyon
+      // (örn. yarım = 0.5) olarak hesaplanır. Etiket tam porsiyonda gizlenir.
+      final amount = resolvedPortion ?? 1.0;
+      unitPrice = product.effectiveBaseUnitPrice * amount;
+      optionLabel = (amount - 1.0).abs() < 0.0001
+          ? ''
+          : ProductPriceCalculator.formatPortionLabel(amount);
+    } else {
+      unitPrice = productUnitPriceForSelection(
+        product,
+        selectedServiceAmount: resolvedPortion,
+        selectedWeightGrams: resolvedWeight,
+      );
+      optionLabel = productAmountLabelForSelection(
+        product,
+        selectedServiceAmount: resolvedPortion,
+        selectedWeightGrams: resolvedWeight,
+      );
+    }
     return <String, dynamic>{
       'selected_pricing_type': productSelectedPricingTypeForSelection(
         product,
@@ -960,14 +996,22 @@ class MixedServiceOrder {
     SellerProduct product, {
     double? selectedServiceAmount,
   }) {
-    if (!product.usesPortionLikeStepper) return null;
-    return ProductPriceCalculator.clampPortionSelection(
-      selectedServiceAmount ?? product.resolvedDefaultServiceAmount,
-      type: product.resolvedServiceControlType,
-      minPortion: product.minPortion,
-      maxPortion: product.maxPortion,
-      portionStep: product.portionStep,
-    );
+    if (product.usesPortionLikeStepper) {
+      return ProductPriceCalculator.clampPortionSelection(
+        selectedServiceAmount ?? product.resolvedDefaultServiceAmount,
+        type: product.resolvedServiceControlType,
+        minPortion: product.minPortion,
+        maxPortion: product.maxPortion,
+        portionStep: product.portionStep,
+      );
+    }
+    // Implicit portion ürünlerde de seçilen porsiyon korunur (yarım/tam) ki
+    // servis havuzundaki seçim garson ekranına ve fişe doğru yansısın.
+    if (_usesImplicitPortion(product)) {
+      final amount = selectedServiceAmount ?? 1.0;
+      return amount > 0 ? amount : 1.0;
+    }
+    return null;
   }
 
   static int? productSelectedWeightGramsForSelection(
@@ -1105,6 +1149,38 @@ class MixedServiceOrder {
       'printer_routing_enabled': printerRoutingEnabled,
       'attributes': const <String>[],
     });
+  }
+
+  /// Servis havuzundaki her ürün için kaydedilmiş varsayılan porsiyon/gramaj
+  /// seçimini productId (ve bağlı id'ler) üzerinden döndürür. Garson "Servisi
+  /// Aç" dialogunda bir ürün seçildiğinde bu varsayılanlar uygulanır.
+  static Map<String, Map<String, dynamic>> templateChildDefaultsByProductId(
+    SellerProduct product,
+  ) {
+    final config = templateConfigFromProduct(product);
+    if (config == null) return const <String, Map<String, dynamic>>{};
+    final defaults = <String, Map<String, dynamic>>{};
+    for (final item in normalizeTemplateItems(config['template_items'])) {
+      final amount =
+          (item['selected_service_amount'] as num?)?.toDouble() ??
+          (item['selected_portion_value'] as num?)?.toDouble();
+      final grams = (item['selected_weight_grams'] as num?)?.toInt();
+      // Havuzda kaydedilen efektif birim fiyat ve etiket (otomatik veya
+      // satıcının elle girdiği özel değer). Garson bunları aynen kullanır;
+      // böylece yarım porsiyon / özel fiyat / özel etiket garsona da yansır.
+      final unitPrice = parsePrice(item['unit_price_snapshot']);
+      final optionLabel = item['selected_option_label']?.toString().trim() ?? '';
+      final entry = <String, dynamic>{
+        'selected_service_amount': amount,
+        'selected_weight_grams': grams,
+        'unit_price_snapshot': unitPrice > 0 ? unitPrice : null,
+        'selected_option_label': optionLabel.isEmpty ? null : optionLabel,
+      };
+      for (final id in _linkedIdsForTemplateItem(item)) {
+        defaults.putIfAbsent(id, () => entry);
+      }
+    }
+    return defaults;
   }
 
   static List<Map<String, dynamic>> childItemsFromTemplateProduct(

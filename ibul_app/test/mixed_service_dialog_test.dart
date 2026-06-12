@@ -306,26 +306,30 @@ void main() {
 
         await tester.tap(
           find.byKey(
-            ValueKey<String>('mixed-service-option-plus-${product.id}'),
-          ),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(
-          find.byKey(
-            ValueKey<String>('mixed-service-option-plus-${product.id}'),
+            ValueKey<String>('mixed-service-popup-plus-${product.id}'),
           ),
         );
         await tester.pumpAndSettle();
 
         await tester.enterText(
-          find.byKey(ValueKey<String>('mixed-service-note-${product.id}')),
+          find.byKey(ValueKey<String>('mixed-service-popup-note-${product.id}')),
           'Az sos',
         );
+        await tester.testTextInput.receiveAction(TextInputAction.done);
         await tester.pumpAndSettle();
 
-        await tester.tap(
-          find.byKey(ValueKey<String>('mixed-service-qty-plus-${product.id}')),
-        );
+        // Save popup
+        await tester.tap(find.text('Onayla'));
+        await tester.pumpAndSettle();
+
+        try {
+          await tester.tap(
+            find.byKey(ValueKey<String>('mixed-service-qty-plus-${product.id}')),
+          );
+        } catch (e) {
+          debugDumpApp();
+          rethrow;
+        }
         await tester.pumpAndSettle();
 
         expect(saveButton(tester).onPressed, isNotNull);

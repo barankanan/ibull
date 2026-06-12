@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/order_status_constants.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import '../widgets/web_footer.dart';
@@ -376,15 +377,15 @@ class OrderConfirmationPage extends StatelessWidget {
 
   static String _statusText(String? status) {
     switch ((status ?? '').toLowerCase()) {
-      case 'confirmed':
+      case OrderStatusConstants.ecommerceConfirmed:
         return 'Onaylandı';
-      case 'preparing':
+      case OrderStatusConstants.ecommercePreparing:
         return 'Hazırlanıyor';
-      case 'shipped':
+      case OrderStatusConstants.ecommerceShipped:
         return 'Kargoda';
-      case 'delivered':
+      case OrderStatusConstants.ecommerceDelivered:
         return 'Teslim edildi';
-      case 'cancelled':
+      case OrderStatusConstants.ecommerceCancelled:
         return 'İptal';
       default:
         return status ?? '-';
