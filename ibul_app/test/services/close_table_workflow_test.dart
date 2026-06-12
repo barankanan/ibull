@@ -2,6 +2,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/services/store/close_table_workflow.dart';
+import 'package:ibul_app/utils/order_status_constants.dart';
 
 // ─── In-memory fake for DB operations ──────────────────────────────────────
 //
@@ -60,7 +61,7 @@ void main() {
         '  paid  ', // whitespace-tolerant
       ]) {
         expect(
-          isTerminalCloseStatus(s),
+          OrderStatusConstants.isTerminalStatus(s),
           isTrue,
           reason: '"$s" should be terminal',
         );
@@ -70,7 +71,7 @@ void main() {
     test('marks active statuses as non-terminal', () {
       for (final s in ['open', 'pending', 'sent', 'new', '', null]) {
         expect(
-          isTerminalCloseStatus(s),
+          OrderStatusConstants.isTerminalStatus(s),
           isFalse,
           reason: '"$s" must NOT be treated as terminal',
         );

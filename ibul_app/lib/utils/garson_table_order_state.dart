@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../models/mixed_service_order.dart';
+import 'order_status_constants.dart';
 import 'table_labels.dart';
 
 class GarsonVisibleOrderPreservation {
@@ -94,17 +95,6 @@ int _firstPositiveBindingNumber(Iterable<dynamic> values) {
   return 0;
 }
 
-bool _garsonIsTerminalVisibilityStatus(String? status) {
-  final normalized = (status ?? '').trim().toLowerCase();
-  return normalized == 'closed' ||
-      normalized == 'paid' ||
-      normalized == 'cancelled' ||
-      normalized == 'canceled' ||
-      normalized == 'completed' ||
-      normalized == 'complete' ||
-      normalized == 'completed_payment' ||
-      normalized == 'payment_completed';
-}
 
 Map<String, dynamic> _hydrateIncomingOrderWithVisibleBinding({
   required Map<String, dynamic> currentVisibleOrder,
@@ -528,7 +518,7 @@ GarsonVisibleOrderMergeResult mergeGarsonVisibleOrdersSafely({
     }
     if (current == null || incoming == null) continue;
 
-    final incomingTerminal = _garsonIsTerminalVisibilityStatus(
+    final incomingTerminal = OrderStatusConstants.isTerminalStatus(
       incoming['status']?.toString(),
     );
     final currentNewer = isGarsonTableOrderNewer(current, incoming);

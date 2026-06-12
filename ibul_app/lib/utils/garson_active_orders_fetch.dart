@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'order_status_constants.dart';
+
 /// Active statuses used on live Garson / kitchen flows.
 const Set<String> garsonActiveOrderStatuses = <String>{
   'new',
@@ -22,29 +24,14 @@ const Set<String> garsonActiveOrderStatuses = <String>{
   'confirmed',
 };
 
-/// Terminal statuses excluded from the Garson active-order board.
-const Set<String> garsonTerminalOrderStatuses = <String>{
-  'closed',
-  'paid',
-  'cancelled',
-  'canceled',
-  'completed',
-  'complete',
-  'completed_payment',
-  'payment_completed',
-  'archived',
-};
-
 bool isGarsonTerminalOrderStatus(String? status) {
-  final normalized = (status ?? '').trim().toLowerCase();
-  if (normalized.isEmpty) return false;
-  return garsonTerminalOrderStatuses.contains(normalized);
+  return OrderStatusConstants.isTerminalStatus(status);
 }
 
 bool isGarsonActiveOrderStatus(String? status) {
   final normalized = (status ?? '').trim().toLowerCase();
   if (normalized.isEmpty) return false;
-  if (garsonTerminalOrderStatuses.contains(normalized)) return false;
+  if (OrderStatusConstants.isTerminalStatus(normalized)) return false;
   if (garsonActiveOrderStatuses.contains(normalized)) return true;
   // Unknown non-terminal status: keep visible so raw_statuses log can surface it.
   return true;
@@ -66,10 +53,10 @@ String resolveGarsonOrderStatusField(Map<String, dynamic> order) {
   final status = order['status']?.toString().trim() ?? '';
   // Terminal in either field wins — never let a non-terminal `order_status`
   // hide a terminal `status` (or vice versa).
-  if (garsonTerminalOrderStatuses.contains(status.toLowerCase())) {
+  if (OrderStatusConstants.isTerminalStatus(status)) {
     return status;
   }
-  if (garsonTerminalOrderStatuses.contains(orderStatus.toLowerCase())) {
+  if (OrderStatusConstants.isTerminalStatus(orderStatus)) {
     return orderStatus;
   }
   if (orderStatus.isNotEmpty) return orderStatus;
@@ -99,7 +86,7 @@ String garsonRestaurantOrdersSnapshotQueryDescription({
 
 String garsonActiveOrdersStatusFilterDescription() {
   return 'include ${garsonActiveOrderStatuses.join(', ')}; '
-      'exclude ${garsonTerminalOrderStatuses.join(', ')}';
+      'exclude ${OrderStatusConstants.terminalStatuses.join(', ')}';
 }
 
 void logGarsonOrdersDebugSql({required String restaurantId}) {
@@ -120,8 +107,8 @@ void logGarsonOrdersDebugSql({required String restaurantId}) {
     'active_orders_query='
     "select id, table_id, store_table_id, table_number, status, created_at, updated_at "
     "from public.orders "
-    "where restaurant_id = '$restaurantId' "
-    "and status not in ('closed','paid','cancelled','completed_payment','archived') "
+    "where restaurant_id = '\$restaurantId' "
+    "and status not in ('\${OrderStatusConstants.terminalStatuses.join("','")}') "
     "order by created_at desc limit 20",
   );
   debugPrint(

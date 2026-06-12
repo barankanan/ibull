@@ -1,30 +1,12 @@
-/// Pure fallback workflow for closing a table's active orders.
-///
-/// This module is deliberately free of Supabase / Flutter imports so the
-/// algorithm can be unit-tested without mocking the DB client.
-///
-/// The [StoreTableService._closeTableClientSide] method delegates to
-/// [runCloseTableFallbackWorkflow], injecting the real Supabase operations
-/// as callbacks. Tests inject simple in-memory lambdas instead.
-/// Statuses that indicate an order has been fully closed.
-/// Must stay in sync with [garsonTerminalOrderStatuses] in
-/// garson_active_orders_fetch.dart.
-const Set<String> closeTableTerminalStatuses = <String>{
-  'closed',
-  'paid',
-  'cancelled',
-  'canceled',
-  'completed',
-  'complete',
-  'archived',
-  'payment_completed',
-  'completed_payment',
-};
-
-bool isTerminalCloseStatus(String? raw) {
-  final s = (raw ?? '').trim().toLowerCase();
-  return s.isNotEmpty && closeTableTerminalStatuses.contains(s);
-}
+// Pure fallback workflow for closing a table's active orders.
+//
+// This module is deliberately free of Supabase / Flutter imports so the
+// algorithm can be unit-tested without mocking the DB client.
+//
+// The [StoreTableService._closeTableClientSide] method delegates to
+// [runCloseTableFallbackWorkflow], injecting the real Supabase operations
+// as callbacks. Tests inject simple in-memory lambdas instead.
+import '../../utils/order_status_constants.dart';
 
 /// Result of a single per-order close attempt.
 enum PerOrderCloseResult { deleted, markedClosed, failed }
@@ -141,7 +123,7 @@ Future<void> runCloseTableFallbackWorkflow({
   // ── Step 3: ID-based verification ────────────────────────────────────────
   final remaining = await verifyByIds(orderIds);
   final stillActive = remaining
-      .where((row) => !isTerminalCloseStatus(row['status']?.toString()))
+      .where((row) => !OrderStatusConstants.isTerminalStatus(row['status']?.toString()))
       .toList(growable: false);
 
   onEvent?.call(

@@ -1,3 +1,4 @@
+import 'package:ibul_app/utils/order_status_constants.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
@@ -57,6 +58,14 @@ class StoreService {
     }
     return '$_debugSupabaseUrl/rest/v1/$table$encodedQuery';
   }
+
+  static const String _storeProfileColumns =
+      'business_name,website,description,slogan,phone,email,whatsapp,'
+      'support_phone,address,postal_code,tax_number,instagram,facebook,'
+      'twitter,city,district,business_type,working_hours,is_store_open,'
+      'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
+      'cover_url,gallery_images,banners,seller_videos,store_lat,'
+      'store_lng,category,rating,is_verified';
 
   // --- Store Profile Methods ---
 
@@ -468,66 +477,117 @@ class StoreService {
   }
 
   // Get Store Profile
-  Future<Map<String, dynamic>?> getStoreProfile() async {
-    final userId = currentUserId;
-    if (userId == null) {
-      debugPrint('[StoreService] getStoreProfile skipped: authUserId missing');
+  Future<String?> resolveStoreOwnerIdForCurrentUser() async {
+    final authUserId = currentUserId?.trim() ?? '';
+    if (authUserId.isEmpty) return null;
+
+    try {
+      final ownStore = await _supabase
+          .from('stores')
+          .select('seller_id')
+          .eq('seller_id', authUserId)
+          .limit(1)
+          .maybeSingle();
+      if (ownStore != null) return authUserId;
+    } catch (error) {
+      debugPrint(
+        '[StoreService] resolveStoreOwnerIdForCurrentUser own-store probe warn: '
+        'authUserId=$authUserId error=$error',
+      );
+    }
+
+    final currentUser = _supabase.auth.currentUser;
+    final filters = <String>[];
+    final email = currentUser?.email?.trim();
+    final phone = currentUser?.phone?.trim();
+    if (email != null && email.isNotEmpty) {
+      filters.add('email.eq.$email');
+    }
+    if (phone != null && phone.isNotEmpty) {
+      filters.add('phone.eq.$phone');
+    }
+    if (filters.isEmpty) return null;
+
+    try {
+      final subAdmin = await _supabase
+          .from('store_sub_admins')
+          .select('store_id')
+          .eq('status', 'active')
+          .or(filters.join(','))
+          .limit(1)
+          .maybeSingle();
+      final storeId = subAdmin?['store_id']?.toString().trim() ?? '';
+      if (storeId.isNotEmpty) return storeId;
+    } catch (error) {
+      debugPrint(
+        '[StoreService] resolveStoreOwnerIdForCurrentUser sub-admin lookup warn: '
+        'authUserId=$authUserId error=$error',
+      );
+    }
+
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> getStoreProfileForSellerId(
+    String sellerId,
+  ) async {
+    final normalizedSellerId = sellerId.trim();
+    if (normalizedSellerId.isEmpty) {
+      debugPrint(
+        '[StoreService] getStoreProfileForSellerId skipped: sellerId missing',
+      );
       return null;
     }
 
     final requestUrl = _debugRestRequestUrl(
       'stores',
       query: <String, String>{
-        'select':
-            'business_name,website,description,slogan,phone,email,whatsapp,'
-            'support_phone,address,postal_code,tax_number,instagram,facebook,'
-            'twitter,city,district,business_type,working_hours,is_store_open,'
-            'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
-            'cover_url,gallery_images,banners,seller_videos,store_lat,'
-            'store_lng,category,rating,is_verified',
-        'seller_id': 'eq.$userId',
+        'select': _storeProfileColumns,
+        'seller_id': 'eq.$normalizedSellerId',
       },
     );
     debugPrint(
-      '[StoreService] getStoreProfile requestUrl=$requestUrl authUserId=$userId',
+      '[StoreService] getStoreProfileForSellerId requestUrl=$requestUrl '
+      'sellerId=$normalizedSellerId authUserId=${currentUserId ?? '-'}',
     );
-
-    const storeProfileColumns =
-        'business_name,website,description,slogan,phone,email,whatsapp,'
-        'support_phone,address,postal_code,tax_number,instagram,facebook,'
-        'twitter,city,district,business_type,working_hours,is_store_open,'
-        'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
-        'cover_url,gallery_images,banners,seller_videos,store_lat,'
-        'store_lng,category,rating,is_verified';
 
     try {
       final data = await _supabase
           .from('stores')
-          .select(storeProfileColumns)
-          .eq('seller_id', userId)
+          .select(_storeProfileColumns)
+          .eq('seller_id', normalizedSellerId)
           .maybeSingle();
 
       if (data == null) {
         debugPrint(
-          '[StoreService] getStoreProfile empty result requestUrl=$requestUrl '
-          'authUserId=$userId',
+          '[StoreService] getStoreProfileForSellerId empty result '
+          'requestUrl=$requestUrl sellerId=$normalizedSellerId',
         );
         return null;
       }
 
-      // Map snake_case to camelCase for UI consumption
       final mapped = StoreServiceMappers.storeToCamelCase(data);
       final name = mapped['storeName']?.toString().trim() ?? '';
       if (name.isNotEmpty) _cachedBusinessName = name;
       return mapped;
     } catch (e, stackTrace) {
       debugPrint(
-        '[StoreService] getStoreProfile failed requestUrl=$requestUrl '
-        'authUserId=$userId error=$e',
+        '[StoreService] getStoreProfileForSellerId failed requestUrl=$requestUrl '
+        'sellerId=$normalizedSellerId error=$e',
       );
       debugPrintStack(stackTrace: stackTrace);
       return null;
     }
+  }
+
+  Future<Map<String, dynamic>?> getStoreProfile() async {
+    final authUserId = currentUserId?.trim() ?? '';
+    if (authUserId.isEmpty) {
+      debugPrint('[StoreService] getStoreProfile skipped: authUserId missing');
+      return null;
+    }
+    final ownerId = await resolveStoreOwnerIdForCurrentUser();
+    return getStoreProfileForSellerId(ownerId ?? authUserId);
   }
 
   // Upload Document (for Seller Application)
@@ -968,11 +1028,11 @@ class StoreService {
           case 'draft':
           case 'taslak':
             return 'taslak';
-          case 'pending':
+          case AdminApprovalStatusConstants.pending:
           case 'pending_approval':
           case 'bekleniyor':
             return 'bekleniyor';
-          case 'rejected':
+          case AdminApprovalStatusConstants.rejected:
           case 'reddedildi':
             return 'reddedildi';
           default:
@@ -1269,7 +1329,7 @@ class StoreService {
     await _supabase
         .from('products')
         .update({
-          'status': 'rejected',
+          'status': AdminApprovalStatusConstants.rejected,
           'rejection_reason': reason,
           'rejected_at': DateTime.now().toIso8601String(),
         })
@@ -1287,12 +1347,12 @@ class StoreService {
       case 'draft':
         return 'Taslak';
       case 'pending_approval':
-      case 'pending':
+      case AdminApprovalStatusConstants.pending:
       case 'bekleniyor':
       case 'beklemede':
       case 'onay_bekliyor':
         return 'pending_approval';
-      case 'rejected':
+      case AdminApprovalStatusConstants.rejected:
       case 'reddedildi':
         return 'rejected';
       default:
@@ -1564,6 +1624,30 @@ class StoreService {
       waiterId: waiterId,
       waiterName: waiterName,
       sessionKey: sessionKey,
+    );
+  }
+
+  Future<bool> ensureTableHistoryRecorded({
+    required String sellerId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> closedOrders,
+    required String paymentMethod,
+    String? paymentNote,
+    String? waiterId,
+    String? waiterName,
+    String? tableLabel,
+    DateTime? closedAt,
+  }) {
+    return _tableService.ensureTableHistoryRecorded(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      closedOrders: closedOrders,
+      paymentMethod: paymentMethod,
+      paymentNote: paymentNote,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      tableLabel: tableLabel,
+      closedAt: closedAt,
     );
   }
 
@@ -2147,7 +2231,7 @@ class StoreService {
       await _supabase.from('store_deletion_requests').upsert({
         'seller_id': currentUserId,
         'reason': reason,
-        'status': 'pending',
+        'status': AdminApprovalStatusConstants.pending,
         'created_at': DateTime.now().toIso8601String(),
       });
     } catch (error) {
@@ -2292,7 +2376,7 @@ class StoreService {
       'current_lng': store['store_lng'],
       'requested_lat': requestedLat,
       'requested_lng': requestedLng,
-      'status': 'pending',
+      'status': AdminApprovalStatusConstants.pending,
       'created_at': DateTime.now().toIso8601String(),
     });
   }

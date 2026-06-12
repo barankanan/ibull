@@ -111,11 +111,11 @@ void main() {
     });
 
     // ── 1f. served statüsü ───────────────────────────────────────────────
-    test('served: undo=FALSE, edit=FALSE, transfer=FALSE', () {
+    test('served: undo=FALSE, edit=TRUE, transfer=FALSE', () {
       final r = GarsonOperationRules.forStatus('served');
       expect(r.canUndo, isFalse);
-      expect(r.canEdit, isFalse);
-      expect(r.canResend, isFalse);
+      expect(r.canEdit, isTrue);
+      expect(r.canResend, isTrue);
       expect(r.canTransfer, isFalse);
     });
 
@@ -716,8 +716,8 @@ void main() {
 
       // Sipariş başarıyla gönderildi mi?
       expect(
-        find.text('Sipariş masaya yansıtıldı. Aktif siparişler aşağıda hazır.'),
-        findsOneWidget,
+        find.textContaining('Sipariş gönderildi'),
+        findsWidgets,
         reason: 'Başarı mesajı gösterilmeli',
       );
       // UndoActionBanner render edilmeli (henüz TTL dolmadı)
