@@ -7,10 +7,16 @@ import '../repositories/finance_repository.dart';
 /// Sadece Overview (genel bakış) ve ortak kaynak listelerini tutar.
 /// Her sekme kendi lokal state'ini yönetir.
 class FinanceProvider extends ChangeNotifier {
-  FinanceProvider({required this.sellerId})
-      : repo = FinanceRepository(sellerId);
+  FinanceProvider({
+    required this.sellerId,
+    this.optimisticClosedHistory = const <Map<String, dynamic>>[],
+  }) : repo = FinanceRepository(
+         sellerId,
+         optimisticHistoryRows: optimisticClosedHistory,
+       );
 
   final String sellerId;
+  final List<Map<String, dynamic>> optimisticClosedHistory;
   final FinanceRepository repo;
 
   // ─── Overview ───
@@ -46,10 +52,7 @@ class FinanceProvider extends ChangeNotifier {
 
   Future<void> init() async {
     if (_resourcesLoaded) return;
-    await Future.wait([
-      loadOverview(),
-      loadSharedResources(),
-    ]);
+    await Future.wait([loadOverview(), loadSharedResources()]);
     _resourcesLoaded = true;
   }
 
@@ -104,7 +107,10 @@ class FinanceProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void triggerQuickAction(String action, {Map<String, dynamic> payload = const {}}) {
+  void triggerQuickAction(
+    String action, {
+    Map<String, dynamic> payload = const {},
+  }) {
     _quickAction = FinanceQuickActionEvent(
       id: ++_quickActionSequence,
       action: action,
@@ -137,9 +143,6 @@ class FinanceProvider extends ChangeNotifier {
   // ─────────────────────────────────────────
 
   Future<void> refresh() async {
-    await Future.wait([
-      loadOverview(),
-      loadSharedResources(),
-    ]);
+    await Future.wait([loadOverview(), loadSharedResources()]);
   }
 }

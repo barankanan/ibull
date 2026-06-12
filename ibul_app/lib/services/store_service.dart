@@ -530,6 +530,87 @@ class StoreService {
     }
   }
 
+  Future<Map<String, dynamic>?> getStoreProfileForSellerId(
+    String sellerId,
+  ) async {
+    final normalizedSellerId = sellerId.trim();
+    if (normalizedSellerId.isEmpty) return null;
+
+    const storeProfileColumns =
+        'business_name,website,description,slogan,phone,email,whatsapp,'
+        'support_phone,address,postal_code,tax_number,instagram,facebook,'
+        'twitter,city,district,business_type,working_hours,is_store_open,'
+        'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
+        'cover_url,gallery_images,banners,seller_videos,store_lat,'
+        'store_lng,category,rating,is_verified';
+
+    try {
+      final data = await _supabase
+          .from('stores')
+          .select(storeProfileColumns)
+          .eq('seller_id', normalizedSellerId)
+          .maybeSingle();
+      if (data == null) return null;
+      final mapped = StoreServiceMappers.storeToCamelCase(data);
+      final name = mapped['storeName']?.toString().trim() ?? '';
+      if (name.isNotEmpty && normalizedSellerId == currentUserId) {
+        _cachedBusinessName = name;
+      }
+      return mapped;
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[StoreService] getStoreProfileForSellerId failed '
+        'sellerId=$normalizedSellerId error=$e',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+      return null;
+    }
+  }
+
+  Future<String?> resolveStoreOwnerIdForCurrentUser() async {
+    final userId = currentUserId?.trim() ?? '';
+    if (userId.isEmpty) return null;
+
+    try {
+      final storeRow = await _supabase
+          .from('stores')
+          .select('seller_id')
+          .eq('seller_id', userId)
+          .maybeSingle();
+      final directSellerId = storeRow?['seller_id']?.toString().trim() ?? '';
+      if (directSellerId.isNotEmpty) return directSellerId;
+    } catch (_) {
+      // Fall through to sub-admin resolution.
+    }
+
+    final authUser = _supabase.auth.currentUser;
+    final email = authUser?.email?.trim() ?? '';
+    final phone = authUser?.phone?.trim() ?? '';
+    final filters = <String>[];
+    if (email.isNotEmpty) {
+      filters.add('email.eq.$email');
+    }
+    if (phone.isNotEmpty) {
+      filters.add('phone.eq.$phone');
+    }
+    if (filters.isEmpty) return userId;
+
+    try {
+      final subAdminRow = await _supabase
+          .from('store_sub_admins')
+          .select('store_id, status')
+          .eq('status', 'active')
+          .or(filters.join(','))
+          .maybeSingle();
+      final ownerId = subAdminRow?['store_id']?.toString().trim() ?? '';
+      if (ownerId.isNotEmpty) return ownerId;
+    } catch (_) {
+      // Keep prior auth-id fallback behavior.
+    }
+
+    return userId;
+  }
+
   // Upload Document (for Seller Application)
   Future<String> uploadDocument(
     String fileName,
@@ -1516,6 +1597,30 @@ class StoreService {
 
   Future<List<Map<String, dynamic>>> getTableOrdersByIds(List<String> ids) {
     return _tableService.getTableOrdersByIds(ids);
+  }
+
+  Future<bool> ensureTableHistoryRecorded({
+    required String sellerId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> closedOrders,
+    required String paymentMethod,
+    String? paymentNote,
+    String? waiterId,
+    String? waiterName,
+    String? tableLabel,
+    DateTime? closedAt,
+  }) {
+    return _tableService.ensureTableHistoryRecorded(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      closedOrders: closedOrders,
+      paymentMethod: paymentMethod,
+      paymentNote: paymentNote,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      tableLabel: tableLabel,
+      closedAt: closedAt,
+    );
   }
 
   Future<void> closeTableOrders({

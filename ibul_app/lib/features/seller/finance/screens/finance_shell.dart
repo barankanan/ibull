@@ -17,14 +17,22 @@ import 'tabs/salary_tab.dart';
 import 'tabs/settings_tab.dart';
 
 class FinanceShell extends StatelessWidget {
-  const FinanceShell({super.key, required this.sellerId});
+  const FinanceShell({
+    super.key,
+    required this.sellerId,
+    this.optimisticClosedHistory = const <Map<String, dynamic>>[],
+  });
 
   final String sellerId;
+  final List<Map<String, dynamic>> optimisticClosedHistory;
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => FinanceProvider(sellerId: sellerId),
+      create: (_) => FinanceProvider(
+        sellerId: sellerId,
+        optimisticClosedHistory: optimisticClosedHistory,
+      ),
       child: const _FinanceShellContent(),
     );
   }
@@ -90,7 +98,11 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         repo.getCashMovements(limit: 4),
         repo.getIncomeRecords(limit: 4),
         repo.getExpenses(limit: 4),
-        repo.getIncomeRecords(from: DateTime(now.year, now.month, now.day), to: now, limit: 100),
+        repo.getIncomeRecords(
+          from: DateTime(now.year, now.month, now.day),
+          to: now,
+          limit: 100,
+        ),
         repo.getPaymentScheduleItems(
           from: now.subtract(const Duration(days: 14)),
           to: now.add(const Duration(days: 21)),
@@ -105,61 +117,69 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
       final todayIncomes = results[3] as List<IncomeRecord>;
       final schedule = results[4] as List<Map<String, dynamic>>;
 
-      final items = <Map<String, dynamic>>[
-        ...movements.map(
-          (m) => {
-            'title': m.accountName ?? m.movementType.label,
-            'subtitle': m.description ?? m.movementType.label,
-            'amount': m.isIn ? m.amount : -m.amount,
-            'date': m.movementDate,
-            'color': m.isIn ? const Color(0xFF10B981) : const Color(0xFFEF4444),
-            'icon': m.isIn ? Icons.south_west_rounded : Icons.north_east_rounded,
-            'tag': m.isIn ? 'Kasa Girişi' : 'Kasa Çıkışı',
-          },
-        ),
-        ...incomes.map(
-          (i) => {
-            'title': i.source ?? i.incomeType.label,
-            'subtitle': i.description ?? i.incomeType.label,
-            'amount': i.netAmount,
-            'date': i.incomeDate,
-            'color': const Color(0xFF10B981),
-            'icon': Icons.trending_up_rounded,
-            'tag': i.isCollected ? 'Gelir' : 'Bekleyen Gelir',
-          },
-        ),
-        ...expenses.map(
-          (e) => {
-            'title': e.supplierName ?? e.category.label,
-            'subtitle': e.description ?? e.category.label,
-            'amount': -e.amount,
-            'date': e.expenseDate,
-            'color': e.isPaid ? const Color(0xFFEF4444) : const Color(0xFFF59E0B),
-            'icon': e.isPaid ? Icons.receipt_long_rounded : Icons.schedule_rounded,
-            'tag': e.isPaid ? 'Gider' : 'Bekleyen Gider',
-          },
-        ),
-      ]
-        ..sort(
-          (a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime),
-        );
+      final items =
+          <Map<String, dynamic>>[
+            ...movements.map(
+              (m) => {
+                'title': m.accountName ?? m.movementType.label,
+                'subtitle': m.description ?? m.movementType.label,
+                'amount': m.isIn ? m.amount : -m.amount,
+                'date': m.movementDate,
+                'color': m.isIn
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFFEF4444),
+                'icon': m.isIn
+                    ? Icons.south_west_rounded
+                    : Icons.north_east_rounded,
+                'tag': m.isIn ? 'Kasa Girişi' : 'Kasa Çıkışı',
+              },
+            ),
+            ...incomes.map(
+              (i) => {
+                'title': i.source ?? i.incomeType.label,
+                'subtitle': i.description ?? i.incomeType.label,
+                'amount': i.netAmount,
+                'date': i.incomeDate,
+                'color': const Color(0xFF10B981),
+                'icon': Icons.trending_up_rounded,
+                'tag': i.isCollected ? 'Gelir' : 'Bekleyen Gelir',
+              },
+            ),
+            ...expenses.map(
+              (e) => {
+                'title': e.supplierName ?? e.category.label,
+                'subtitle': e.description ?? e.category.label,
+                'amount': -e.amount,
+                'date': e.expenseDate,
+                'color': e.isPaid
+                    ? const Color(0xFFEF4444)
+                    : const Color(0xFFF59E0B),
+                'icon': e.isPaid
+                    ? Icons.receipt_long_rounded
+                    : Icons.schedule_rounded,
+                'tag': e.isPaid ? 'Gider' : 'Bekleyen Gider',
+              },
+            ),
+          ]..sort(
+            (a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime),
+          );
 
       setState(() {
         _recentActivities = items.take(8).toList(growable: false);
         _paymentSchedule = schedule.take(6).toList(growable: false);
         _expenseSummary = results[5] as Map<String, double>;
         _companySettings = results[6] as CompanySettings?;
-        _todayIncome = todayIncomes.fold<double>(0, (sum, item) => sum + item.netAmount);
-        _upcomingPaymentAmount = schedule.fold<double>(
+        _todayIncome = todayIncomes.fold<double>(
           0,
-          (sum, item) {
-            final dueDate = item['due_date'] as DateTime;
-            final amount = (item['amount'] as num?)?.toDouble() ?? 0;
-            return dueDate.isAfter(now.subtract(const Duration(days: 1)))
-                ? sum + amount
-                : sum;
-          },
+          (sum, item) => sum + item.netAmount,
         );
+        _upcomingPaymentAmount = schedule.fold<double>(0, (sum, item) {
+          final dueDate = item['due_date'] as DateTime;
+          final amount = (item['amount'] as num?)?.toDouble() ?? 0;
+          return dueDate.isAfter(now.subtract(const Duration(days: 1)))
+              ? sum + amount
+              : sum;
+        });
       });
     } catch (error) {
       setState(() {
@@ -303,7 +323,11 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.info_outline_rounded, color: Color(0xFFD97706), size: 18),
+          const Icon(
+            Icons.info_outline_rounded,
+            color: Color(0xFFD97706),
+            size: 18,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -423,11 +447,13 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
 
   Widget _buildPerformanceCard(FinanceProvider provider) {
     final trendPoints = provider.trend
-        .map((point) => (
-              label: point.label,
-              income: point.income,
-              expense: point.expense,
-            ))
+        .map(
+          (point) => (
+            label: point.label,
+            income: point.income,
+            expense: point.expense,
+          ),
+        )
         .toList(growable: false);
     final overview = provider.overview;
 
@@ -665,14 +691,18 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
           const SizedBox(height: 12),
           FinMetricRow(label: 'Şirket', value: settings?.companyName ?? '-'),
           FinMetricRow(label: 'Vergi No', value: settings?.taxNumber ?? '-'),
-          FinMetricRow(label: 'Vergi Dairesi', value: settings?.taxOffice ?? '-'),
+          FinMetricRow(
+            label: 'Vergi Dairesi',
+            value: settings?.taxOffice ?? '-',
+          ),
           FinMetricRow(
             label: 'Para Birimi',
             value: settings?.defaultCurrency ?? 'TRY',
           ),
           FinMetricRow(
             label: 'Komisyon Oranı',
-            value: '%${(((settings?.platformCommissionRate ?? 0) * 100)).toStringAsFixed(1)}',
+            value:
+                '%${(((settings?.platformCommissionRate ?? 0) * 100)).toStringAsFixed(1)}',
             valueColor: const Color(0xFF7C3AED),
           ),
         ],
@@ -829,53 +859,61 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
   }
 
   List<Widget> _buildExpenseBreakdownRows() {
-    final total = _expenseSummary.values.fold<double>(0, (sum, value) => sum + value);
+    final total = _expenseSummary.values.fold<double>(
+      0,
+      (sum, value) => sum + value,
+    );
     final rows = _expenseSummary.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    return rows.take(4).map((entry) {
-      final ratio = total == 0 ? 0.0 : entry.value / total;
-      final label = ExpenseCategory.fromValue(entry.key).label;
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return rows
+        .take(4)
+        .map((entry) {
+          final ratio = total == 0 ? 0.0 : entry.value / total;
+          final label = ExpenseCategory.fromValue(entry.key).label;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF334155),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF334155),
+                        ),
+                      ),
                     ),
-                  ),
+                    Text(
+                      '${(ratio * 100).toStringAsFixed(1)}% • ${fmtCurrency(entry.value)}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: kFinancePrimary,
+                      ),
+                    ),
+                  ],
                 ),
-                Text(
-                  '${(ratio * 100).toStringAsFixed(1)}% • ${fmtCurrency(entry.value)}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: kFinancePrimary,
+                const SizedBox(height: 4),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(99),
+                  child: LinearProgressIndicator(
+                    value: ratio,
+                    minHeight: 6,
+                    backgroundColor: const Color(0xFFE2E8F0),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      kFinancePrimary,
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(99),
-              child: LinearProgressIndicator(
-                value: ratio,
-                minHeight: 6,
-                backgroundColor: const Color(0xFFE2E8F0),
-                valueColor: const AlwaysStoppedAnimation<Color>(kFinancePrimary),
-              ),
-            ),
-          ],
-        ),
-      );
-    }).toList(growable: false);
+          );
+        })
+        .toList(growable: false);
   }
 
   Widget _buildSectionSwitcher() {
@@ -950,7 +988,8 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         FinToolbarAction(
           label: '+ Maaş',
           icon: Icons.payments_rounded,
-          onTap: () => _dispatchQuickAction(FinanceQuickActions.salaryAddRecord),
+          onTap: () =>
+              _dispatchQuickAction(FinanceQuickActions.salaryAddRecord),
         ),
         FinToolbarAction(
           label: '+ Ödeme',
@@ -966,12 +1005,18 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
     );
   }
 
-  void _dispatchQuickAction(String action, {Map<String, dynamic> payload = const {}}) {
+  void _dispatchQuickAction(
+    String action, {
+    Map<String, dynamic> payload = const {},
+  }) {
     final tabIndex = FinanceQuickActions.tabIndexFor(action);
     if (tabIndex != null && _selectedIndex != tabIndex) {
       setState(() => _selectedIndex = tabIndex);
     }
-    context.read<FinanceProvider>().triggerQuickAction(action, payload: payload);
+    context.read<FinanceProvider>().triggerQuickAction(
+      action,
+      payload: payload,
+    );
   }
 
   void _showPaymentQuickSheet() {
@@ -985,7 +1030,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.credit_card_rounded, color: Color(0xFFEF4444)),
+              leading: const Icon(
+                Icons.credit_card_rounded,
+                color: Color(0xFFEF4444),
+              ),
               title: const Text('Borç Ödemesi Başlat'),
               subtitle: const Text('Açık borç kaydını seçip ödeme oluştur'),
               onTap: () {
@@ -994,7 +1042,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.local_shipping_rounded, color: Color(0xFFF97316)),
+              leading: const Icon(
+                Icons.local_shipping_rounded,
+                color: Color(0xFFF97316),
+              ),
               title: const Text('Tedarikçi Ödemesi'),
               subtitle: const Text('Tedarikçi tipindeki borçları filtrele'),
               onTap: () {
@@ -1006,7 +1057,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.people_alt_rounded, color: Color(0xFF8B5CF6)),
+              leading: const Icon(
+                Icons.people_alt_rounded,
+                color: Color(0xFF8B5CF6),
+              ),
               title: const Text('Maaş Ödemesi Başlat'),
               subtitle: const Text('Açık maaş kayıtlarına toplu ödeme aç'),
               onTap: () {
@@ -1015,7 +1069,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.receipt_long_rounded, color: Color(0xFF0EA5E9)),
+              leading: const Icon(
+                Icons.receipt_long_rounded,
+                color: Color(0xFF0EA5E9),
+              ),
               title: const Text('Gider Ödemesi'),
               subtitle: const Text('Bekleyen gideri seçip ödenmiş işaretle'),
               onTap: () {
@@ -1024,7 +1081,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.arrow_circle_up_rounded, color: Color(0xFFEF4444)),
+              leading: const Icon(
+                Icons.arrow_circle_up_rounded,
+                color: Color(0xFFEF4444),
+              ),
               title: const Text('Kasa Çıkışı'),
               subtitle: const Text('Serbest ödeme veya kasadan çıkış kaydı'),
               onTap: () {
@@ -1033,7 +1093,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.compare_arrows_rounded, color: Color(0xFF3B82F6)),
+              leading: const Icon(
+                Icons.compare_arrows_rounded,
+                color: Color(0xFF3B82F6),
+              ),
               title: const Text('Banka Transferi'),
               subtitle: const Text('Transfer tipi kasa hareketi başlat'),
               onTap: () {
@@ -1058,7 +1121,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.arrow_circle_down_rounded, color: Color(0xFF10B981)),
+              leading: const Icon(
+                Icons.arrow_circle_down_rounded,
+                color: Color(0xFF10B981),
+              ),
               title: const Text('Kasa Girişi'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -1066,7 +1132,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.arrow_circle_up_rounded, color: Color(0xFFEF4444)),
+              leading: const Icon(
+                Icons.arrow_circle_up_rounded,
+                color: Color(0xFFEF4444),
+              ),
               title: const Text('Kasa Çıkışı'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -1074,7 +1143,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.compare_arrows_rounded, color: Color(0xFF3B82F6)),
+              leading: const Icon(
+                Icons.compare_arrows_rounded,
+                color: Color(0xFF3B82F6),
+              ),
               title: const Text('Transfer'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -1082,7 +1154,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.rule_folder_rounded, color: Color(0xFFF59E0B)),
+              leading: const Icon(
+                Icons.rule_folder_rounded,
+                color: Color(0xFFF59E0B),
+              ),
               title: const Text('Düzeltme'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -1090,7 +1165,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.badge_rounded, color: Color(0xFF8B5CF6)),
+              leading: const Icon(
+                Icons.badge_rounded,
+                color: Color(0xFF8B5CF6),
+              ),
               title: const Text('Avans'),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -1121,7 +1199,11 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
             child: Row(
               children: [
-                Icon(_tabs[_selectedIndex].icon, size: 18, color: kFinancePrimary),
+                Icon(
+                  _tabs[_selectedIndex].icon,
+                  size: 18,
+                  color: kFinancePrimary,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(

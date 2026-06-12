@@ -262,6 +262,16 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Risk notu:` `FinanceShell` anahtarı owner `sellerId` değişimini yansıtmazsa provider eski auth fallback UID ile yaşamaya devam eder ve finans verileri aç-kapa sonrası `₺0` görünebilir. Ayrıca owner bootstrap tamamlanmadan shell oluşturulursa cached optimistic history kullanılmadan 0-state render görülebilir.
 - `Durum:` net
 
+## `ibul_app/lib/screens/seller_panel_orders_modules.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/seller_panel_orders_modules.dart`
+- `Amaç:` Seller panel içindeki Siparişler modülünün desktop/mobile liste kabuğu; arama, filtre chip’leri, KPI kartları ve sipariş kartlarını `seller_panel_page.dart` içindeki state/helpers ile render eder.
+- `Bağlı olduğu dosyalar:` `seller_panel_page.dart`, `services/order_service.dart`
+- `Bu dosyayı kullanan dosyalar:` `seller_panel_page.dart`
+- `Değişirse etkilenecek yerler:` seller Siparişler ekranı liste veri kümesi, üst sayaçlar, sipariş kart başlıkları ve detail sayfasına geçiş davranışı.
+- `Risk notu:` Restoran / yemek mağazalarında bu modül yalnız online siparişleri göstermeli; `table` / `waiter` kaynaklı kayıtlar Garson akışında kalmalı. Buradaki filtreler yanlış genişlerse dashboard/finance değil ama Siparişler ekranı yanlış veriyle dolar.
+- `Durum:` net
+
 ## `restaurant-ops-web/src/features/restaurant/app/WaiterRouteScreen.tsx`
 
 - `Dosya yolu:` `restaurant-ops-web/src/features/restaurant/app/WaiterRouteScreen.tsx`
@@ -533,7 +543,13 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `ibul_app/lib/core/web_seo*.dart`
   - web SEO/stub ayrımı.
 - `ibul_app/lib/utils/order_status_constants.dart`
-  - sipariş durum sabitleri.
+  - sipariş ve admin onay durum sabitleri; switch-case kullanan seller/admin ekranları için const kaynak.
+- `ibul_app/lib/services/store/table_order_history_utils.dart`
+  - `table_order_history` satırlarından kapanış zamanı, gelir ve masa etiketi türeten ortak helper.
+- `ibul_app/lib/services/store/table_close_history_fallback.dart`
+  - garson masa kapanışında duplicate archive kontrolü ve fallback insert planı üretir.
+- `ibul_app/lib/features/seller/finance/helpers/today_income_builder.dart`
+  - finance repository için günlük gelir breakdown ve kapanmış masa ciro toplamı yardımcıları.
 - `ibul_app/lib/utils/table_labels.dart`
   - masa etiketi üretimi.
 - `ibul_app/lib/core/store_logo_helper.dart`
@@ -624,3 +640,4 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `app_state.dart` seller-scoped cache yardımcıları ile seller panel için kalıcı dashboard/finance cache desteği aldı.
 - `seller_panel_page.dart` startup bootstrap sırası owner restore -> sellerId resolve -> cached closed-history hydrate -> store profile refresh olacak şekilde güçlendirildi; boş fetch artık mevcut cache’i ezmiyor.
 - `seller_panel_finance_modules.dart` owner bootstrap tamamlanmadan `FinanceShell` oluşturmuyor; hazır olunca sellerId içeren anahtarla provider yeniden kuruluyor.
+- Build restore için eksik helper/constants zinciri tamamlandı: `order_status_constants.dart` artık hem `OrderStatusConstants` hem `AdminApprovalStatusConstants` sağlıyor; `table_order_history_utils.dart`, `table_close_history_fallback.dart` ve `today_income_builder.dart` seller finance/store servisleriyle bağlı.

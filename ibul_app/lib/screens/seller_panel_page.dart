@@ -9,7 +9,6 @@ import 'package:flutter/foundation.dart'
         kIsWeb,
         listEquals;
 import 'package:flutter/material.dart';
-import '../utils/order_status_constants.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -544,8 +543,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   SellerDashboardRangePreset _dashboardRangePreset =
       SellerDashboardRangePreset.last7Days;
   DateTimeRange? _dashboardCustomRange;
-  late DateTime _earningsDay;
-  late DateTime _earningsMonth;
   int _financeRefreshToken = 0;
   int _sellerPanelBuildCount = 0;
   int _sellerPanelStateUpdateCount = 0;
@@ -1684,9 +1681,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _earningsDay = DateTime(now.year, now.month, now.day);
-    _earningsMonth = DateTime(now.year, now.month, 1);
     WidgetsBinding.instance.addObserver(this);
     _bindNavigationController(source: 'initState', viaSetState: false);
     _logSellerPanelLifecycle(
@@ -1865,7 +1859,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   Future<void> _bootstrapSellerOwnerAndDashboardState() async {
-    await _restorePersistedSellerDataOwnerIdWithReload(reloadStoreProfile: false);
+    await _restorePersistedSellerDataOwnerIdWithReload(
+      reloadStoreProfile: false,
+    );
     final sellerId = await _ensureSellerDataOwnerIdResolved(
       source: 'bootstrap_owner_and_cache',
     );
@@ -1924,9 +1920,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     };
   }
 
-  String _dashboardClosedHistoryRowsSignature(
-    List<Map<String, dynamic>> rows,
-  ) {
+  String _dashboardClosedHistoryRowsSignature(List<Map<String, dynamic>> rows) {
     return rows
         .map(
           (r) =>
@@ -3706,14 +3700,15 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   Map<String, int> _sellerOrderStatusCounts() {
-    final cacheKey = '$_ordersVersion';
+    final cacheKey = '$_ordersVersion|$_storeCategory';
     if (_sellerOrderStatusCountsCacheKey == cacheKey &&
         _sellerOrderStatusCountsCache != null) {
       return _sellerOrderStatusCountsCache!;
     }
 
+    final visibleOrders = _sellerOrdersVisibleInOrdersModule();
     final counts = <String, int>{
-      'all': _sellerOrders.length,
+      'all': visibleOrders.length,
       'new': 0,
       'confirmed': 0,
       'preparing': 0,
@@ -3723,7 +3718,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       'returns': 0,
       'external': 0,
     };
-    for (final order in _sellerOrders) {
+    for (final order in visibleOrders) {
       final status = (order['status'] ?? '').toString();
       if (_isSellerExternalOrder(order)) {
         counts['external'] = (counts['external'] ?? 0) + 1;
@@ -3771,6 +3766,54 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         storeName.contains('harici sipariş');
   }
 
+  List<Map<String, dynamic>> _sellerOrdersVisibleInOrdersModule() {
+    if (!_isFoodStoreCategory(_storeCategory)) {
+      return _sellerOrders;
+    }
+    return _sellerOrders
+        .where(_shouldIncludeInSellerOrdersModule)
+        .toList(growable: false);
+  }
+
+  bool _shouldIncludeInSellerOrdersModule(Map<String, dynamic> order) {
+    if (!_isFoodStoreCategory(_storeCategory)) return true;
+    return !_isSellerTableSourcedOrder(order);
+  }
+
+  bool _isSellerTableSourcedOrder(Map<String, dynamic> order) {
+    final explicit = order['is_table_order'];
+    if (explicit is bool) return explicit;
+
+    final orderNumber = (order['order_number'] ?? '')
+        .toString()
+        .trim()
+        .toUpperCase();
+    if (orderNumber.startsWith('TBL-')) return true;
+
+    final orderType = (order['order_type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (orderType == 'table' || orderType.startsWith('table_')) return true;
+
+    final deliveryType = (order['delivery_type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (deliveryType == 'table' ||
+        deliveryType.startsWith('table_') ||
+        deliveryType.contains('masa') ||
+        deliveryType.contains('table')) {
+      return true;
+    }
+
+    final tableId = order['table_id']?.toString().trim() ?? '';
+    if (tableId.isNotEmpty) return true;
+
+    final waiterId = order['waiter_id']?.toString().trim() ?? '';
+    return waiterId.isNotEmpty;
+  }
+
   bool _isIhizCargoCompany(String? cargoCompany) {
     final normalized = (cargoCompany ?? '')
         .replaceAll('İ', 'I')
@@ -3781,14 +3824,14 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   List<Map<String, dynamic>> _getFilteredSellerOrders() {
     final cacheKey =
-        '$_ordersVersion|$_selectedSellerOrderFilter|$_debouncedSellerOrderQuery';
+        '$_ordersVersion|$_storeCategory|$_selectedSellerOrderFilter|$_debouncedSellerOrderQuery';
     if (_filteredSellerOrdersCacheKey == cacheKey &&
         _filteredSellerOrdersCache != null) {
       return _filteredSellerOrdersCache!;
     }
 
     final query = _debouncedSellerOrderQuery;
-    final filtered = _sellerOrders
+    final filtered = _sellerOrdersVisibleInOrdersModule()
         .where((order) {
           final status = (order['status'] ?? '').toString();
           final matchesFilter = switch (_selectedSellerOrderFilter) {
@@ -4227,7 +4270,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   /// actually changed (mirrors the [_loadDashboardTableOrders] loop-guard).
   Future<bool> _loadDashboardClosedHistory({String source = 'unknown'}) async {
     if (_isDashboardClosedHistoryLoading) return false;
-    if (!_isFoodStoreCategory(_storeCategory) && _dashboardClosedHistory.isEmpty) {
+    if (!_isFoodStoreCategory(_storeCategory) &&
+        _dashboardClosedHistory.isEmpty) {
       return false;
     }
     final sellerId = await _ensureSellerDataOwnerIdResolved(
@@ -4348,7 +4392,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   /// For others: online orders only (unchanged behaviour).
   List<Map<String, dynamic>> get _combinedDashboardOrders {
     final shouldIncludeClosedHistory =
-        _isFoodStoreCategory(_storeCategory) || _dashboardClosedHistory.isNotEmpty;
+        _isFoodStoreCategory(_storeCategory) ||
+        _dashboardClosedHistory.isNotEmpty;
     if (!shouldIncludeClosedHistory) {
       return _sellerOrders;
     }
@@ -4429,7 +4474,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       _invalidateDashboardSnapshot();
     });
     _financeRefreshToken++;
-    unawaited(_persistDashboardFinanceCache(closedHistoryRows: _dashboardClosedHistory));
+    unawaited(
+      _persistDashboardFinanceCache(closedHistoryRows: _dashboardClosedHistory),
+    );
   }
 
   /// Restaurant-specific status counts derived from active table_orders plus
@@ -10149,6 +10196,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Widget _buildMobileOrderCard(Map<String, dynamic> order) {
     final statusColor = _sellerOrderStatusColor(order['status']?.toString());
     final orderNo = order['order_number']?.toString() ?? '-';
+    final orderTitle = _sellerOrderDisplayTitle(order);
     final dateText = _formatSellerOrderDate(
       order['order_created_at']?.toString(),
     );
@@ -10171,7 +10219,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               children: [
                 Expanded(
                   child: Text(
-                    orderNo,
+                    orderTitle,
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
@@ -10199,9 +10247,23 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ],
             ),
             const SizedBox(height: 6),
-            Text(
-              dateText,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            Row(
+              children: [
+                Icon(
+                  Icons.calendar_today_outlined,
+                  size: 14,
+                  color: Colors.grey.shade500,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '$dateText • $orderNo',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 10),
             Row(
@@ -16388,34 +16450,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return SellerDashboardRevenueCard(data: data);
   }
 
-  Widget _buildEarningsCard() {
-    final daily = _earningsForDay(_earningsDay);
-    final monthly = _earningsForMonth(_earningsMonth);
-    final monthOptions = _dashboardEarningsMonthOptions;
-
-    return EarningsSummaryCard(
-      dailyValue: _formatDashboardCurrency(daily),
-      monthlyValue: _formatDashboardCurrency(monthly),
-      dayLabel: _formatEarningsDayLabel(_earningsDay),
-      monthLabel: _formatEarningsMonthOption(_earningsMonth),
-      monthOptions: monthOptions,
-      selectedMonth: _earningsMonth,
-      formatMonthOption: _formatEarningsMonthOption,
-      onPickDay: () async {
-        final picked = await showDatePicker(
-          context: context,
-          initialDate: _earningsDay,
-          firstDate: DateTime(2020),
-          lastDate: DateTime.now(),
-        );
-        if (picked == null || !mounted) return;
-        setState(() {
-          _earningsDay = DateTime(picked.year, picked.month, picked.day);
-        });
-      },
-      onMonthChanged: (value) => setState(() => _earningsMonth = value),
-    );
-  }
+  // ignore: unused_element
+  Widget _buildEarningsCard() => const SizedBox.shrink();
 
   Widget _buildDashboardRangeChip({
     required String label,
@@ -16911,50 +16947,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           0;
       return sum + (amount as num).toDouble();
     });
-  }
-
-  double _earningsForDay(DateTime day) {
-    final start = DateTime(day.year, day.month, day.day);
-    final end = DateTime(day.year, day.month, day.day, 23, 59, 59);
-    return _dashboardSumRevenue(_dashboardOrdersBetween(start, end));
-  }
-
-  double _earningsForMonth(DateTime month) {
-    final start = DateTime(month.year, month.month, 1);
-    final end = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
-    return _dashboardSumRevenue(_dashboardOrdersBetween(start, end));
-  }
-
-  static const _earningsMonthLabels = [
-    'Ocak',
-    'Şubat',
-    'Mart',
-    'Nisan',
-    'Mayıs',
-    'Haziran',
-    'Temmuz',
-    'Ağustos',
-    'Eylül',
-    'Ekim',
-    'Kasım',
-    'Aralık',
-  ];
-
-  List<DateTime> get _dashboardEarningsMonthOptions {
-    final now = DateTime.now();
-    return List.generate(
-      12,
-      (i) => DateTime(now.year, now.month - i, 1),
-      growable: false,
-    );
-  }
-
-  String _formatEarningsMonthOption(DateTime month) {
-    return '${_earningsMonthLabels[month.month - 1]} ${month.year}';
-  }
-
-  String _formatEarningsDayLabel(DateTime day) {
-    return '${day.day.toString().padLeft(2, '0')}.${day.month.toString().padLeft(2, '0')}.${day.year}';
   }
 
   String _normalizeDashboardOrderStatus(dynamic status) {
@@ -21063,6 +21055,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final status = order['status']?.toString();
     final accent = _sellerOrderStatusColor(status);
     final orderNo = order['order_number']?.toString() ?? '-';
+    final orderTitle = _sellerOrderDisplayTitle(order);
     final dateText = _formatSellerOrderDate(
       order['order_created_at']?.toString(),
     );
@@ -21139,12 +21132,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         children: [
                           Row(
                             children: [
-                              Text(
-                                orderNo,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF182032),
+                              Expanded(
+                                child: Text(
+                                  orderTitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF182032),
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 10),
@@ -21187,11 +21184,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 color: Colors.grey.shade500,
                               ),
                               const SizedBox(width: 8),
-                              Text(
-                                dateText,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF667085),
+                              Expanded(
+                                child: Text(
+                                  '$dateText • $orderNo',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF667085),
+                                  ),
                                 ),
                               ),
                             ],
@@ -22841,6 +22842,33 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     if (raw is int) return raw;
     if (raw is num) return raw.toInt();
     return int.tryParse(raw?.toString() ?? '') ?? 1;
+  }
+
+  String _sellerOrderDisplayTitle(Map<String, dynamic> order) {
+    final names = <String>[];
+    for (final raw in <dynamic>[
+      order['product_name'],
+      order['secondary_product_name'],
+      order['third_product_name'],
+    ]) {
+      final value = raw?.toString().trim() ?? '';
+      if (value.isEmpty) continue;
+      if (value.toUpperCase().startsWith('TBL-')) continue;
+      if (!names.contains(value)) {
+        names.add(value);
+      }
+    }
+
+    final primary = names.isNotEmpty ? names.first : '';
+    if (primary.isEmpty) return 'Sipariş';
+
+    var totalItems = _sellerOrderItemCount(order);
+    if (names.length > totalItems) {
+      totalItems = names.length;
+    }
+    final extraCount = totalItems > 1 ? totalItems - 1 : 0;
+    if (extraCount <= 0) return primary;
+    return '$primary +$extraCount ürün';
   }
 
   List<String> _sellerOrderPreviewTags(Map<String, dynamic> order) {
@@ -35291,9 +35319,6 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         product,
         availableProducts: selectableProducts,
         preselectTemplateItems: false,
-      ),
-      templateChildDefaults: MixedServiceOrder.templateChildDefaultsByProductId(
-        product,
       ),
       availablePricingModes: _availablePricingModesForTemplate(product),
     );
