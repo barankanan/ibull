@@ -6,9 +6,13 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/runtime_config.dart';
+import '../../models/mixed_service_order.dart';
 import '../../utils/garson_active_orders_fetch.dart';
+import '../../utils/order_status_constants.dart';
 import '../../utils/table_labels.dart';
 import 'close_table_workflow.dart';
+import 'table_close_history_fallback.dart';
+import 'table_order_history_utils.dart';
 
 class StoreTableService {
   StoreTableService({
@@ -21,6 +25,7 @@ class StoreTableService {
   final SupabaseClient _supabase;
   final String? Function() _currentUserIdResolver;
   final Duration tableOrderTimeout;
+  bool? _tableOrderHistorySupportsArchivedAt;
 
   bool _isStoreTablesMissingError(Object error) {
     if (error is! PostgrestException) return false;
@@ -129,6 +134,46 @@ class StoreTableService {
         details.contains('last_edit_summary') ||
         details.contains('last_edit_note') ||
         details.contains('updated_at');
+  }
+
+  bool _isTableOrderHistoryArchivedAtMissingError(Object error) {
+    if (error is! PostgrestException) return false;
+    final details =
+        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
+            .toLowerCase();
+    return error.code == '42703' ||
+        details.contains('archived_at does not exist') ||
+        details.contains('archived_at');
+  }
+
+  Future<T> _runWithTableOrderHistorySchemaFallback<T>({
+    required Future<T> Function(bool includeArchivedAt) operation,
+  }) async {
+    final preferArchivedAt = _tableOrderHistorySupportsArchivedAt != false;
+    try {
+      final result = await operation(preferArchivedAt);
+      if (preferArchivedAt) {
+        _tableOrderHistorySupportsArchivedAt = true;
+      }
+      return result;
+    } catch (error) {
+      if (preferArchivedAt &&
+          _isTableOrderHistoryArchivedAtMissingError(error)) {
+        _tableOrderHistorySupportsArchivedAt = false;
+        return operation(false);
+      }
+      rethrow;
+    }
+  }
+
+  String _tableOrderHistorySinceFilter({
+    required String wideFromIso,
+    required bool includeArchivedAt,
+  }) {
+    if (includeArchivedAt) {
+      return 'closed_at.gte.$wideFromIso,archived_at.gte.$wideFromIso';
+    }
+    return 'closed_at.gte.$wideFromIso';
   }
 
   String _legacyTableOrderStatus(String status) {
@@ -269,7 +314,10 @@ class StoreTableService {
     String defaultName = 'Salon',
   }) async {
     final resolvedSellerId = _resolveSellerId(sellerId);
-    final areas = await getTableAreas(sellerId: resolvedSellerId, onlyActive: false);
+    final areas = await getTableAreas(
+      sellerId: resolvedSellerId,
+      onlyActive: false,
+    );
     final existing = areas.firstWhere(
       (a) => _text(a['name']).toLowerCase() == defaultName.toLowerCase(),
       orElse: () => const <String, dynamic>{},
@@ -392,12 +440,15 @@ class StoreTableService {
         final max = nums.isEmpty ? 0 : nums.reduce((a, b) => a > b ? a : b);
         areaTableNumber = max + 1;
       }
-      await _supabase.from('store_tables').update({
-        'area_id': areaId.trim().isEmpty ? null : areaId.trim(),
-        'area_name': areaName.trim().isEmpty ? null : areaName.trim(),
-        'area_table_number': areaTableNumber,
-        'updated_at': DateTime.now().toIso8601String(),
-      }).eq('id', normalizedTableId);
+      await _supabase
+          .from('store_tables')
+          .update({
+            'area_id': areaId.trim().isEmpty ? null : areaId.trim(),
+            'area_name': areaName.trim().isEmpty ? null : areaName.trim(),
+            'area_table_number': areaTableNumber,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', normalizedTableId);
     } catch (error) {
       if (_isStoreTablesMissingError(error)) {
         throw _storeTablesUnavailableException();
@@ -452,7 +503,7 @@ class StoreTableService {
       final result = <int>{};
       for (final row in (rows as List)) {
         final status = (row['status']?.toString() ?? '').toLowerCase();
-        if (status == 'closed') continue;
+        if (OrderStatusConstants.isTerminalStatus(status)) continue;
         final tableNum = _parseTableNumberValue(row['table_number']);
         if (tableNum > 0) result.add(tableNum);
       }
@@ -586,13 +637,6 @@ class StoreTableService {
     // IMPORTANT: Stream delivers EVERY row, including archived/closed orders
     // from the RPC close_table_orders. Without filtering these out, they get
     // re-inserted into board state and make a closed table appear "open again"
-    // after the next stream event. Since SupabaseStreamBuilder does not support
-    // .not('status', 'in', ...), we filter the emitted list client-side.
-    const terminalStatuses = [
-      'closed', 'paid', 'cancelled', 'canceled',
-      'completed', 'complete', 'archived',
-      'payment_completed', 'completed_payment',
-    ];
     return _supabase
         .from('table_orders')
         .stream(primaryKey: ['id'])
@@ -601,9 +645,7 @@ class StoreTableService {
         .map(
           (list) => List<Map<String, dynamic>>.from(
             list.where(
-              (row) => !terminalStatuses.contains(
-                (row['status']?.toString() ?? '').trim().toLowerCase(),
-              ),
+              (row) => !OrderStatusConstants.isTerminalStatus(row['status']?.toString()),
             ),
           ),
         );
@@ -675,15 +717,17 @@ class StoreTableService {
       );
     }
 
-    final restaurantOrdersQuery = garsonRestaurantOrdersSnapshotQueryDescription(
-      restaurantId: resolvedSellerId,
-    );
+    final restaurantOrdersQuery =
+        garsonRestaurantOrdersSnapshotQueryDescription(
+          restaurantId: resolvedSellerId,
+        );
     logGarsonActiveOrdersFetchStart(
       restaurantId: resolvedSellerId,
       source: 'orders',
       query: restaurantOrdersQuery,
     );
-    List<Map<String, dynamic>> restaurantOrders = const <Map<String, dynamic>>[];
+    List<Map<String, dynamic>> restaurantOrders =
+        const <Map<String, dynamic>>[];
     try {
       restaurantOrders = await _fetchRestaurantOrdersForGarson(
         restaurantId: resolvedSellerId,
@@ -723,17 +767,11 @@ class StoreTableService {
     // Exclude terminal-status rows at the DB level.  This is the definitive
     // guard against closed/archived orders "coming back" after a page refresh:
     // even if UPDATE status='archived' succeeded (instead of DELETE), these
-    // rows will never be included in the garson board snapshot.
-    const terminalStatuses = [
-      'closed', 'paid', 'cancelled', 'canceled',
-      'completed', 'complete', 'archived',
-      'payment_completed', 'completed_payment',
-    ];
     var query = _supabase
         .from('table_orders')
         .select()
         .eq('seller_id', sellerId)
-        .not('status', 'in', '(${terminalStatuses.join(',')})'); 
+        .not('status', 'in', OrderStatusConstants.terminalStatuses.toList());
     if (tableNumber != null && tableNumber > 0) {
       query = query.eq('table_number', tableNumber);
     }
@@ -806,13 +844,6 @@ class StoreTableService {
     //   canonical insert path (see migration
     //   20260607_fix_create_table_order_with_print_jobs_impl_orders_schema.sql)
     //   so filtering on it alone is safe.  `order_status` consistency is
-    //   then enforced client-side by `isGarsonActiveOrderStatus`.
-    const terminalStatuses = <String>[
-      'closed', 'paid', 'cancelled', 'canceled',
-      'completed', 'complete', 'archived',
-      'payment_completed', 'completed_payment',
-    ];
-    final terminalList = '(${terminalStatuses.join(',')})';
     final rows = await _supabase
         .from('orders')
         .select(
@@ -823,7 +854,7 @@ class StoreTableService {
         )
         .eq('restaurant_id', restaurantId)
         .or('order_type.eq.table,delivery_type.eq.table')
-        .not('status', 'in', terminalList)
+        .not('status', 'in', OrderStatusConstants.terminalStatuses.toList())
         .order('created_at', ascending: false)
         .limit(50)
         .timeout(tableOrderTimeout);
@@ -837,6 +868,19 @@ class StoreTableService {
     final storeTablesById = await _loadStoreTablesById(
       sellerId: restaurantId,
       tableIds: tableIds,
+    );
+    final candidateTableNumbers = <int>{};
+    for (final raw in rawOrders) {
+      final tableId = raw['table_id']?.toString().trim() ?? '';
+      final storeTable = tableId.isEmpty ? null : storeTablesById[tableId];
+      final tableNo = _parseTableNumberValue(
+        storeTable?['table_number'] ?? raw['table_number'],
+      );
+      if (tableNo > 0) candidateTableNumbers.add(tableNo);
+    }
+    final latestClosedByTable = await _loadLatestClosedMomentsByTableNumber(
+      sellerId: restaurantId,
+      tableNumbers: candidateTableNumbers,
     );
 
     final normalized = <Map<String, dynamic>>[];
@@ -854,6 +898,25 @@ class StoreTableService {
         storeTable: storeTable,
       );
       if (mapped == null) continue;
+      final mappedTableNumber = _parseTableNumberValue(mapped['table_number']);
+      final latestClosedAt = latestClosedByTable[mappedTableNumber];
+      final activityAt = DateTime.tryParse(
+        raw['updated_at']?.toString() ?? raw['created_at']?.toString() ?? '',
+      )?.toLocal();
+      if (latestClosedAt != null &&
+          activityAt != null &&
+          !activityAt.isAfter(latestClosedAt)) {
+        debugPrint(
+          '[GARSON_REOPEN_GUARD] '
+          'restaurant_id=$restaurantId '
+          'table_number=$mappedTableNumber '
+          'order_id=${raw['id']} '
+          'order_activity=${activityAt.toIso8601String()} '
+          'latest_closed_at=${latestClosedAt.toIso8601String()} '
+          'action=suppress_stale_orders_row',
+        );
+        continue;
+      }
       normalized.add(mapped);
     }
 
@@ -936,6 +999,45 @@ class StoreTableService {
       return out;
     } catch (_) {
       return const <int, Map<String, dynamic>>{};
+    }
+  }
+
+  Future<Map<int, DateTime>> _loadLatestClosedMomentsByTableNumber({
+    required String sellerId,
+    required Set<int> tableNumbers,
+  }) async {
+    if (tableNumbers.isEmpty) return const <int, DateTime>{};
+    try {
+      final rows = await _runWithTableOrderHistorySchemaFallback(
+        operation: (includeArchivedAt) {
+          return _supabase
+              .from('table_order_history')
+              .select(
+                includeArchivedAt
+                    ? 'table_number, closed_at, archived_at'
+                    : 'table_number, closed_at',
+              )
+              .eq('seller_id', sellerId)
+              .inFilter('table_number', tableNumbers.toList(growable: false))
+              .limit(tableNumbers.length * 8)
+              .timeout(tableOrderTimeout);
+        },
+      );
+      final latest = <int, DateTime>{};
+      for (final raw in (rows as List)) {
+        final row = Map<dynamic, dynamic>.from(raw as Map);
+        final tableNumber = _parseTableNumberValue(row['table_number']);
+        if (tableNumber <= 0) continue;
+        final closedAt = TableOrderHistoryUtils.closedAt(row);
+        if (closedAt == null) continue;
+        final previous = latest[tableNumber];
+        if (previous == null || closedAt.isAfter(previous)) {
+          latest[tableNumber] = closedAt;
+        }
+      }
+      return latest;
+    } catch (_) {
+      return const <int, DateTime>{};
     }
   }
 
@@ -1186,14 +1288,65 @@ class StoreTableService {
       return 0;
     }
 
-    // ── Identity probe ────────────────────────────────────────────────
-    // The `orders` table is RLS-locked by `auth.uid() = restaurant_id`
-    // (see migration 20260407_restaurant_ops_upgrade.sql).  If the UI
-    // is operating on behalf of a sub-admin or waiter, then
-    // `_resolveGarsonSellerId()` may have produced the parent seller's
-    // UUID while `auth.uid()` is the sub-user's UUID — the UPDATE will
-    // affect 0 rows without any error.  Surface that mismatch here so
-    // the reopen bug is no longer silent.
+    // Preferred path: SECURITY DEFINER RPC so waiter/sub-admin sessions can
+    // close customer-side `orders` rows under the parent restaurant identity.
+    // If the migration is not applied yet, fall back to the legacy direct
+    // UPDATE path below.
+    try {
+      final rpcResult = await _supabase
+          .rpc(
+            'close_restaurant_orders_for_table',
+            params: <String, dynamic>{
+              'p_seller_id': sellerId,
+              'p_table_number': tableNumber,
+            },
+          )
+          .timeout(tableOrderTimeout);
+      final closedCount = _coerceAffectedRowCount(rpcResult);
+      debugPrint(
+        '[StoreTableService.closeRestaurantOrdersForTable] '
+        'rpc=ok sellerId=$sellerId tableNumber=$tableNumber '
+        'orders_closed=$closedCount',
+      );
+      return closedCount;
+    } on PostgrestException catch (error) {
+      final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
+      final rpcMissing =
+          error.code == '42883' ||
+          message.contains('close_restaurant_orders_for_table') ||
+          message.contains('function') ||
+          message.contains('schema cache');
+      if (!rpcMissing) {
+        debugPrint(
+          '[StoreTableService.closeRestaurantOrdersForTable] '
+          'rpc=failed_non_fallback sellerId=$sellerId tableNumber=$tableNumber '
+          'error=$error',
+        );
+        return 0;
+      }
+      debugPrint(
+        '[StoreTableService.closeRestaurantOrdersForTable] '
+        'rpc=missing sellerId=$sellerId tableNumber=$tableNumber '
+        'action=falling_back_to_direct_update',
+      );
+    } on TimeoutException {
+      debugPrint(
+        '[StoreTableService.closeRestaurantOrdersForTable] '
+        'rpc=timeout sellerId=$sellerId tableNumber=$tableNumber '
+        'action=falling_back_to_direct_update',
+      );
+    }
+
+    return _closeRestaurantOrdersForTableDirect(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+    );
+  }
+
+  Future<int> _closeRestaurantOrdersForTableDirect({
+    required String sellerId,
+    required int tableNumber,
+  }) async {
     final authUid = _supabase.auth.currentUser?.id;
     final identityMatches =
         authUid != null && authUid.trim() == sellerId.trim();
@@ -1241,9 +1394,11 @@ class StoreTableService {
           .eq('restaurant_id', sellerId)
           .or('order_type.eq.table,delivery_type.eq.table')
           .inFilter('table_id', tableIds)
-          .not('status', 'in',
-              '(closed,paid,cancelled,canceled,completed,complete,'
-              'archived,payment_completed,completed_payment)')
+          .not(
+            'status',
+            'in',
+            OrderStatusConstants.terminalStatuses.toList(),
+          )
           .select('id, table_id, status')
           .timeout(tableOrderTimeout);
       final updatedList = updatedRows as List;
@@ -1274,18 +1429,26 @@ class StoreTableService {
           'resolved_table_ids=${tableIds.length} '
           'probe_visible_to_client=$visibleToClient '
           'identity_matches=$identityMatches '
-          'interpretation=${visibleToClient == 0
-              ? (identityMatches
-                  ? 'no_active_customer_orders_for_this_table'
-                  : 'rls_likely_blocked_due_to_auth_uid_mismatch')
-              : 'rows_visible_to_read_but_update_returned_zero_rows_'
-                'check_RLS_USING_vs_WITH_CHECK_clauses'}',
+          'interpretation=${visibleToClient == 0 ? (identityMatches ? 'no_active_customer_orders_for_this_table' : 'rls_likely_blocked_due_to_auth_uid_mismatch') : 'rows_visible_to_read_but_update_returned_zero_rows_'
+                    'check_RLS_USING_vs_WITH_CHECK_clauses'}',
         );
       }
       return closedCount;
+    } on PostgrestException catch (error) {
+      debugPrint(
+        '[StoreTableService.closeRestaurantOrdersForTableDirect] '
+        'PostgrestException sellerId=$sellerId tableNumber=$tableNumber '
+        'resolved_table_ids=${tableIds.length} '
+        'identity_matches=$identityMatches '
+        'best_effort=failed error=$error',
+      );
+      if (error.code == '42501' || error.message.contains('RLS')) {
+        throw Exception('RLS Violation during table close: ${error.message}');
+      }
+      return 0;
     } catch (error) {
       debugPrint(
-        '[StoreTableService.closeRestaurantOrdersForTable] '
+        '[StoreTableService.closeRestaurantOrdersForTableDirect] '
         'sellerId=$sellerId tableNumber=$tableNumber '
         'resolved_table_ids=${tableIds.length} '
         'identity_matches=$identityMatches '
@@ -1293,6 +1456,32 @@ class StoreTableService {
       );
       return 0;
     }
+  }
+
+  int _coerceAffectedRowCount(dynamic result) {
+    if (result is num) return result.toInt();
+    if (result is String) return int.tryParse(result) ?? 0;
+    if (result is List && result.isNotEmpty) {
+      final first = result.first;
+      if (first is num) return first.toInt();
+      if (first is Map) {
+        for (final key in ['closed_count', 'count', 'rows_affected']) {
+          final value = first[key];
+          if (value is num) return value.toInt();
+          final parsed = int.tryParse(value?.toString() ?? '');
+          if (parsed != null) return parsed;
+        }
+      }
+    }
+    if (result is Map) {
+      for (final key in ['closed_count', 'count', 'rows_affected']) {
+        final value = result[key];
+        if (value is num) return value.toInt();
+        final parsed = int.tryParse(value?.toString() ?? '');
+        if (parsed != null) return parsed;
+      }
+    }
+    return 0;
   }
 
   Future<void> closeTableOrders({
@@ -1305,10 +1494,13 @@ class StoreTableService {
     // never triggers the recursive DELETE trigger that caused P0001 errors.
     try {
       await _supabase
-          .rpc('close_table_orders', params: <String, dynamic>{
-            'p_seller_id': sellerId,
-            'p_table_number': tableNumber,
-          })
+          .rpc(
+            'close_table_orders',
+            params: <String, dynamic>{
+              'p_seller_id': sellerId,
+              'p_table_number': tableNumber,
+            },
+          )
           .timeout(tableOrderTimeout);
       debugPrint(
         '[StoreTableService.closeTableOrders] rpc=ok '
@@ -1456,19 +1648,22 @@ class StoreTableService {
   }) async {
     try {
       await _supabase
-          .rpc('close_table_with_history', params: {
-            'p_seller_id': sellerId,
-            'p_table_number': tableNumber,
-            'p_payment_method': paymentMethod,
-            if (paymentNote != null && paymentNote.isNotEmpty)
-              'p_payment_note': paymentNote,
-            if (waiterId != null && waiterId.isNotEmpty)
-              'p_waiter_id': waiterId,
-            if (waiterName != null && waiterName.isNotEmpty)
-              'p_waiter_name': waiterName,
-            if (sessionKey != null && sessionKey.isNotEmpty)
-              'p_session_key': sessionKey,
-          })
+          .rpc(
+            'close_table_with_history',
+            params: {
+              'p_seller_id': sellerId,
+              'p_table_number': tableNumber,
+              'p_payment_method': paymentMethod,
+              if (paymentNote != null && paymentNote.isNotEmpty)
+                'p_payment_note': paymentNote,
+              if (waiterId != null && waiterId.isNotEmpty)
+                'p_waiter_id': waiterId,
+              if (waiterName != null && waiterName.isNotEmpty)
+                'p_waiter_name': waiterName,
+              if (sessionKey != null && sessionKey.isNotEmpty)
+                'p_session_key': sessionKey,
+            },
+          )
           .timeout(tableOrderTimeout);
       // BUG-FIX (Reopen Bug): the RPC only clears `table_orders`; mirror the
       // close into the customer-facing `orders` table here as well.  Without
@@ -1480,7 +1675,9 @@ class StoreTableService {
       );
     } on PostgrestException catch (error) {
       // Fall back to client-side archive + delete if RPC unavailable (older DB)
-      debugPrint('[StoreTableService] closeTableWithHistory RPC failed ($error). Falling back to client-side archive.');
+      debugPrint(
+        '[StoreTableService] closeTableWithHistory RPC failed ($error). Falling back to client-side archive.',
+      );
       await _closeTableClientSide(
         sellerId: sellerId,
         tableNumber: tableNumber,
@@ -1493,6 +1690,145 @@ class StoreTableService {
     } on TimeoutException {
       throw Exception('Masa kapatma zaman aşımına uğradı. Tekrar deneyin.');
     }
+  }
+
+  /// Ensures a just-closed table session is queryable from `table_order_history`
+  /// even if the primary archive path partially failed and the caller had to
+  /// finish the close via per-order fallback.
+  ///
+  /// Returns `true` when a fallback history row was inserted, `false` when a
+  /// recent matching row already existed or when there was nothing to archive.
+  Future<bool> ensureTableHistoryRecorded({
+    required String sellerId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> closedOrders,
+    required String paymentMethod,
+    String? paymentNote,
+    String? waiterId,
+    String? waiterName,
+    String? tableLabel,
+    DateTime? closedAt,
+  }) async {
+    if (tableNumber <= 0 || closedOrders.isEmpty) return false;
+
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final effectiveClosedAt = (closedAt ?? DateTime.now()).toUtc();
+    final recentFrom = effectiveClosedAt.subtract(const Duration(minutes: 15));
+    var recentHistoryRows = const <Map<String, dynamic>>[];
+    try {
+      recentHistoryRows = List<Map<String, dynamic>>.from(
+        await _runWithTableOrderHistorySchemaFallback(
+          operation: (includeArchivedAt) {
+            var query = _supabase
+                .from('table_order_history')
+                .select(
+                  includeArchivedAt
+                      ? 'id, original_order_id, session_key, table_number, '
+                            'grand_total, items, status, closed_at, '
+                            'archived_at, archived_orders, '
+                            'display_table_label, table_display_name, '
+                            'table_name'
+                      : 'id, original_order_id, session_key, table_number, '
+                            'grand_total, items, status, closed_at, '
+                            'archived_orders, display_table_label, '
+                            'table_display_name, table_name',
+                )
+                .eq('seller_id', resolvedSellerId)
+                .eq('table_number', tableNumber);
+            query = includeArchivedAt
+                ? query.or(
+                    _tableOrderHistorySinceFilter(
+                      wideFromIso: recentFrom.toIso8601String(),
+                      includeArchivedAt: true,
+                    ),
+                  )
+                : query.gte('closed_at', recentFrom.toIso8601String());
+            return query.limit(20).timeout(tableOrderTimeout);
+          },
+        ),
+      );
+    } on PostgrestException catch (error) {
+      final message = error.message.toLowerCase();
+      if (error.code == '42P01' ||
+          message.contains('does not exist') ||
+          message.contains('could not find table') ||
+          message.contains('schema cache')) {
+        debugPrint(
+          '[StoreTableService.ensureTableHistoryRecorded] '
+          'table_order_history unavailable, skipping fallback archive.',
+        );
+        return false;
+      }
+      rethrow;
+    }
+
+    final fallbackPlan = planTableCloseHistoryFallback(
+      closedOrders: closedOrders,
+      recentHistoryRows: recentHistoryRows,
+    );
+    if (!fallbackPlan.shouldInsert) return false;
+
+    final normalizedLabel = tableLabel?.trim();
+    final ordersToArchive = fallbackPlan.ordersToArchive;
+    final singleOrder = ordersToArchive.length == 1
+        ? ordersToArchive.first
+        : null;
+    final singleOrderId = singleOrder?['id']?.toString().trim() ?? '';
+    final earliestCreatedAt = ordersToArchive
+        .map(
+          (order) => DateTime.tryParse(order['created_at']?.toString() ?? ''),
+        )
+        .whereType<DateTime>()
+        .fold<DateTime?>(null, (earliest, current) {
+          if (earliest == null || current.isBefore(earliest)) return current;
+          return earliest;
+        });
+
+    await _runWithTableOrderHistorySchemaFallback(
+      operation: (includeArchivedAt) {
+        return _supabase
+            .from('table_order_history')
+            .insert({
+              'seller_id': resolvedSellerId,
+              'table_number': tableNumber,
+              'session_key':
+                  'fallback_${resolvedSellerId}_${tableNumber}_${effectiveClosedAt.millisecondsSinceEpoch}',
+              'payment_method': paymentMethod,
+              if (paymentNote != null && paymentNote.isNotEmpty)
+                'payment_note': paymentNote,
+              if (waiterId != null && waiterId.isNotEmpty)
+                'waiter_id': waiterId,
+              if (waiterName != null && waiterName.isNotEmpty)
+                'waiter_name': waiterName,
+              if (normalizedLabel != null && normalizedLabel.isNotEmpty) ...{
+                'display_table_label': normalizedLabel,
+                'table_display_name': normalizedLabel,
+                'table_name': normalizedLabel,
+              },
+              if (singleOrderId.isNotEmpty) 'original_order_id': singleOrderId,
+              if (singleOrder?['items'] != null) 'items': singleOrder!['items'],
+              if (singleOrder?['revision'] != null)
+                'revision': singleOrder!['revision'],
+              if (singleOrder?['last_edit_summary'] != null)
+                'last_edit_summary': singleOrder!['last_edit_summary'],
+              if (singleOrder?['last_edit_note'] != null)
+                'last_edit_note': singleOrder!['last_edit_note'],
+              'grand_total': fallbackPlan.grandTotal,
+              'archived_orders': ordersToArchive,
+              'status': 'closed',
+              'closed_at': effectiveClosedAt.toIso8601String(),
+              if (includeArchivedAt)
+                'archived_at': effectiveClosedAt.toIso8601String(),
+              if (earliestCreatedAt != null)
+                'opened_at': earliestCreatedAt.toUtc().toIso8601String(),
+              'created_at': (earliestCreatedAt ?? effectiveClosedAt)
+                  .toUtc()
+                  .toIso8601String(),
+            })
+            .timeout(tableOrderTimeout);
+      },
+    );
+    return true;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1538,7 +1874,10 @@ class StoreTableService {
         '[StoreTableService._closeTableClientSide] '
         'fetch_active_orders failed: $error',
       );
-      throw _tableOrderException('Masa siparişlerini alma (kapatma öncesi)', error);
+      throw _tableOrderException(
+        'Masa siparişlerini alma (kapatma öncesi)',
+        error,
+      );
     } on TimeoutException {
       throw Exception(
         'Masa siparişleri alınamadı (zaman aşımı). '
@@ -1558,51 +1897,95 @@ class StoreTableService {
     final session =
         sessionKey ??
         'session_${sellerId}_${tableNumber}_${DateTime.now().millisecondsSinceEpoch}';
+    final archivedAt = DateTime.now().toUtc().toIso8601String();
+    var grandTotalAll = 0.0;
     for (final order in activeOrders) {
-      final items = order['items'] ?? [];
-      double grandTotal = 0;
-      if (items is List) {
-        for (final item in items) {
-          final price = (item['price'] as num?)?.toDouble() ?? 0;
-          final qty = (item['quantity'] as num?)?.toDouble() ?? 1;
-          grandTotal += price * qty;
-        }
+      for (final item in TableOrderHistoryUtils.parseJsonList(order['items'])) {
+        final normalized = MixedServiceOrder.normalizeOrderItem(item);
+        grandTotalAll += MixedServiceOrder.itemLineTotal(normalized);
       }
-      try {
-        await _supabase
-            .from('table_order_history')
-            .insert({
-              'original_order_id': order['id']?.toString(),
-              'seller_id': sellerId,
-              'table_number': tableNumber,
-              'items': order['items'] ?? '[]',
-              'status': 'closed',
-              'revision': order['revision'] ?? 1,
-              'last_edit_summary': order['last_edit_summary'] ?? {},
-              'last_edit_note': order['last_edit_note'],
-              'payment_method': paymentMethod,
-              'payment_note': paymentNote,
-              'waiter_id': waiterId,
-              'waiter_name': waiterName,
-              'grand_total': grandTotal,
-              'session_key': session,
-              'opened_at': order['created_at'],
-              'closed_at': DateTime.now().toUtc().toIso8601String(),
-              'created_at':
-                  order['created_at'] ?? DateTime.now().toUtc().toIso8601String(),
-            })
-            .timeout(tableOrderTimeout);
-        debugPrint(
-          '[StoreTableService._closeTableClientSide] '
-          'history_insert=ok orderId=${order['id']}',
-        );
-      } catch (archiveErr) {
-        // Best-effort: log and continue — do NOT abort close for missing history.
-        debugPrint(
-          '[StoreTableService._closeTableClientSide] '
-          'history_insert=failed (best-effort, continuing close) '
-          'orderId=${order['id']} error=$archiveErr',
-        );
+    }
+
+    var historyArchived = false;
+    try {
+      await _runWithTableOrderHistorySchemaFallback(
+        operation: (includeArchivedAt) {
+          return _supabase
+              .from('table_order_history')
+              .insert({
+                'seller_id': sellerId,
+                'table_number': tableNumber,
+                'session_key': session,
+                'payment_method': paymentMethod,
+                if (paymentNote != null && paymentNote.isNotEmpty)
+                  'payment_note': paymentNote,
+                if (waiterId != null && waiterId.isNotEmpty)
+                  'waiter_id': waiterId,
+                if (waiterName != null && waiterName.isNotEmpty)
+                  'waiter_name': waiterName,
+                'grand_total': grandTotalAll,
+                'archived_orders': activeOrders,
+                'status': 'closed',
+                'closed_at': archivedAt,
+                if (includeArchivedAt) 'archived_at': archivedAt,
+              })
+              .timeout(tableOrderTimeout);
+        },
+      );
+      historyArchived = true;
+      debugPrint(
+        '[StoreTableService._closeTableClientSide] '
+        'history_insert=ok_hotfix table=$tableNumber total=$grandTotalAll',
+      );
+    } catch (hotfixErr) {
+      debugPrint(
+        '[StoreTableService._closeTableClientSide] '
+        'history_insert=hotfix_failed table=$tableNumber error=$hotfixErr',
+      );
+    }
+
+    if (!historyArchived) {
+      for (final order in activeOrders) {
+        final items = order['items'] ?? [];
+        var grandTotal = 0.0;
+        for (final item in TableOrderHistoryUtils.parseJsonList(items)) {
+          final normalized = MixedServiceOrder.normalizeOrderItem(item);
+          grandTotal += MixedServiceOrder.itemLineTotal(normalized);
+        }
+        try {
+          await _supabase
+              .from('table_order_history')
+              .insert({
+                'original_order_id': order['id']?.toString(),
+                'seller_id': sellerId,
+                'table_number': tableNumber,
+                'items': order['items'] ?? '[]',
+                'status': 'closed',
+                'revision': order['revision'] ?? 1,
+                'last_edit_summary': order['last_edit_summary'] ?? {},
+                'last_edit_note': order['last_edit_note'],
+                'payment_method': paymentMethod,
+                'payment_note': paymentNote,
+                'waiter_id': waiterId,
+                'waiter_name': waiterName,
+                'grand_total': grandTotal,
+                'session_key': session,
+                'opened_at': order['created_at'],
+                'closed_at': archivedAt,
+                'created_at': order['created_at'] ?? archivedAt,
+              })
+              .timeout(tableOrderTimeout);
+          debugPrint(
+            '[StoreTableService._closeTableClientSide] '
+            'history_insert=ok orderId=${order['id']}',
+          );
+        } catch (archiveErr) {
+          debugPrint(
+            '[StoreTableService._closeTableClientSide] '
+            'history_insert=failed (best-effort, continuing close) '
+            'orderId=${order['id']} error=$archiveErr',
+          );
+        }
       }
     }
 
@@ -1611,10 +1994,8 @@ class StoreTableService {
     // Supabase client — tests inject simple lambda mocks instead.
     await runCloseTableFallbackWorkflow(
       orderIds: targetIds,
-      bulkDelete: () => closeTableOrders(
-        sellerId: sellerId,
-        tableNumber: tableNumber,
-      ),
+      bulkDelete: () =>
+          closeTableOrders(sellerId: sellerId, tableNumber: tableNumber),
       deleteById: (id) => deleteTableOrder(id),
       markClosed: (id) async {
         await _supabase
@@ -1657,24 +2038,59 @@ class StoreTableService {
     int offset = 0,
   }) async {
     try {
-      var query = _supabase
-          .from('table_order_history')
-          .select()
-          .eq('seller_id', sellerId);
-      if (tableNumber != null && tableNumber > 0) {
-        query = query.eq('table_number', tableNumber);
+      final rows = await _runWithTableOrderHistorySchemaFallback(
+        operation: (includeArchivedAt) {
+          var query = _supabase
+              .from('table_order_history')
+              .select()
+              .eq('seller_id', sellerId);
+          if (tableNumber != null && tableNumber > 0) {
+            query = query.eq('table_number', tableNumber);
+          }
+          if (fromDate != null) {
+            final wideFrom = fromDate
+                .subtract(const Duration(days: 1))
+                .toUtc()
+                .toIso8601String();
+            query = includeArchivedAt
+                ? query.or(
+                    _tableOrderHistorySinceFilter(
+                      wideFromIso: wideFrom,
+                      includeArchivedAt: true,
+                    ),
+                  )
+                : query.gte('closed_at', wideFrom);
+          }
+          return query.limit(limit + 200).timeout(tableOrderTimeout);
+        },
+      );
+      var list = List<Map<String, dynamic>>.from(rows as List);
+      if (fromDate != null || toDate != null) {
+        final from = fromDate ?? DateTime(2000);
+        final to = toDate ?? DateTime(2100, 12, 31);
+        list = list
+            .where(
+              (row) => TableOrderHistoryUtils.isWithinRange(
+                Map<dynamic, dynamic>.from(row),
+                from,
+                to,
+              ),
+            )
+            .toList(growable: false);
       }
-      if (fromDate != null) {
-        query = query.gte('closed_at', fromDate.toUtc().toIso8601String());
+      list.sort((a, b) {
+        final aAt = TableOrderHistoryUtils.closedAt(
+          Map<dynamic, dynamic>.from(a),
+        );
+        final bAt = TableOrderHistoryUtils.closedAt(
+          Map<dynamic, dynamic>.from(b),
+        );
+        return (bAt ?? DateTime(2000)).compareTo(aAt ?? DateTime(2000));
+      });
+      if (list.length > limit) {
+        list = list.sublist(0, limit);
       }
-      if (toDate != null) {
-        query = query.lte('closed_at', toDate.toUtc().toIso8601String());
-      }
-      final rows = await query
-          .order('closed_at', ascending: false)
-          .range(offset, offset + limit - 1)
-          .timeout(tableOrderTimeout);
-      return List<Map<String, dynamic>>.from(rows as List);
+      return list;
     } on PostgrestException catch (error) {
       // table_order_history may not exist on older DBs — return empty list
       final msg = error.message.toLowerCase();
@@ -1713,28 +2129,35 @@ class StoreTableService {
   }) async {
     try {
       final result = await _supabase
-          .rpc('transfer_table_orders', params: {
-            'p_seller_id': sellerId,
-            'p_from_table': fromTable,
-            'p_to_table': toTable,
-            'p_transfer_type': transferType,
-            'p_item_ids': itemIds,
-            if (waiterId != null && waiterId.isNotEmpty)
-              'p_waiter_id': waiterId,
-            if (waiterName != null && waiterName.isNotEmpty)
-              'p_waiter_name': waiterName,
-            if (note != null && note.trim().isNotEmpty)
-              'p_note': note.trim(),
-          })
+          .rpc(
+            'transfer_table_orders',
+            params: {
+              'p_seller_id': sellerId,
+              'p_from_table': fromTable,
+              'p_to_table': toTable,
+              'p_transfer_type': transferType,
+              'p_item_ids': itemIds,
+              if (waiterId != null && waiterId.isNotEmpty)
+                'p_waiter_id': waiterId,
+              if (waiterName != null && waiterName.isNotEmpty)
+                'p_waiter_name': waiterName,
+              if (note != null && note.trim().isNotEmpty) 'p_note': note.trim(),
+            },
+          )
           .timeout(tableOrderTimeout);
       if (result is Map) return Map<String, dynamic>.from(result);
       return const <String, dynamic>{'success': true};
     } on PostgrestException catch (error) {
-      debugPrint('[StoreTableService] transferTableOrders RPC failed ($error). Falling back to client-side.');
+      debugPrint(
+        '[StoreTableService] transferTableOrders RPC failed ($error). Falling back to client-side.',
+      );
       // Client-side fallback: update all source orders to toTable
       await _supabase
           .from('table_orders')
-          .update({'table_number': toTable, 'updated_at': DateTime.now().toIso8601String()})
+          .update({
+            'table_number': toTable,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
           .eq('seller_id', sellerId)
           .eq('table_number', fromTable)
           .timeout(tableOrderTimeout);
@@ -1757,15 +2180,13 @@ class StoreTableService {
     final from = (fromDate ?? DateTime.now().subtract(const Duration(days: 30)))
         .toUtc()
         .toIso8601String();
-    final to =
-        (toDate ?? DateTime.now()).toUtc().toIso8601String();
+    final to = (toDate ?? DateTime.now()).toUtc().toIso8601String();
     try {
       final rows = await _supabase
-          .rpc('get_waiter_performance', params: {
-            'p_seller_id': sellerId,
-            'p_from': from,
-            'p_to': to,
-          })
+          .rpc(
+            'get_waiter_performance',
+            params: {'p_seller_id': sellerId, 'p_from': from, 'p_to': to},
+          )
           .timeout(const Duration(seconds: 15));
       if (rows is List) {
         return List<Map<String, dynamic>>.from(rows.cast<Map>());
@@ -1792,18 +2213,23 @@ class StoreTableService {
     if (currentProductIds.isEmpty) return const <Map<String, dynamic>>[];
     try {
       final rows = await _supabase
-          .rpc('get_product_recommendations', params: {
-            'p_seller_id': sellerId,
-            'p_product_ids': currentProductIds,
-            'p_limit': limit,
-          })
+          .rpc(
+            'get_product_recommendations',
+            params: {
+              'p_seller_id': sellerId,
+              'p_product_ids': currentProductIds,
+              'p_limit': limit,
+            },
+          )
           .timeout(const Duration(seconds: 10));
       if (rows is List) {
         return List<Map<String, dynamic>>.from(rows.cast<Map>());
       }
       return const <Map<String, dynamic>>[];
     } catch (error) {
-      debugPrint('[StoreTableService] getProductRecommendations failed: $error');
+      debugPrint(
+        '[StoreTableService] getProductRecommendations failed: $error',
+      );
       return const <Map<String, dynamic>>[];
     }
   }

@@ -1,13 +1,107 @@
+import 'dart:convert';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../../models/mixed_service_order.dart';
+import '../../../../services/store/table_order_history_utils.dart';
+import '../../../../utils/order_status_constants.dart';
+import '../helpers/today_income_builder.dart';
 import '../models/finance_models.dart';
 
 /// Tüm Finans modülü Supabase operasyonları.
 /// Stateless — state yönetimi FinanceProvider'da yapılır.
 class FinanceRepository {
-  FinanceRepository(this._sellerId);
+  FinanceRepository(
+    this._sellerId, {
+    List<Map<String, dynamic>> optimisticHistoryRows =
+        const <Map<String, dynamic>>[],
+  }) : _optimisticHistoryRows = optimisticHistoryRows
+           .map((row) => Map<String, dynamic>.from(row))
+           .toList(growable: false);
 
   final String _sellerId;
+  final List<Map<String, dynamic>> _optimisticHistoryRows;
   SupabaseClient get _db => Supabase.instance.client;
+  bool? _tableOrderHistorySupportsArchivedAt;
+
+  bool _isTableOrderHistoryArchivedAtMissingError(Object error) {
+    if (error is! PostgrestException) return false;
+    final details =
+        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
+            .toLowerCase();
+    return error.code == '42703' ||
+        details.contains('archived_at does not exist') ||
+        details.contains('archived_at');
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchTableOrderHistoryRows({
+    required String selectWithArchivedAt,
+    required String selectWithoutArchivedAt,
+    DateTime? from,
+    int limit = 800,
+  }) async {
+    Future<List<Map<String, dynamic>>> run(bool includeArchivedAt) async {
+      var q = _db
+          .from('table_order_history')
+          .select(
+            includeArchivedAt ? selectWithArchivedAt : selectWithoutArchivedAt,
+          )
+          .eq('seller_id', _sellerId);
+      if (from != null) {
+        final wideFrom = from
+            .subtract(const Duration(days: 1))
+            .toUtc()
+            .toIso8601String();
+        q = includeArchivedAt
+            ? q.or('closed_at.gte.$wideFrom,archived_at.gte.$wideFrom')
+            : q.gte('closed_at', wideFrom);
+      }
+      final data = await q.limit(limit);
+      return List<Map<String, dynamic>>.from(data as List);
+    }
+
+    final preferArchivedAt = _tableOrderHistorySupportsArchivedAt != false;
+    try {
+      final rows = await run(preferArchivedAt);
+      if (preferArchivedAt) {
+        _tableOrderHistorySupportsArchivedAt = true;
+      }
+      return rows;
+    } catch (error) {
+      if (preferArchivedAt &&
+          _isTableOrderHistoryArchivedAtMissingError(error)) {
+        _tableOrderHistorySupportsArchivedAt = false;
+        return run(false);
+      }
+      rethrow;
+    }
+  }
+
+  List<Map<String, dynamic>> _optimisticHistoryRowsInRange({
+    required DateTime from,
+    required DateTime to,
+  }) {
+    return _optimisticHistoryRows
+        .where((row) {
+          return TableOrderHistoryUtils.isWithinRange(
+            Map<dynamic, dynamic>.from(row),
+            from,
+            to,
+          );
+        })
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
+
+  double _sumOptimisticHistoryRevenue({
+    required DateTime from,
+    required DateTime to,
+  }) {
+    return sumClosedTableIncome(
+      historyRows: _optimisticHistoryRowsInRange(from: from, to: to),
+      from: from,
+      to: to,
+    );
+  }
 
   // ─────────────────────────────────────────
   // Overview
@@ -19,11 +113,31 @@ class FinanceRepository {
         'finance_get_overview',
         params: {'p_seller_id': _sellerId},
       );
-      return FinanceOverview.fromJson(result as Map<String, dynamic>);
+      // `finance_get_overview` "RETURNS TABLE" olduğunda PostgREST tek satırlık
+      // bir List döndürür; "RETURNS json" olduğunda Map döner. İkisini de
+      // destekle ki tip-cast hatası grafiği sessizce boş bırakmasın.
+      final json = _firstRowAsMap(result);
+      if (json == null) return _buildOverviewFallback();
+      return FinanceOverview.fromJson(json);
     } catch (error) {
-      if (!_shouldUseOverviewFallback(error)) rethrow;
+      if (!_shouldUseOverviewFallback(error)) {
+        // RPC dağıtılmış ama beklenmedik bir şekil/dönüş verdiyse (ör. tip-cast)
+        // yine de modülü kırma — fallback hesaplamasına düş.
+        return _buildOverviewFallback();
+      }
       return _buildOverviewFallback();
     }
+  }
+
+  /// PostgREST RPC sonucunu güvenli biçimde `Map`e indirger.
+  /// Map → kendisi; List → ilk eleman (Map ise); aksi halde null.
+  Map<String, dynamic>? _firstRowAsMap(dynamic result) {
+    if (result is Map) return Map<String, dynamic>.from(result);
+    if (result is List && result.isNotEmpty) {
+      final first = result.first;
+      if (first is Map) return Map<String, dynamic>.from(first);
+    }
+    return null;
   }
 
   Future<List<MonthlyTrendPoint>> getMonthlyTrend({int months = 6}) async {
@@ -32,12 +146,15 @@ class FinanceRepository {
         'finance_get_monthly_trend',
         params: {'p_seller_id': _sellerId, 'p_months': months},
       );
-      final list = result as List<dynamic>;
-      return list
-          .map((e) => MonthlyTrendPoint.fromJson(e as Map<String, dynamic>))
+      if (result is! List) return _buildMonthlyTrendFallback(months: months);
+      return result
+          .whereType<Map>()
+          .map((e) => MonthlyTrendPoint.fromJson(Map<String, dynamic>.from(e)))
           .toList();
     } catch (error) {
-      if (!_shouldUseTrendFallback(error)) rethrow;
+      if (!_shouldUseTrendFallback(error)) {
+        return _buildMonthlyTrendFallback(months: months);
+      }
       return _buildMonthlyTrendFallback(months: months);
     }
   }
@@ -60,14 +177,14 @@ class FinanceRepository {
         message.contains('schema cache');
   }
 
-        bool _shouldUseFlowFallback(Object error, String functionName) {
-          if (error is! PostgrestException) return false;
-          final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
-          return error.code == '42883' ||
-          message.contains(functionName.toLowerCase()) ||
-          message.contains('function') ||
-          message.contains('schema cache');
-        }
+  bool _shouldUseFlowFallback(Object error, String functionName) {
+    if (error is! PostgrestException) return false;
+    final message = '${error.message} ${error.details ?? ''}'.toLowerCase();
+    return error.code == '42883' ||
+        message.contains(functionName.toLowerCase()) ||
+        message.contains('function') ||
+        message.contains('schema cache');
+  }
 
   Future<FinanceOverview> _buildOverviewFallback() async {
     final now = DateTime.now();
@@ -125,7 +242,9 @@ class FinanceRepository {
       double monthIncome = 0;
       for (final row in incomes) {
         final income = _toDouble(row['net_amount']);
-        final incomeDate = DateTime.tryParse(row['income_date'] as String? ?? '');
+        final incomeDate = DateTime.tryParse(
+          row['income_date'] as String? ?? '',
+        );
         final isCollected = row['is_collected'] as bool? ?? false;
         if (!isCollected) pendingCollections += income;
         if (incomeDate != null &&
@@ -141,7 +260,9 @@ class FinanceRepository {
       int upcomingPayments = 0;
       for (final row in expenses) {
         final amount = _toDouble(row['amount']);
-        final expenseDate = DateTime.tryParse(row['expense_date'] as String? ?? '');
+        final expenseDate = DateTime.tryParse(
+          row['expense_date'] as String? ?? '',
+        );
         final dueDate = DateTime.tryParse(row['due_date'] as String? ?? '');
         final isPaid = row['is_paid'] as bool? ?? false;
 
@@ -166,7 +287,10 @@ class FinanceRepository {
       for (final row in debts) {
         final originalAmount = _toDouble(row['original_amount']);
         final paidAmount = _toDouble(row['paid_amount']);
-        final remaining = (originalAmount - paidAmount).clamp(0, double.infinity);
+        final remaining = (originalAmount - paidAmount).clamp(
+          0,
+          double.infinity,
+        );
         final dueDate = DateTime.tryParse(row['due_date'] as String? ?? '');
         final status = row['status'] as String? ?? 'active';
 
@@ -245,15 +369,21 @@ class FinanceRepository {
       final expenseMap = <String, double>{};
 
       for (final row in incomes) {
-        final incomeDate = DateTime.tryParse(row['income_date'] as String? ?? '');
+        final incomeDate = DateTime.tryParse(
+          row['income_date'] as String? ?? '',
+        );
         if (incomeDate == null) continue;
-        final key = '${incomeDate.year}-${incomeDate.month.toString().padLeft(2, '0')}';
+        final key =
+            '${incomeDate.year}-${incomeDate.month.toString().padLeft(2, '0')}';
         incomeMap[key] = (incomeMap[key] ?? 0) + _toDouble(row['net_amount']);
       }
       for (final row in expenses) {
-        final expenseDate = DateTime.tryParse(row['expense_date'] as String? ?? '');
+        final expenseDate = DateTime.tryParse(
+          row['expense_date'] as String? ?? '',
+        );
         if (expenseDate == null) continue;
-        final key = '${expenseDate.year}-${expenseDate.month.toString().padLeft(2, '0')}';
+        final key =
+            '${expenseDate.year}-${expenseDate.month.toString().padLeft(2, '0')}';
         expenseMap[key] = (expenseMap[key] ?? 0) + _toDouble(row['amount']);
       }
       for (final row in salaries) {
@@ -261,12 +391,27 @@ class FinanceRepository {
         final month = (row['period_month'] as num?)?.toInt();
         if (year == null || month == null) continue;
         final slotDate = DateTime(year, month, 1);
-        if (slotDate.isBefore(startMonth) || slotDate.isAfter(endMonth)) continue;
+        if (slotDate.isBefore(startMonth) || slotDate.isAfter(endMonth)) {
+          continue;
+        }
         final key = '$year-${month.toString().padLeft(2, '0')}';
         expenseMap[key] = (expenseMap[key] ?? 0) + _toDouble(row['net_salary']);
       }
 
-      final labels = ['Oca', 'Sub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Agu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+      final labels = [
+        'Oca',
+        'Sub',
+        'Mar',
+        'Nis',
+        'May',
+        'Haz',
+        'Tem',
+        'Agu',
+        'Eyl',
+        'Eki',
+        'Kas',
+        'Ara',
+      ];
       return List.generate(months, (index) {
         final slot = DateTime(now.year, now.month - months + index + 1, 1);
         final key = '${slot.year}-${slot.month.toString().padLeft(2, '0')}';
@@ -293,17 +438,496 @@ class FinanceRepository {
   }
 
   // ─────────────────────────────────────────
+  // Gerçek satış cirosu (order_items)
+  //
+  // Finans modülü manuel "gelir kayıtları" üzerine kuruluydu; satıcının asıl
+  // kazancı ise `order_items` tablosunda yaşıyor. Genel Bakış'taki ciro ile
+  // tutarlı olması için satış cirosunu doğrudan buradan okuyup finans gelirine
+  // ekliyoruz. order_items erişilemezse 0 döner — finans modülü asla kırılmaz.
+  // ─────────────────────────────────────────
+
+  Future<double> getSalesRevenue({DateTime? from, DateTime? to}) async {
+    double sum = 0;
+
+    // ── Online satışlar: order_items ──
+    try {
+      var q = _db
+          .from('order_items')
+          .select('total_price, status, created_at')
+          .eq('seller_id', _sellerId);
+      if (from != null) q = q.gte('created_at', from.toIso8601String());
+      if (to != null) q = q.lte('created_at', to.toIso8601String());
+      final data = await q;
+      for (final row in (data as List)) {
+        final status = ((row as Map)['status']?.toString() ?? '').toLowerCase();
+        if (OrderStatusConstants.isCancelledStatus(status)) continue;
+        sum += _toDouble(row['total_price']);
+      }
+    } catch (_) {
+      /* online satış erişilemedi */
+    }
+
+    // ── Garson satışları: table_order_history (KAPATILMIŞ masalar) ──
+    var historyRevenue = 0.0;
+    try {
+      final data = await _fetchTableOrderHistoryRows(
+        selectWithArchivedAt:
+            'id, original_order_id, session_key, table_number, grand_total, '
+            'items, status, closed_at, archived_at, archived_orders, '
+            'display_table_label, table_display_name, table_name, '
+            'payment_method, payment_note',
+        selectWithoutArchivedAt:
+            'id, original_order_id, session_key, table_number, grand_total, '
+            'items, status, closed_at, archived_orders, '
+            'display_table_label, table_display_name, table_name, '
+            'payment_method, payment_note',
+        from: from,
+      );
+      final rangeFrom = from ?? DateTime(2000);
+      final rangeTo = to ?? DateTime(2100, 12, 31);
+      historyRevenue = sumClosedTableIncome(
+        historyRows: data,
+        from: rangeFrom,
+        to: rangeTo,
+      );
+      sum += historyRevenue;
+    } catch (_) {
+      /* kapalı masa geçmişi erişilemedi */
+    }
+
+    final optimisticFrom = from ?? DateTime(2000);
+    final optimisticTo = to ?? DateTime(2100, 12, 31);
+    if (historyRevenue <= 0) {
+      sum += _sumOptimisticHistoryRevenue(
+        from: optimisticFrom,
+        to: optimisticTo,
+      );
+    }
+
+    return sum;
+  }
+
+  /// Kapatılmış bir masa kaydının (table_order_history satırı) cirosu.
+  /// Önce `grand_total` kolonu kullanılır; yoksa items satır toplamına düşülür.
+  double _historyRowRevenue(Map row) =>
+      TableOrderHistoryUtils.revenue(Map<dynamic, dynamic>.from(row));
+
+  Future<List<TodayIncomeLine>> getTodayIncomeBreakdown() async {
+    final now = DateTime.now();
+    final from = DateTime(now.year, now.month, now.day);
+    final to = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    var historyRows = const <Map<String, dynamic>>[];
+    var onlineRows = const <Map<String, dynamic>>[];
+    var manualIncomeRows = const <Map<String, dynamic>>[];
+
+    try {
+      historyRows = await _fetchTableOrderHistoryRows(
+        selectWithArchivedAt:
+            'id, original_order_id, session_key, table_number, grand_total, '
+            'items, status, closed_at, archived_at, archived_orders, '
+            'display_table_label, table_display_name, table_name, '
+            'payment_method, payment_note',
+        selectWithoutArchivedAt:
+            'id, original_order_id, session_key, table_number, grand_total, '
+            'items, status, closed_at, archived_orders, '
+            'display_table_label, table_display_name, table_name, '
+            'payment_method, payment_note',
+        from: from,
+      );
+    } catch (_) {
+      /* garson geçmişi okunamadı */
+    }
+    if (historyRows.isEmpty) {
+      historyRows = _optimisticHistoryRowsInRange(from: from, to: to);
+    }
+
+    try {
+      onlineRows = List<Map<String, dynamic>>.from(
+        await _db
+            .from('order_items')
+            .select('order_id, total_price, status, created_at, product_name')
+            .eq('seller_id', _sellerId)
+            .gte('created_at', from.toUtc().toIso8601String())
+            .lte('created_at', to.toUtc().toIso8601String()),
+      );
+    } catch (_) {
+      /* online satış okunamadı */
+    }
+
+    try {
+      manualIncomeRows = List<Map<String, dynamic>>.from(
+        await _db
+            .from('finance_income_records')
+            .select(
+              'id, net_amount, source, description, income_type, income_date, '
+              'is_collected',
+            )
+            .eq('seller_id', _sellerId)
+            .gte('income_date', from.toIso8601String().split('T').first)
+            .lte('income_date', to.toIso8601String().split('T').first),
+      );
+    } catch (_) {
+      /* manuel gelir okunamadı */
+    }
+
+    return buildTodayIncomeLines(
+      from: from,
+      to: to,
+      historyRows: historyRows,
+      onlineRows: onlineRows,
+      manualIncomeRows: manualIncomeRows,
+    );
+  }
+
+  /// Gerçek satışların (online `order_items` + garson `table_orders`) ürün
+  /// bazında dökümü. "Neler satıldı, ne kadar ciro" → Gelirler sekmesinde
+  /// gösterilir. Erişim hatası olursa boş döner (modül kırılmaz).
+  Future<SalesBreakdown> getSalesBreakdown({
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final products = <String, SoldProduct>{};
+    double onlineRevenue = 0;
+    double garsonRevenue = 0;
+    final onlineOrderIds = <String>{};
+    int garsonOrderCount = 0;
+
+    // ── Online satışlar: order_items ──
+    try {
+      var q = _db
+          .from('order_items')
+          .select(
+            'order_id, product_name, quantity, total_price, unit_price, status, created_at',
+          )
+          .eq('seller_id', _sellerId);
+      if (from != null) q = q.gte('created_at', from.toIso8601String());
+      if (to != null) q = q.lte('created_at', to.toIso8601String());
+      final data = await q;
+      for (final raw in (data as List)) {
+        final row = raw as Map;
+        final status = (row['status']?.toString() ?? '').toLowerCase();
+        if (OrderStatusConstants.isCancelledStatus(status)) continue;
+        final qty = (row['quantity'] as num?)?.toInt() ?? 1;
+        final line = row['total_price'] != null
+            ? _toDouble(row['total_price'])
+            : _toDouble(row['unit_price']) * qty;
+        final name =
+            (row['product_name']?.toString().trim().isNotEmpty ?? false)
+            ? row['product_name'].toString().trim()
+            : 'Ürün';
+        onlineRevenue += line;
+        final oid = row['order_id']?.toString();
+        if (oid != null) onlineOrderIds.add(oid);
+        final p = products.putIfAbsent(name, () => SoldProduct(name: name));
+        p.quantity += qty;
+        p.revenue += line;
+        p.online = true;
+      }
+    } catch (_) {
+      /* online satış erişilemedi */
+    }
+
+    // ── Garson satışları: table_order_history (KAPATILMIŞ masalar) ──
+    var historyRowsLoaded = false;
+    try {
+      final data = await _fetchTableOrderHistoryRows(
+        selectWithArchivedAt:
+            'grand_total, items, status, closed_at, archived_at, '
+            'archived_orders, table_number',
+        selectWithoutArchivedAt:
+            'grand_total, items, status, closed_at, archived_orders, '
+            'table_number',
+        from: from,
+      );
+      final rangeFrom = from ?? DateTime(2000);
+      final rangeTo = to ?? DateTime(2100, 12, 31);
+      for (final raw in data) {
+        final row = Map<dynamic, dynamic>.from(raw as Map);
+        final status = (row['status']?.toString() ?? '').toLowerCase();
+        if (OrderStatusConstants.isCancelledStatus(status)) continue;
+        if (!TableOrderHistoryUtils.isWithinRange(row, rangeFrom, rangeTo)) {
+          continue;
+        }
+        garsonOrderCount++;
+        final sessionRevenue = _historyRowRevenue(row);
+        garsonRevenue += sessionRevenue;
+        for (final item in _parseJsonList(row['items'])) {
+          final normalized = MixedServiceOrder.normalizeOrderItem(item);
+          final qty = (normalized['quantity'] as num?)?.toInt() ?? 1;
+          final line = MixedServiceOrder.itemLineTotal(normalized);
+          final name = (normalized['item_name'] ?? normalized['name'])
+              ?.toString()
+              .trim();
+          final label = (name != null && name.isNotEmpty) ? name : 'Ürün';
+          final p = products.putIfAbsent(label, () => SoldProduct(name: label));
+          p.quantity += qty;
+          p.revenue += line;
+          p.garson = true;
+        }
+        if (_parseJsonList(row['items']).isEmpty && sessionRevenue > 0) {
+          final label = TableOrderHistoryUtils.tableLabel(row);
+          final p = products.putIfAbsent(label, () => SoldProduct(name: label));
+          p.quantity += 1;
+          p.revenue += sessionRevenue;
+          p.garson = true;
+        }
+      }
+      historyRowsLoaded = garsonRevenue > 0 || garsonOrderCount > 0;
+    } catch (_) {
+      /* garson satış erişilemedi */
+    }
+
+    if (!historyRowsLoaded) {
+      final optimisticRows = _optimisticHistoryRowsInRange(
+        from: from ?? DateTime(2000),
+        to: to ?? DateTime(2100, 12, 31),
+      );
+      for (final row in optimisticRows) {
+        final typedRow = Map<dynamic, dynamic>.from(row);
+        final sessionRevenue = _historyRowRevenue(typedRow);
+        if (sessionRevenue <= 0) continue;
+        garsonOrderCount++;
+        garsonRevenue += sessionRevenue;
+        for (final item in _parseJsonList(typedRow['items'])) {
+          final normalized = MixedServiceOrder.normalizeOrderItem(item);
+          final qty = (normalized['quantity'] as num?)?.toInt() ?? 1;
+          final line = MixedServiceOrder.itemLineTotal(normalized);
+          final name = (normalized['item_name'] ?? normalized['name'])
+              ?.toString()
+              .trim();
+          final label = (name != null && name.isNotEmpty) ? name : 'Ürün';
+          final p = products.putIfAbsent(label, () => SoldProduct(name: label));
+          p.quantity += qty;
+          p.revenue += line;
+          p.garson = true;
+        }
+        if (_parseJsonList(typedRow['items']).isEmpty && sessionRevenue > 0) {
+          final label = TableOrderHistoryUtils.tableLabel(typedRow);
+          final p = products.putIfAbsent(label, () => SoldProduct(name: label));
+          p.quantity += 1;
+          p.revenue += sessionRevenue;
+          p.garson = true;
+        }
+      }
+    }
+
+    final list = products.values.toList(growable: false)
+      ..sort((a, b) => b.revenue.compareTo(a.revenue));
+
+    return SalesBreakdown(
+      onlineRevenue: onlineRevenue,
+      garsonRevenue: garsonRevenue,
+      onlineOrderCount: onlineOrderIds.length,
+      garsonOrderCount: garsonOrderCount,
+      products: list,
+    );
+  }
+
+  /// Günlük satış serisi: "Gelir & Sipariş" grafiği için. Her gün için ciro
+  /// (online `order_items` created_at + kapalı masa `table_order_history`
+  /// closed_at) ve sipariş adedi döner. [from]..[to] arası tüm günler (ciro 0
+  /// olsa bile) dahil edilir ki grafik düz/boş görünmesin.
+  Future<List<DailySalesPoint>> getDailySalesSeries({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    DateTime dayKey(DateTime d) => DateTime(d.year, d.month, d.day);
+    final revenueByDay = <DateTime, double>{};
+    final ordersByDay = <DateTime, int>{};
+    final onlineOrderIdsByDay = <DateTime, Set<String>>{};
+
+    final fromStart = dayKey(from);
+    final toEnd = DateTime(to.year, to.month, to.day, 23, 59, 59);
+
+    // ── Online: order_items (created_at) ──
+    try {
+      final data = await _db
+          .from('order_items')
+          .select('order_id, total_price, status, created_at')
+          .eq('seller_id', _sellerId)
+          .gte('created_at', fromStart.toIso8601String())
+          .lte('created_at', toEnd.toIso8601String());
+      for (final raw in (data as List)) {
+        final row = raw as Map;
+        final status = (row['status']?.toString() ?? '').toLowerCase();
+        if (OrderStatusConstants.isCancelledStatus(status)) continue;
+        final created = DateTime.tryParse(
+          row['created_at']?.toString() ?? '',
+        )?.toLocal();
+        if (created == null) continue;
+        final key = dayKey(created);
+        revenueByDay[key] =
+            (revenueByDay[key] ?? 0) + _toDouble(row['total_price']);
+        final oid = row['order_id']?.toString();
+        if (oid != null) {
+          (onlineOrderIdsByDay[key] ??= <String>{}).add(oid);
+        }
+      }
+    } catch (_) {
+      /* online satış erişilemedi */
+    }
+
+    // ── Garson: table_order_history (closed_at veya archived_at) ──
+    final loadedGarsonDayKeys = <DateTime>{};
+    try {
+      final data = await _fetchTableOrderHistoryRows(
+        selectWithArchivedAt:
+            'grand_total, items, status, closed_at, archived_at, archived_orders',
+        selectWithoutArchivedAt:
+            'grand_total, items, status, closed_at, archived_orders',
+        from: fromStart,
+      );
+      for (final raw in data) {
+        final row = Map<dynamic, dynamic>.from(raw as Map);
+        final status = (row['status']?.toString() ?? '').toLowerCase();
+        if (OrderStatusConstants.isCancelledStatus(status)) continue;
+        final closed = TableOrderHistoryUtils.closedAt(row);
+        if (closed == null) continue;
+        if (closed.isBefore(fromStart) || closed.isAfter(toEnd)) continue;
+        final key = dayKey(closed);
+        revenueByDay[key] = (revenueByDay[key] ?? 0) + _historyRowRevenue(row);
+        ordersByDay[key] = (ordersByDay[key] ?? 0) + 1;
+        loadedGarsonDayKeys.add(key);
+      }
+    } catch (_) {
+      /* kapalı masa geçmişi erişilemedi */
+    }
+
+    for (final row in _optimisticHistoryRowsInRange(
+      from: fromStart,
+      to: toEnd,
+    )) {
+      final typedRow = Map<dynamic, dynamic>.from(row);
+      final closed = TableOrderHistoryUtils.closedAt(typedRow);
+      if (closed == null) continue;
+      final key = dayKey(closed);
+      if (loadedGarsonDayKeys.contains(key)) continue;
+      revenueByDay[key] =
+          (revenueByDay[key] ?? 0) + _historyRowRevenue(typedRow);
+      ordersByDay[key] = (ordersByDay[key] ?? 0) + 1;
+    }
+
+    // Tüm günleri (boş olsa bile) doldur.
+    final points = <DailySalesPoint>[];
+    var cursor = fromStart;
+    final lastDay = dayKey(to);
+    while (!cursor.isAfter(lastDay)) {
+      final online = onlineOrderIdsByDay[cursor]?.length ?? 0;
+      final garson = ordersByDay[cursor] ?? 0;
+      points.add(
+        DailySalesPoint(
+          date: cursor,
+          revenue: revenueByDay[cursor] ?? 0,
+          orderCount: online + garson,
+        ),
+      );
+      cursor = cursor.add(const Duration(days: 1));
+    }
+    return points;
+  }
+
+  List<Map<String, dynamic>> _parseJsonList(dynamic raw) {
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList(growable: false);
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return decoded
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList(growable: false);
+        }
+      } catch (_) {
+        /* geçersiz JSON */
+      }
+    }
+    return const [];
+  }
+
+  /// 'yyyy-MM' anahtarlı aylık satış cirosu haritası (trend grafiği için).
+  Future<Map<String, double>> getMonthlySalesRevenue({int months = 6}) async {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month - months + 1, 1);
+    final map = <String, double>{};
+
+    String? keyFor(dynamic createdRaw) {
+      final created = DateTime.tryParse(
+        createdRaw?.toString() ?? '',
+      )?.toLocal();
+      if (created == null) return null;
+      return '${created.year}-${created.month.toString().padLeft(2, '0')}';
+    }
+
+    // ── Online satışlar: order_items ──
+    try {
+      final data = await _db
+          .from('order_items')
+          .select('total_price, status, created_at')
+          .eq('seller_id', _sellerId)
+          .gte('created_at', start.toIso8601String());
+      for (final row in (data as List)) {
+        final status = ((row as Map)['status']?.toString() ?? '').toLowerCase();
+        if (OrderStatusConstants.isCancelledStatus(status)) continue;
+        final key = keyFor(row['created_at']);
+        if (key == null) continue;
+        map[key] = (map[key] ?? 0) + _toDouble(row['total_price']);
+      }
+    } catch (_) {
+      /* online satış erişilemedi */
+    }
+
+    // ── Garson satışları: table_order_history (KAPATILMIŞ masalar) ──
+    final loadedMonthKeys = <String>{};
+    try {
+      final data = await _fetchTableOrderHistoryRows(
+        selectWithArchivedAt:
+            'grand_total, items, status, closed_at, archived_at, archived_orders',
+        selectWithoutArchivedAt:
+            'grand_total, items, status, closed_at, archived_orders',
+        from: start,
+      );
+      for (final raw in data) {
+        final row = Map<dynamic, dynamic>.from(raw as Map);
+        final status = (row['status']?.toString() ?? '').toLowerCase();
+        if (OrderStatusConstants.isCancelledStatus(status)) continue;
+        final key = keyFor(row['closed_at'] ?? row['archived_at']);
+        if (key == null) continue;
+        map[key] = (map[key] ?? 0) + _historyRowRevenue(row);
+        loadedMonthKeys.add(key);
+      }
+    } catch (_) {
+      /* kapalı masa geçmişi erişilemedi */
+    }
+
+    for (final row in _optimisticHistoryRowsInRange(
+      from: start,
+      to: DateTime(now.year, now.month, now.day, 23, 59, 59),
+    )) {
+      final typedRow = Map<dynamic, dynamic>.from(row);
+      final key = keyFor(typedRow['closed_at'] ?? typedRow['archived_at']);
+      if (key == null || loadedMonthKeys.contains(key)) continue;
+      map[key] = (map[key] ?? 0) + _historyRowRevenue(typedRow);
+    }
+
+    return map;
+  }
+
+  // ─────────────────────────────────────────
   // Suppliers
   // ─────────────────────────────────────────
 
   Future<List<FinanceSupplier>> getSuppliers({bool activeOnly = true}) async {
-    var q = _db
-        .from('finance_suppliers')
-        .select()
-        .eq('seller_id', _sellerId);
+    var q = _db.from('finance_suppliers').select().eq('seller_id', _sellerId);
     if (activeOnly) q = q.eq('is_active', true);
     final data = await q.order('name');
-    return (data as List).map((e) => FinanceSupplier.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => FinanceSupplier.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<FinanceSupplier> createSupplier(FinanceSupplier s) async {
@@ -342,7 +966,9 @@ class FinanceRepository {
         .eq('seller_id', _sellerId);
     if (activeOnly) q = q.eq('is_active', true);
     final data = await q.order('created_at');
-    return (data as List).map((e) => CashAccount.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => CashAccount.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<CashAccount> createCashAccount(CashAccount a) async {
@@ -392,7 +1018,9 @@ class FinanceRepository {
       q = q.lte('movement_date', to.toIso8601String().substring(0, 10));
     }
     final data = await q.order('movement_date', ascending: false).limit(limit);
-    return (data as List).map((e) => CashMovement.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => CashMovement.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<CashMovement> createCashMovement(CashMovement m) async {
@@ -434,7 +1062,9 @@ class FinanceRepository {
     }
     if (collected != null) q = q.eq('is_collected', collected);
     final data = await q.order('income_date', ascending: false).limit(limit);
-    return (data as List).map((e) => IncomeRecord.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => IncomeRecord.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<IncomeRecord> createIncomeRecord(IncomeRecord r) async {
@@ -461,7 +1091,10 @@ class FinanceRepository {
         .eq('seller_id', _sellerId);
   }
 
-  Future<void> updateIncomeRecord(String id, Map<String, dynamic> fields) async {
+  Future<void> updateIncomeRecord(
+    String id,
+    Map<String, dynamic> fields,
+  ) async {
     await _db
         .from('finance_income_records')
         .update(fields)
@@ -501,7 +1134,9 @@ class FinanceRepository {
     if (paid != null) q = q.eq('is_paid', paid);
     if (category != null) q = q.eq('category', category);
     final data = await q.order('expense_date', ascending: false).limit(limit);
-    return (data as List).map((e) => Expense.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => Expense.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<Expense> createExpense(Expense e) async {
@@ -600,13 +1235,12 @@ class FinanceRepository {
   // ─────────────────────────────────────────
 
   Future<List<Debt>> getDebts({String? status}) async {
-    var q = _db
-        .from('finance_debts')
-        .select()
-        .eq('seller_id', _sellerId);
+    var q = _db.from('finance_debts').select().eq('seller_id', _sellerId);
     if (status != null) q = q.eq('status', status);
     final data = await q.order('created_at', ascending: false);
-    return (data as List).map((e) => Debt.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => Debt.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<Debt> createDebt(Debt d) async {
@@ -645,7 +1279,9 @@ class FinanceRepository {
         .eq('debt_id', debtId)
         .eq('seller_id', _sellerId)
         .order('payment_date', ascending: false);
-    return (data as List).map((e) => DebtPayment.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => DebtPayment.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<DebtPayment> createDebtPayment(DebtPayment p) async {
@@ -670,13 +1306,19 @@ class FinanceRepository {
           'p_amount': payment.amount,
           'p_account_id': payment.accountId,
           'p_description': payment.description,
-          'p_payment_date': payment.paymentDate.toIso8601String().substring(0, 10),
-          'p_create_cash_movement': createLinkedCashMovement && payment.accountId != null,
+          'p_payment_date': payment.paymentDate.toIso8601String().substring(
+            0,
+            10,
+          ),
+          'p_create_cash_movement':
+              createLinkedCashMovement && payment.accountId != null,
         },
       );
       return;
     } catch (error) {
-      if (!_shouldUseFlowFallback(error, 'finance_record_debt_payment')) rethrow;
+      if (!_shouldUseFlowFallback(error, 'finance_record_debt_payment')) {
+        rethrow;
+      }
     }
 
     await createDebtPayment(payment);
@@ -700,7 +1342,8 @@ class FinanceRepository {
           direction: 'out',
           referenceId: payment.debtId,
           referenceType: 'debt_payment',
-          description: payment.description ?? debtRow['creditor_name'] as String?,
+          description:
+              payment.description ?? debtRow['creditor_name'] as String?,
           movementDate: payment.paymentDate,
           createdAt: payment.createdAt,
         ),
@@ -721,13 +1364,12 @@ class FinanceRepository {
   // ─────────────────────────────────────────
 
   Future<List<FinanceEmployee>> getEmployees({bool activeOnly = true}) async {
-    var q = _db
-        .from('finance_employees')
-        .select()
-        .eq('seller_id', _sellerId);
+    var q = _db.from('finance_employees').select().eq('seller_id', _sellerId);
     if (activeOnly) q = q.eq('is_active', true);
     final data = await q.order('full_name');
-    return (data as List).map((e) => FinanceEmployee.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => FinanceEmployee.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<FinanceEmployee> createEmployee(FinanceEmployee e) async {
@@ -776,7 +1418,9 @@ class FinanceRepository {
     final data = await q
         .order('period_year', ascending: false)
         .order('period_month', ascending: false);
-    return (data as List).map((e) => SalaryRecord.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => SalaryRecord.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<SalaryRecord> createSalaryRecord(SalaryRecord r) async {
@@ -788,7 +1432,10 @@ class FinanceRepository {
     return SalaryRecord.fromJson(row);
   }
 
-  Future<void> updateSalaryRecord(String id, Map<String, dynamic> fields) async {
+  Future<void> updateSalaryRecord(
+    String id,
+    Map<String, dynamic> fields,
+  ) async {
     await _db
         .from('finance_salary_records')
         .update(fields)
@@ -807,7 +1454,9 @@ class FinanceRepository {
         .eq('salary_record_id', salaryRecordId)
         .eq('seller_id', _sellerId)
         .order('payment_date', ascending: false);
-    return (data as List).map((e) => SalaryPayment.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => SalaryPayment.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<SalaryPayment> createSalaryPayment(SalaryPayment p) async {
@@ -903,7 +1552,8 @@ class FinanceRepository {
   }
 
   Future<ReconciliationNote> createReconciliationNote(
-      ReconciliationNote n) async {
+    ReconciliationNote n,
+  ) async {
     final row = await _db
         .from('finance_reconciliation_notes')
         .insert(n.toInsertJson(_sellerId))
@@ -913,7 +1563,9 @@ class FinanceRepository {
   }
 
   Future<void> updateReconciliationNote(
-      String id, Map<String, dynamic> fields) async {
+    String id,
+    Map<String, dynamic> fields,
+  ) async {
     await _db
         .from('finance_reconciliation_notes')
         .update(fields)
@@ -1001,7 +1653,9 @@ class FinanceRepository {
 
     final debts = await _db
         .from('finance_debts')
-        .select('id, creditor_name, original_amount, paid_amount, due_date, status, debt_type')
+        .select(
+          'id, creditor_name, original_amount, paid_amount, due_date, status, debt_type',
+        )
         .eq('seller_id', _sellerId)
         .not('status', 'in', '("paid","cancelled")')
         .not('due_date', 'is', null)
@@ -1018,7 +1672,9 @@ class FinanceRepository {
       items.add({
         'id': e['id'],
         'type': 'expense',
-        'title': ExpenseCategory.fromValue(e['category'] as String? ?? 'other').label,
+        'title': ExpenseCategory.fromValue(
+          e['category'] as String? ?? 'other',
+        ).label,
         'description': e['description'] ?? '',
         'amount': double.tryParse(e['amount'].toString()) ?? 0,
         'due_date': dueDate,
@@ -1043,8 +1699,10 @@ class FinanceRepository {
       });
     }
 
-    items.sort((a, b) =>
-        (a['due_date'] as DateTime).compareTo(b['due_date'] as DateTime));
+    items.sort(
+      (a, b) =>
+          (a['due_date'] as DateTime).compareTo(b['due_date'] as DateTime),
+    );
     return items;
   }
 }

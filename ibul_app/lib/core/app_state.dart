@@ -252,6 +252,53 @@ class AppState extends ChangeNotifier {
     await prefs.setString(key, jsonEncode(value));
   }
 
+  String _sellerScopedCacheKey(String namespace, String sellerId) =>
+      'seller_scoped_cache_${namespace}_${sellerId.trim()}';
+
+  Future<dynamic> loadSellerScopedCache(
+    String namespace, {
+    required String sellerId,
+  }) async {
+    final normalizedSellerId = sellerId.trim();
+    if (namespace.trim().isEmpty || normalizedSellerId.isEmpty) return null;
+    final prefs = await _getPrefs();
+    final raw = prefs.getString(
+      _sellerScopedCacheKey(namespace.trim(), normalizedSellerId),
+    );
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return jsonDecode(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> persistSellerScopedCache(
+    String namespace, {
+    required String sellerId,
+    required dynamic value,
+  }) async {
+    final normalizedSellerId = sellerId.trim();
+    if (namespace.trim().isEmpty || normalizedSellerId.isEmpty) return;
+    final prefs = await _getPrefs();
+    await prefs.setString(
+      _sellerScopedCacheKey(namespace.trim(), normalizedSellerId),
+      jsonEncode(value),
+    );
+  }
+
+  Future<void> clearSellerScopedCache(
+    String namespace, {
+    required String sellerId,
+  }) async {
+    final normalizedSellerId = sellerId.trim();
+    if (namespace.trim().isEmpty || normalizedSellerId.isEmpty) return;
+    final prefs = await _getPrefs();
+    await prefs.remove(
+      _sellerScopedCacheKey(namespace.trim(), normalizedSellerId),
+    );
+  }
+
   Future<void> _persistCurrentDeliveryAddressLocal() async {
     final prefs = await _getPrefs();
     if ((_currentDeliveryAddress ?? '').trim().isEmpty) {

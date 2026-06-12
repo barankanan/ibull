@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart'
         kIsWeb,
         listEquals;
 import 'package:flutter/material.dart';
+import '../utils/order_status_constants.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -31,6 +32,7 @@ import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/web_seo.dart';
 import '../services/store_service.dart';
+import '../services/store/table_order_history_utils.dart';
 import '../services/auth_service.dart';
 import '../services/support_service.dart';
 import '../services/campaign_service.dart';
@@ -81,6 +83,7 @@ import '../utils/garson_product_selection.dart';
 import '../utils/print_perf_log.dart';
 import '../utils/garson_active_orders_fetch.dart';
 import '../utils/garson_board_state.dart';
+import '../utils/garson_table_metrics.dart';
 import '../utils/garson_table_order_state.dart';
 import '../utils/garson_area_sections.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart';
@@ -437,6 +440,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   String? _dashboardTableOrdersSignature;
   // In-flight guard: prevents concurrent duplicate fetches.
   bool _isDashboardTableOrdersLoading = false;
+
+  /// Closed (archived) table sessions from `table_order_history`, used so that
+  /// restaurant "ciro" only counts a table AFTER it is closed (dated by
+  /// `closed_at`). Active `table_orders` are intentionally NOT counted toward
+  /// revenue — only operational status counts.
+  List<Map<String, dynamic>> _dashboardClosedHistory = [];
+  String? _dashboardClosedHistorySignature;
+  bool _isDashboardClosedHistoryLoading = false;
+  bool _isSellerOwnerBootstrapReady = false;
+  static const String _dashboardFinanceCacheNamespace =
+      'seller_dashboard_finance_v1';
   int _sellerWalletLoadRequestId = 0;
   int _storeProfileLoadRequestId = 0;
   bool _sellerPanelControllersDisposed = false;
@@ -500,6 +514,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   bool _hasLoadedSellerQuestionsData = false;
   bool _hasLoadedSellerWalletData = false;
   bool _hasLoadedStoreTablesData = false;
+  String? _sellerDataOwnerId;
   String? _storeTablesLoadedForSellerId;
   bool _hasLoadedPendingLocationRequestData = false;
   bool _showStoreMediaSection = false;
@@ -529,6 +544,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   SellerDashboardRangePreset _dashboardRangePreset =
       SellerDashboardRangePreset.last7Days;
   DateTimeRange? _dashboardCustomRange;
+  late DateTime _earningsDay;
+  late DateTime _earningsMonth;
+  int _financeRefreshToken = 0;
   int _sellerPanelBuildCount = 0;
   int _sellerPanelStateUpdateCount = 0;
   int _ordersVersion = 0;
@@ -1666,6 +1684,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _earningsDay = DateTime(now.year, now.month, now.day);
+    _earningsMonth = DateTime(now.year, now.month, 1);
     WidgetsBinding.instance.addObserver(this);
     _bindNavigationController(source: 'initState', viaSetState: false);
     _logSellerPanelLifecycle(
@@ -1687,6 +1708,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     unawaited(_restoreLastSelectedModule());
     unawaited(_restoreGarsonAreaFilter());
     unawaited(_restoreSidebarCollapsed());
+    unawaited(_bootstrapSellerOwnerAndDashboardState());
     _sellerOrderHighlightExpiryScheduler = SellerOrderHighlightExpiryScheduler(
       highlightDuration: const Duration(seconds: 30),
       onExpired: _onSellerOrderHighlightExpired,
@@ -1695,7 +1717,6 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       'Init',
       'branch=store_profile trigger=initState requestUrl=${_sellerPanelRestRequestUrl('stores', query: <String, String>{'select': '*', 'seller_id': 'eq.${_authService.currentUser?.id.trim().isNotEmpty == true ? _authService.currentUser!.id.trim() : '<missing>'}'})}',
     );
-    _loadStoreProfile();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _logSellerPanelLifecycle('build', newInitialModule: _selectedModule.name);
@@ -1734,6 +1755,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   static const String _garsonLastAreaPrefKey = 'seller_panel.garson.last_area';
+  static const String _sellerDataOwnerPrefKey = 'seller_panel.owner_seller_id';
 
   Future<void> _restoreGarsonAreaFilter() async {
     try {
@@ -1755,6 +1777,293 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     } catch (_) {
       // ignore
     }
+  }
+
+  String _normalizeSellerIdentity(Object? raw) => raw?.toString().trim() ?? '';
+
+  String _sellerDataOwnerStorageKey(String authUserId) =>
+      '$_sellerDataOwnerPrefKey.$authUserId';
+
+  String _firstNonEmptySellerIdentity(
+    Iterable<Map<String, dynamic>> rows, {
+    List<String> keys = const <String>[
+      'seller_id',
+      'restaurant_id',
+      'store_id',
+    ],
+  }) {
+    for (final row in rows) {
+      for (final key in keys) {
+        final candidate = _normalizeSellerIdentity(row[key]);
+        if (candidate.isNotEmpty) return candidate;
+      }
+    }
+    return '';
+  }
+
+  void _rememberSellerDataOwnerId(
+    String? candidate, {
+    required String source,
+    bool persist = true,
+  }) {
+    final normalized = _normalizeSellerIdentity(candidate);
+    if (normalized.isEmpty || normalized == _sellerDataOwnerId) return;
+    _sellerDataOwnerId = normalized;
+    debugPrint(
+      '[SellerOwnerId][remember] source=$source ownerId=$normalized '
+      'authUserId=${_authService.currentUser?.id ?? '-'}',
+    );
+    if (!persist) return;
+    final authUserId = _normalizeSellerIdentity(_authService.currentUser?.id);
+    if (authUserId.isEmpty) return;
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          _sellerDataOwnerStorageKey(authUserId),
+          normalized,
+        );
+      } catch (_) {
+        // ignore
+      }
+    }());
+  }
+
+  Future<void> _restorePersistedSellerDataOwnerIdWithReload({
+    bool reloadStoreProfile = true,
+  }) async {
+    final authUserId = _normalizeSellerIdentity(_authService.currentUser?.id);
+    if (authUserId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = _normalizeSellerIdentity(
+        prefs.getString(_sellerDataOwnerStorageKey(authUserId)),
+      );
+      if (stored.isEmpty || stored == _sellerDataOwnerId) return;
+      if (!mounted) {
+        _sellerDataOwnerId = stored;
+        return;
+      }
+      setState(() {
+        _sellerDataOwnerId = stored;
+        _dashboardClosedHistorySignature = null;
+        _financeRefreshToken++;
+      });
+      debugPrint(
+        '[SellerOwnerId][restore] authUserId=$authUserId ownerId=$stored',
+      );
+      if (reloadStoreProfile) {
+        // App restart'tan sonra ilk build auth fallback UID ile yapılmış olabilir.
+        // Persist edilmiş canonical owner kimliği geri gelince store profile +
+        // closed history tekrar yüklenmeli; aksi halde Genel Bakış / Finans
+        // optimistic olmayan kalıcı veriyi yanlış sellerId ile 0 gösterir.
+        unawaited(_loadStoreProfile());
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  Future<void> _bootstrapSellerOwnerAndDashboardState() async {
+    await _restorePersistedSellerDataOwnerIdWithReload(reloadStoreProfile: false);
+    final sellerId = await _ensureSellerDataOwnerIdResolved(
+      source: 'bootstrap_owner_and_cache',
+    );
+    if (sellerId.isNotEmpty) {
+      await _restorePersistedDashboardFinanceCache(sellerId: sellerId);
+    }
+    if (!mounted) {
+      _isSellerOwnerBootstrapReady = true;
+      return;
+    }
+    setState(() => _isSellerOwnerBootstrapReady = true);
+    unawaited(_ensureModuleDataLoaded(_selectedModule));
+    unawaited(_loadStoreProfile());
+  }
+
+  Map<String, dynamic> _buildDashboardFinanceCachePayload({
+    required String sellerId,
+    required List<Map<String, dynamic>> closedHistoryRows,
+  }) {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final todayEnd = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    final weekStart = todayStart.subtract(Duration(days: now.weekday - 1));
+    final monthStart = DateTime(now.year, now.month, 1);
+    double revenueInRange(DateTime from, DateTime to) {
+      var sum = 0.0;
+      for (final row in closedHistoryRows) {
+        final typedRow = Map<dynamic, dynamic>.from(row);
+        if (!TableOrderHistoryUtils.isWithinRange(typedRow, from, to)) {
+          continue;
+        }
+        sum += TableOrderHistoryUtils.revenue(typedRow);
+      }
+      return sum;
+    }
+
+    return <String, dynamic>{
+      'seller_id': sellerId,
+      'cached_at': DateTime.now().toUtc().toIso8601String(),
+      'closed_history_rows': closedHistoryRows,
+      'summary': <String, dynamic>{
+        'today_revenue': revenueInRange(todayStart, todayEnd),
+        'week_revenue': revenueInRange(weekStart, todayEnd),
+        'month_revenue': revenueInRange(
+          monthStart,
+          DateTime(now.year, now.month + 1, 0, 23, 59, 59),
+        ),
+        'closed_today_count': closedHistoryRows.where((row) {
+          return TableOrderHistoryUtils.isWithinRange(
+            Map<dynamic, dynamic>.from(row),
+            todayStart,
+            todayEnd,
+          );
+        }).length,
+      },
+    };
+  }
+
+  String _dashboardClosedHistoryRowsSignature(
+    List<Map<String, dynamic>> rows,
+  ) {
+    return rows
+        .map(
+          (r) =>
+              '${r['id']}:${r['grand_total'] ?? ''}:${r['closed_at'] ?? ''}:${r['archived_at'] ?? ''}',
+        )
+        .join('|');
+  }
+
+  Future<void> _persistDashboardFinanceCache({
+    String? sellerId,
+    List<Map<String, dynamic>>? closedHistoryRows,
+  }) async {
+    final normalizedSellerId = _normalizeSellerIdentity(sellerId);
+    final resolvedSellerId = normalizedSellerId.isNotEmpty
+        ? normalizedSellerId
+        : _bestSellerDataOwnerIdCandidate(includeAuthFallback: false);
+    if (resolvedSellerId.isEmpty) return;
+    final rows = (closedHistoryRows ?? _dashboardClosedHistory)
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+    final payload = _buildDashboardFinanceCachePayload(
+      sellerId: resolvedSellerId,
+      closedHistoryRows: rows,
+    );
+    try {
+      await AppState().persistSellerScopedCache(
+        _dashboardFinanceCacheNamespace,
+        sellerId: resolvedSellerId,
+        value: payload,
+      );
+    } catch (error) {
+      debugPrint(
+        '[DashboardFinanceCache][persist_failed] '
+        'sellerId=$resolvedSellerId error=$error',
+      );
+    }
+  }
+
+  Future<void> _restorePersistedDashboardFinanceCache({
+    required String sellerId,
+  }) async {
+    final normalizedSellerId = _normalizeSellerIdentity(sellerId);
+    if (normalizedSellerId.isEmpty) return;
+    try {
+      final payload = await AppState().loadSellerScopedCache(
+        _dashboardFinanceCacheNamespace,
+        sellerId: normalizedSellerId,
+      );
+      if (payload is! Map) return;
+      final rawRows = payload['closed_history_rows'];
+      if (rawRows is! List) return;
+      final rows = rawRows
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+      if (rows.isEmpty) return;
+      final signature = _dashboardClosedHistoryRowsSignature(rows);
+      if (!mounted) {
+        _dashboardClosedHistory = rows;
+        _dashboardClosedHistorySignature = signature;
+        return;
+      }
+      setState(() {
+        _dashboardClosedHistory = rows;
+        _dashboardClosedHistorySignature = signature;
+        _dashboardTableOrdersVersion++;
+        _financeRefreshToken++;
+      });
+      debugPrint(
+        '[DashboardFinanceCache][restored] '
+        'sellerId=$normalizedSellerId rows=${rows.length}',
+      );
+    } catch (error) {
+      debugPrint(
+        '[DashboardFinanceCache][restore_failed] '
+        'sellerId=$normalizedSellerId error=$error',
+      );
+    }
+  }
+
+  String _bestSellerDataOwnerIdCandidate({bool includeAuthFallback = true}) {
+    final candidates = <String>[
+      _normalizeSellerIdentity(_sellerDataOwnerId),
+      _firstNonEmptySellerIdentity(_garsonVisibleTablesForUi()),
+      _firstNonEmptySellerIdentity(_storeTables),
+      _firstNonEmptySellerIdentity(_dashboardTableOrders),
+      _firstNonEmptySellerIdentity(_dashboardClosedHistory),
+      _firstNonEmptySellerIdentity(_sellerOrders),
+      _normalizeSellerIdentity(_garsonManualTableOrdersSellerId),
+    ];
+    if (includeAuthFallback) {
+      candidates.add(_normalizeSellerIdentity(_authService.currentUser?.id));
+    }
+    for (final candidate in candidates) {
+      if (candidate.isEmpty) continue;
+      _rememberSellerDataOwnerId(
+        candidate,
+        source: 'best_candidate',
+        persist: true,
+      );
+      return candidate;
+    }
+    return '';
+  }
+
+  Future<String> _ensureSellerDataOwnerIdResolved({
+    required String source,
+  }) async {
+    final existing = _bestSellerDataOwnerIdCandidate(
+      includeAuthFallback: false,
+    );
+    if (existing.isNotEmpty) return existing;
+
+    final resolvedFromService = await _storeService
+        .resolveStoreOwnerIdForCurrentUser();
+    final normalizedResolved = _normalizeSellerIdentity(resolvedFromService);
+    if (normalizedResolved.isNotEmpty) {
+      _rememberSellerDataOwnerId(
+        normalizedResolved,
+        source: '${source}_service_lookup',
+      );
+      return normalizedResolved;
+    }
+
+    final fallback = _bestSellerDataOwnerIdCandidate(includeAuthFallback: true);
+    if (fallback.isNotEmpty) {
+      _rememberSellerDataOwnerId(fallback, source: '${source}_auth_fallback');
+    }
+    return fallback;
+  }
+
+  Future<String> _resolveCanonicalGarsonSellerId({
+    required String source,
+  }) async {
+    final resolved = await _ensureSellerDataOwnerIdResolved(source: source);
+    if (resolved.trim().isNotEmpty) return resolved.trim();
+    return _resolveGarsonSellerId().trim();
   }
 
   List<({String key, String label})> _garsonAreaOptions() {
@@ -2404,6 +2713,15 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       'Init',
       'phase=ensureModuleDataLoaded module=${module.name} activeTab=${_selectedModule.name}',
     );
+    if ((module == SellerModule.dashboard || module == SellerModule.finance) &&
+        !_isSellerOwnerBootstrapReady) {
+      _logSellerPanel(
+        'Init',
+        'phase=ensureModuleDataLoaded module=${module.name} '
+            'skipped=owner_bootstrap_pending',
+      );
+      return;
+    }
     switch (module) {
       case SellerModule.dashboard:
         final shouldLoadCampaigns = !_hasLoadedCampaignsData;
@@ -2424,11 +2742,20 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           _hasLoadedSellerWalletData = true;
           unawaited(_loadSellerWalletBalance(silent: true));
         }
-        // Always (re-)fetch table orders for food businesses. If _storeCategory
-        // is not known yet, the method guards itself and returns early; a
-        // subsequent call from _loadStoreProfile will populate the data.
+        // Always (re-)fetch table orders for food businesses.
+        // Two-pass mechanism:
+        //   Pass 1 (immediate): _storeCategory may still be empty here because
+        //   _loadStoreProfile is running in parallel. _reloadRestaurantDashboardMetrics
+        //   guards on _isFoodStoreCategory and returns early when category is unknown.
+        //   Pass 2 (deferred): _loadStoreProfile completes → its callback calls
+        //   _loadDashboardTableOrdersGuarded (dashboard module) or
+        //   _loadDashboardClosedHistory (other modules), populating the data.
+        //   When _loadDashboardClosedHistory applies new rows it also bumps
+        //   _financeRefreshToken so FinanceShell rebuilds with fresh history.
+        _dashboardTableOrdersSignature = null;
+        _dashboardClosedHistorySignature = null;
         unawaited(
-          _loadDashboardTableOrdersGuarded(
+          _reloadRestaurantDashboardMetrics(
             source: '_ensureModuleDataLoaded_dashboard',
           ),
         );
@@ -3500,17 +3827,29 @@ class _SellerPanelPageState extends State<SellerPanelPage>
 
   Future<void> _exitSellerPanel() async {
     debugPrint(
-      '[SellerExit] _exitSellerPanel triggered — full sign-out (no consumer session restore)',
+      '[SellerExit] _exitSellerPanel triggered — returning to "Hesabım"',
     );
     setState(() => _isLoading = true);
     try {
-      await _authService.signOut();
+      // Satıcı panelinden çıkınca kullanıcıyı "Hesabım" alanına (Hesap sekmesi)
+      // geri at. Panele girerken yedeklenen tüketici oturumu varsa onu geri
+      // yükle (kullanıcı giriş yapmış halde kalır); yoksa tamamen çıkış yap.
+      // Her iki durumda da Hesap sekmesine yönlendir.
+      final hasConsumerBackup = await _authService.hasSellerSwitchBackup();
+      bool restoredConsumerSession = false;
+      if (hasConsumerBackup) {
+        restoredConsumerSession = await _authService
+            .restoreUserSessionAfterSellerExit();
+      } else {
+        await _authService.signOut();
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Satıcı panelinden çıkıldı.')),
       );
       debugPrint(
-        '[SellerExit] navigating to HomeScreen(profile tab) — routes cleared',
+        '[SellerExit] navigating to HomeScreen(profile tab) — routes cleared '
+        '(restoredConsumerSession=$restoredConsumerSession)',
       );
       Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
         buildAppPageRoute<void>(
@@ -3531,8 +3870,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   Future<void> _loadSellerOrders() async {
-    final sellerId = _authService.currentUser?.id;
-    if (sellerId == null || sellerId.isEmpty) return;
+    final sellerId = await _ensureSellerDataOwnerIdResolved(
+      source: '_loadSellerOrders',
+    );
+    if (sellerId.isEmpty) return;
     final requestId = ++_sellerOrdersLoadRequestId;
     final requestUrl = 'OrderService.getSellerOrders(sellerId=$sellerId)';
     final watch = Stopwatch()..start();
@@ -3551,6 +3892,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         requestUrl: requestUrl,
       );
       final orders = await OrderService.instance.getSellerOrders(sellerId);
+      _rememberSellerDataOwnerId(
+        _firstNonEmptySellerIdentity(orders),
+        source: '_loadSellerOrders_rows',
+      );
       if (!_canApplySellerOrdersRequest(requestId)) return;
       final previousIds = _sellerOrders
           .map((order) => order['id']?.toString())
@@ -3677,10 +4022,14 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     debugPrint('[DashboardRefresh][start] source=$source');
     final watch = Stopwatch()..start();
     final changed = await _loadDashboardTableOrders(source: source);
+    // Revenue (ciro) is sourced from CLOSED tables — load the archived history
+    // in the same refresh pass so "Bugünkü Ciro" updates as tables are closed.
+    await _loadDashboardClosedHistory(source: source);
     debugPrint(
       '[DashboardRefresh][done] '
       'source=$source changed=$changed '
       'count=${_dashboardTableOrders.length} '
+      'closedHistory=${_dashboardClosedHistory.length} '
       'durationMs=${watch.elapsedMilliseconds}',
     );
   }
@@ -3710,10 +4059,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       );
       return false;
     }
-    // Prefer the seller_id from currentUser — _resolveGarsonSellerId reads
-    // _storeTables which may be empty at this point; auth user ID is always
-    // the canonical seller identifier.
-    final sellerId = (_authService.currentUser?.id ?? '').trim();
+    final sellerId = await _ensureSellerDataOwnerIdResolved(
+      source: '_loadDashboardTableOrders',
+    );
     if (sellerId.isEmpty) {
       debugPrint('[DashboardTableOrders][skip] sellerId empty source=$source');
       return false;
@@ -3724,7 +4072,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       'sellerId=$sellerId storeCategory=$_storeCategory source=$source',
     );
     try {
-      final orders = await _storeService.getTableOrdersSnapshot(sellerId);
+      final orders = (await _storeService.getTableOrdersSnapshot(sellerId))
+          .where(
+            (order) => !isGarsonTerminalOrderStatus(
+              resolveGarsonOrderStatusField(order),
+            ),
+          )
+          .toList(growable: false);
+      _rememberSellerDataOwnerId(
+        _firstNonEmptySellerIdentity(orders),
+        source: '_loadDashboardTableOrders_rows',
+      );
       if (!mounted) return false;
 
       // Debug: log a sample to verify data shape.
@@ -3827,113 +4185,281 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     }
   }
 
+  /// Masa kapatma sonrası Genel Bakış metriklerini günceller.
+  /// Dashboard görünür olmasa bile çalışır — garson'dan kapatınca stale
+  /// `_dashboardTableOrders` (açık masa=3) ile gerçek durum (0 dolu) ayrışmasını önler.
+  Future<void> _reloadRestaurantDashboardMetrics({
+    required String source,
+  }) async {
+    // Guard: profil yüklendiyse ve kategori restoran değilse anlamlı veri yok.
+    // Profil henüz yüklenmediyse (_storeCategory boş) sessizce çık —
+    // _loadStoreProfile tamamlandığında ikinci pass (pass-2) tetiklenecek:
+    //   • dashboard modülündeyse → _loadDashboardTableOrdersGuarded
+    //   • diğer modüllerdeyse → _loadDashboardClosedHistory
+    // Pass-2, _loadDashboardClosedHistory'de veriyi uygulayıp _financeRefreshToken
+    // artırarak FinanceShell'i de güncelleyecek.
+    if (!_isFoodStoreCategory(_storeCategory)) {
+      debugPrint(
+        '[DashboardMetrics][skip] source=$source '
+        'reason=${_hasLoadedStoreProfile ? "not_food_store" : "profile_loading_pass2_pending"}',
+      );
+      return;
+    }
+    final sellerId = await _ensureSellerDataOwnerIdResolved(
+      source: '_reloadRestaurantDashboardMetrics',
+    );
+    if (sellerId.isEmpty) return;
+
+    _dashboardTableOrdersSignature = null;
+    _dashboardClosedHistorySignature = null;
+    _invalidateDashboardSnapshot();
+
+    await Future.wait([
+      _loadDashboardTableOrders(source: source),
+      _loadDashboardClosedHistory(source: source),
+    ]);
+  }
+
+  /// Loads CLOSED table sessions (`table_order_history`) for the dashboard so
+  /// restaurant revenue only counts a table after it is closed. Covers a wide
+  /// window (≈ last 400 days) so today / this-month / selected-range metrics
+  /// are all served from one fetch. Idempotent: only setState when data
+  /// actually changed (mirrors the [_loadDashboardTableOrders] loop-guard).
+  Future<bool> _loadDashboardClosedHistory({String source = 'unknown'}) async {
+    if (_isDashboardClosedHistoryLoading) return false;
+    if (!_isFoodStoreCategory(_storeCategory) && _dashboardClosedHistory.isEmpty) {
+      return false;
+    }
+    final sellerId = await _ensureSellerDataOwnerIdResolved(
+      source: '_loadDashboardClosedHistory',
+    );
+    if (sellerId.isEmpty) return false;
+    _isDashboardClosedHistoryLoading = true;
+    try {
+      final now = DateTime.now();
+      final from = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).subtract(const Duration(days: 400));
+      final rows = await _storeService.getTableOrderHistory(
+        sellerId: sellerId,
+        fromDate: from,
+        toDate: DateTime(now.year, now.month, now.day, 23, 59, 59),
+        limit: 2000,
+      );
+      final mergedRows = _mergeDashboardClosedHistoryWithOptimistic(rows);
+      _rememberSellerDataOwnerId(
+        _firstNonEmptySellerIdentity(mergedRows),
+        source: '_loadDashboardClosedHistory_rows',
+      );
+      if (!mounted) return false;
+      if (mergedRows.isEmpty) {
+        debugPrint(
+          '[DashboardClosedHistory][empty] source=$source '
+          'sellerId=$sellerId — table_order_history boş veya okunamadı',
+        );
+        if (_dashboardClosedHistory.isNotEmpty) {
+          debugPrint(
+            '[DashboardClosedHistory][keep_cache] source=$source '
+            'sellerId=$sellerId cachedRows=${_dashboardClosedHistory.length}',
+          );
+          return false;
+        }
+      }
+      final signature = _dashboardClosedHistoryRowsSignature(mergedRows);
+      if (signature == _dashboardClosedHistorySignature) return false;
+      setState(() {
+        _dashboardClosedHistory = mergedRows;
+        _dashboardClosedHistorySignature = signature;
+        _dashboardTableOrdersVersion++;
+        // FinanceShell, oluşturulduğu anda geçilen optimisticClosedHistory ile
+        // FinanceRepository'yi başlatır. _dashboardClosedHistory sonradan
+        // yüklenirse FinanceShell'in anahtarını değiştirerek yeniden oluştur
+        // ki FinanceProvider güncel geçmişle initialize edilsin.
+        _financeRefreshToken++;
+      });
+      debugPrint(
+        '[DashboardClosedHistory][applied] source=$source '
+        'count=${mergedRows.length} financeToken=$_financeRefreshToken',
+      );
+      unawaited(
+        _persistDashboardFinanceCache(
+          sellerId: sellerId,
+          closedHistoryRows: mergedRows,
+        ),
+      );
+      return true;
+    } catch (e) {
+      debugPrint('[DashboardClosedHistory][error] graceful fail: $e');
+      return false;
+    } finally {
+      _isDashboardClosedHistoryLoading = false;
+    }
+  }
+
+  List<Map<String, dynamic>> _mergeDashboardClosedHistoryWithOptimistic(
+    List<Map<String, dynamic>> fetchedRows,
+  ) {
+    final merged = fetchedRows
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: true);
+    final recentOptimisticRows = _dashboardClosedHistory.where((row) {
+      final id = row['id']?.toString() ?? '';
+      if (!id.startsWith('optimistic-')) return false;
+      final closedAt = TableOrderHistoryUtils.closedAt(
+        Map<dynamic, dynamic>.from(row),
+      );
+      if (closedAt == null) return false;
+      return DateTime.now().difference(closedAt) <= const Duration(minutes: 30);
+    });
+
+    for (final optimisticRow in recentOptimisticRows) {
+      final optimisticMap = Map<dynamic, dynamic>.from(optimisticRow);
+      final optimisticClosedAt = TableOrderHistoryUtils.closedAt(optimisticMap);
+      final optimisticRevenue = TableOrderHistoryUtils.revenue(optimisticMap);
+      final optimisticTable =
+          int.tryParse(optimisticMap['table_number']?.toString() ?? '') ?? 0;
+      final alreadyResolved = merged.any((row) {
+        final rowMap = Map<dynamic, dynamic>.from(row);
+        final rowClosedAt = TableOrderHistoryUtils.closedAt(rowMap);
+        final rowRevenue = TableOrderHistoryUtils.revenue(rowMap);
+        final rowTable =
+            int.tryParse(rowMap['table_number']?.toString() ?? '') ?? 0;
+        final sameTable = optimisticTable > 0 && rowTable == optimisticTable;
+        final sameRevenue = (rowRevenue - optimisticRevenue).abs() <= 0.01;
+        final nearCloseTime =
+            optimisticClosedAt != null &&
+            rowClosedAt != null &&
+            optimisticClosedAt.difference(rowClosedAt).inMinutes.abs() <= 10;
+        return sameTable && sameRevenue && nearCloseTime;
+      });
+      if (!alreadyResolved) {
+        merged.insert(0, Map<String, dynamic>.from(optimisticRow));
+      }
+    }
+
+    return merged;
+  }
+
   /// Combined orders list for dashboard calculations.
-  /// For food businesses: online orders + normalised table orders.
+  /// For food businesses: online orders + CLOSED table sessions (revenue rises
+  /// only when a table is closed, dated by `closed_at`).
   /// For others: online orders only (unchanged behaviour).
   List<Map<String, dynamic>> get _combinedDashboardOrders {
-    if (!_isFoodStoreCategory(_storeCategory) ||
-        _dashboardTableOrders.isEmpty) {
+    final shouldIncludeClosedHistory =
+        _isFoodStoreCategory(_storeCategory) || _dashboardClosedHistory.isNotEmpty;
+    if (!shouldIncludeClosedHistory) {
       return _sellerOrders;
     }
-    final normalized = _dashboardTableOrders
-        .map(_normalizeTableOrderForDashboard)
+    // Restoran cirosu yalnızca KAPATILMIŞ masalardan gelir. Açık masalar
+    // (`_dashboardTableOrders`) sadece operasyonel sayımlar için kullanılır,
+    // ciroya YANSIMAZ.
+    if (_dashboardClosedHistory.isEmpty) {
+      return _sellerOrders;
+    }
+    final normalized = _dashboardClosedHistory
+        .map(_normalizeClosedHistoryForDashboard)
         .toList(growable: false);
     return [..._sellerOrders, ...normalized];
   }
 
-  /// Maps a raw table_orders status string to the dashboard-normalised status.
-  /// Handles all known garson status variants including legacy ones.
-  static String _mapTableOrderStatus(String rawStatus) {
-    switch (rawStatus) {
-      case 'cancelled':
-      case 'canceled':
-      case 'void':
-      case 'refunded':
-      case 'deleted':
-        return 'cancelled';
-      case 'closed':
-      case 'paid':
-      case 'completed':
-        return 'delivered';
-      case 'done':
-      case 'sent':
-      case 'kitchen_sent':
-      case 'preparing':
-      case 'ready':
-        return 'preparing';
-      case 'new':
-      case 'open':
-      case 'active':
-      case 'pending':
-      default:
-        return 'new';
-    }
-  }
-
-  /// Converts a raw table_orders row to a shape compatible with dashboard
-  /// helpers (same field names as online orders).
-  Map<String, dynamic> _normalizeTableOrderForDashboard(
-    Map<String, dynamic> order,
+  /// Maps a `table_order_history` row to the dashboard order shape, dating the
+  /// revenue by `closed_at` so it lands on the day the table was closed.
+  Map<String, dynamic> _normalizeClosedHistoryForDashboard(
+    Map<String, dynamic> row,
   ) {
-    final rawStatus = (order['status'] ?? 'new')
-        .toString()
-        .toLowerCase()
-        .trim();
-    final mappedStatus = _mapTableOrderStatus(rawStatus);
-    final total = _garsonOrderTotal(order);
+    final map = Map<dynamic, dynamic>.from(row);
+    final closedAt = map['closed_at'] ?? map['archived_at'];
+    final total = TableOrderHistoryUtils.revenue(map);
     return <String, dynamic>{
-      'id': order['id'],
-      'created_at': order['created_at'],
-      'status': mappedStatus,
+      'id': row['id'],
+      'created_at': closedAt,
+      'status': 'delivered',
       'total_price': total,
       'source': 'table',
-      'table_number': order['table_number'],
-      'table_name': 'Masa ${order['table_number'] ?? '-'}',
+      'table_number': row['table_number'],
+      'table_name': 'Masa ${row['table_number'] ?? '-'}',
     };
   }
 
-  /// Restaurant-specific status counts derived from the raw table_orders list.
-  /// These are merged into the main statusCounts map for food businesses.
+  /// Masa kapatıldıktan hemen sonra Genel Bakış / Finans cirosunu günceller.
+  /// DB geçmişi gecikse bile kullanıcı ₺0 görmez.
+  void _applyOptimisticClosedTableSession({
+    required int tableNumber,
+    required String tableLabel,
+    required List<Map<String, dynamic>> closedOrders,
+  }) {
+    if (!_isFoodStoreCategory(_storeCategory)) return;
+    final grandTotal = closedOrders.fold<double>(
+      0,
+      (sum, order) => sum + _garsonOrderTotal(order),
+    );
+    if (grandTotal <= 0) return;
+
+    final closedAt = DateTime.now().toUtc().toIso8601String();
+    setState(() {
+      _dashboardTableOrders = _dashboardTableOrders
+          .where(
+            (order) =>
+                (int.tryParse(order['table_number']?.toString() ?? '') ?? 0) !=
+                tableNumber,
+          )
+          .toList(growable: false);
+      _dashboardTableOrdersSignature = tableOrdersDashboardSignature(
+        _dashboardTableOrders,
+      );
+
+      final optimisticRow = <String, dynamic>{
+        'id':
+            'optimistic-$tableNumber-${DateTime.now().millisecondsSinceEpoch}',
+        'seller_id': _authService.currentUser?.id,
+        'table_number': tableNumber,
+        'table_name': tableLabel,
+        'display_table_label': tableLabel,
+        'grand_total': grandTotal,
+        'archived_at': closedAt,
+        'closed_at': closedAt,
+        'archived_orders': closedOrders,
+        'status': 'closed',
+      };
+      _dashboardClosedHistory = [optimisticRow, ..._dashboardClosedHistory];
+      _dashboardClosedHistorySignature = null;
+      _dashboardTableOrdersVersion++;
+      _invalidateDashboardSnapshot();
+    });
+    _financeRefreshToken++;
+    unawaited(_persistDashboardFinanceCache(closedHistoryRows: _dashboardClosedHistory));
+  }
+
+  /// Restaurant-specific status counts derived from active table_orders plus
+  /// closed sessions in `table_order_history`.
   Map<String, int> _dashboardRestaurantStatusCounts() {
     final today = DateTime.now();
     final todayStart = DateTime(today.year, today.month, today.day);
     final todayEnd = DateTime(today.year, today.month, today.day, 23, 59, 59);
-    var openTables = 0;
-    var sentToKitchen = 0;
+    final activeMetrics = computeGarsonActiveTableMetrics(
+      orders: _dashboardTableOrders,
+      now: today,
+    );
+
     var closedToday = 0;
-    var restaurantCancelled = 0;
-    var todayTableOrders = 0;
-    for (final order in _dashboardTableOrders) {
-      final rawStatus = (order['status'] ?? '').toString().toLowerCase().trim();
-      final mappedStatus = _mapTableOrderStatus(rawStatus);
-      if (mappedStatus == 'cancelled') {
-        restaurantCancelled++;
+    for (final row in _dashboardClosedHistory) {
+      final map = Map<dynamic, dynamic>.from(row);
+      if (!TableOrderHistoryUtils.isWithinRange(map, todayStart, todayEnd)) {
         continue;
       }
-      if (mappedStatus != 'delivered') {
-        openTables++;
-      }
-      if (mappedStatus == 'preparing') {
-        sentToKitchen++;
-      }
-      final createdAt = DateTime.tryParse(
-        order['created_at']?.toString() ?? '',
-      )?.toLocal();
-      if (createdAt != null &&
-          !createdAt.isBefore(todayStart) &&
-          !createdAt.isAfter(todayEnd)) {
-        todayTableOrders++;
-        if (mappedStatus == 'delivered') {
-          closedToday++;
-        }
-      }
+      final status = (map['status']?.toString() ?? '').toLowerCase();
+      if (status == 'cancelled' || status == 'canceled') continue;
+      closedToday++;
     }
+
     return <String, int>{
-      'open_tables': openTables,
-      'sent_to_kitchen': sentToKitchen,
+      'open_tables': activeMetrics.openTableCount,
+      'sent_to_kitchen': activeMetrics.sentToKitchenCount,
       'closed_today': closedToday,
-      'restaurant_cancelled': restaurantCancelled,
-      'today_table_orders': todayTableOrders,
+      'restaurant_cancelled': activeMetrics.cancelledCount,
+      'today_table_orders': activeMetrics.todayActiveOrderCount + closedToday,
     };
   }
 
@@ -4377,12 +4903,54 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.resumed &&
-        _shouldMonitorLocalPrintForModule(_selectedModule)) {
+    if (state == AppLifecycleState.resumed) {
+      // ─── Yazıcı durumu yenile ───
+      if (_shouldMonitorLocalPrintForModule(_selectedModule)) {
+        debugPrint(
+          '[LocalPrint][Lifecycle] appResumed — re-checking print service status',
+        );
+        unawaited(_refreshLocalPrintStatus(reason: 'app_lifecycle_resumed'));
+      }
+
+      // ─── Dashboard / Finans verilerini yenile ───
+      // Uygulama arka plana gidip geri geldiğinde (aç/kapa), bellekteki
+      // sipariş listesi ve kapatılan masa geçmişi güncel olmayabilir.
+      // Dashboard görünümdeyse tam refresh, finans görünümdeyse sadece
+      // siparişleri ve masa geçmişini yenile ki sayılar sıfırlanmasın.
       debugPrint(
-        '[LocalPrint][Lifecycle] appResumed — re-checking print service status',
+        '[Lifecycle][appResumed] module=${_selectedModule.name} — '
+        'triggering data refresh to prevent stale-zero display',
       );
-      unawaited(_refreshLocalPrintStatus(reason: 'app_lifecycle_resumed'));
+      if (_selectedModule == SellerModule.dashboard) {
+        unawaited(
+          _refreshDashboardData(
+            source: 'app_lifecycle_resumed',
+            userInitiated: false,
+          ),
+        );
+      } else if (_selectedModule == SellerModule.finance) {
+        // Finans sayfasında _refreshDashboardData dashboard görünümde olmadığı
+        // için çalışmaz (guard var). Bunun yerine bağımlı verileri doğrudan
+        // yeniliyoruz; FinanceProvider kendi _refreshAll metodunu bir sonraki
+        // build'de zaten çalıştıracak değil, bu yüzden kaynak verileri
+        // güncelliyoruz ki _financeRefreshToken ile yeniden oluşan FinanceShell
+        // güncel optimisticClosedHistory ile başlasın.
+        _hasLoadedSellerOrdersData = false;
+        unawaited(_loadSellerOrders());
+        _dashboardClosedHistorySignature = null;
+        unawaited(
+          _loadDashboardClosedHistory(source: 'app_lifecycle_resumed_finance'),
+        );
+      } else {
+        // Diğer modüllerde de siparişler stale olabilir; sadece
+        // _sellerOrders ve kapalı geçmişi güncelle — dashboard'u tetiklemeden.
+        _hasLoadedSellerOrdersData = false;
+        unawaited(_loadSellerOrders());
+        _dashboardClosedHistorySignature = null;
+        unawaited(
+          _loadDashboardClosedHistory(source: 'app_lifecycle_resumed_bg'),
+        );
+      }
     }
   }
 
@@ -4495,13 +5063,21 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   }
 
   Future<void> _loadStoreProfile() async {
+    final profileSellerId = await _ensureSellerDataOwnerIdResolved(
+      source: '_loadStoreProfile',
+    );
+    if (profileSellerId.isEmpty) return;
+    _rememberSellerDataOwnerId(
+      profileSellerId,
+      source: '_loadStoreProfile_lookup',
+    );
     final requestId = ++_storeProfileLoadRequestId;
-    final sellerId = _authService.currentUser?.id.trim() ?? '';
     final requestUrl = _sellerPanelRestRequestUrl(
       'stores',
       query: <String, String>{
         'select': '*',
-        'seller_id': 'eq.${sellerId.isEmpty ? '<missing>' : sellerId}',
+        'seller_id':
+            'eq.${profileSellerId.isEmpty ? '<missing>' : profileSellerId}',
       },
     );
     final watch = Stopwatch()..start();
@@ -4519,7 +5095,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         branch: 'store_profile:start',
         requestUrl: requestUrl,
       );
-      final data = await _storeService.getStoreProfile();
+      final data = await _storeService.getStoreProfileForSellerId(
+        profileSellerId,
+      );
       if (!_canApplyStoreProfileRequest(requestId)) return;
       if (data != null) {
         if (data['isDeleted'] == true) {
@@ -4572,6 +5150,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         if (isFoodStore && _selectedModule == SellerModule.dashboard) {
           unawaited(
             _loadDashboardTableOrdersGuarded(source: '_loadStoreProfile'),
+          );
+        } else if (isFoodStore) {
+          // Uygulama yeniden başladığında _storeCategory, _loadDashboardClosedHistory
+          // çağrısından ÖNCE boş olabilir (race condition). Profil yüklendikten
+          // sonra kategorinin bilindiği garantilendiğinden, modülden bağımsız olarak
+          // kapatılmış masa geçmişini yükle. Bu veri hem Genel Bakış hem de Finans
+          // için "optimisticClosedHistory" kaynağıdır; yüklenmezse her iki sayfada
+          // da gelir verileri sıfır görünür.
+          _dashboardClosedHistorySignature = null;
+          unawaited(
+            _loadDashboardClosedHistory(source: '_loadStoreProfile_bg'),
           );
         }
         // Note: the previous `unawaited(_persistSelectedModule(dashboard))`
@@ -4755,7 +5344,9 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     String source = 'store_tables_load',
     bool forceApply = false,
   }) async {
-    final sellerId = _authService.currentUser?.id.trim() ?? '';
+    final sellerId = await _ensureSellerDataOwnerIdResolved(
+      source: '_loadStoreTables',
+    );
     if (sellerId.isNotEmpty &&
         _storeTablesLoadedForSellerId != null &&
         _storeTablesLoadedForSellerId != sellerId) {
@@ -4846,6 +5437,13 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           source: source,
         );
         final tables = await _storeService.getStoreTables(sellerId: sellerId);
+        _rememberSellerDataOwnerId(
+          _firstNonEmptySellerIdentity(
+            tables,
+            keys: const <String>['seller_id'],
+          ),
+          source: '_loadStoreTables_rows',
+        );
         // Best-effort preload of dining areas (Salon/Bahçe/Teras...). This must
         // not break older deployments where the areas table doesn't exist.
         List<Map<String, dynamic>> areas = const <Map<String, dynamic>>[];
@@ -5114,6 +5712,35 @@ class _SellerPanelPageState extends State<SellerPanelPage>
             .toList(growable: false)
           ..sort();
     return numbers;
+  }
+
+  /// Snapshot of table numbers that currently have an active (non-closed)
+  /// order, derived from the SAME source the garson board uses to decide
+  /// "Dolu Masa". Passed to the transfer modal so occupied tables show red and
+  /// match exactly what the board displays.
+  Set<int> _garsonOccupiedTableNumbersSnapshot() {
+    final occupied = <int>{};
+    final orders = _resolveGarsonTableOrdersForUi(null);
+    for (final order in orders) {
+      if (_isGarsonCompletedStatus(order['status']?.toString())) continue;
+      final tableNo = _garsonTableNumberFromOrder(order);
+      if (tableNo > 0) occupied.add(tableNo);
+    }
+    occupied.addAll(
+      _mobileGarsonDraftItemsByTable.entries
+          .where((entry) => entry.value.isNotEmpty)
+          .map((entry) => entry.key),
+    );
+    final now = DateTime.now();
+    occupied.addAll(
+      _mobileGarsonOptimisticSentAtByTable.entries
+          .where(
+            (entry) =>
+                now.difference(entry.value) <= const Duration(seconds: 45),
+          )
+          .map((entry) => entry.key),
+    );
+    return occupied;
   }
 
   /// Returns visible tables for rendering, falling back to the raw `_storeTables`
@@ -10960,6 +11587,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               0,
                             ),
                             cardBuilder: (tableNumber) {
+                              final draftOrder =
+                                  _garsonDraftDisplayOrderForTable(tableNumber);
+                              if (draftOrder != null) {
+                                return _buildMobileGarsonTableCard(
+                                  tableNumber: tableNumber,
+                                  order: draftOrder,
+                                  orderCount: 1,
+                                  foundIn: 'manual',
+                                );
+                              }
                               final tableOrders =
                                   ordersByTable[tableNumber] ??
                                   const <Map<String, dynamic>>[];
@@ -11284,12 +11921,23 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   /// subscriptions, order fetches, and adisyon prints all use the same
   /// ID as the one used when submitting orders.
   String _resolveGarsonSellerId() {
-    final fromTables = _garsonVisibleTablesForUi()
-        .map((row) => row['seller_id']?.toString().trim() ?? '')
-        .firstWhere((id) => id.isNotEmpty, orElse: () => '');
-    return fromTables.isNotEmpty
-        ? fromTables
-        : (_authService.currentUser?.id ?? '');
+    return _bestSellerDataOwnerIdCandidate(includeAuthFallback: true);
+  }
+
+  /// Canonical seller/store owner id for restaurant analytics and finance.
+  ///
+  /// Garson/sub-admin sessions authenticate with their own user id, but all
+  /// restaurant table/history data is stored under the parent store owner id.
+  /// Using the wrong id here makes "Bugünkü Ciro" and Finance appear as `₺0`
+  /// even when table closes are archived correctly.
+  String _resolveSellerDataOwnerId() {
+    if (_isFoodStoreCategory(_storeCategory) || _isWaiterEntry) {
+      final restaurantOwnerId = _bestSellerDataOwnerIdCandidate(
+        includeAuthFallback: true,
+      ).trim();
+      if (restaurantOwnerId.isNotEmpty) return restaurantOwnerId;
+    }
+    return _normalizeSellerIdentity(_authService.currentUser?.id);
   }
 
   ({Map<String, dynamic>? table, String matchedBy})
@@ -13636,7 +14284,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required String tableLabel,
     List<Map<String, dynamic>>? existingOrders,
   }) async {
-    final sellerId = _resolveGarsonSellerId();
+    final sellerId = await _resolveCanonicalGarsonSellerId(
+      source: '_closeGarsonTable',
+    );
     if (sellerId.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -13652,14 +14302,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     try {
       // ── 1. Fetch live orders from DB (prefer passed list to avoid a
       //       redundant round-trip, but always verify via DB IDs later).
-      var tableOrders = existingOrders?.isNotEmpty == true
-          ? List<Map<String, dynamic>>.from(existingOrders!)
-          : await _storeService.getTableOrdersByTable(
-              sellerId: sellerId,
-              tableNumber: tableNumber,
-            );
+      final tableOrders = await _storeService.getTableOrdersByTable(
+        sellerId: sellerId,
+        tableNumber: tableNumber,
+      );
+      final preCloseSnapshotOrders = await _storeService.getTableOrdersSnapshot(
+        sellerId,
+        tableNumber: tableNumber,
+      );
+      final sessionOrders = preCloseSnapshotOrders.isNotEmpty
+          ? preCloseSnapshotOrders
+          : tableOrders;
 
-      if (tableOrders.isEmpty) {
+      if (sessionOrders.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -13694,28 +14349,33 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // bug — surface it to the user.
       var ordersClosedTotal = 0;
 
-      // ── 4. Attempt bulk delete — log any error but allow per-order fallback.
+      // ── 4. Archive to table_order_history then remove active orders.
+      // Revenue (Genel Bakış / Finans) reads ONLY from table_order_history
+      // with closed_at — closeTableOrders() skips the archive and leaves
+      // ciro stuck at 0 until this path runs.
       try {
-        await _storeService.closeTableOrders(
+        final currentUser = _authService.currentUser;
+        await _storeService.closeTableWithHistory(
           sellerId: sellerId,
           tableNumber: tableNumber,
+          paymentMethod: 'cash',
+          waiterId: currentUser?.id,
+          waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
         );
-        // BUG-FIX (Reopen Bug): `closeTableOrders` already mirrors the close
-        // into the `orders` table internally, but if a future caller skips
-        // the bulk path we still want explicit insurance.  Calling it twice
-        // is safe (the filter excludes already-terminal rows).
+        // closeTableWithHistory mirrors `orders`; keep explicit count for
+        // diagnostics on the reopen-bug path.
         ordersClosedTotal += await _storeService.closeRestaurantOrdersForTable(
           sellerId: sellerId,
           tableNumber: tableNumber,
         );
         debugPrint(
-          '[GARSON_CLOSE] bulk_delete=ok '
+          '[GARSON_CLOSE] archive_with_history=ok '
           'table=$tableNumber '
           'target_ids=${targetOrderIds.length} '
           'orders_closed_so_far=$ordersClosedTotal',
         );
       } catch (bulkErr) {
-        // Bulk delete failed (e.g. RLS blocks DELETE on table_orders).
+        // Archive/delete failed (e.g. RLS blocks DELETE on table_orders).
         // Log the error and fall through to the per-order fallback below.
         debugPrint(
           '[GARSON_CLOSE_BULK_ERROR] '
@@ -13825,6 +14485,79 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         }
       }
 
+      final currentUser = _authService.currentUser;
+      final closeCompletedAt = DateTime.now();
+      try {
+        final insertedFallbackHistory = await _storeService
+            .ensureTableHistoryRecorded(
+              sellerId: sellerId,
+              tableNumber: tableNumber,
+              closedOrders: sessionOrders,
+              paymentMethod: 'cash',
+              waiterId: currentUser?.id,
+              waiterName: _sellerPrintJobService.safeUserDisplayName(
+                currentUser,
+              ),
+              tableLabel: tableLabel,
+              closedAt: closeCompletedAt,
+            );
+        debugPrint(
+          '[GARSON_CLOSE_HISTORY_ENSURE] '
+          'table=$tableNumber '
+          'inserted_fallback=$insertedFallbackHistory '
+          'orders=${tableOrders.length}',
+        );
+      } catch (historyError) {
+        debugPrint(
+          '[GARSON_CLOSE_HISTORY_ENSURE_FAILED] '
+          'table=$tableNumber '
+          'error=$historyError',
+        );
+        rethrow;
+      }
+
+      // Final merged-source verification: `table_orders` may be closed while
+      // customer-side `orders` still remain active (notably when the waiter/
+      // sub-admin DB migration is missing and the fallback direct UPDATE hits
+      // RLS). Re-query the same merged snapshot used by the garson board and
+      // fail the close if anything still looks active.
+      final remainingActiveOrders = await _storeService.getTableOrdersSnapshot(
+        sellerId,
+        tableNumber: tableNumber,
+      );
+      if (remainingActiveOrders.isNotEmpty) {
+        final allFromOrders = remainingActiveOrders.every(
+          (o) => o['_garson_source_table'] == 'orders',
+        );
+        debugPrint(
+          '[GARSON_CLOSE_VERIFY_MERGED_FAIL] '
+          'table=$tableNumber '
+          'remaining_active=${remainingActiveOrders.length} '
+          'all_from_orders=$allFromOrders '
+          'ids=${remainingActiveOrders.map((o) => o['id']).toList()}',
+        );
+
+        if (allFromOrders) {
+          debugPrint(
+            'Masa siparişi kapandı ama müşteri siparişi hala açık. '
+            'Supabase migration uygulanmalı.',
+          );
+        } else {
+          debugPrint(
+            'Masa kapanisi tamamlanmadi. '
+            '${remainingActiveOrders.length} aktif kayit hala acik gorunuyor.',
+          );
+        }
+        throw Exception(
+          allFromOrders
+              ? 'Masa kapatma tamamlanamadı. Müşteri siparişleri hâlâ açık görünüyor. '
+                    'Supabase migration dosyası eksik olabilir: '
+                    'ibul_app/supabase/migrations/20260609_close_table_waiter_access.sql'
+              : 'Masa kapatma tamamlanamadı. '
+                    '${remainingActiveOrders.length} aktif kayıt hâlâ açık görünüyor.',
+        );
+      }
+
       // ── 7. All DB operations confirmed — now mutate local state.
       if (!mounted) return;
       setState(() {
@@ -13838,10 +14571,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         _mobileGarsonOptimisticSentAtByTable.remove(tableNumber);
         _mobileGarsonOptimisticItemsByTable.remove(tableNumber);
       });
+      _applyOptimisticClosedTableSession(
+        tableNumber: tableNumber,
+        tableLabel: tableLabel,
+        closedOrders: sessionOrders,
+      );
+      _dashboardClosedHistorySignature = null;
+      unawaited(
+        _reloadRestaurantDashboardMetrics(source: 'garson_close_table_final'),
+      );
+      _financeRefreshToken++;
 
       final snackbarText = garsonCloseTableSnackbarText(tableLabel);
-      final firstOrderId = tableOrders.isNotEmpty
-          ? tableOrders.first['id']?.toString() ?? '-'
+      final firstOrderId = sessionOrders.isNotEmpty
+          ? sessionOrders.first['id']?.toString() ?? '-'
           : '-';
       final tableRow = _storeTableRowByNumber(tableNumber);
       logGarsonCloseTableSuccess(
@@ -13962,15 +14705,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // targets).  Identity-matched owners closing a garson table see a clean
       // success message.  The diagnostic debug log still fires regardless.
       final authUid = _authService.currentUser?.id.trim() ?? '';
-      final identityMatches =
-          authUid.isNotEmpty && authUid == sellerId.trim();
-      final ordersUntouched =
-          ordersClosedTotal == 0 && tableOrders.isNotEmpty;
-      final shouldWarnOrdersUntouched = shouldWarnGarsonOrdersUntouched(
-        ordersClosed: ordersClosedTotal,
-        hadTableOrders: tableOrders.isNotEmpty,
-        identityMatches: identityMatches,
+      final identityMatches = authUid.isNotEmpty && authUid == sellerId.trim();
+      final hadCustomerOrders = sessionOrders.any(
+        (order) =>
+            (order['_garson_source_table']?.toString().trim().toLowerCase() ??
+                '') ==
+            'orders',
       );
+      final ordersUntouched = ordersClosedTotal == 0 && hadCustomerOrders;
+      final shouldWarnOrdersUntouched = ordersUntouched && !identityMatches;
       if (ordersUntouched) {
         debugPrint(
           '[GARSON_CLOSE_PARTIAL_SUCCESS] '
@@ -13979,9 +14722,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           'orders_closed=0 '
           'identity_matches=$identityMatches '
           'user_warning_shown=$shouldWarnOrdersUntouched '
-          'warning=${identityMatches
-              ? 'no_customer_orders_for_table_normal_garson_close'
-              : 'customer_orders_may_resurface_after_refresh'} '
+          'warning=${identityMatches ? 'no_customer_orders_for_table_normal_garson_close' : 'customer_orders_may_resurface_after_refresh'} '
           'next_step=inspect_GARSON_ORDERS_CLOSE_ZERO_log_above',
         );
       }
@@ -14407,19 +15148,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     required int tableNumber,
     Map<String, dynamic>? initialOrder,
   }) async {
-    final sellerId =
-        initialOrder?['seller_id']?.toString().trim().isNotEmpty == true
-        ? initialOrder!['seller_id'].toString().trim()
-        : (_storeTables
-                  .firstWhere(
-                    (row) =>
-                        (row['seller_id']?.toString().trim() ?? '').isNotEmpty,
-                    orElse: () => const <String, dynamic>{},
-                  )['seller_id']
-                  ?.toString()
-                  .trim() ??
-              _authService.currentUser?.id ??
-              '');
+    final sellerId = await _resolveCanonicalGarsonSellerId(
+      source: '_pushGarsonTableFlowPage',
+    );
     if (sellerId.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -14459,6 +15190,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       // Pass the already-loaded store table numbers so the transfer modal
       // does not need a separate API call (which can fail with RLS errors).
       storeTableNumbers: _sortedStoreTableNumbers(),
+      // Full rows so the transfer modal can show area-grouped labels
+      // (Salon / Bahçe / Teras …) instead of legacy "Masa N" placeholders.
+      storeTables: List<Map<String, dynamic>>.from(
+        _garsonVisibleTablesForRender(),
+      ),
+      // Lazily resolve occupancy from the board's own source of truth so the
+      // picker's red "Dolu" markers match the board exactly.
+      occupiedTablesResolver: _garsonOccupiedTableNumbersSnapshot,
       configureProductItem: _configureGarsonProductItem,
       editItemSettings: _editGarsonItemSettings,
       onDraftChanged: _onMobileGarsonDraftChanged,
@@ -14520,6 +15259,20 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             );
           }
         });
+        _dashboardClosedHistorySignature = null;
+        unawaited(
+          _reloadRestaurantDashboardMetrics(
+            source: 'garson_mobile_close_success',
+          ),
+        );
+        _financeRefreshToken++;
+      },
+      onTableClosedSessionArchived: (closedTableNumber, closedOrders, label) {
+        _applyOptimisticClosedTableSession(
+          tableNumber: closedTableNumber,
+          tableLabel: label,
+          closedOrders: closedOrders,
+        );
       },
       onConfirmCustomerKitchenPrint:
           ({
@@ -15635,6 +16388,35 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return SellerDashboardRevenueCard(data: data);
   }
 
+  Widget _buildEarningsCard() {
+    final daily = _earningsForDay(_earningsDay);
+    final monthly = _earningsForMonth(_earningsMonth);
+    final monthOptions = _dashboardEarningsMonthOptions;
+
+    return EarningsSummaryCard(
+      dailyValue: _formatDashboardCurrency(daily),
+      monthlyValue: _formatDashboardCurrency(monthly),
+      dayLabel: _formatEarningsDayLabel(_earningsDay),
+      monthLabel: _formatEarningsMonthOption(_earningsMonth),
+      monthOptions: monthOptions,
+      selectedMonth: _earningsMonth,
+      formatMonthOption: _formatEarningsMonthOption,
+      onPickDay: () async {
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: _earningsDay,
+          firstDate: DateTime(2020),
+          lastDate: DateTime.now(),
+        );
+        if (picked == null || !mounted) return;
+        setState(() {
+          _earningsDay = DateTime(picked.year, picked.month, picked.day);
+        });
+      },
+      onMonthChanged: (value) => setState(() => _earningsMonth = value),
+    );
+  }
+
   Widget _buildDashboardRangeChip({
     required String label,
     required bool selected,
@@ -16129,6 +16911,50 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           0;
       return sum + (amount as num).toDouble();
     });
+  }
+
+  double _earningsForDay(DateTime day) {
+    final start = DateTime(day.year, day.month, day.day);
+    final end = DateTime(day.year, day.month, day.day, 23, 59, 59);
+    return _dashboardSumRevenue(_dashboardOrdersBetween(start, end));
+  }
+
+  double _earningsForMonth(DateTime month) {
+    final start = DateTime(month.year, month.month, 1);
+    final end = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+    return _dashboardSumRevenue(_dashboardOrdersBetween(start, end));
+  }
+
+  static const _earningsMonthLabels = [
+    'Ocak',
+    'Şubat',
+    'Mart',
+    'Nisan',
+    'Mayıs',
+    'Haziran',
+    'Temmuz',
+    'Ağustos',
+    'Eylül',
+    'Ekim',
+    'Kasım',
+    'Aralık',
+  ];
+
+  List<DateTime> get _dashboardEarningsMonthOptions {
+    final now = DateTime.now();
+    return List.generate(
+      12,
+      (i) => DateTime(now.year, now.month - i, 1),
+      growable: false,
+    );
+  }
+
+  String _formatEarningsMonthOption(DateTime month) {
+    return '${_earningsMonthLabels[month.month - 1]} ${month.year}';
+  }
+
+  String _formatEarningsDayLabel(DateTime day) {
+    return '${day.day.toString().padLeft(2, '0')}.${day.month.toString().padLeft(2, '0')}.${day.year}';
   }
 
   String _normalizeDashboardOrderStatus(dynamic status) {
@@ -24711,6 +25537,21 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               aspectRatioResolver: _webGarsonGridAspectRatio,
                               sectionPadding: EdgeInsets.zero,
                               cardBuilder: (tableNumber) {
+                                final draftOrder =
+                                    _garsonDraftDisplayOrderForTable(
+                                      tableNumber,
+                                    );
+                                if (draftOrder != null) {
+                                  return _buildWebGarsonTableCard(
+                                    tableNumber: tableNumber,
+                                    order: draftOrder,
+                                    orderCount: 1,
+                                    foundIn: 'manual',
+                                    tableOrders: <Map<String, dynamic>>[
+                                      draftOrder,
+                                    ],
+                                  );
+                                }
                                 var tableOrders =
                                     ordersByTable[tableNumber] ??
                                     const <Map<String, dynamic>>[];
@@ -25102,6 +25943,22 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                             _webGarsonGridAspectRatio,
                                         sectionPadding: EdgeInsets.zero,
                                         cardBuilder: (tableNumber) {
+                                          final draftOrder =
+                                              _garsonDraftDisplayOrderForTable(
+                                                tableNumber,
+                                              );
+                                          if (draftOrder != null) {
+                                            return _buildWebGarsonTableCard(
+                                              tableNumber: tableNumber,
+                                              order: draftOrder,
+                                              orderCount: 1,
+                                              foundIn: 'manual',
+                                              tableOrders:
+                                                  <Map<String, dynamic>>[
+                                                    draftOrder,
+                                                  ],
+                                            );
+                                          }
                                           var tableOrders =
                                               ordersByTable[tableNumber] ??
                                               const <Map<String, dynamic>>[];
@@ -25392,6 +26249,24 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ),
       ),
     );
+  }
+
+  /// Henüz "Siparişi Gönder" yapılmamış taslak ürünleri olan masalar için
+  /// taslak (sarı) durumu gösteren sahte sipariş kaydı döndürür; taslak yoksa
+  /// null döner. Masaya ürün eklenince masa sarı taslak olur, sipariş
+  /// gönderilince (taslak temizlenip gerçek sipariş gelince) yeşile döner.
+  Map<String, dynamic>? _garsonDraftDisplayOrderForTable(int tableNumber) {
+    final draftItems =
+        _mobileGarsonDraftItemsByTable[tableNumber] ??
+        const <Map<String, dynamic>>[];
+    if (draftItems.isEmpty) return null;
+    final draftUpdatedAt = _mobileGarsonDraftUpdatedAtByTable[tableNumber];
+    return <String, dynamic>{
+      'status': 'draft',
+      'table_number': tableNumber,
+      'created_at': (draftUpdatedAt ?? DateTime.now()).toIso8601String(),
+      'items': draftItems,
+    };
   }
 
   Widget _buildWebGarsonTableCard({
@@ -32894,9 +33769,12 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     this.tableOrdersStream,
     this.initialDraftItems = const <Map<String, dynamic>>[],
     this.storeTableNumbers = const <int>[],
+    this.storeTables = const <Map<String, dynamic>>[],
+    this.occupiedTablesResolver,
     this.onDraftChanged,
     this.onOrderSubmitted,
     this.onTableClosed,
+    this.onTableClosedSessionArchived,
     this.onTableCloseOptimistic,
     this.onTableCloseFailed,
     this.onPrintAdisyon,
@@ -32933,11 +33811,27 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   /// All configured store table numbers for this seller, pre-loaded by the
   /// parent so that the transfer modal does not need a separate API call.
   final List<int> storeTableNumbers;
+
+  /// Full store table rows (with area_name / display_label / table_number) so
+  /// the transfer modal can render real, area-grouped labels instead of the
+  /// legacy "Masa N" placeholders.
+  final List<Map<String, dynamic>> storeTables;
+
+  /// Returns the set of currently-occupied table numbers, evaluated lazily at
+  /// transfer time so the picker highlights the same "Dolu" tables the board
+  /// shows. When null, the flow page falls back to a server probe.
+  final Set<int> Function()? occupiedTablesResolver;
   final _GarsonConfigureProductItem configureProductItem;
   final _GarsonEditItemSettings editItemSettings;
   final _MobileGarsonDraftChanged? onDraftChanged;
   final _MobileGarsonOrderSubmitted? onOrderSubmitted;
   final void Function(int tableNumber)? onTableClosed;
+  final void Function(
+    int tableNumber,
+    List<Map<String, dynamic>> closedOrders,
+    String tableLabel,
+  )?
+  onTableClosedSessionArchived;
 
   /// Called before [closeTableWithHistory] so the parent grid can hide the
   /// table immediately while the RPC finishes.
@@ -33051,6 +33945,98 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
 
   String? _currentWaiterId() {
     return _currentSupabaseUser()?.id;
+  }
+
+  int _transferTableNumberFromMap(Map<String, dynamic> source) {
+    final raw = source['table_number'];
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw?.toString() ?? '') ?? 0;
+  }
+
+  Map<String, dynamic>? _firstStoreTableRowForNumber(
+    List<Map<String, dynamic>> rows,
+    int tableNumber,
+  ) {
+    for (final row in rows) {
+      if (_transferTableNumberFromMap(row) == tableNumber) return row;
+    }
+    return null;
+  }
+
+  /// Returns the set of table numbers that currently have an active order, used
+  /// to highlight occupied tables in the transfer picker.  Combines a fresh
+  /// server probe with locally-known (hydrated + optimistic) orders so a table
+  /// that was just opened still shows as occupied.
+  Future<Set<int>> _resolveOccupiedTableNumbers() async {
+    final occupied = <int>{};
+    // Primary source: the parent board's own occupancy snapshot, so the
+    // picker's red markers match exactly what the board shows.
+    final resolver = widget.occupiedTablesResolver;
+    if (resolver != null) {
+      occupied.addAll(resolver());
+    }
+    for (final order in <Map<String, dynamic>>[
+      ..._hydratedTableOrders,
+      ..._optimisticTableOrders,
+    ]) {
+      final n = _transferTableNumberFromMap(order);
+      if (n > 0) occupied.add(n);
+    }
+    try {
+      final server = await _storeService.getOccupiedTableNumbers(
+        widget.sellerId,
+      );
+      occupied.addAll(server);
+    } catch (_) {
+      // Best-effort: the local set is still a useful approximation.
+    }
+    return occupied;
+  }
+
+  /// Builds the area-grouped, label-rich target list for the transfer modal,
+  /// excluding the current table.  Falls back to the pre-loaded store table
+  /// numbers when no full rows are available.
+  List<TransferTargetTable> _buildTransferTargetTables({
+    required List<Map<String, dynamic>> storeTableRows,
+    required Set<int> occupied,
+  }) {
+    final seen = <int>{};
+    final targets = <TransferTargetTable>[];
+    for (final row in storeTableRows) {
+      final number = _transferTableNumberFromMap(row);
+      if (number <= 0 || number == widget.tableNumber) continue;
+      if (!seen.add(number)) continue;
+      targets.add(
+        TransferTargetTable(
+          tableNumber: number,
+          label: resolveTableCardTitle(tableRow: row, tableNumber: number),
+          areaName: (row['area_name'] ?? '').toString().trim(),
+          isOccupied: occupied.contains(number),
+        ),
+      );
+    }
+    if (targets.isEmpty) {
+      for (final number in widget.storeTableNumbers) {
+        if (number <= 0 || number == widget.tableNumber) continue;
+        if (!seen.add(number)) continue;
+        targets.add(
+          TransferTargetTable(
+            tableNumber: number,
+            label: 'Masa $number',
+            isOccupied: occupied.contains(number),
+          ),
+        );
+      }
+    }
+    targets.sort((a, b) {
+      final areaCmp = a.areaName.toLowerCase().compareTo(
+        b.areaName.toLowerCase(),
+      );
+      if (areaCmp != 0) return areaCmp;
+      return a.tableNumber.compareTo(b.tableNumber);
+    });
+    return targets;
   }
 
   @override
@@ -34306,6 +35292,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         availableProducts: selectableProducts,
         preselectTemplateItems: false,
       ),
+      templateChildDefaults: MixedServiceOrder.templateChildDefaultsByProductId(
+        product,
+      ),
       availablePricingModes: _availablePricingModesForTemplate(product),
     );
     if (configured == null || !mounted) return;
@@ -34335,6 +35324,34 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         ),
       );
       return;
+    }
+    final hiddenCount =
+        resolution.templateItemsCount - resolution.selectableProducts.length;
+    if (hiddenCount > 0) {
+      final unmatched =
+          resolution.templateItemsCount -
+          resolution.matchedSelectableProductsCount;
+      final inactive =
+          resolution.matchedSelectableProductsCount -
+          resolution.activeMatchedProductsCount;
+      final outOfStock =
+          resolution.activeMatchedProductsCount -
+          resolution.selectableProducts.length;
+      final reasons = <String>[
+        if (inactive > 0) '$inactive pasif/taslak',
+        if (outOfStock > 0) '$outOfStock stokta yok',
+        if (unmatched > 0) '$unmatched ürün bulunamadı',
+      ];
+      final detail = reasons.isEmpty ? '' : ' (${reasons.join(', ')})';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '$hiddenCount ürün serviste gösterilmiyor$detail. '
+            'Görünmesi için ürünleri Aktif yapın ve stoğu 0\'dan büyük tutun.',
+          ),
+          duration: const Duration(seconds: 5),
+        ),
+      );
     }
     await _customizeServiceTemplateProduct(
       product,
@@ -37197,6 +38214,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     try {
       _tableOrdersFallbackFuture = null;
       widget.onTableCloseOptimistic?.call(widget.tableNumber);
+      final closeCompletedAt = DateTime.now();
+      final preCloseSessionOrders = await _storeService.getTableOrdersSnapshot(
+        widget.sellerId,
+        tableNumber: widget.tableNumber,
+      );
       await _storeService.closeTableWithHistory(
         sellerId: widget.sellerId,
         tableNumber: widget.tableNumber,
@@ -37205,6 +38227,51 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         waiterName: _currentWaiterName(),
         sessionKey: _getOrCreateSessionKey(),
       );
+      await _storeService.closeRestaurantOrdersForTable(
+        sellerId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+      );
+      final sessionOrders = preCloseSessionOrders.isNotEmpty
+          ? preCloseSessionOrders
+          : orders;
+      await _storeService.ensureTableHistoryRecorded(
+        sellerId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+        closedOrders: sessionOrders,
+        paymentMethod: paymentMethod,
+        waiterId: _currentWaiterId(),
+        waiterName: _currentWaiterName(),
+        tableLabel: widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}',
+        closedAt: closeCompletedAt,
+      );
+      final remainingActiveOrders = await _storeService.getTableOrdersSnapshot(
+        widget.sellerId,
+        tableNumber: widget.tableNumber,
+      );
+      if (remainingActiveOrders.isNotEmpty) {
+        final allFromOrders = remainingActiveOrders.every(
+          (o) => o['_garson_source_table'] == 'orders',
+        );
+        if (allFromOrders) {
+          debugPrint(
+            'Masa siparişi kapandı ama müşteri siparişi hala açık. '
+            'Supabase migration uygulanmalı.',
+          );
+        } else {
+          debugPrint(
+            'Masa kapanisi tamamlanmadi. '
+            '${remainingActiveOrders.length} aktif kayit hala acik gorunuyor.',
+          );
+        }
+        throw Exception(
+          allFromOrders
+              ? 'Masa kapatma tamamlanamadı. Müşteri siparişleri hâlâ açık görünüyor. '
+                    'Supabase migration dosyası eksik olabilir: '
+                    'ibul_app/supabase/migrations/20260609_close_table_waiter_access.sql'
+              : 'Masa kapatma tamamlanamadı. '
+                    '${remainingActiveOrders.length} aktif kayıt hâlâ açık görünüyor.',
+        );
+      }
       if (!mounted) return;
       // IMPORTANT: The table_orders realtime stream can legitimately emit an
       // empty list after close. Our UI has a fallback that can still display
@@ -37221,6 +38288,11 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         _optimisticTableOrders = const <Map<String, dynamic>>[];
         _clearSubmitFeedback();
       });
+      widget.onTableClosedSessionArchived?.call(
+        widget.tableNumber,
+        sessionOrders,
+        widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}',
+      );
       widget.onTableClosed?.call(widget.tableNumber);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -37674,20 +38746,18 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                               : TableLevelPolicy.transferBlocked,
                           onTap: canTransferTable
                               ? () => runAction(() async {
-                                  // Prefer the pre-loaded store table numbers
+                                  // Prefer the pre-loaded store table rows
                                   // passed from the parent (avoids an extra API
                                   // call that can fail silently on some RLS
                                   // configurations, making the list appear
-                                  // empty even when tables exist).
-                                  List<int> otherTables;
-                                  if (widget.storeTableNumbers.isNotEmpty) {
-                                    otherTables = widget.storeTableNumbers
-                                        .where((t) => t != widget.tableNumber)
-                                        .toList();
-                                  } else {
-                                    // Fallback: fetch from Supabase when no
-                                    // pre-loaded list is available.
-                                    final allStoreTables = await _storeService
+                                  // empty even when tables exist).  We keep the
+                                  // FULL rows so the picker can render real,
+                                  // area-grouped labels (Salon / Bahçe / Teras)
+                                  // instead of the legacy "Masa N" placeholder.
+                                  List<Map<String, dynamic>> storeTableRows =
+                                      widget.storeTables;
+                                  if (storeTableRows.isEmpty) {
+                                    storeTableRows = await _storeService
                                         .getStoreTables(
                                           sellerId: widget.sellerId,
                                         )
@@ -37695,25 +38765,24 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                           (Object _) =>
                                               <Map<String, dynamic>>[],
                                         );
-                                    otherTables =
-                                        allStoreTables
-                                            .map((row) {
-                                              final raw = row['table_number'];
-                                              if (raw is int) return raw;
-                                              return int.tryParse(
-                                                    raw?.toString() ?? '',
-                                                  ) ??
-                                                  0;
-                                            })
-                                            .where(
-                                              (t) =>
-                                                  t > 0 &&
-                                                  t != widget.tableNumber,
-                                            )
-                                            .toSet()
-                                            .toList()
-                                          ..sort();
                                   }
+                                  // Resolve which tables are currently occupied
+                                  // (have an active, non-closed order) so they
+                                  // can be highlighted in red.
+                                  final occupied =
+                                      await _resolveOccupiedTableNumbers();
+                                  final availableTables =
+                                      _buildTransferTargetTables(
+                                        storeTableRows: storeTableRows,
+                                        occupied: occupied,
+                                      );
+                                  final sourceLabel = resolveTableCardTitle(
+                                    tableRow: _firstStoreTableRowForNumber(
+                                      storeTableRows,
+                                      widget.tableNumber,
+                                    ),
+                                    tableNumber: widget.tableNumber,
+                                  );
                                   // Flatten all items across orders on this
                                   // table for the partial/customer-based modes.
                                   final allItems = tableOrders
@@ -37730,8 +38799,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                   final result = await TransferTableModal.show(
                                     context,
                                     tableNumber: widget.tableNumber,
-                                    availableTableNumbers: otherTables,
+                                    availableTables: availableTables,
                                     allItems: allItems,
+                                    sourceLabel: sourceLabel,
                                   );
                                   if (result == null || !mounted) return;
                                   await _storeService.transferTableOrders(
@@ -37744,11 +38814,28 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
                                     note: result.note,
                                   );
                                   if (!mounted) return;
+                                  // Use the real area labels (e.g. "Bahçe 3 →
+                                  // Bahçe 1") rather than legacy "Masa N".
+                                  final targetLabel = availableTables
+                                      .firstWhere(
+                                        (t) => t.tableNumber == result.toTable,
+                                        orElse: () => TransferTargetTable(
+                                          tableNumber: result.toTable,
+                                          label: resolveTableCardTitle(
+                                            tableRow:
+                                                _firstStoreTableRowForNumber(
+                                                  storeTableRows,
+                                                  result.toTable,
+                                                ),
+                                            tableNumber: result.toTable,
+                                          ),
+                                        ),
+                                      )
+                                      .label;
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Text(
-                                        'Masa ${widget.tableNumber} → '
-                                        'Masa ${result.toTable} aktarıldı.',
+                                        '$sourceLabel → $targetLabel aktarıldı.',
                                       ),
                                       backgroundColor: const Color(0xFF2563EB),
                                     ),
