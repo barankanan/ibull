@@ -87,7 +87,7 @@ class AddEthernetPrinterScreen extends StatefulWidget {
 class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   late final DesktopPrintOrchestrator _orchestrator =
       widget.orchestrator ?? DesktopPrintOrchestrator();
-  late final LocalPrintService _localPrintService = 
+  late final LocalPrintService _localPrintService =
       widget.localPrintService ?? LocalPrintService();
 
   final TextEditingController _nameCtrl = TextEditingController();
@@ -107,6 +107,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   bool _printTesting = false;
   String? _printMessage;
   bool _printOk = false;
+  _EthernetSetupAdvice? _setupAdvice;
 
   bool _saving = false;
   String? _formError;
@@ -135,15 +136,40 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         _role = EthernetPrinterRole.adisyon;
       }
     }
+    _ipCtrl.addListener(_handleNetworkFieldEdited);
+    _portCtrl.addListener(_handleNetworkFieldEdited);
   }
 
   @override
   void dispose() {
+    _ipCtrl.removeListener(_handleNetworkFieldEdited);
+    _portCtrl.removeListener(_handleNetworkFieldEdited);
     _nameCtrl.dispose();
     _ipCtrl.dispose();
     _portCtrl.dispose();
     _localPrintService.dispose();
     super.dispose();
+  }
+
+  void _handleNetworkFieldEdited() {
+    if (_connectionMessage == null &&
+        _printMessage == null &&
+        _setupAdvice == null &&
+        _ipError == null &&
+        _portError == null) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _connectionMessage = null;
+      _connectionOk = false;
+      _printMessage = null;
+      _printOk = false;
+      _setupAdvice = null;
+      _ipError = null;
+      _portError = null;
+      _formError = null;
+    });
   }
 
   // ── validation helpers ─────────────────────────────────────────────────
@@ -168,6 +194,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     if (host.isEmpty) {
       ipError = 'IP adresi boş olamaz.';
       debugPrint('[EthernetPrinter][validate_error] field=ip reason=empty');
+    } else if (!_looksLikeIpv4(host)) {
+      ipError = 'IPv4 formatında girin. Örn: 192.168.1.100';
+      debugPrint('[EthernetPrinter][validate_error] field=ip reason=ipv4');
     }
     int port = PrinterModel.ethernetDefaultPort;
     if (rawPort.isNotEmpty) {
@@ -240,6 +269,173 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     );
   }
 
+  bool _looksLikeIpv4(String value) {
+    final parts = value.trim().split('.');
+    if (parts.length != 4) return false;
+    for (final part in parts) {
+      if (part.isEmpty) return false;
+      final parsed = int.tryParse(part);
+      if (parsed == null || parsed < 0 || parsed > 255) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  List<String> _normalizeIpList(Object? raw) {
+    if (raw is! List) return const <String>[];
+    return raw
+        .map((value) => value.toString().trim())
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  String _networkPrefix(String ip) {
+    final parts = ip.trim().split('.');
+    if (parts.length < 3) return ip.trim();
+    return '${parts[0]}.${parts[1]}.${parts[2]}.x';
+  }
+
+  String _targetLabel(String host, int port) => '$host:$port';
+
+  Map<String, dynamic> _errorDetailsFromException(Object error) {
+    if (error is! LocalPrintServiceException) {
+      return const <String, dynamic>{};
+    }
+    final details = error.details;
+    if (details is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(details);
+    }
+    if (details is Map) {
+      return details.map((key, value) => MapEntry(key.toString(), value));
+    }
+    return const <String, dynamic>{};
+  }
+
+  _EthernetFailurePresentation _presentEthernetFailure({
+    required String host,
+    required int port,
+    Map<String, dynamic>? payload,
+    String? fallbackMessage,
+    bool forPrint = false,
+  }) {
+    final normalized = payload == null
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(payload);
+    final errorCode =
+        normalized['errorCode']?.toString().trim() ??
+        normalized['error_code']?.toString().trim() ??
+        '';
+    final targetHost =
+        normalized['target_host']?.toString().trim().isNotEmpty == true
+        ? normalized['target_host']!.toString().trim()
+        : host;
+    final targetPort =
+        (normalized['target_port'] as num?)?.toInt() ??
+        (normalized['port'] as num?)?.toInt() ??
+        port;
+    final localIps = _normalizeIpList(normalized['local_ips']);
+    final sameSubnet = normalized['same_subnet'] as bool?;
+    final suggestedMessage =
+        normalized['suggested_message']?.toString().trim() ?? '';
+    final rawMessage = fallbackMessage?.trim().isNotEmpty == true
+        ? fallbackMessage!.trim()
+        : (normalized['message']?.toString().trim().isNotEmpty == true
+              ? normalized['message']!.toString().trim()
+              : normalized['error']?.toString().trim());
+    final localNetwork = localIps.isNotEmpty
+        ? _networkPrefix(localIps.first)
+        : 'restoran ağınız';
+    final printerNetwork = _networkPrefix(targetHost);
+
+    if (sameSubnet == false) {
+      return _EthernetFailurePresentation(
+        summary: forPrint
+            ? 'Test fişi gönderilmedi. Yazıcı bilgisayarla aynı ağda görünmüyor.'
+            : 'Bağlantı kurulamadı. Yazıcı bilgisayarla aynı ağda görünmüyor.',
+        advice: _EthernetSetupAdvice(
+          title: 'Aynı ağ gerekli',
+          message: suggestedMessage.isNotEmpty
+              ? suggestedMessage
+              : 'Bilgisayarınız $localNetwork ağında, yazıcı ise '
+                    '${_targetLabel(targetHost, targetPort)} adresinde görünüyor.',
+          steps: <String>[
+            'Yazıcıyı bilgisayarın bağlı olduğu modem/router/switch LAN ağına alın.',
+            'Self-test fişindeki IP doğruysa yazıcı IP\'sini $localNetwork ağına uyumlu olacak şekilde sabitleyin.',
+            'Kalıcı kullanım için modemden DHCP reservation yapın veya yazıcıya sabit IP verin.',
+          ],
+        ),
+      );
+    }
+
+    if (errorCode == 'tcp_unreachable') {
+      return _EthernetFailurePresentation(
+        summary: forPrint
+            ? 'Test fişi gönderilemedi. Yazıcıya ağdan ulaşılamıyor.'
+            : 'Bağlantı kurulamadı. Yazıcıya ağdan ulaşılamıyor.',
+        advice: _EthernetSetupAdvice(
+          title: 'Yazıcı bulunamıyor',
+          message:
+              '${_targetLabel(targetHost, targetPort)} adresindeki cihaz yanıt vermiyor.',
+          steps: <String>[
+            'Yazıcının açık olduğundan ve Ethernet kablosunun LAN portuna takılı olduğundan emin olun.',
+            'Self-test fişindeki IP adresini birebir girin. Farklı bir IP kullanıyorsanız eski kayıt olabilir.',
+            'Port alanını genelde 9100 bırakın.',
+            'Kurulum tamamlanınca IP\'yi sabitleyin; DHCP değişirse tekrar bozulur.',
+          ],
+        ),
+      );
+    }
+
+    if (errorCode == 'tcp_timeout') {
+      return _EthernetFailurePresentation(
+        summary: forPrint
+            ? 'Test fişi gönderilemedi. Yazıcı ağda görünüyor ama cevap vermiyor.'
+            : 'Bağlantı zaman aşımına uğradı. Yazıcı cevap vermiyor.',
+        advice: _EthernetSetupAdvice(
+          title: 'Yazıcı cevap vermiyor',
+          message: rawMessage?.isNotEmpty == true
+              ? rawMessage!
+              : 'Yazıcı $printerNetwork ağında görünüyor ancak '
+                    '${_targetLabel(targetHost, targetPort)} üzerinden yanıt vermiyor.',
+          steps: <String>[
+            'Self-test fişinde Server Port / Raw Port değerinin 9100 olduğundan emin olun.',
+            'Yazıcının ağ modunun Ethernet olduğundan ve aynı anda farklı bir IP almadığından emin olun.',
+            'Mümkünse yazıcıyı modem/router\'a doğrudan LAN kablosuyla bağlayın.',
+            'Sorunsuz kullanım için çalışan IP\'yi daha sonra sabit IP veya DHCP reservation ile koruyun.',
+          ],
+        ),
+      );
+    }
+
+    return _EthernetFailurePresentation(
+      summary: forPrint
+          ? 'Test fişi gönderilemedi. Ethernet bağlantısı doğrulanamadı.'
+          : 'Ethernet bağlantısı doğrulanamadı.',
+      advice: _EthernetSetupAdvice(
+        title: 'Kurulum kontrolü gerekiyor',
+        message: rawMessage?.isNotEmpty == true
+            ? rawMessage!
+            : 'Yazıcıya bağlantı kurulamadı.',
+        steps: <String>[
+          'IP adresini self-test fişindeki değerle karşılaştırın.',
+          'Bilgisayar ve yazıcının aynı modem/router LAN ağında olduğundan emin olun.',
+          'Port alanını genelde 9100 bırakın ve bağlantıyı tekrar test edin.',
+        ],
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>?> _probeEthernetPrinter(
+    _EthernetFormValidation form, {
+    Duration timeout = const Duration(seconds: 8),
+  }) {
+    final payload = _buildEthernetDispatchPayload(form);
+    return _localPrintService
+        .probeTcpPrinter(host: form.host, port: form.port, printer: payload)
+        .timeout(timeout);
+  }
+
   Map<String, dynamic> _buildEthernetDispatchPayload(
     _EthernetFormValidation form,
   ) {
@@ -294,11 +490,11 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       });
       return;
     }
-    final payload = _buildEthernetDispatchPayload(form);
     setState(() {
       _connectionTesting = true;
       _connectionMessage = null;
       _connectionOk = false;
+      _setupAdvice = null;
       _formError = null;
       _ipError = null;
       _portError = null;
@@ -317,22 +513,22 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       '[EthernetPrinter][connection_test_start] host=$host port=$port',
     );
     try {
-      final result = await _localPrintService
-          .probeTcpPrinter(host: host, port: port, printer: payload)
-          .timeout(const Duration(seconds: 8));
+      final result = await _probeEthernetPrinter(form);
       if (!mounted) return;
       final ok = result?['ok'] == true;
-      final suggestedMessage =
-          result?['suggested_message']?.toString().trim() ?? '';
+      final friendly = ok
+          ? _EthernetFailurePresentation(
+              summary:
+                  (result?['suggested_message']?.toString().trim().isNotEmpty ==
+                      true)
+                  ? result!['suggested_message'].toString().trim()
+                  : 'Ethernet yazıcıya bağlantı başarılı.',
+            )
+          : _presentEthernetFailure(host: host, port: port, payload: result);
       setState(() {
         _connectionOk = ok;
-        _connectionMessage = ok
-            ? (suggestedMessage.isNotEmpty
-                  ? suggestedMessage
-                  : 'Ethernet yazıcıya bağlantı başarılı.')
-            : (suggestedMessage.isNotEmpty
-                  ? suggestedMessage
-                  : 'Bağlantı başarısız: ${result?['error'] ?? 'Bilinmeyen hata'}');
+        _connectionMessage = friendly.summary;
+        _setupAdvice = ok ? null : friendly.advice;
       });
       debugPrint(
         ok
@@ -340,18 +536,36 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
             : '[EthernetPrinter][connection_test_error] '
                   'code=${result?['errorCode'] ?? 'unknown'}',
       );
-    } catch (e) {
+    } on LocalPrintServiceException catch (e) {
       if (!mounted) return;
-      final rawMessage = e.toString();
-      final friendlyMessage =
-          rawMessage.contains('Not found') || rawMessage.contains('404')
-          ? 'Baglanti dogrulanamadi. Bridge bu surumde TCP probe endpointini desteklemiyor olabilir. Test fisi hattini kullanarak tekrar deneyin.'
-          : 'Baglanti basarisiz: $e';
+      final details = _errorDetailsFromException(e);
+      final friendly = _presentEthernetFailure(
+        host: host,
+        port: port,
+        payload: details,
+        fallbackMessage: e.message,
+      );
       setState(() {
         _connectionOk = false;
-        _connectionMessage = friendlyMessage;
+        _connectionMessage = friendly.summary;
+        _setupAdvice = friendly.advice;
       });
       debugPrint('[EthernetPrinter][connection_test_error] code=exception');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _connectionOk = false;
+        _connectionMessage = 'Bağlantı başarısız. Ağ kontrolü tamamlanamadı.';
+        _setupAdvice = const _EthernetSetupAdvice(
+          title: 'Tekrar deneyin',
+          message: 'Bağlantı testi sırasında beklenmeyen bir hata oluştu.',
+          steps: <String>[
+            'IP ve port alanlarını kontrol edin.',
+            'Yazıcının açık olduğundan ve kablonun LAN portunda olduğundan emin olun.',
+            'Aynı ağda olduğunuzu doğrulayıp testi tekrar çalıştırın.',
+          ],
+        );
+      });
     } finally {
       if (mounted) {
         setState(() {
@@ -377,6 +591,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       _printTesting = true;
       _printMessage = null;
       _printOk = false;
+      _setupAdvice = null;
       _formError = null;
       _ipError = null;
       _portError = null;
@@ -395,6 +610,25 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       '[EthernetPrinter][test_start] host=$host port=$port backend=tcp',
     );
     try {
+      final probe = await _probeEthernetPrinter(
+        form,
+        timeout: const Duration(seconds: 6),
+      );
+      if (!mounted) return;
+      if (probe?['ok'] != true) {
+        final friendly = _presentEthernetFailure(
+          host: host,
+          port: port,
+          payload: probe,
+          forPrint: true,
+        );
+        setState(() {
+          _printOk = false;
+          _printMessage = friendly.summary;
+          _setupAdvice = friendly.advice;
+        });
+        return;
+      }
       final result = await _orchestrator
           .printBridgeTest(
             restaurantId: widget.restaurantId,
@@ -412,17 +646,55 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
           )
           .timeout(const Duration(seconds: 20));
       if (!mounted) return;
+      final raw = Map<String, dynamic>.from(
+        result.raw ?? const <String, dynamic>{},
+      );
+      final failure = result.ok
+          ? const _EthernetFailurePresentation()
+          : _presentEthernetFailure(
+              host: host,
+              port: port,
+              payload: raw,
+              fallbackMessage: result.message,
+              forPrint: true,
+            );
       setState(() {
         _printOk = result.ok;
         _printMessage = result.ok
             ? 'Test fişi gönderildi. Yazıcı çıktısını kontrol edin.'
-            : 'Test başarısız: ${result.message}';
+            : failure.summary;
+        _setupAdvice = result.ok ? null : failure.advice;
+      });
+    } on LocalPrintServiceException catch (e) {
+      if (!mounted) return;
+      final details = _errorDetailsFromException(e);
+      final failure = _presentEthernetFailure(
+        host: host,
+        port: port,
+        payload: details,
+        fallbackMessage: e.message,
+        forPrint: true,
+      );
+      setState(() {
+        _printOk = false;
+        _printMessage = failure.summary;
+        _setupAdvice = failure.advice;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _printOk = false;
-        _printMessage = 'Test başarısız: $e';
+        _printMessage = 'Test başarısız. Yazıcıya çıktı gönderilemedi.';
+        _setupAdvice = const _EthernetSetupAdvice(
+          title: 'Test fişi gönderilemedi',
+          message:
+              'Bağlantı veya baskı aşamasında beklenmeyen bir hata oluştu.',
+          steps: <String>[
+            'Önce bağlantı testini çalıştırın.',
+            'IP adresi, port ve kağıt genişliğini kontrol edin.',
+            'Yazıcı açık ve aynı ağda ise testi yeniden deneyin.',
+          ],
+        );
       });
     } finally {
       if (mounted) {
@@ -451,13 +723,16 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     final host = form.host;
     final port = form.port;
     final name = form.name;
+    final stableCode = widget.existing?.code.trim().isNotEmpty == true
+        ? widget.existing!.code.trim()
+        : 'eth_${host.replaceAll('.', '_')}_$port';
     try {
       final repo = widget.repository ?? PrinterRepository();
       final saved = await repo.upsertEthernetPrinter(
         restaurantId: widget.restaurantId,
         printerId: widget.existing?.id,
         name: name,
-        code: 'eth_${host.replaceAll('.', '_')}_$port',
+        code: stableCode,
         ipAddress: host,
         port: port,
         paperWidthMm: _paperWidth,
@@ -514,6 +789,8 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _IntroBanner(),
+              const SizedBox(height: 16),
+              const _EthernetReliabilityCard(),
               const SizedBox(height: 16),
               _Field(
                 label: 'Yazıcı Adı',
@@ -635,6 +912,10 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                 const SizedBox(height: 10),
                 _ResultBanner(ok: _printOk, message: _printMessage!),
               ],
+              if (_setupAdvice != null) ...[
+                const SizedBox(height: 10),
+                _AdviceBanner(advice: _setupAdvice!),
+              ],
               const SizedBox(height: 24),
               FilledButton.icon(
                 onPressed: _saving ? null : _save,
@@ -687,14 +968,70 @@ class _IntroBanner extends StatelessWidget {
           Expanded(
             child: Text(
               'Ethernet yazıcının kendi self-test fişinde yazan IP adresi ve '
-              'sunucu portunu girin. Yazıcı üzerinde port genelde 9100\'dür. '
-              'Bu yazıcı CUPS/USB üzerinden değil, doğrudan TCP ile yazdırır.',
+              'sunucu portunu girin. Bilgisayar ve yazıcı aynı modem/router '
+              'LAN ağında olmalıdır. Yazıcı üzerinde port genelde 9100\'dür '
+              've bu akış CUPS/USB yerine doğrudan TCP kullanır.',
               style: TextStyle(
                 fontSize: 12,
                 color: Color(0xFF1E3A8A),
                 height: 1.45,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EthernetReliabilityCard extends StatelessWidget {
+  const _EthernetReliabilityCard();
+
+  @override
+  Widget build(BuildContext context) {
+    const itemStyle = TextStyle(
+      fontSize: 12,
+      color: Color(0xFF475569),
+      height: 1.45,
+    );
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.verified_outlined, size: 18, color: Color(0xFF0F766E)),
+              SizedBox(width: 8),
+              Text(
+                'Kalıcı ve Sorunsuz Kurulum',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 10),
+          Text(
+            '1. Yazıcıyı modem/router/switch LAN portuna bağlayın; bilgisayar ile aynı ağda olsun.',
+            style: itemStyle,
+          ),
+          SizedBox(height: 6),
+          Text(
+            '2. Self-test fişindeki IP adresini ve portu girin. Port çoğu cihazda 9100\'dür.',
+            style: itemStyle,
+          ),
+          SizedBox(height: 6),
+          Text(
+            '3. Kurulum tamamlandıktan sonra IP\'yi sabitleyin: modemden DHCP reservation veya yazıcıda sabit IP.',
+            style: itemStyle,
           ),
         ],
       ),
@@ -1022,6 +1359,25 @@ class _EthernetFormValidation {
   bool get isValid => ipError == null && portError == null;
 }
 
+class _EthernetSetupAdvice {
+  const _EthernetSetupAdvice({
+    required this.title,
+    required this.message,
+    required this.steps,
+  });
+
+  final String title;
+  final String message;
+  final List<String> steps;
+}
+
+class _EthernetFailurePresentation {
+  const _EthernetFailurePresentation({this.summary = '', this.advice});
+
+  final String summary;
+  final _EthernetSetupAdvice? advice;
+}
+
 class _ErrorBanner extends StatelessWidget {
   const _ErrorBanner({required this.message});
 
@@ -1096,6 +1452,96 @@ class _ResultBanner extends StatelessWidget {
               style: TextStyle(fontSize: 12, color: fg, height: 1.45),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdviceBanner extends StatelessWidget {
+  const _AdviceBanner({required this.advice});
+
+  final _EthernetSetupAdvice advice;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.tips_and_updates_outlined,
+                size: 16,
+                color: Color(0xFFB45309),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      advice.title,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF92400E),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      advice.message,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF92400E),
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (advice.steps.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ...advice.steps.map(
+              (step) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Icon(
+                        Icons.circle,
+                        size: 6,
+                        color: Color(0xFFD97706),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        step,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF92400E),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -70,12 +70,37 @@ void main() {
     expect(orchestrator.callCount, 0);
   });
 
+  testWidgets('invalid IPv4 validation appears for malformed IP', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    await pumpDialog(tester, orchestrator: orchestrator);
+
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1',
+    );
+    await tester.ensureVisible(find.text('Bağlantıyı Test Et'));
+    await tester.tap(find.text('Bağlantıyı Test Et'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('IPv4 formatında girin. Örn: 192.168.1.100'),
+      findsOneWidget,
+    );
+    expect(orchestrator.callCount, 0);
+  });
+
   testWidgets('connection test dispatches explicit ethernet tcp payload', (
     tester,
   ) async {
     final orchestrator = _RecordingEthernetOrchestrator();
     final localService = _FakeEthernetLocalPrintService();
-    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+    await pumpDialog(
+      tester,
+      orchestrator: orchestrator,
+      localService: localService,
+    );
 
     await tester.enterText(
       find.byKey(const Key('ethernet_ip_field')),
@@ -89,7 +114,7 @@ void main() {
     expect(localService.probeCallCount, 1);
     expect(localService.lastProbeHost, '192.168.1.100');
     expect(localService.lastProbePort, 9100);
-    
+
     final printerPayload = localService.lastProbePrinter;
     expect(printerPayload?['backend'], 'tcp');
     expect(printerPayload?['transportType'], 'ethernet');
@@ -107,7 +132,12 @@ void main() {
     tester,
   ) async {
     final orchestrator = _RecordingEthernetOrchestrator();
-    await pumpDialog(tester, orchestrator: orchestrator);
+    final localService = _FakeEthernetLocalPrintService();
+    await pumpDialog(
+      tester,
+      orchestrator: orchestrator,
+      localService: localService,
+    );
 
     await tester.enterText(
       find.byKey(const Key('ethernet_ip_field')),
@@ -117,6 +147,7 @@ void main() {
     await tester.tap(find.text('Test Fişi Gönder'));
     await tester.pumpAndSettle();
 
+    expect(localService.probeCallCount, 1);
     expect(orchestrator.callCount, 1);
     expect(orchestrator.lastSkipSetupSnapshot, isTrue);
     expect(orchestrator.lastTargetHost, '192.168.1.100');
@@ -137,15 +168,63 @@ void main() {
     expect(orchestrator.lastExtraBody?['printer_role'], 'adisyon');
     expect(orchestrator.lastExtraBody?['source'], 'ethernet_dialog_form');
   });
+
+  testWidgets(
+    'print test stops early and shows same-network guidance when probe fails',
+    (tester) async {
+      final orchestrator = _RecordingEthernetOrchestrator();
+      final localService = _FakeEthernetLocalPrintService()
+        ..probeResponse = <String, dynamic>{
+          'ok': false,
+          'errorCode': 'tcp_unreachable',
+          'same_subnet': false,
+          'target_host': '192.168.1.100',
+          'target_port': 9100,
+          'local_ips': const <String>['192.168.10.158'],
+          'suggested_message':
+              'Yazıcı ile bilgisayar aynı ağda görünmüyor. Yazıcı IP\'sini 192.168.10.x ağına uygun ayarlayın.',
+        };
+      await pumpDialog(
+        tester,
+        orchestrator: orchestrator,
+        localService: localService,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('ethernet_ip_field')),
+        '192.168.1.100',
+      );
+      await tester.ensureVisible(find.text('Test Fişi Gönder'));
+      await tester.tap(find.text('Test Fişi Gönder'));
+      await tester.pumpAndSettle();
+
+      expect(orchestrator.callCount, 0);
+      expect(
+        find.text(
+          'Test fişi gönderilmedi. Yazıcı bilgisayarla aynı ağda görünmüyor.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Aynı ağ gerekli'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'DHCP reservation yapın veya yazıcıya sabit IP verin',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 class _FakeEthernetLocalPrintService extends LocalPrintService {
-  _FakeEthernetLocalPrintService() : super(baseUri: Uri.parse('http://127.0.0.1:3001'));
+  _FakeEthernetLocalPrintService()
+    : super(baseUri: Uri.parse('http://127.0.0.1:3001'));
 
   int probeCallCount = 0;
   String? lastProbeHost;
   int? lastProbePort;
   Map<String, dynamic>? lastProbePrinter;
+  Map<String, dynamic>? probeResponse;
 
   @override
   Future<Map<String, dynamic>?> probeTcpPrinter({
@@ -158,10 +237,11 @@ class _FakeEthernetLocalPrintService extends LocalPrintService {
     lastProbeHost = host;
     lastProbePort = port;
     lastProbePrinter = printer;
-    return <String, dynamic>{
-      'ok': true,
-      'suggested_message': 'Mock ethernet baglanti basarili',
-    };
+    return probeResponse ??
+        <String, dynamic>{
+          'ok': true,
+          'suggested_message': 'Mock ethernet baglanti basarili',
+        };
   }
 }
 
@@ -315,12 +395,15 @@ class _TestPrinterRepository implements PrinterRepositoryPort {
 
 class _TestPrintStationService implements PrintStationServicePort {
   @override
-  Future<String> invalidateRoleMappingCacheState({Map<String, dynamic>? roleMappings, String source = 'print_station_service',
+  Future<String> invalidateRoleMappingCacheState({
+    Map<String, dynamic>? roleMappings,
+    String source = 'print_station_service',
     required String restaurantId,
   }) async => 'mock_token';
 
   @override
-  Future<String?> readRoleMappingCacheToken(String restaurantId) async => 'mock_token';
+  Future<String?> readRoleMappingCacheToken(String restaurantId) async =>
+      'mock_token';
 
   @override
   Future<Map<String, dynamic>?> configureLocalBridgeAsPrintStation({

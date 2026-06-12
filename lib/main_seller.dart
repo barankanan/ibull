@@ -145,10 +145,18 @@ class SellerDesktopApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       supportedLocales: const [Locale('tr'), Locale('en')],
-      // ── Home: session restore gate ──────────────────────────────────────
-      home: const _SellerSessionGate(),
+      // ── Boot: session restore gate ──────────────────────────────────────
+      // The app boots through the session gate (logged out → seller login).
+      // We intentionally do NOT register the gate as the "/" route: after the
+      // user exits the seller panel we land on the consumer "Hesabım" screen,
+      // whose header logo navigates to "/". That "/" must resolve to the real
+      // consumer home — NOT back to the seller login gate.
+      onGenerateInitialRoutes: (_) => <Route<dynamic>>[
+        MaterialPageRoute<void>(builder: (_) => const _SellerSessionGate()),
+      ],
       // ── Named routes ────────────────────────────────────────────────────
       routes: {
+        '/': (ctx) => const HomeWrapper(),
         '/seller-login': (ctx) => const SellerLoginPage(),
         '/seller': (ctx) => _DesktopSellerRouteShell(
           entryRole: parseSellerPanelEntryRole(
@@ -157,6 +165,8 @@ class SellerDesktopApp extends StatelessWidget {
         ),
         '/printer-setup': (ctx) => const DesktopPrinterSetupPage(),
       },
+      onUnknownRoute: (settings) =>
+          MaterialPageRoute<void>(builder: (_) => const HomeWrapper()),
       // ── Print status bar overlay (bottom-right, desktop only) ───────────
       builder: (context, child) {
         return Stack(
@@ -380,51 +390,60 @@ class _DesktopSellerRouteShellState extends State<_DesktopSellerRouteShell> {
           bootstrapped: _bootstrapped,
           bootError: _bootError,
         );
-        if (!showBootBanner) return panel;
+        // IMPORTANT: The widget tree structure must stay IDENTICAL regardless of
+        // [showBootBanner]. [DesktopPrintHub] fires notifyListeners() on periodic
+        // health/watchdog timers, so the printer bridge status flaps frequently.
+        // If we switched between `return panel;` and `return Stack([panel, ...])`,
+        // the SellerPanelPage element would change depth and Flutter would REMOUNT
+        // the entire panel on every flap — wiping all in-progress state (e.g. a
+        // half-filled salary form) and looking like a spontaneous page reload.
+        // Keeping the Stack constant with the panel always at index 0 preserves
+        // the panel's element + state; only the optional banner toggles.
         return Stack(
           fit: StackFit.expand,
           children: [
             panel,
-            Positioned(
-              top: 12,
-              right: 12,
-              child: Material(
-                elevation: 4,
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 340),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFFDE68A)),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(
-                        Icons.print_disabled_outlined,
-                        size: 18,
-                        color: Color(0xFFD97706),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _bootstrapped
-                              ? 'Yazıcı servisi hazır değil: ${_bootError ?? hub.bridgeStatus.name}'
-                              : 'Yazıcı servisi hazırlanıyor...',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF92400E),
-                            height: 1.4,
+            if (showBootBanner)
+              Positioned(
+                top: 12,
+                right: 12,
+                child: Material(
+                  elevation: 4,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 340),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFBEB),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.print_disabled_outlined,
+                          size: 18,
+                          color: Color(0xFFD97706),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _bootstrapped
+                                ? 'Yazıcı servisi hazır değil: ${_bootError ?? hub.bridgeStatus.name}'
+                                : 'Yazıcı servisi hazırlanıyor...',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF92400E),
+                              height: 1.4,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         );
       },

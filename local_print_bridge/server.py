@@ -306,6 +306,53 @@ def _request_auto_cut(body: dict[str, object] | None) -> bool | None:
     return None
 
 
+def _selected_printer_paper_width_mm(selected_printer: dict[str, object] | None) -> int | None:
+    printer = selected_printer or {}
+    for candidate in (
+        printer.get("paper_width_mm"),
+        printer.get("paperWidthMm"),
+    ):
+        try:
+            parsed = int(str(candidate).strip()) if candidate is not None else None
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is not None and parsed > 0:
+            return parsed
+    return None
+
+
+def _selected_printer_profile(selected_printer: dict[str, object] | None) -> str:
+    printer = selected_printer or {}
+    for candidate in (
+        printer.get("printer_profile"),
+        printer.get("printer_profile_id"),
+        printer.get("printerProfile"),
+        printer.get("printerProfileId"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _selected_printer_auto_cut(selected_printer: dict[str, object] | None) -> bool | None:
+    printer = selected_printer or {}
+    for candidate in (
+        printer.get("auto_cut"),
+        printer.get("autoCut"),
+    ):
+        if isinstance(candidate, bool):
+            return candidate
+        if candidate is None:
+            continue
+        normalized = str(candidate).strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
 def _request_printer_profile(body: dict[str, object] | None) -> str:
     raw_body = body or {}
     printer = _request_printer_blob(raw_body)
@@ -410,6 +457,10 @@ def _default_chars_per_line_for_paper(paper_width_mm: int) -> int:
     if paper_width_mm <= 72:
         return 42
     return 48
+
+
+def _default_raster_width_px_for_paper(paper_width_mm: int) -> int:
+    return 384 if paper_width_mm <= 58 else 576
 
 
 def _cut_mode_for_request(*, paper_width_mm: int, auto_cut: bool) -> str:
@@ -3417,11 +3468,34 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         request = dict(raw_request or {})
         request["document_type"] = "receipt"
         request.setdefault("printer_role", "adisyon")
-        request.setdefault("paper_width_mm", self.settings.receipt_paper_width_mm)
-        request.setdefault("raster_width_px", self.settings.receipt_raster_width_px)
-        request.setdefault("chars_per_line", self.settings.receipt_chars_per_line)
-        request.setdefault("printer_profile", self.settings.receipt_printer_profile)
-        request.setdefault("auto_cut", True)
+        requested_paper_width = _request_paper_width_mm(request)
+        selected_paper_width = _selected_printer_paper_width_mm(selected_printer)
+        paper_width_mm = (
+            requested_paper_width
+            or selected_paper_width
+            or self.settings.receipt_paper_width_mm
+        )
+        request.setdefault("paper_width_mm", paper_width_mm)
+        request.setdefault("raster_width_px", _default_raster_width_px_for_paper(paper_width_mm))
+        request.setdefault("chars_per_line", _default_chars_per_line_for_paper(paper_width_mm))
+
+        requested_profile = _request_printer_profile(request).strip()
+        selected_profile = _selected_printer_profile(selected_printer).strip()
+        if requested_profile:
+            default_profile = requested_profile
+        elif selected_profile:
+            default_profile = selected_profile
+        elif paper_width_mm <= 58:
+            default_profile = self.settings.receipt_printer_profile
+        else:
+            default_profile = "generic_80mm_escpos"
+        request.setdefault("printer_profile", default_profile)
+        request.setdefault("printer_profile_id", default_profile)
+
+        auto_cut = _request_auto_cut(request)
+        if auto_cut is None:
+            auto_cut = _selected_printer_auto_cut(selected_printer)
+        request.setdefault("auto_cut", True if auto_cut is None else auto_cut)
 
         if selected_printer:
             request.setdefault("printer_id", selected_printer.get("id"))
@@ -3448,10 +3522,19 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         effective_paper = _request_paper_width_mm(request)
         effective_raster = _request_raster_width_px(request)
         profile_name = _request_printer_profile(request).strip().lower()
-        if effective_paper != 58 or effective_raster != 384 or "80" in profile_name:
-            raise PayloadError(
-                "POS-58 adisyon profili gecersiz. paper_width_mm=58, raster_width_px=384 ve printer_profile=pos58 olmalidir."
-            )
+        if effective_paper is None:
+            effective_paper = 58
+        expected_raster = _default_raster_width_px_for_paper(effective_paper)
+        if effective_paper <= 58:
+            if effective_raster != expected_raster or "80" in profile_name:
+                raise PayloadError(
+                    "POS-58 adisyon profili gecersiz. paper_width_mm=58, raster_width_px=384 ve printer_profile=pos58 olmalidir."
+                )
+        else:
+            if effective_raster != expected_raster or "58" in profile_name:
+                raise PayloadError(
+                    "80mm adisyon profili gecersiz. paper_width_mm=80, raster_width_px=576 ve printer_profile 80mm uyumlu olmalidir."
+                )
         return request
 
     def _render_receipt_document(

@@ -102,11 +102,43 @@ void main() {
       await _settle(tester);
 
       expect(
-        find.textContaining('Baskı sistemi kapalı. Test göndermek için sistemi açın.'),
+        find.textContaining(
+          'Baskı sistemi kapalı. Test göndermek için sistemi açın.',
+        ),
         findsOneWidget,
       );
     },
   );
+
+  testWidgets('Yazici Ekle menusu USB ve Ethernet seceneklerini gosterir', (
+    tester,
+  ) async {
+    final stationService = _FakeKitchenPrintStationService(
+      localEnabled: true,
+      remoteEnabled: true,
+    );
+    final orchestrator = _FakeKitchenPrintOrchestrator(stationService);
+
+    await _pumpPage(
+      tester,
+      stationService: stationService,
+      orchestrator: orchestrator,
+    );
+
+    await tester.tap(find.text('Yazıcılar'));
+    await _settle(tester);
+
+    await tester.tap(find.text('Yazıcı Ekle'));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('add_printer_option_usb')), findsOneWidget);
+    expect(
+      find.byKey(const Key('add_printer_option_ethernet')),
+      findsOneWidget,
+    );
+    expect(find.text('USB / Yerel Yazıcı'), findsOneWidget);
+    expect(find.text('Ethernet / Ağ Yazıcısı'), findsOneWidget);
+  });
 
   testWidgets(
     'Baskı sistemi açıkken Kapat butonu görünür ve toggle servisi çağrılır',
@@ -193,9 +225,7 @@ void main() {
       await _settle(tester);
 
       // Dropdown should list the saved printer.
-      await tester.tap(
-        find.byKey(const ValueKey<String>('role-receipt-none')),
-      );
+      await tester.tap(find.byKey(const ValueKey<String>('role-receipt-none')));
       await _settle(tester);
       expect(find.text('USB Test Yazıcısı'), findsWidgets);
     },
@@ -219,7 +249,10 @@ void main() {
       );
 
       // Default tab is Print Station.
-      expect(find.text('Yerel yazıcı bulundu ama kayıtlı değil'), findsOneWidget);
+      expect(
+        find.text('Yerel yazıcı bulundu ama kayıtlı değil'),
+        findsOneWidget,
+      );
       expect(find.text('Yazıcıyı Kaydet'), findsOneWidget);
       expect(find.text('Kaydet ve İkisi İçin Kullan'), findsOneWidget);
     },
@@ -463,7 +496,9 @@ class _FakeKitchenPrintOrchestrator extends DesktopPrintOrchestrator {
       setupStatus: <String, dynamic>{
         'status': stationService.localEnabled ? 'ready' : 'setup_required',
       },
-      prerequisites: const <String, dynamic>{'checks': <Map<String, dynamic>>[]},
+      prerequisites: const <String, dynamic>{
+        'checks': <Map<String, dynamic>>[],
+      },
       discoveryWarning: null,
       bridgeStatusLabel: stationService.localEnabled ? 'Hazir' : 'Kapali',
       localConfig: localCfg,

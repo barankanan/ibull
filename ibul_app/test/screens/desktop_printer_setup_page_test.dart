@@ -174,12 +174,57 @@ void main() {
     expect(orchestrator.receiptTestCallCount, 1);
     expect(find.text('Adisyon test fişi gönderildi.'), findsOneWidget);
   });
+
+  testWidgets('Ethernet yazici karti IP Port duzenleme ekranini acar', (
+    tester,
+  ) async {
+    final stationService = _FakePrintStationService(
+      localEnabled: true,
+      remoteEnabled: true,
+      includeReadyPrinter: true,
+    );
+    final orchestrator = _FakeDesktopPrintOrchestrator(stationService);
+    final ethernetPrinter = PrinterModel(
+      id: 'printer-eth-1',
+      restaurantId: 'restaurant-1',
+      name: 'Netum Ethernet',
+      code: 'ETH_MAIN',
+      connectionType: PrinterModel.networkConnectionType,
+      ipAddress: '192.168.1.100',
+      port: 9100,
+      deviceIdentifier: 'tcp:192.168.1.100:9100',
+      paperWidthMm: 80,
+      isActive: true,
+      supportsCut: true,
+      assignedRoles: const <PrinterRole>[
+        PrinterRole.receipt,
+        PrinterRole.kitchen,
+      ],
+      createdAt: DateTime(2026, 6, 11),
+    );
+
+    await _pumpPage(
+      tester,
+      stationService: stationService,
+      orchestrator: orchestrator,
+      printers: <PrinterModel>[ethernetPrinter],
+    );
+
+    expect(find.text('IP/Port'), findsOneWidget);
+
+    await tester.tap(find.text('IP/Port'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ethernet Yazıcı Düzenle'), findsOneWidget);
+    expect(find.text('192.168.1.100'), findsWidgets);
+  });
 }
 
 Future<void> _pumpPage(
   WidgetTester tester, {
   required _FakePrintStationService stationService,
   required _FakeDesktopPrintOrchestrator orchestrator,
+  List<PrinterModel> printers = const <PrinterModel>[],
 }) async {
   tester.view.physicalSize = const Size(1600, 3200);
   tester.view.devicePixelRatio = 1.0;
@@ -196,8 +241,7 @@ Future<void> _pumpPage(
         guideTabOverride: const SizedBox.shrink(),
         printOrchestrator: orchestrator,
         printStationService: stationService,
-        printerStreamBuilder: (_) =>
-            Stream<List<PrinterModel>>.value(const <PrinterModel>[]),
+        printerStreamBuilder: (_) => Stream<List<PrinterModel>>.value(printers),
       ),
     ),
   );

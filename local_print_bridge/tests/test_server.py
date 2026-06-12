@@ -501,12 +501,45 @@ class PrintBridgeServerTests(unittest.TestCase):
     def test_complete_receipt_request_rejects_80mm_profile(self) -> None:
         handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
         handler.settings = self.settings
+        completed = handler._complete_receipt_request(
+            {
+                "paper_width_mm": 80,
+                "raster_width_px": 576,
+                "printer_profile": "generic_80mm_escpos",
+            },
+            selected_printer=None,
+        )
+        self.assertEqual(completed["printer_profile"], "generic_80mm_escpos")
+        self.assertEqual(completed["paper_width_mm"], 80)
+        self.assertEqual(completed["raster_width_px"], 576)
+        self.assertEqual(completed["chars_per_line"], 48)
+
+    def test_complete_receipt_request_promotes_selected_80mm_printer_defaults(self) -> None:
+        handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
+        handler.settings = self.settings
+        completed = handler._complete_receipt_request(
+            {},
+            selected_printer={
+                "id": "tcp:192.168.1.100:9100",
+                "paper_width_mm": 80,
+                "printer_profile": "pos80",
+                "auto_cut": True,
+            },
+        )
+        self.assertEqual(completed["printer_profile"], "pos80")
+        self.assertEqual(completed["paper_width_mm"], 80)
+        self.assertEqual(completed["raster_width_px"], 576)
+        self.assertEqual(completed["chars_per_line"], 48)
+
+    def test_complete_receipt_request_rejects_mismatched_80mm_pos58_profile(self) -> None:
+        handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
+        handler.settings = self.settings
         with self.assertRaises(Exception):
             handler._complete_receipt_request(
                 {
                     "paper_width_mm": 80,
                     "raster_width_px": 576,
-                    "printer_profile": "generic_80mm_escpos",
+                    "printer_profile": "pos58",
                 },
                 selected_printer=None,
             )

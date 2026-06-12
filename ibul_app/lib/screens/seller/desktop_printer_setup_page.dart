@@ -20,6 +20,7 @@ import '../../services/print_station_service.dart';
 import '../../services/printer_repository.dart';
 import '../../widgets/bridge_error_dialog.dart';
 import '../../widgets/turkish_encoding_calibration_dialog.dart';
+import 'printer_ethernet_dialog.dart';
 import 'printer_system_setup_wizard.dart';
 import 'printer_wizard.dart';
 
@@ -1679,6 +1680,7 @@ class _PrintersTabState extends State<_PrintersTab> {
                 _PrinterCard(
                   printer: printer,
                   restaurantId: widget.restaurantId,
+                  printOrchestrator: _printOrchestrator,
                 ),
               );
             },
@@ -2403,18 +2405,23 @@ class _GuidedStepTile extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────────
 
 class _PrinterCard extends StatefulWidget {
-  const _PrinterCard({required this.printer, required this.restaurantId});
+  const _PrinterCard({
+    required this.printer,
+    required this.restaurantId,
+    this.printOrchestrator,
+  });
 
   final PrinterModel printer;
   final String restaurantId;
+  final DesktopPrintOrchestrator? printOrchestrator;
 
   @override
   State<_PrinterCard> createState() => _PrinterCardState();
 }
 
 class _PrinterCardState extends State<_PrinterCard> {
-  final DesktopPrintOrchestrator _printOrchestrator =
-      DesktopPrintOrchestrator();
+  late final DesktopPrintOrchestrator _printOrchestrator =
+      widget.printOrchestrator ?? DesktopPrintOrchestrator();
   bool _testing = false;
   bool _deleting = false;
   String? _testError;
@@ -2509,19 +2516,36 @@ class _PrinterCardState extends State<_PrinterCard> {
   }
 
   Future<void> _handleEdit() async {
-    final saved = await showPrinterWizard(
-      context,
-      restaurantId: widget.restaurantId,
-      existing: widget.printer,
-    );
-    if (saved != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('"${saved.name}" güncellendi.'),
-          backgroundColor: const Color(0xFF8B5CF6),
-        ),
+    if (!mounted) return;
+    final isEthernetPrinter = widget.printer.isEthernetConnection;
+    late final Future<PrinterModel?> dialogFuture;
+    if (isEthernetPrinter) {
+      // ignore: use_build_context_synchronously
+      dialogFuture = showAddEthernetPrinterDialog(
+        context,
+        restaurantId: widget.restaurantId,
+        existing: widget.printer,
+      );
+    } else {
+      // ignore: use_build_context_synchronously
+      dialogFuture = showPrinterWizard(
+        context,
+        restaurantId: widget.restaurantId,
+        existing: widget.printer,
       );
     }
+    final saved = await dialogFuture;
+    if (!mounted || saved == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isEthernetPrinter
+              ? '"${saved.name}" IP/port ayarı güncellendi.'
+              : '"${saved.name}" güncellendi.',
+        ),
+        backgroundColor: const Color(0xFF8B5CF6),
+      ),
+    );
   }
 
   Future<void> _handleActiveToggle(bool value) async {
@@ -2833,7 +2857,10 @@ class _PrinterCardState extends State<_PrinterCard> {
                 FilledButton.icon(
                   onPressed: _handleEdit,
                   icon: const Icon(Icons.edit_outlined, size: 14),
-                  label: const Text('Düzenle', style: TextStyle(fontSize: 12)),
+                  label: Text(
+                    widget.printer.isEthernetConnection ? 'IP/Port' : 'Düzenle',
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF8B5CF6),
                     padding: const EdgeInsets.symmetric(
