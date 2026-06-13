@@ -2,9 +2,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../../../services/seller_dashboard_service.dart';
 import 'seller_dashboard_overview_widgets.dart';
 
+typedef SellerDashboardOrderTitleResolver =
+    String Function(Map<String, dynamic> order);
+typedef SellerDashboardOrderSubtitleResolver =
+    String Function(Map<String, dynamic> order);
 typedef SellerDashboardOrderLabelResolver =
     String Function(Map<String, dynamic> order);
 typedef SellerDashboardOrderColorResolver =
@@ -221,8 +224,10 @@ class SellerDashboardProgressRow extends StatelessWidget {
 class SellerDashboardRecentOrdersCard extends StatelessWidget {
   const SellerDashboardRecentOrdersCard({
     super.key,
-    required this.metrics,
+    required this.recentOrders,
     required this.onViewAll,
+    required this.titleForOrder,
+    required this.subtitleForOrder,
     required this.statusLabelForOrder,
     required this.statusColorForOrder,
     required this.customerNameForOrder,
@@ -230,8 +235,10 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
     required this.formatCurrency,
   });
 
-  final SellerDashboardMetrics metrics;
+  final List<Map<String, dynamic>> recentOrders;
   final VoidCallback onViewAll;
+  final SellerDashboardOrderTitleResolver titleForOrder;
+  final SellerDashboardOrderSubtitleResolver subtitleForOrder;
   final SellerDashboardOrderLabelResolver statusLabelForOrder;
   final SellerDashboardOrderColorResolver statusColorForOrder;
   final SellerDashboardOrderCustomerResolver customerNameForOrder;
@@ -272,7 +279,7 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
             ),
           ),
           Container(height: 1, color: const Color(0xFFE5E7EB)),
-          if (metrics.recentOrders.isEmpty)
+          if (recentOrders.isEmpty)
             Padding(
               padding: const EdgeInsets.all(18),
               child: Text(
@@ -281,12 +288,11 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
               ),
             )
           else
-            ...metrics.recentOrders.map((order) {
+            ...recentOrders.map((order) {
               final status = statusLabelForOrder(order);
               final statusColor = statusColorForOrder(order);
-              final orderId =
-                  (order['order_id'] ?? order['orderId'] ?? order['id'] ?? '-')
-                      .toString();
+              final orderTitle = titleForOrder(order);
+              final orderSubtitle = subtitleForOrder(order);
               final customerName = customerNameForOrder(order);
               final quantity =
                   int.tryParse((order['quantity'] ?? 1).toString()) ?? 1;
@@ -299,6 +305,9 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                           as num)
                       .toDouble();
               final createdAt = orderDateForOrder(order);
+              final detailLine = orderSubtitle.isEmpty
+                  ? '$customerName · $quantity ürün'
+                  : '$customerName · $quantity ürün · $orderSubtitle';
 
               return Container(
                 padding: const EdgeInsets.symmetric(
@@ -332,12 +341,14 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                         children: [
                           Row(
                             children: [
-                              Text(
-                                orderId,
-                                style: const TextStyle(
-                                  color: Color(0xFF0F172A),
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w800,
+                              Expanded(
+                                child: Text(
+                                  orderTitle,
+                                  style: const TextStyle(
+                                    color: Color(0xFF0F172A),
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -363,7 +374,7 @@ class SellerDashboardRecentOrdersCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '$customerName · $quantity ürün',
+                            detailLine,
                             style: const TextStyle(
                               color: Color(0xFF64748B),
                               fontSize: 12.5,

@@ -36,6 +36,7 @@ import '../services/auth_service.dart';
 import '../services/support_service.dart';
 import '../services/campaign_service.dart';
 import '../services/order_service.dart';
+import '../utils/dynamic_value_helpers.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
 import '../services/desktop_print_orchestrator.dart';
@@ -4407,6 +4408,20 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         .map(_normalizeClosedHistoryForDashboard)
         .toList(growable: false);
     return [..._sellerOrders, ...normalized];
+  }
+
+  /// Son Siparişler kartı ile Siparişler modülü aynı görünür online kümesini
+  /// kullanır; restoranlarda kapalı masa geçmişi burada gösterilmez.
+  List<Map<String, dynamic>> get _dashboardRecentOrders {
+    final sorted = [..._sellerOrdersVisibleInOrdersModule()]
+      ..sort((a, b) {
+        final left =
+            _dashboardOrderDate(a) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final right =
+            _dashboardOrderDate(b) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return right.compareTo(left);
+      });
+    return sorted.take(5).toList(growable: false);
   }
 
   /// Maps a `table_order_history` row to the dashboard order shape, dating the
@@ -9054,7 +9069,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             ],
           ),
           const SizedBox(height: 8),
-          if (metrics.recentOrders.isEmpty)
+          if (_dashboardRecentOrders.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
@@ -9063,16 +9078,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               ),
             )
           else
-            ...metrics.recentOrders.map((order) {
+            ..._dashboardRecentOrders.map((order) {
               final status = _sellerOrderStatusLabel(
                 order['status']?.toString(),
               );
               final statusColor = _sellerOrderStatusColor(
                 order['status']?.toString(),
               );
-              final orderId =
-                  (order['order_id'] ?? order['orderId'] ?? order['id'] ?? '-')
-                      .toString();
+              final orderTitle = _sellerOrderDisplayTitle(order);
+              final orderSubtitle = _sellerOrderDashboardSubtitle(order);
               final customerName = _sellerOrderCustomerName(order);
               final quantity =
                   int.tryParse((order['quantity'] ?? 1).toString()) ?? 1;
@@ -9088,6 +9102,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               final timeText = createdAt == null
                   ? '--:--'
                   : '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+              final detailLine = orderSubtitle.isEmpty
+                  ? '$customerName • $quantity ürün • $timeText'
+                  : '$customerName • $quantity ürün • $orderSubtitle • $timeText';
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
@@ -9122,7 +9139,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                             children: [
                               Expanded(
                                 child: Text(
-                                  orderId,
+                                  orderTitle,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w800,
                                     color: Color(0xFF0F172A),
@@ -9151,7 +9168,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '$customerName • $quantity ürün • $timeText',
+                            detailLine,
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.grey.shade600,
@@ -10306,7 +10323,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Future<void> _showMobileOrderDetailSheet(Map<String, dynamic> order) async {
-    final orderItemId = order['id']?.toString() ?? '';
+    final normalizedOrder = normalizeOrderIdentityFields(
+      Map<String, dynamic>.from(order),
+    );
+    final orderItemId = normalizedOrder['id']?.toString() ?? '';
     if (orderItemId.isNotEmpty) {
       await _loadSelectedSellerOrderHistory(orderItemId);
     }
@@ -10322,7 +10342,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                   (orderItemId.isNotEmpty
                       ? _sellerOrderById[orderItemId]
                       : null) ??
-                  order;
+                  normalizedOrder;
               final status = latestOrder['status']?.toString();
               final canAdvance = _canAdvanceMobileOrderStage(status);
               final prepareLabel = _mobilePrepareActionLabel(status);
@@ -16507,8 +16527,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
   Widget _buildOverviewRecentOrdersCard(SellerDashboardMetrics metrics) {
     return SellerDashboardRecentOrdersCard(
-      metrics: metrics,
+      recentOrders: _dashboardRecentOrders,
       onViewAll: () => _setSelectedModule(SellerModule.orders),
+      titleForOrder: _sellerOrderDisplayTitle,
+      subtitleForOrder: _sellerOrderDashboardSubtitle,
       statusLabelForOrder: (order) =>
           _sellerOrderStatusLabel(order['status']?.toString()),
       statusColorForOrder: (order) =>
@@ -21337,7 +21359,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Future<void> _openSellerOrderDetail(Map<String, dynamic> order) async {
-    final normalized = Map<String, dynamic>.from(order);
+    final normalized = normalizeOrderIdentityFields(
+      Map<String, dynamic>.from(order),
+    );
     final isExternalOrder = _isSellerExternalOrder(normalized);
     final rawDeliveryType =
         normalized['delivery_type']?.toString().toLowerCase() ?? '';
@@ -22869,6 +22893,28 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final extraCount = totalItems > 1 ? totalItems - 1 : 0;
     if (extraCount <= 0) return primary;
     return '$primary +$extraCount ürün';
+  }
+
+  bool _isTechnicalSellerOrderId(String value) {
+    if (value.startsWith('optimistic-')) return true;
+    return RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+      caseSensitive: false,
+    ).hasMatch(value);
+  }
+
+  String _sellerOrderDashboardSubtitle(Map<String, dynamic> order) {
+    final orderNumber = order['order_number']?.toString().trim();
+    if (orderNumber != null && orderNumber.isNotEmpty) {
+      return orderNumber;
+    }
+    final rawId = (order['order_id'] ?? order['orderId'])?.toString().trim();
+    if (rawId != null &&
+        rawId.isNotEmpty &&
+        !_isTechnicalSellerOrderId(rawId)) {
+      return '#$rawId';
+    }
+    return '';
   }
 
   List<String> _sellerOrderPreviewTags(Map<String, dynamic> order) {

@@ -199,7 +199,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` `AppState`, `ReviewState`, `DatabaseHelper`, `AdminService`, `ReviewRepository`, `StoreService`, `SupabaseService`, çok sayıda widget ve `business_detail_page.dart`, `map_page.dart`.
 - `Bu dosyayı kullanan dosyalar:` `HomeWrapper`, `MaterialApp.home`, kök `/` route.
 - `Değişirse etkilenecek yerler:` landing ürün akışı, banner cache, QR’dan home fallback, category/search navigasyonları.
-- `Risk notu:` Büyük ve çok sorumluluklu; performans ve init race sorunlarına açık.
+- `Risk notu:` Büyük ve çok sorumluluklu; performans ve init race sorunlarına açık. Web görünümü (`home_screen_sections.dart`) `WebStickyFooterScrollView` kullanır; kategori/boş ürün ekranı footer layout'u bu wrapper'a bağlıdır.
 - `Durum:` kısmi
 
 ## `ibul_app/lib/screens/qr_entry_screen.dart`
@@ -246,7 +246,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 - `Dosya yolu:` `ibul_app/lib/screens/reviews_page.dart`
 - `Amaç:` Hesap > **Değerlendirmelerim** ekranı; kullanıcının yazdığı ürün yorumlarını listeler, arama ve sekme filtreleri sunar.
-- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `core/constants.dart`, `models/product_model.dart`, `widgets/account_search_filter_row.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`, `widgets/web_footer.dart`, `screens/product_detail_page.dart`, `screens/search_results_page.dart`
+- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `core/constants.dart`, `models/product_model.dart`, `widgets/account_search_filter_row.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`, `widgets/web_sticky_footer_scroll_view.dart`, `screens/product_detail_page.dart`, `screens/search_results_page.dart`
 - `Bu dosyayı kullanan dosyalar:` `widgets/account_sidebar.dart`, hesap navigasyon akışı.
 - `Değişirse etkilenecek yerler:` kullanıcı değerlendirme geçmişi listesi, arama/filtre UI, boş durum kartı, ürün detayına geçiş.
 - `Risk notu:` UI-only değişiklikler davranışı etkilememeli; `_selectedTab`, `_searchQuery`, `_filteredReviews` ve `_openProduct` akışı korunmalı. Filtre butonu dekoratif (onTap yok).
@@ -259,7 +259,27 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` `core/app_state.dart`, `services/order_service.dart`, `utils/order_status_constants.dart`, `utils/dynamic_value_helpers.dart`, `screens/order_detail_page.dart`, `screens/shipment_tracking_page.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`
 - `Bu dosyayı kullanan dosyalar:` `home_screen.dart`, hesap navigasyon akışı.
 - `Değişirse etkilenecek yerler:` Hesap Özeti > Son Siparişler satır tıklaması, kargo takip görünürlüğü, sipariş detay navigasyonu.
-- `Risk notu:` Takip kodu sipariş oluşturulurken atanır; görünürlük yalnız `isInTransitShipmentStatus` ile sınırlandırılmalı, aksi halde onaylanmış/hazırlanıyor siparişlerde erken görünür. Son Siparişler detay navigasyonu `wrapOrderForDetailPage` ile `OrderDetailPage`'in beklediği `rawOrder` payload'ını taşımalı.
+- `Risk notu:` Takip kodu sipariş oluşturulurken atanır; görünürlük yalnız `isInTransitShipmentStatus` ile sınırlandırılmalı. Mobil üst profil özeti `AppState.currentUser` + `UserIdentity.resolveProfilePhotoUrl` / `formatHeightWeightSummary` kullanmalı; mock avatar/boy-kilo kullanılmamalı.
+- `Durum:` net
+
+## `ibul_app/lib/screens/settings_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/settings_page.dart`
+- `Amaç:` Hesap > **Kullanıcı Bilgilerim** / Ayarlar; profil fotoğrafı, kişisel bilgiler, iletişim, güvenlik ve bildirim tercihleri formu.
+- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `services/auth_service.dart`, `screens/addresses_page.dart`, `screens/change_password_page.dart`, `utils/pick_image_file.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`, `widgets/web_sticky_footer_scroll_view.dart`
+- `Bu dosyayı kullanan dosyalar:` `widgets/account_sidebar.dart`, hesap navigasyon akışı.
+- `Değişirse etkilenecek yerler:` profil kaydetme, adres önizleme (`AppState.currentDeliveryAddress` / `deliveryAddresses`), telefon/e-posta güncelleme diyalogları, şifre değiştir navigasyonu.
+- `Risk notu:` Adres alanı `AppState.currentDeliveryAddress` + `deliveryAddresses` tek kaynaktır; `users.address` settings save'de yazılmaz. SMS OTP backend'i yok — telefon değişimi profil kaydı + bilgilendirme diyalogu. E-posta değişimi Supabase `auth.updateUser(email)` + doğrulama maili gerektirir. `ensureCurrentUserRow` mevcut kullanıcıda `photo_url` overwrite etmemeli; profil foto `users.photo_url` + `store-images/{uid}/profiles/...` (RLS: ilk klasör `auth.uid()`). Foto upload fail olsa bile text profil alanları ayrı kaydedilir.
+- `Durum:` net
+
+## `ibul_app/lib/screens/change_password_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/change_password_page.dart`
+- `Amaç:` Ayarlar > **Şifre Değiştir** ayrı ekranı; mevcut şifre doğrulama (re-auth), yeni şifre + tekrar, Supabase e-posta sıfırlama (`resetPasswordForEmail`).
+- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `services/auth_service.dart`
+- `Bu dosyayı kullanan dosyalar:` `screens/settings_page.dart`
+- `Değişirse etkilenecek yerler:` şifre güncelleme UX, Google-only hesaplarda şifre formu devre dışı + e-posta reset, oturum yenileme (re-auth `signInWithPassword`).
+- `Risk notu:` SMS OTP backend yok — yalnız e-posta reset. Google-only hesaplarda mevcut şifre alanı devre dışı; şifre oluşturmak için e-posta sıfırlama gerekir. Supabase reset redirect URL projede ayrıca yapılandırılmalı.
 - `Durum:` net
 
 ## `ibul_app/lib/screens/cart_page.dart`
@@ -276,7 +296,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 - `Dosya yolu:` `ibul_app/lib/screens/favorites_page.dart`
 - `Amaç:` Hesap > **Beğendiklerim** / Favorilerim ekranı; beğenilen ürünler, kullanıcı listeleri ve öneriler sekmelerini sunar.
-- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `core/constants.dart`, `models/product_model.dart`, `widgets/account_search_filter_row.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`, `widgets/web_footer.dart`, `widgets/product_card.dart`, `screens/list_detail_page.dart`, `screens/product_detail_page.dart`
+- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `core/constants.dart`, `models/product_model.dart`, `widgets/account_search_filter_row.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`, `widgets/web_sticky_footer_scroll_view.dart`, `widgets/product_card.dart`, `screens/list_detail_page.dart`, `screens/product_detail_page.dart`
 - `Bu dosyayı kullanan dosyalar:` `widgets/account_sidebar.dart`, `widgets/web_header_menu_items.dart`, `screens/account_page.dart`
 - `Değişirse etkilenecek yerler:` favori ürün grid'i, liste oluşturma, öneriler sekmesi, mobil arama/filtre satırı.
 - `Risk notu:` Listelerim sekmesindeki Ekle butonu `_showCreateListDialog` açmalı; arama alanı şu an dekoratif (onChanged yok).
@@ -309,7 +329,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` `AuthService`, `AdminPanelPage`, `SellerPanelPage`, `become_seller_page.dart`.
 - `Bu dosyayı kullanan dosyalar:` `lib/main_seller.dart`, named route `/seller-login`.
 - `Değişirse etkilenecek yerler:` seller desktop giriş, admin mode giriş, session backup/restore akışı.
-- `Risk notu:` yanlış role handling seller ve admin yetki ayrımını bozar.
+- `Risk notu:` yanlış role handling seller ve admin yetki ayrımını bozar. macOS sandbox’ta Keychain entitlement yoksa `AuthService.clearSellerSwitchBackup()` → `SecureLocalStore.delete()` patlayabilir; login catch bloğu ikinci kez aynı cleanup’ı çağırırsa gerçek auth hatası SnackBar’a ulaşmadan unhandled exception olur. `SecureLocalStore` Keychain hatasında SharedPreferences fallback kullanır; macOS entitlements’a `keychain-access-groups` eklenmelidir.
 - `Durum:` net
 
 ## `ibul_app/lib/screens/seller_panel_page.dart`
@@ -339,7 +359,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` `seller_panel_page.dart`, `services/order_service.dart`
 - `Bu dosyayı kullanan dosyalar:` `seller_panel_page.dart`
 - `Değişirse etkilenecek yerler:` seller Siparişler ekranı liste veri kümesi, üst sayaçlar, sipariş kart başlıkları ve detail sayfasına geçiş davranışı.
-- `Risk notu:` Restoran / yemek mağazalarında bu modül yalnız online siparişleri göstermeli; `table` / `waiter` kaynaklı kayıtlar Garson akışında kalmalı. Buradaki filtreler yanlış genişlerse dashboard/finance değil ama Siparişler ekranı yanlış veriyle dolar.
+- `Risk notu:` Restoran / yemek mağazalarında bu modül yalnız online siparişleri göstermeli; `table` / `waiter` kaynaklı kayıtlar Garson akışında kalmalı. Dashboard **Son Siparişler** kartı da aynı `_sellerOrdersVisibleInOrdersModule()` kümesini kullanır; kapalı masa geçmişi (`_dashboardClosedHistory`) yalnız ciro/KPI hesabında kalır, Son Siparişler / Siparişler listesine karışmaz.
 - `Durum:` net
 
 ## `restaurant-ops-web/src/features/restaurant/app/WaiterRouteScreen.tsx`
@@ -625,6 +645,8 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
   - masa etiketi üretimi.
 - `ibul_app/lib/widgets/skeleton_loading.dart`
   - `SkeletonLoading` shimmer primitive + `ProductCardSkeleton`; arama/ana sayfa grid loading kartları. `tight` modu arama sonuç grid'i ile hizalı constraint-aware layout kullanır.
+- `ibul_app/lib/widgets/web_sticky_footer_scroll_view.dart`
+  - Web hesap/checkout/sepet/home sayfalarında paylaşılan scroll + sticky footer layout. `footerReserve` yalnız ölçülen footer slot yüksekliği (gap çift sayılmaz); body `minHeight = viewport − footerReserve`; `WebStickyFooterBodyScope` ile alt içerik alanına body yüksekliği iletilir.
 - `ibul_app/lib/core/store_logo_helper.dart`
   - store logo çözümleme.
 
@@ -690,7 +712,165 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - Eski `table_order_history` satırlarının waiter/sub-admin UID altında yazılmış olması halinde owner eşlemesi otomatik geri kazanılamaz; güvenli yaklaşım manuel mapping ile backfill çalıştırmaktır.
 - Prod `table_order_history` şemasında `archived_at` kolonu görünmüyor; başka ortamda legacy kolon olup olmadığı doğrulanmalı.
 
+# Security / Quality Audit (2026-06-13)
+
+Kapsamlı repo denetimi: secret yönetimi, AI yüzeyi, auth/RLS, network, performans, log/gizlilik, build güvenliği. Kod değişikliği yapılmadı; yalnız bulgular ve minimum düzeltme planı.
+
+## Denetim kapsamı (okunan kritik yüzeyler)
+
+| Alan | Dosyalar |
+| --- | --- |
+| Config / env | `.env.example`, `runtime_config.dart`, `ihiz_runtime_config.dart`, `firebase_options.dart`, `local_print_bridge/.env.example`, `restaurant-ops-web/.env.example` |
+| Bootstrap | `lib/main.dart`, `lib/main_seller.dart`, `app_bootstrap.dart`, `scripts/run.sh` |
+| State | `app_state.dart`, `app_state_auth.dart`, `cart_state.dart`, `auth_service.dart` |
+| Network / servis | `supabase_service.dart`, `store_service.dart`, `order_service.dart`, `search_telemetry_service.dart`, edge `functions/_shared/http.ts` |
+| Auth / yetki | `auth_service.dart`, `admin_panel_page.dart`, `SUPABASE_SEARCH_TELEMETRY.sql`, `SUPABASE_FIX_GARSON_CLOSE_TABLE.sql`, `SUPABASE_ADMIN_GENERAL_CLEANUP_RPC.sql` |
+| Restaurant ops | `restaurant-ops-web/.../commands/route.ts`, `snapshot/route.ts`, `server/repository.ts`, `data/supabase/client.ts` |
+| Print / local API | `local_print_service.dart`, `local_print_bridge/config.py`, `server.py` |
+| AI (mevcut) | `ai_assistant_service.dart`, `ai_chat_page.dart`, `visual_intelligence_service.dart`, `app_feature_flags.dart` |
+| Build / CI | `.github/workflows/firebase-hosting-*.yml`, `firebase.json` |
+| Performans adayları | `home_screen.dart`, `seller_panel_page.dart`, `desktop_print_hub.dart`, `search_overlay.dart`, `business_detail_page.dart` |
+
+## Özet risk matrisi
+
+| Öncelik | Sayı | Ana temalar |
+| --- | --- | --- |
+| P0 | 3 | Restaurant ops API auth yok; search_telemetry global SELECT; CI release dart-define eksik |
+| P1 | 8 | Session token SharedPreferences; QR token log; table_orders geniş RLS; print station token env; admin client-only guard |
+| P2 | 10+ | user_provider cast; yutulan exception; polling/timer; security header eksik; mega dosyalar |
+| P3 | çeşitli | Legacy print server belirsizliği; demo AI flag; test placeholder JWT |
+
+## Minimum güvenli düzeltme sırası (öneri)
+
+1. `SUPABASE_SEARCH_TELEMETRY.sql` — SELECT politikasını admin veya `auth.uid() = user_id` ile sınırla; `delivery_address` insert’te hash/şehir-only yap.
+2. `restaurant-ops-web` API route’larına auth (waiter session JWT veya server-only secret header) + mutation allowlist.
+3. `.github/workflows/firebase-hosting-*.yml` — GitHub Secrets → `--dart-define` enjeksiyonu; boş config ile deploy engeli.
+4. `auth_service.dart` — seller switch session backup → `flutter_secure_storage` (veya en azından refresh token hariç).
+5. QR debug logları — `kDebugMode` / `AppFeatureFlags.enableVerboseDebugLogs` arkasına al.
+6. Prod Supabase’te `table_orders_authenticated_all` yerine seller/garson scoped policy (SQL Bölüm B) doğrula/uygula.
+7. `search_overlay.dart` — global 1500 satır telemetry çekimini kaldır veya admin-only RPC’ye taşı.
+
+## AI API durumu
+
+Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `VisualIntelligenceService` demo/keyword placeholder. `use_ai_suggestions` yalnız ads veri alanı. Gelecek entegrasyon için: server-side proxy, rate limit, prompt izolasyonu, output validation zorunlu.
+
+## Secret envanteri (beklenen client-safe vs server-only)
+
+| Secret | Beklenen konum | Repo durumu |
+| --- | --- | --- |
+| `IBUL_SUPABASE_ANON_KEY` | Client dart-define | `.env.example` placeholder; CI’da inject eksik |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server only | `restaurant-ops-web`, edge functions, Firebase functions — client’ta yok ✓ |
+| Firebase API keys | Client (kısıtlı) | `firebase_options.dart` dart-define; git’te ✓ (kısıtlama Firebase console’da olmalı) |
+| `PRINT_STATION_*_TOKEN` | Local bridge `.env` | `.env.example`’da; gitignore altında; rotation önerilir |
+| Session JWT backup | Cihaz secure store | SharedPreferences’ta — iyileştirme gerekli |
+
+# Security / Quality Audit (2026-06-13, post-patch yenileme)
+
+Önceki turda P0/P1 patch seti uygulandı (bkz. Update Log). Bu bölüm **güncel kod + kalan riskleri** yansıtır.
+
+## Kapatılan / iyileştirilen (kod tarafı)
+
+| Alan | Durum |
+| --- | --- |
+| restaurant-ops API | `server-action` varsayılan; HTTP route’lar `RESTAURANT_API_SECRET` guard |
+| search_telemetry Dart | Tam `delivery_address` insert kaldırıldı; overlay telemetry fetch kaldırıldı |
+| CI web build | `scripts/build_web_ci.sh` + GitHub Secrets dart-define |
+| Session backup | `SecureLocalStore` (seller switch JWT); macOS Keychain hatasında SharedPreferences fallback |
+| Hassas device cache | `addresses` / `savedCards` secure storage + legacy migrate |
+| QR token log | `kDebugMode` + `maskSensitiveToken` |
+| Print hub sweep | 300ms → 1000ms |
+
+## Açık / prod doğrulama gerektiren
+
+| Öncelik | Bulgu | Not |
+| --- | --- | --- |
+| P0* | `SUPABASE_FIX_SEARCH_TELEMETRY_RLS.sql` prod’da uygulanmadıysa eski global SELECT devam eder | *Deployment gap |
+| P0* | `table_orders_authenticated_all` + `table_order_history_authenticated` (`using true`) prod’da aktifse IDOR | *SQL policy |
+| P1 | `user_provider.dart` adres hydrate `Map<String,String>.from` crash riski | `app_state_auth` düzeltilmiş, provider değil |
+| P1 | `device_cache_current_delivery_address_v1` hâlâ SharedPreferences | secure storage’a taşınmadı |
+| P1 | Admin `/admin` route yalnız client guard | RPC/RLS’ye bağımlı |
+| P2 | `google_generative_ai` pubspec’te var, kodda kullanım yok | Gelecek AI entegrasyon riski |
+| P2 | `enableDemoAiAssistant` release’te `true` | Yanıltıcı UX |
+| P2 | `firebase.json` CSP/HSTS yok | Web hardening eksik |
+| P2 | `home_screen.dart` init waterfall + `Timer.periodic` + `IndexedStack` | Ana sayfa perf |
+
+## Performans darboğazları (dosya bazlı, güncel)
+
+1. `home_screen.dart` — paralel cache+network init, banner timer, tüm sekmeler `IndexedStack`’te canlı
+2. `seller_panel_page.dart` — çok büyük monolith; bootstrap/owner restore zinciri
+3. `business_detail_page.dart` — menü+kampanya+table order tek dosyada
+4. `desktop_print_hub.dart` — 1s sweep + realtime + health timer (iyileştirildi ama hâlâ aktif)
+5. `app_state.dart` — geniş `notifyListeners` yüzeyi
+6. `map_page.dart` — konum + proximity polling
+
+## Minimum kalan düzeltme planı
+
+1. Prod Supabase: `SUPABASE_FIX_SEARCH_TELEMETRY_RLS.sql` uygula + doğrula
+2. Prod Supabase: `table_orders` / `table_order_history` policy audit; Bölüm B (seller/garson scoped) geç
+3. `user_provider.dart`: `readStringMap` ile adres hydrate
+4. `app_state.dart`: current delivery address → secure storage
+5. `app_feature_flags.dart`: demo AI/visual flags → `kReleaseMode` veya dart-define
+6. `firebase.json`: CSP + HSTS header ekle
+
 # Update Log
+
+## 2026-06-13 (home web kategori — footer reserve + main slot fill)
+
+- **Kök neden (2 parça):** (1) `WebStickyFooterScrollView` footer reserve hesabında `contentFooterGap` slot ölçümüne ekleniyordu → toplam scroll yüksekliği viewport'tan kısa kalıyor, footer gerçek alt kenara oturmuyordu. (2) Home web kategori görünümünde (`home_screen_sections.dart`) ana içerik (Teknoloji Dünyası / empty state) doğal/kısa yükseklikte kalıyordu; body slot dolsa bile orta alan genişlemiyordu.
+- `web_sticky_footer_scroll_view.dart`: `footerReserve = _footerSlotHeight` (çift gap sayımı kaldırıldı); `WebStickyFooterBodyScope` eklendi.
+- `home_screen_sections.dart`: web sticky footer `contentAlignment: topCenter`; `_wrapWebCategoryMainSlot` ile kısa/boş kategori ana alanı body yüksekliğine göre büyütülüp empty state near-center hizalanır; dolu grid'de expand kapalı.
+
+## 2026-06-13 (home web kategori — sticky footer bağlantısı)
+
+- **Kök neden:** Boş kategori/marka web ekranı (`home_screen_sections.dart` → `_buildWebHomeContentImpl`) `WebStickyFooterScrollView` kullanmıyordu; `SingleChildScrollView` + inline `WebFooter` ile içerik doğal yükseklikte kalıyor, footer viewport altına oturmuyordu. `Teknoloji Dünyası` kartı ve 200px empty state sabit yükseklikte olması sorunu tetikliyordu ama asıl eksik ortak sticky footer wrapper'dı.
+- `home_screen_sections.dart`: web scroll → `WebStickyFooterScrollView`; inline `WebFooter` + kategori branch `SizedBox(80)` kaldırıldı.
+- `category_products_page.dart` web footer kullanmıyor (mobil header); bu bug owner'ı home web kategori akışı.
+
+## 2026-06-13 (web sticky footer — boş ekran body dengeleme)
+
+- **Kök neden:** İlk sticky footer fix'inde `MainAxisAlignment.spaceBetween` footer'ı alta itiyordu ama content bloğunu üstte pinliyordu; boşluk body içinde dağılmıyor, içerik–footer arasında dengesiz gap oluşuyordu.
+- `web_sticky_footer_scroll_view.dart`: `spaceBetween` kaldırıldı → body slot (`minHeight = viewport − footerReserve`) + footer ayrı kolon; kısa içerik `Align(0, -0.1)` ile header'a saygılı near-center; footer slot yüksekliği ölçülerek body reserve güncellenir. Sayfa dosyalarına dokunulmadı.
+
+## 2026-06-13 (web sticky footer — boş ekran layout)
+
+- **Kök neden:** Hesap alt sayfalarında `WebFooter`, `ConstrainedBox(minHeight: viewport)` dışında ayrı `Column` child olarak duruyordu; kısa/boş içerikte footer viewport altına sabitlenmiyor, içeriğin hemen altında kalıyordu.
+- `ibul_app/lib/widgets/web_sticky_footer_scroll_view.dart` eklendi: ortak scroll layout — footer içerik ile aynı min-height kolonunda, `spaceBetween` + `contentFooterGap` (varsayılan 32px) ile alta itilir; uzun içerikte scroll davranışı değişmez.
+- Web görünümü taşıyan sayfalar ortak layout'a geçirildi: `account_page`, `favorites_page`, `reviews_page`, `orders_page`, `order_detail_page`, `list_detail_page`, `coupons_page`, `addresses_page`, `followed_stores_page`, `settings_page`, `cart_page`, `order_confirmation_page`. Checkout sol kolon scroll yapısı dokunulmadı; ana sayfa web akışı sonraki turda bağlandı (bkz. home web kategori sticky footer).
+
+## 2026-06-13 (Firebase Hosting security headers)
+
+- Kök `firebase.json`: tüm yanıtlar için HSTS, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, baseline CSP eklendi (`source: **`).
+- CSP Flutter web (`unsafe-inline`/`wasm-unsafe-eval`), Supabase (`*.supabase.co` + `wss:`), Firebase/Google APIs, OpenStreetMap tiles/nominatim, Google Sign-In frame için daraltılmış allowlist; mevcut cache header blokları ve SPA `rewrites` korundu.
+- Risk notu: `img-src https:` ürün görselleri için geniş; ileride storage host allowlist’e daraltılabilir. `unsafe-eval` CanvasKit uyumluluğu için bilinçli.
+
+## 2026-06-13 (P1/P2 kalan üçlü patch)
+
+- `user_provider.dart`: adres hydrate `readStringMap` ile güvenli normalize (`app_state_auth` parity).
+- `app_state.dart` + `app_state_auth.dart`: `device_cache_current_delivery_address_v1` → `SecureLocalStore` (legacy SharedPreferences migrate).
+- `app_feature_flags.dart`: demo AI/visual intelligence `!kReleaseMode`; release build’de kapalı.
+- `pubspec.yaml`: kullanılmayan `google_generative_ai` bağımlılığı kaldırıldı.
+
+## 2026-06-13 (post-patch audit yenileme)
+
+- Patch sonrası denetim: kapatılan maddeler ve prod deployment gap’leri ayrıldı.
+- Kalan P0*: telemetry RLS migration + geniş `table_orders`/`table_order_history` policy prod doğrulaması.
+- Kalan P1/P2: user_provider cast, delivery address cache, demo AI flags, firebase headers, home_screen perf.
+
+## 2026-06-13 (P0/P1 security + perf patch set)
+
+- **restaurant-ops-web:** Varsayılan client adapter `server-action` (browser service-role HTTP yok). `/api/restaurant/*` ve `/api/admin/printer-jobs` supabase modunda `RESTAURANT_API_SECRET` + `x-restaurant-api-key` zorunlu (`api-auth.ts`). `.env.example` güncellendi.
+- **search_telemetry:** RLS daraltıldı — `search_telemetry_select_own` + `search_telemetry_select_admin`; hotfix `SUPABASE_FIX_SEARCH_TELEMETRY_RLS.sql`. Dart insert artık tam `delivery_address` yazmıyor; `getRecentSearches` limit 200.
+- **CI:** `scripts/build_web_ci.sh` + Firebase workflow’larda zorunlu `--dart-define` secret injection.
+- **Flutter secure storage:** `secure_local_store.dart`; seller session backup + device `addresses`/`savedCards` cache taşındı; legacy SharedPreferences otomatik migrate.
+- **Log privacy:** `log_mask_helpers.dart`; QR token logları `kDebugMode` + maskeleme (`home_screen`, `qr_entry_screen`).
+- **Perf:** `search_overlay` global telemetry fetch kaldırıldı; `desktop_print_hub` pending sweep 300ms → 1000ms.
+
+## 2026-06-13 (repo güvenlik / kalite audit)
+
+- Kapsamlı denetim tamamlandı: P0/P1 bulgular, performans top-10, secret/AI/auth/network/log analizi.
+- Kritik: `restaurant-ops-web` `/api/restaurant/*` auth’suz + service role backend; `search_telemetry` authenticated global SELECT; Firebase CI `flutter build web` dart-define’sız.
+- AI: gerçek LLM entegrasyonu yok; demo assistant/visual intelligence.
+- Minimum düzeltme planı ve denetim kapsamı tablosu eklendi.
 
 ## 2026-06-13 (ürün detay satıcı logosu + sepet chip iki satır)
 
@@ -748,6 +928,11 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `ibul_app/lib/services/supabase_service.dart`: `_homeProductSelectFields` / `_homeProductSelectFieldsSansStore` artık `description`, `specifications`, `attributes` içeriyor (quick view için).
 - `ibul_app/lib/screens/home_screen.dart`: `_convertToProduct` → `Product.fromDBProduct(dbProduct)`; satıcı sayfasıyla aynı normalize/model akışı.
 
+## 2026-06-13 (seller dashboard Son Siparişler ↔ Orders tutarlılığı)
+
+- **Kök neden:** Dashboard KPI/recent orders `_combinedDashboardOrders` (online + kapalı masa geçmişi) kullanıyordu; Siparişler modülü `_sellerOrdersVisibleInOrdersModule()` (online-only) kullanıyordu. Son Siparişler kart başlığı `order['id']` / optimistic UUID gösteriyordu.
+- **Fix:** `_dashboardRecentOrders` getter eklendi — Orders modülüyle aynı görünür küme. Dashboard kart başlıkları `_sellerOrderDisplayTitle`, alt satır `_sellerOrderDashboardSubtitle` (sipariş no). Kapalı masa geçmişi yalnız ciro/KPI'da kalır.
+
 ## 2026-06-13 (Hesap Özeti Son Siparişler detay payload)
 
 - **Kök neden:** `OrderDetailPage` sipariş verisini `orderData['rawOrder']` altında bekliyor. `orders_page.dart` `_mapRealOrderForUi` ile `rawOrder` sarmalıyor; `account_page.dart` Son Siparişler satır tıklamasında ham sipariş map'ini doğrudan geçiriyordu → `_rawOrder` boş kalıyor, satıcı adı generic (`Satıcı`), ürün kodu/özellikleri eksik görünüyordu.
@@ -796,6 +981,44 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 ## 2026-06-13 (categories page UI polish)
 
 - `ibul_app/lib/screens/categories_page.dart`: Kategoriler ekranı UI toparlandı — üst kategori şeridi kompakt hizalandı (sabit border alanı, seçili ring/shadow, 104px yükseklik); alt kategori grid'i responsive (`<=900`: 3–4 kolon, `>900`: `maxCrossAxisExtent: 118`), tutarlı kart radius/spacing ve `Expanded` görsel alanı ile dağınık boşluk giderildi. Davranış değişmedi.
+
+## 2026-06-13 (şifre değiştir güvenli akış)
+
+- **Kök neden:** `change_password_page.dart` yalnız yeni şifre + tekrar alanına sahipti; mevcut şifre doğrulaması, re-auth ve forgot-password akışı yoktu.
+- `ibul_app/lib/services/auth_service.dart`: `verifyCurrentPassword` (Supabase `signInWithPassword` re-auth), `changePasswordWithVerification`, `sendPasswordResetEmail` (`resetPasswordForEmail`), `hasEmailPasswordProvider`.
+- `ibul_app/lib/screens/change_password_page.dart`: Mevcut Şifre + Yeni Şifre + Tekrar; doğrulama geçmeden CTA pasif; Google-only hesap banner'ı; **Şifremi Unuttum** → e-posta reset diyalogu (SMS yok).
+- `ibul_app/lib/core/app_state_profile.dart`: `changeUserPasswordWithVerification`, `sendPasswordResetEmail`, `hasEmailPasswordProvider` API.
+
+## 2026-06-13 (hesabım özet kartı profile source of truth)
+
+- **Kök neden:** `account_page.dart` mobil üst profil kartı `AppState.currentUser` okumuyordu; sabit `CircleAvatar(Icons.person)` + hardcoded `Boy: 175 cm / Kilo: 70 kg` mock verisi render ediliyordu. Settings save/state refresh doğru çalışsa bile account summary farklı (statik) kaynaktan besleniyordu.
+- `user_identity.dart`: `resolveProfilePhotoUrl`, `formatHeightWeightSummary`, `profilePresetColor`; `buildAuthUserMap` foto alanlarını `photo_url` + `photoURL` olarak senkron tutar (kayıtlı profil öncelikli).
+- `account_page.dart`: mobil özet kartı normalized `currentUser` üzerinden avatar (http / preset / initials) ve boy/kilo gösterir; `Provider.of<AppState>(context)` ile save sonrası anında rebuild.
+
+## 2026-06-13 (profil foto storage 403 RLS)
+
+- **Kök neden:** `uploadProfilePhotoBytes` → `store-images` bucket, yol `profiles/{uid}/...` idi. `storage.objects` INSERT policy (`SUPABASE_FIX_SELLER.sql`) ilk klasörün `auth.uid()::text` olmasını şart koşuyor; `profiles` ≠ uid → 403 RLS. Ayrıca upload exception tüm `updateUserProfile` akışını blokluyordu.
+- `auth_service.dart`: yol `{uid}/profiles/{timestamp}.ext`; `StorageException` için net kullanıcı mesajı (URL/token loglanmaz).
+- `app_state.dart` / `app_state_profile.dart`: `uploadProfilePhotoBytes` (yalnız upload) ayrıldı.
+- `settings_page.dart`: foto upload try/catch ayrı; text profil alanları upload fail olsa da kaydedilir; kısmi başarı snackbar.
+- `ibul_app/SUPABASE_FIX_PROFILE_PHOTO_STORAGE.sql`: mevcut `store-images` policy doğrulama/hotfix (yeni path kuralı ile uyumlu).
+
+## 2026-06-13 (kullanıcı bilgilerim persist / adres source of truth)
+
+- **Kök neden (5 parça):** (1) `getUserProfile()` her çağrıda `ensureCurrentUserRow` upsert ile `photo_url`'yi auth metadata'dan yeniden yazıyordu → galeri/hazır avatar kaydı restart sonrası siliniyordu. (2) Supabase `users` satırı snake_case (`birth_date`, `photo_url`) dönerken settings hydrate camelCase (`birthDate`) okuyordu → boy/kilo/doğum tarihi/tarz/cinsiyet geri gelmiyordu. (3) Profil save sonrası local state kısmi patch ediliyor, backend readback yoktu. (4) Adreslerim'de varsayılan seçim yoktu; settings `users.address` string'i yazıyordu ama hydrate `currentDeliveryAddress` + `deliveryAddresses` okuyordu → source of truth kırıktı. (5) `updateUserProfile` oturum yokken sessizce return ediyordu.
+- `auth_service.dart`: `ensureCurrentUserRow` yalnız yeni kullanıcı insert'inde `photo_url` set eder; `updateUserProfile` oturum yoksa exception.
+- `dynamic_value_helpers.dart` + `user_identity.dart`: `normalizeUserProfileForApp` — DB profil alanlarını UI/state için tek forma getirir.
+- `app_state_profile.dart`: save sonrası `_refreshCurrentUserProfileFromBackend()` ile gerçek readback.
+- `settings_page.dart`: normalize hydrate; adres save'den çıkarıldı (teslimat koleksiyonu tek kaynak); mobil sticky CTA + section polish.
+- `addresses_page.dart`: teslimat adresine dokununca `setCurrentDeliveryAddress` + "Varsayılan" rozeti.
+
+## 2026-06-13 (kullanıcı bilgilerim / settings)
+
+- **Kök neden:** `settings_page.dart` profil fotoğrafı dekoratifti (`onPressed: () {}`), adres `user['address']` okuyordu (Adreslerim ise `AppState.deliveryAddresses`), inline şifre alanları kaydetmiyordu, mobilde ana CTA yoktu.
+- `ibul_app/lib/screens/settings_page.dart`: Section bazlı yeniden düzenleme (Profil / Kişisel / İletişim / Güvenlik / Bildirimler); adres `currentDeliveryAddress` + `deliveryAddresses` hydrate; galeri + hazır avatar seçimi; doğum tarihi picker; tarz/cinsiyet bottom sheet; telefon/e-posta değişiminde bilgilendirici doğrulama diyalogları (SMS OTP yok, e-posta Supabase confirm); **Bilgileri Güncelle** CTA; şifre inline kaldırıldı.
+- `ibul_app/lib/screens/change_password_page.dart` eklendi: ayrı şifre değiştir ekranı.
+- `ibul_app/lib/services/auth_service.dart`: `photoUrl` profil güncelleme, `uploadProfilePhotoBytes`, `updateUserEmail`, `updateUserPassword`.
+- `ibul_app/lib/core/app_state_profile.dart`: `photoUrl`, `updateUserEmail`, `uploadProfilePhoto`, `updateUserPassword` AppState API.
 
 ## 2026-06-13 (product detail nearby map back button)
 
