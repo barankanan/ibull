@@ -110,8 +110,11 @@ class ProductStoreInfo extends StatelessWidget {
                   alignment: Alignment.center,
                   child: _buildStoreLogo(
                     storeName: storeName,
-                    storeLogoUrl: storeLogoUrl,
-                    padding: const EdgeInsets.all(6),
+                    storeLogoUrl: storeLogoUrl?.isNotEmpty == true
+                        ? storeLogoUrl
+                        : null,
+                    padding: EdgeInsets.zero,
+                    size: 44,
                   ),
                 ),
               ),
@@ -305,8 +308,11 @@ class ProductStoreInfo extends StatelessWidget {
                   alignment: Alignment.center,
                   child: _buildStoreLogo(
                     storeName: storeName,
-                    storeLogoUrl: storeLogoUrl,
-                    padding: const EdgeInsets.all(4),
+                    storeLogoUrl: storeLogoUrl?.isNotEmpty == true
+                        ? storeLogoUrl
+                        : null,
+                    padding: EdgeInsets.zero,
+                    size: 48,
                     fallback: Text(
                       storeName.isNotEmpty ? storeName[0].toUpperCase() : 'T',
                       style: const TextStyle(
@@ -485,29 +491,37 @@ class ProductStoreInfo extends StatelessWidget {
     required String storeName,
     required String? storeLogoUrl,
     required EdgeInsets padding,
+    double size = 32,
     Widget? fallback,
   }) {
-    final assetLogoPath = StoreLogoHelper.getStoreLogo(storeName);
-    if (assetLogoPath != null) {
-      return Padding(
-        padding: padding,
-        child: Image.asset(assetLogoPath, fit: BoxFit.contain),
-      );
-    }
+    final letterFallback = fallback ?? _storeLetter(storeName);
 
     if (storeLogoUrl != null && storeLogoUrl.isNotEmpty) {
       return Padding(
         padding: padding,
         child: OptimizedImage(
           imageUrlOrPath: storeLogoUrl,
-          fit: BoxFit.contain,
-          cacheWidth: 96,
-          cacheHeight: 96,
-          errorWidget: fallback ?? _storeLetter(storeName),
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => letterFallback,
         ),
       );
     }
 
-    return fallback ?? _storeLetter(storeName);
+    final assetLogoPath = StoreLogoHelper.getStoreLogo(storeName);
+    if (assetLogoPath != null) {
+      return Padding(
+        padding: padding,
+        child: Image.asset(
+          assetLogoPath,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
+    return Padding(padding: padding, child: letterFallback);
   }
 }

@@ -232,6 +232,66 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Risk notu:` İzin verildikten sonra konum alınamazsa UI katmanı hata mesajını göstermeye devam eder; proximity notification mantığı bu servisten bağımsızdır.
 - `Durum:` net
 
+## `ibul_app/lib/screens/delivery_info_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/delivery_info_page.dart`
+- `Amaç:` Ürün detayından açılan Kurye Bilgi ekranı; kargo firması seçimi, teslimat süresi/ücret bilgileri ve teslimat adresi yönetimi.
+- `Bağlı olduğu dosyalar:` `core/constants.dart`, `widgets/address_edit_sheet.dart`
+- `Bu dosyayı kullanan dosyalar:` `widgets/product_detail/product_delivery_info.dart`
+- `Değişirse etkilenecek yerler:` ürün detayı kurye teslimat kartı navigasyonu, kargo firması seçim dialogu, adres ekleme/seçim akışı.
+- `Risk notu:` UI-only değişiklikler davranışı etkilememeli; `_selectedCourier`, `_addresses` ve dialog callback’leri korunmalı.
+- `Durum:` net
+
+## `ibul_app/lib/screens/reviews_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/reviews_page.dart`
+- `Amaç:` Hesap > **Değerlendirmelerim** ekranı; kullanıcının yazdığı ürün yorumlarını listeler, arama ve sekme filtreleri sunar.
+- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `core/constants.dart`, `models/product_model.dart`, `widgets/account_search_filter_row.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`, `widgets/web_footer.dart`, `screens/product_detail_page.dart`, `screens/search_results_page.dart`
+- `Bu dosyayı kullanan dosyalar:` `widgets/account_sidebar.dart`, hesap navigasyon akışı.
+- `Değişirse etkilenecek yerler:` kullanıcı değerlendirme geçmişi listesi, arama/filtre UI, boş durum kartı, ürün detayına geçiş.
+- `Risk notu:` UI-only değişiklikler davranışı etkilememeli; `_selectedTab`, `_searchQuery`, `_filteredReviews` ve `_openProduct` akışı korunmalı. Filtre butonu dekoratif (onTap yok).
+- `Durum:` net
+
+## `ibul_app/lib/screens/account_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/account_page.dart`
+- `Amaç:` Hesap Özeti (web dashboard); kullanıcı istatistikleri, Son Siparişler önizlemesi ve hesap alt sayfalarına geçiş.
+- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `services/order_service.dart`, `utils/order_status_constants.dart`, `utils/dynamic_value_helpers.dart`, `screens/order_detail_page.dart`, `screens/shipment_tracking_page.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`
+- `Bu dosyayı kullanan dosyalar:` `home_screen.dart`, hesap navigasyon akışı.
+- `Değişirse etkilenecek yerler:` Hesap Özeti > Son Siparişler satır tıklaması, kargo takip görünürlüğü, sipariş detay navigasyonu.
+- `Risk notu:` Takip kodu sipariş oluşturulurken atanır; görünürlük yalnız `isInTransitShipmentStatus` ile sınırlandırılmalı, aksi halde onaylanmış/hazırlanıyor siparişlerde erken görünür. Son Siparişler detay navigasyonu `wrapOrderForDetailPage` ile `OrderDetailPage`'in beklediği `rawOrder` payload'ını taşımalı.
+- `Durum:` net
+
+## `ibul_app/lib/screens/cart_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/cart_page.dart`
+- `Amaç:` **Sepetim** ekranı; mobil 3 sekme (Alışveriş / Market / Yemek), satıcı gruplu ürün kartları, özet/ onay barı; geniş layout (`>=900px`) web görünümü.
+- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `core/cart_state.dart`, `core/store_logo_helper.dart`, `models/product_model.dart`, `services/store_service.dart`, `utils/dynamic_value_helpers.dart`, `screens/business_detail_page.dart`, `screens/product_detail_page.dart`, `widgets/optimized_image.dart`
+- `Bu dosyayı kullanan dosyalar:` `home_screen.dart`, alt nav sepet route'u.
+- `Değişirse etkilenecek yerler:` sepet listesi hydrate, sekme sayaçları, ürün seçimi/miktar/kupon/hızlı teslimat UI, checkout öncesi özet, satıcı header navigasyonu.
+- `Risk notu:` UI-only değişiklikler `_toggleProductSelection`, `_updateQuantity`, `_appState.toggleFastDelivery`, kupon ve parça popup callback'lerini korumalı; mobil ürün kartı `_buildProductCard`, web satırı `_buildWebProductRow`. Satıcı logosu BDP ile aynı: `_loadCartStorePublicInfo` → `getStorePublicInfoByBusinessName(businessName)` → `_storePublicInfoByGroupKey`; widget `_buildStoreLogoWidget` parity (`OptimizedImage` width/height + `errorBuilder`). Chip: üst satır Stokta + Avantajlı (`Wrap`), alt satır tam genişlik teslimat. Header → `_openStoreFromCart`.
+- `Durum:` net
+
+## `ibul_app/lib/screens/favorites_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/favorites_page.dart`
+- `Amaç:` Hesap > **Beğendiklerim** / Favorilerim ekranı; beğenilen ürünler, kullanıcı listeleri ve öneriler sekmelerini sunar.
+- `Bağlı olduğu dosyalar:` `core/app_state.dart`, `core/constants.dart`, `models/product_model.dart`, `widgets/account_search_filter_row.dart`, `widgets/account_sidebar.dart`, `widgets/web_header.dart`, `widgets/web_footer.dart`, `widgets/product_card.dart`, `screens/list_detail_page.dart`, `screens/product_detail_page.dart`
+- `Bu dosyayı kullanan dosyalar:` `widgets/account_sidebar.dart`, `widgets/web_header_menu_items.dart`, `screens/account_page.dart`
+- `Değişirse etkilenecek yerler:` favori ürün grid'i, liste oluşturma, öneriler sekmesi, mobil arama/filtre satırı.
+- `Risk notu:` Listelerim sekmesindeki Ekle butonu `_showCreateListDialog` açmalı; arama alanı şu an dekoratif (onChanged yok).
+- `Durum:` net
+
+## `ibul_app/lib/widgets/account_search_filter_row.dart`
+
+- `Dosya yolu:` `ibul_app/lib/widgets/account_search_filter_row.dart`
+- `Amaç:` Hesap alt sayfalarında paylaşılan kompakt arama + filtre satırı (40px, ortalanmış placeholder).
+- `Bağlı olduğu dosyalar:` `core/constants.dart`
+- `Bu dosyayı kullanan dosyalar:` `screens/favorites_page.dart`, `screens/reviews_page.dart`
+- `Değişirse etkilenecek yerler:` Beğendiklerim ve Değerlendirmelerim üst arama/filtre UI'si.
+- `Risk notu:` `onSearchChanged` ve `onFilterTap` opsiyonel; sayfa bazlı davranış korunmalı.
+- `Durum:` net
+
 ## `ibul_app/lib/screens/map_page.dart`
 
 - `Dosya yolu:` `ibul_app/lib/screens/map_page.dart`
@@ -505,6 +565,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 - Ana desen `provider`.
 - `AppState`, `CartState`, `FavoriteState`, `ReviewState` singleton eğilimli `ChangeNotifier` yapıları.
+- `CartState`: sepet ürün listesi + `CartTabKind` ile Alışveriş/Market/Yemek sınıflandırması; `AppState.cartCountForTab` ve alt nav `cartCountNotifier` aynı listeyi okur.
 - `buildAppProviders()` bunları provider ağacına ekler.
 - Ekran içi `StatefulWidget` cache’leri çok yaygın; state tamamen merkezi değil.
 - `ConnectivityProvider`, `CartProvider`, `DesktopPrintHub` gibi ek notifier’lar var.
@@ -553,7 +614,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `ibul_app/lib/core/web_seo*.dart`
   - web SEO/stub ayrımı.
 - `ibul_app/lib/utils/order_status_constants.dart`
-  - sipariş ve admin onay durum sabitleri; switch-case kullanan seller/admin ekranları için const kaynak.
+  - sipariş ve admin onay durum sabitleri; switch-case kullanan seller/admin ekranları için const kaynak. `isInTransitShipmentStatus` müşteri tarafında kargo takip görünürlüğü için kullanılır (`shipped`, `transfer`, `branch`, `out_for_delivery`).
 - `ibul_app/lib/services/store/table_order_history_utils.dart`
   - `table_order_history` satırlarından kapanış zamanı, gelir ve masa etiketi türeten ortak helper.
 - `ibul_app/lib/services/store/table_close_history_fallback.dart`
@@ -562,6 +623,8 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
   - finance repository için günlük gelir breakdown ve kapanmış masa ciro toplamı yardımcıları.
 - `ibul_app/lib/utils/table_labels.dart`
   - masa etiketi üretimi.
+- `ibul_app/lib/widgets/skeleton_loading.dart`
+  - `SkeletonLoading` shimmer primitive + `ProductCardSkeleton`; arama/ana sayfa grid loading kartları. `tight` modu arama sonuç grid'i ile hizalı constraint-aware layout kullanır.
 - `ibul_app/lib/core/store_logo_helper.dart`
   - store logo çözümleme.
 
@@ -629,6 +692,111 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 # Update Log
 
+## 2026-06-13 (ürün detay satıcı logosu + sepet chip iki satır)
+
+- **Kök neden (ürün detay):** `ProductDetailViewModel.loadStoreLogo` yalnız `getStoreLogoUrlByBusinessName` kullanıyordu; `storeName` null iken `'Teknosa'` fallback → yanlış lookup + harf `T`. `_buildStoreLogo` asset’i remote URL’den önce seçiyordu; `OptimizedImage` boyutsuzdu.
+- `product_detail_viewmodel.dart`: BDP/cart parity — `sellerId` → `getStorePublicInfoById`, sonra `getStorePublicInfoByBusinessName`; `storeName` = `product.store ?? brand`.
+- `product_store_info.dart`: Logo sırası remote → asset → harf; sized `OptimizedImage` + `errorBuilder` (BDP `_buildStoreLogoWidget` gibi).
+- `cart_page.dart`: Chip üst satır `Wrap`(Stokta + Avantajlı), alt satır tam genişlik teslimat.
+
+## 2026-06-13 (Sepetim logo BDP parity + header/chip polish)
+
+- **Kök neden:** Cart logo çok katmanlı cache/fetch kullanıyordu; BDP yalnız `getStorePublicInfoByBusinessName(business['name'])` + `_storePublicInfo['logoUrl']` + `_buildStoreLogoWidget` (sized `OptimizedImage`). Cart'ta farklı render ve erken harf fallback logo URL'yi gizliyordu.
+- `ibul_app/lib/screens/cart_page.dart`: `_loadCartStorePublicInfo` BDP `_loadStorePublicInfo` ile hizalandı; logo widget aynı sıra (remote → asset → harf). Header kompakt (40–44px logo, tek satır meta); "Satıcı puanı" kaldırıldı. Chip: Stokta/Avantajlı dikey + teslimat tam genişlik satır.
+
+## 2026-06-13 (Sepetim logo veri akışı — sellerId + BDP parity)
+
+- **Kök neden:** Group map'te `logoUrl` taşınmıyordu; cart'ta `sellerId` çoğu üründe boş kalınca logo lookup yalnız `storeName` (çoğu zaman `brand`) ile yapılıyordu — BDP ise `getSellerIdByBusinessName` + `getStorePublicInfoByBusinessName` kullanıyor. Uzak logo yalnız `http` prefix ile `OptimizedImage`'a gidiyordu; diğer URL'ler `Image.asset` ile düşüyordu.
+- `ibul_app/lib/screens/cart_page.dart`: `_storeHeaderIdentityCache` + group map `logoUrl`/`businessName`; logo çözüm sırası BDP ile hizalandı; `OptimizedImage` tüm non-asset URL'ler için; fetch sonrası `setState` + identity persist. Navigation/chip layout değişmedi.
+
+## 2026-06-13 (Sepetim logo sellerId + chip kolon)
+
+- **Kök neden:** Logo yalnız `business_name` ile aranıyordu; sepette `product.brand` store adı olarak kullanıldığında eşleşme başarısız → erken harf avatar. Chip'ler tek satırda kırpılıyordu.
+- `ibul_app/lib/screens/cart_page.dart`: Logo `sellerId` öncelikli (`getStorePublicInfoById.logo_url`); yüklemede storefront ikonu, harf yalnızca logo yoksa. Chip: Stokta / Avantajlı dikey kolon + `Expanded` çok satırlı teslimat. Navigasyon korundu.
+
+## 2026-06-13 (Sepetim store header + chip overlap)
+
+- **Kök neden:** Store header yalnızca harf avatar kullanıyordu; logo/navigasyon yoktu. Teslimat chip'i sağa pinlenince dar ekranda `Avantajlı` ile z-index overlap oluşuyordu.
+- `ibul_app/lib/screens/cart_page.dart`: `_buildStoreLogoAvatar` (asset + Supabase `logo_url` cache), `_openStoreFromCart` → `BusinessDetailPage`; chip satırı tek `SingleChildScrollView` — overlap yok, kaydırarak tam metin.
+
+## 2026-06-13 (Sepetim teslimat chip dar ekran)
+
+- **Kök neden:** Ürün kartı chip satırında stok + kampanya + teslimat tek `SingleChildScrollView` içindeydi; dar ekranda son chip (`35-45 dk içinde kapında`) viewport kenarında kırpılıyordu. `_buildInfoPill` metninde `TextOverflow.ellipsis` tam okunmayı engelliyordu.
+- `ibul_app/lib/screens/cart_page.dart`: Chip satırı `Row` + `Expanded` (stok/kampanya scroll) + sabit teslimat pill olarak ayrıldı; pill metninde ellipsis kaldırıldı (`softWrap: false`). Kompakt kart yüksekliği korundu.
+
+## 2026-06-13 (Sepetim ürün kartı kompakt UI)
+
+- **Kök neden:** Mobil `_buildProductCard` yüksek padding (14px), büyük görsel (70–82px), `Wrap` chip satırının iki satıra taşması ve fiyat / hızlı teslimat / adet stepper'ının dikey yığılması kartları hantal gösteriyordu.
+- `ibul_app/lib/screens/cart_page.dart`: Ürün kartı kompaktlaştırıldı — padding/spacing azaltıldı, görsel 56–64px, chip'ler tek satır yatay scroll, action row fiyat + hızlı teslimat + adet aynı hizada; `_buildInfoPill` ve satıcı kartı margin/padding hafif düşürüldü. Seçim, miktar, kupon, hızlı teslimat ve silme callback'leri değişmedi. Web `_buildWebProductRow` dokunulmadı.
+
+## 2026-06-13 (sepet 3 sekme — sayaç / toplam / sekme kalıcılığı)
+
+- **Kök neden:** Mobil `CartPage` sekmeleri (Alışveriş / Market / Yemek) yalnızca listeyi filtreliyordu; üst sayaç, alt bar toplamı ve `Sepeti Onayla` tüm sepetten hesaplanıyordu. Sekme seçimi widget-local `_hasAutoSelectedCartTab` ile yönetildiği için IndexedStack dışı yeniden açılışlarda kullanıcı sekmesi korunmuyordu.
+- `ibul_app/lib/core/cart_state.dart`: `CartTabKind`, `tabKindForProduct`, sekme bazlı `countForTab` / `productsForTab` — kategori sınıflandırması tek kaynak.
+- `ibul_app/lib/core/app_state.dart`: `selectedCartTabIndex`, `cartCountForTab`, `setSelectedCartTabIndex`; `addToCart` ürün kategorisine göre sekmeyi günceller. Alt nav badge `cartCountNotifier` ← `cart.length` (toplam = sekme sayıları toplamı).
+- `ibul_app/lib/screens/cart_page.dart`: Mobil özet/sepet onay yalnız aktif sekmeye göre; sekme etiketlerinde `(n)` sayaç; header `scopedProductCount` aktif sekmeyle hizalı; `AppState.selectedCartTabIndex` geri yüklenir. Web görünümü tüm kategorileri birleşik göstermeye devam eder.
+
+## 2026-06-13 (sepet badge / Sepetim boş mismatch)
+
+- **Kök neden:** Alt nav badge `AppState.cartCountNotifier` ← `CartState.cart.length` ile güncelleniyor (`home_screen.dart`, `web_header_menu_items.dart`). `CartPage` ise `AppState` değişimlerini dinlemeden singleton `_appState.cart` okuyordu; async local/remote hydrate veya sepete ekleme sonrası widget yeniden build olmadığı için liste boş kalıyordu. Ek olarak mobil sepet 3 sekmeye bölünüyor (Alışveriş / Market / Yemek); yalnız `category` alanına göre filtrelenen ürünler varsayılan **Alışveriş** sekmesinde görünmeyebiliyordu — badge toplam sayıyı gösterirken aktif sekme boş görünüyordu.
+- **Kaynak hizalama:** Badge ve sepet listesi artık aynı source of truth olan `AppState.cart` / `CartState` üzerinden okunuyor; `CartProvider` merge hack'i kaldırıldı.
+- `ibul_app/lib/screens/cart_page.dart`: `context.watch<AppState>()` ile hydrate/ekleme sonrası rebuild; sepete ürün eklenince `CartState.tabIndexForProduct` ile ilgili sekme `AppState.selectedCartTabIndex`'e yazılır.
+
+## 2026-06-13 (ana sayfa product quick view preview)
+
+- **Kök neden:** Ana sayfa `ProductCard` eye icon → `ProductQuickInfoSheet` akışında `_convertToProduct` yalnız temel alanları map'liyordu (`description`/`specifications`/`attributes` eksik). `getInitialHomeProducts` select'i de bu alanları bilinçli olarak dışlıyordu. Satıcı sayfası (`business_detail_page`) `Product.fromDBProduct` + `getMenuProductsBySellerId` zengin select ile aynı modal'da açıklama/özellikleri dolduruyordu.
+- `ibul_app/lib/services/supabase_service.dart`: `_homeProductSelectFields` / `_homeProductSelectFieldsSansStore` artık `description`, `specifications`, `attributes` içeriyor (quick view için).
+- `ibul_app/lib/screens/home_screen.dart`: `_convertToProduct` → `Product.fromDBProduct(dbProduct)`; satıcı sayfasıyla aynı normalize/model akışı.
+
+## 2026-06-13 (Hesap Özeti Son Siparişler detay payload)
+
+- **Kök neden:** `OrderDetailPage` sipariş verisini `orderData['rawOrder']` altında bekliyor. `orders_page.dart` `_mapRealOrderForUi` ile `rawOrder` sarmalıyor; `account_page.dart` Son Siparişler satır tıklamasında ham sipariş map'ini doğrudan geçiriyordu → `_rawOrder` boş kalıyor, satıcı adı generic (`Satıcı`), ürün kodu/özellikleri eksik görünüyordu.
+- `ibul_app/lib/utils/dynamic_value_helpers.dart`: `wrapOrderForDetailPage` eklendi — Siparişlerim ile aynı detail payload sözleşmesi.
+- `ibul_app/lib/screens/account_page.dart`: `_openRecentOrderDetail` artık `wrapOrderForDetailPage(order)` kullanıyor.
+
+## 2026-06-13 (Hesap Özeti Son Siparişler takip + navigasyon)
+
+- **Kök neden:** `account_page.dart` Son Siparişler satırında takip kodu yalnız `tracking_number` dolu mu diye bakıyordu; `OrderService` sipariş oluşturulurken takip no atadığı için onaylanmış/hazırlanıyor siparişlerde de görünüyordu. Satır ve takip alanı tıklanabilir değildi.
+- `ibul_app/lib/utils/order_status_constants.dart`: `isInTransitShipmentStatus` eklendi (`shipped`, `transfer`, `branch`, `out_for_delivery`).
+- `ibul_app/lib/screens/account_page.dart`: Takip görünürlüğü `shipment_step` → item `status` → order `status` zinciriyle gerçek sevkiyat statüsüne bağlandı. Sipariş satırı `OrderDetailPage` açar; takip kodu ayrı tıklanabilir ve `ShipmentTrackingPage` açar.
+
+## 2026-06-13 (arama loading skeleton overflow)
+
+- **Kök neden:** `ProductCardSkeleton` sabit 312px yükseklik + sabit görsel/metin placeholder'ları kullanıyordu; `SearchResultsPage` loading grid'i (`0.65` mobil / `0.58` web) gerçek sonuç grid'i (`0.70` mobil / `0.82` web) ile uyumsuzdu → hücre içinde ~5.5px bottom overflow.
+- `ibul_app/lib/widgets/skeleton_loading.dart`: `ProductCardSkeleton` artık `LayoutBuilder` ile hücre sınırlarına uyuyor; `tight` modu `ProductCard(tight: true)` gövde oranlarını yansıtıyor (esnek görsel + kompakt metin/CTA placeholder).
+- `ibul_app/lib/screens/search_results_page.dart`: Loading grid delegate gerçek sonuç grid'i ile hizalandı; skeleton `tight: !isWeb`, `margin: EdgeInsets.zero`.
+- `ProductCard` değişmedi.
+
+## 2026-06-13 (Beğendiklerim / Değerlendirmelerim arama satırı)
+
+- `ibul_app/lib/widgets/account_search_filter_row.dart` eklendi: Hesap alt sayfaları için ortak kompakt arama + filtre satırı (40px yükseklik, ortalanmış placeholder, hafif border).
+- `ibul_app/lib/screens/favorites_page.dart`: Mobil **Beğendiklerim** ekranı ortak arama/filtre satırını kullanıyor; Listelerim sekmesindeki Ekle butonu davranışı korundu.
+- `ibul_app/lib/screens/reviews_page.dart`: **Değerlendirmelerim** aynı ortak satıra geçirildi; mobil "Yorum geçmişin" özet şeridi kaldırıldı. Arama, sekme filtreleri ve liste davranışı değişmedi.
+
+## 2026-06-13 (Değerlendirmelerim ekranı UI polish)
+
+- `ibul_app/lib/screens/reviews_page.dart`: Hesap > **Değerlendirmelerim** ekranı toparlandı — web başlık + istatistik rozeti, mobil özet şeridi, gölgeli arama/filtre satırı, pill sekme chip’leri (count badge + seçili gölge) ve gradient boş durum kartı eklendi. Arama, sekme filtreleri, liste ve ürün detay navigasyonu değişmedi.
+
+## 2026-06-13 (Kurye Bilgi ekranı UI polish)
+
+- `ibul_app/lib/screens/delivery_info_page.dart`: Ürün detayı > Kurye Teslimatı > **Kurye Bilgi** ekranı yeniden düzenlendi — flat/settings listesi kaldırıldı; gradient hero header, kart tabanlı kurye/teslimat satırları, seçili adres vurgusu ve premium e-ticaret teslimat tipografisi eklendi. Kargo seçimi, adres toggle ve `AddressEditSheet` akışı değişmedi.
+
+## 2026-06-13 (kategori Telefonlar ürün eşleme düzeltmesi)
+
+- **Kök neden:** Arama `searchProductsPaged` ile `ilike`/contains (`name`, `sub_category`, `main_category`) kullanıyor; kategori akışı `getCategoryProductsPaged` + `CategoryProductsPage` içinde `sub_category` için exact match bekliyordu. UI etiketi `Telefonlar`, ürün verisi çoğunlukla `Telefon` (tekil) — `home_screen.dart` bu farkı client-side fuzzy ile çözüyordu, kategori sayfası çözmüyordu.
+- `ibul_app/lib/utils/category_product_filter.dart` eklendi: UI ana/alt kategori etiketlerini ürün `main_category`/`sub_category`/`name` ile aynı kurallarla eşleştirir; `Telefonlar` → `telefon`/`iphone`/`galaxy` alias; Supabase `.or(ilike…)` clause üretir.
+- `ibul_app/lib/services/supabase_service.dart` `getCategoryProductsPaged`: alt kategori için exact `eq` yerine helper tabanlı flexible `or` filtresi (Elektronik alt kategorileri, öncelik `Telefonlar`).
+- `ibul_app/lib/screens/category_products_page.dart` `_getDisplayProducts`: ikinci katman exact match kaldırıldı; `CategoryProductFilter.productMatchesSelection` kullanılıyor.
+- Arama (`search_results_page` / `searchProductsPaged`) değişmedi.
+
+## 2026-06-13 (categories top bar overflow fix)
+
+- `ibul_app/lib/screens/categories_page.dart`: Üst kategori şeridinde 2 satırlı label için sabit `_topLabelHeight` (26px) + `StrutStyle` eklendi; dikey padding `8→6`, ikon-label gap `6→5`. Kök neden: 104px şerit − 16px padding = 88px kullanılabilir alan, içerik ~92px (ikon 60 + gap 6 + 2 satır metin ~26) → 4px overflow.
+
+## 2026-06-13 (categories page UI polish)
+
+- `ibul_app/lib/screens/categories_page.dart`: Kategoriler ekranı UI toparlandı — üst kategori şeridi kompakt hizalandı (sabit border alanı, seçili ring/shadow, 104px yükseklik); alt kategori grid'i responsive (`<=900`: 3–4 kolon, `>900`: `maxCrossAxisExtent: 118`), tutarlı kart radius/spacing ve `Expanded` görsel alanı ile dağınık boşluk giderildi. Davranış değişmedi.
+
 ## 2026-06-13 (product detail nearby map back button)
 
 - `ibul_app/lib/screens/map_page.dart`: Ürün detayından `MapPage(product: …)` ile push edilen yakın lokasyon akışında mobil/tablet sol üst geri butonu gösterilir (`product != null && Navigator.canPop`); IndexedStack’teki standalone harita sekmesinde geri butonu görünmez. Desktop geniş layout (`>=1100px`) davranışı aynı kalır.
@@ -661,7 +829,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `ibul_app/lib/utils/dynamic_value_helpers.dart` eklendi: Supabase JSON map alanları için `readString`, `readNullableString`, `readInt`, `readDouble`, `normalizeOrderIdentityFields` ve ürün başlığı fallback yardımcıları.
 - `ibul_app/lib/services/order_service.dart` seller/customer order fetch sonuçlarında `order_number`, `tracking_number`, `product_code`, `product_name` gibi kimlik alanları normalize ediliyor; restoran online sipariş detayında double→String runtime hatası bu katmanda önlenir.
 - `ibul_app/lib/screens/seller_panel_page.dart` `_openSellerOrderDetail` ve mobil detay sheet açılışında order map normalize edilir.
-- `ibul_app/lib/screens/account_page.dart` Hesap Özeti > Son Siparişler kartı: ürün görseli + ürün adı başlık, alt satırda sipariş no ve takip no ayrı gösterilir; teknik kod ana başlıkta kullanılmaz.
+- `ibul_app/lib/screens/account_page.dart` Hesap Özeti > Son Siparişler kartı: ürün görseli + ürün adı başlık, alt satırda sipariş no; takip no yalnız sevkiyat statüsünde (`shipped`/`transfer`/`branch`/`out_for_delivery`) ve ayrı tıklanabilir. Satır tıklaması `OrderDetailPage` açar.
 
 ## 2026-06-12 (food order Online → cart)
 

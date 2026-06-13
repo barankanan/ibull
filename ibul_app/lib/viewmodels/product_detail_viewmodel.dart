@@ -126,7 +126,10 @@ class ProductDetailViewModel extends ChangeNotifier {
 
   ReviewSummary get reviewSummary => _reviewSummary;
 
-  String get storeName => initialProduct.store ?? 'Teknosa';
+  String get storeName =>
+      initialProduct.store?.trim().isNotEmpty == true
+      ? initialProduct.store!.trim()
+      : initialProduct.brand.trim();
 
   String? get storeLogoUrl => _storeLogoUrl;
 
@@ -164,18 +167,26 @@ class ProductDetailViewModel extends ChangeNotifier {
   }
 
   Future<void> loadStoreLogo() async {
-    final resolvedStoreName = storeName.trim();
-    if (resolvedStoreName.isEmpty) {
-      return;
+    if (_storeLogoUrl != null) return;
+
+    var logoUrl = '';
+    final sellerId = initialProduct.sellerId?.trim() ?? '';
+    if (sellerId.isNotEmpty) {
+      final info = await StoreService().getStorePublicInfoById(sellerId);
+      logoUrl = info?['logoUrl']?.toString().trim() ?? '';
     }
 
-    final logoUrl = await StoreService().getStoreLogoUrlByBusinessName(
-      resolvedStoreName,
-    );
-    if (_storeLogoUrl == logoUrl) {
-      return;
+    if (logoUrl.isEmpty) {
+      final resolvedStoreName = storeName.trim();
+      if (resolvedStoreName.isNotEmpty) {
+        final info = await StoreService().getStorePublicInfoByBusinessName(
+          resolvedStoreName,
+        );
+        logoUrl = info?['logoUrl']?.toString().trim() ?? '';
+      }
     }
-    _storeLogoUrl = logoUrl;
+
+    _storeLogoUrl = logoUrl.isEmpty ? '' : logoUrl;
     notifyListeners();
   }
 

@@ -4,10 +4,13 @@ import 'package:provider/provider.dart';
 import 'dart:ui';
 import '../core/constants.dart';
 import '../core/app_state.dart';
-import '../core/providers/cart_provider.dart';
 import '../core/cart_state.dart';
+import '../core/store_logo_helper.dart';
 import '../models/product_model.dart';
 import '../models/product_pricing.dart';
+import '../services/store_service.dart';
+import '../utils/dynamic_value_helpers.dart';
+import 'business_detail_page.dart';
 import 'checkout_page.dart';
 import 'product_detail_page.dart';
 import '../widgets/web_header.dart';
@@ -24,6 +27,8 @@ class _CartPageState extends State<CartPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final AppState _appState = AppState();
+  bool _isMobileLayout = true;
+  int _activeTabIndex = 0;
   final Map<int, bool> _dynamicSelections = {};
   final Map<int, int> _dynamicQuantities = {};
   final ScrollController _couponScrollController = ScrollController();
@@ -34,24 +39,14 @@ class _CartPageState extends State<CartPage>
 
   final List<Map<String, dynamic>> _availableCoupons = [];
 
+  final Map<String, Map<String, String>> _storeHeaderIdentityCache = {};
+  final Map<String, Map<String, dynamic>?> _storePublicInfoByGroupKey = {};
+  final Set<String> _storePublicInfoLoadingKeys = {};
+  final StoreService _storeService = StoreService();
+
   static const String _softFontFamily = 'Poppins';
 
-  List<Product> _effectiveCartProducts() {
-    // The codebase currently has two cart sources:
-    // - AppState.cart (legacy singleton)
-    // - CartProvider.cart (provider-backed)
-    // Some flows update only one of them; merge so UI never shows "empty" while
-    // there are items.
-    final providerCart = context.watch<CartProvider>().cart;
-    final merged = <String, Product>{};
-    for (final p in _appState.cart) {
-      merged[CartState.productKey(p)] = p;
-    }
-    for (final p in providerCart) {
-      merged[CartState.productKey(p)] = p;
-    }
-    return merged.values.toList(growable: false);
-  }
+  List<Product> _effectiveCartProducts() => _appState.cart;
 
   TextStyle _softTextStyle({
     double size = 14,
@@ -76,6 +71,211 @@ class _CartPageState extends State<CartPage>
   bool _isNarrowPhone(BuildContext context) => _screenWidth(context) < 380;
 
   bool _isVeryNarrowPhone(BuildContext context) => _screenWidth(context) < 350;
+
+  String _cartStoreBusinessName(Map<String, dynamic> store) {
+    final businessName = store['businessName']?.toString().trim() ?? '';
+    if (businessName.isNotEmpty) return businessName;
+    return store['storeName']?.toString().trim() ?? '';
+  }
+
+  String _storeGroupKey(String storeName, String sellerId) =>
+      '$storeName::$sellerId';
+
+  String _storeGroupKeyFromStore(Map<String, dynamic> store) =>
+      _storeGroupKey(
+        store['storeName']?.toString() ?? '',
+        store['sellerId']?.toString() ?? '',
+      );
+
+  void _applyStoreHeaderIdentity(Map<String, dynamic> store) {
+    final cached = _storeHeaderIdentityCache[_storeGroupKeyFromStore(store)];
+    if (cached == null) return;
+    final logoUrl = cached['logoUrl']?.trim() ?? '';
+    final sellerId = cached['sellerId']?.trim() ?? '';
+    final businessName = cached['businessName']?.trim() ?? '';
+    if (logoUrl.isNotEmpty) store['logoUrl'] = logoUrl;
+    if (sellerId.isNotEmpty) store['sellerId'] = sellerId;
+    if (businessName.isNotEmpty) store['businessName'] = businessName;
+  }
+
+  void _persistStoreHeaderIdentity({
+    required String groupKey,
+    String? sellerId,
+    String? businessName,
+    String? logoUrl,
+  }) {
+    final previous = _storeHeaderIdentityCache[groupKey] ?? const {};
+    final merged = <String, String>{
+      'sellerId': (sellerId ?? previous['sellerId'] ?? '').trim(),
+      'businessName': (businessName ?? previous['businessName'] ?? '').trim(),
+      'logoUrl': (logoUrl ?? previous['logoUrl'] ?? '').trim(),
+    };
+    _storeHeaderIdentityCache[groupKey] = merged;
+  }
+
+  /// BusinessDetailPage._loadStorePublicInfo ile aynı kaynak: business name → logoUrl.
+  void _loadCartStorePublicInfo(Map<String, dynamic> store) {
+    _applyStoreHeaderIdentity(store);
+    final groupKey = _storeGroupKeyFromStore(store);
+    if (_storePublicInfoByGroupKey.containsKey(groupKey) ||
+        _storePublicInfoLoadingKeys.contains(groupKey)) {
+      return;
+    }
+
+    final name = _cartStoreBusinessName(store);
+    if (name.isEmpty) {
+      _storePublicInfoByGroupKey[groupKey] = null;
+      return;
+    }
+
+    _storePublicInfoLoadingKeys.add(groupKey);
+    _storeService.getStorePublicInfoByBusinessName(name).then((info) async {
+      if (!mounted) return;
+      var sellerId = store['sellerId']?.toString().trim() ?? '';
+      if (sellerId.isEmpty) {
+        sellerId = await _storeService.getSellerIdByBusinessName(name) ?? '';
+      }
+      _persistStoreHeaderIdentity(
+        groupKey: groupKey,
+        sellerId: sellerId.isNotEmpty ? sellerId : null,
+        businessName: name,
+        logoUrl: info?['logoUrl']?.toString(),
+      );
+      setState(() {
+        _storePublicInfoLoadingKeys.remove(groupKey);
+        _storePublicInfoByGroupKey[groupKey] = info;
+      });
+    }).catchError((_) {
+      if (!mounted) return;
+      setState(() {
+        _storePublicInfoLoadingKeys.remove(groupKey);
+        _storePublicInfoByGroupKey[groupKey] = null;
+      });
+    });
+  }
+
+  String? _resolvedStoreLogo(Map<String, dynamic> store) {
+    _applyStoreHeaderIdentity(store);
+    final groupKey = _storeGroupKeyFromStore(store);
+    final logoUrl = _storePublicInfoByGroupKey[groupKey]?['logoUrl'] as String?;
+    if (logoUrl != null && logoUrl.trim().isNotEmpty) return logoUrl.trim();
+
+    final mapLogo = store['logoUrl']?.toString().trim();
+    if (mapLogo != null && mapLogo.isNotEmpty) return mapLogo;
+
+    final name = _cartStoreBusinessName(store);
+    if (name.isNotEmpty) {
+      final assetLogo = StoreLogoHelper.getStoreLogo(name);
+      if (assetLogo != null) return assetLogo;
+    }
+    return null;
+  }
+
+  Widget _storeLogoLetter(String businessName, double size) {
+    return Center(
+      child: Text(
+        businessName.isNotEmpty ? businessName[0].toUpperCase() : 'M',
+        style: TextStyle(
+          fontSize: size * 0.38,
+          fontWeight: FontWeight.w800,
+          color: AppColors.primary,
+        ),
+      ),
+    );
+  }
+
+  Map<String, dynamic> _businessMapFromStore(Map<String, dynamic> store) {
+    _applyStoreHeaderIdentity(store);
+    final businessName = _cartStoreBusinessName(store);
+    final sellerId = store['sellerId']?.toString() ?? '';
+    final logo = _resolvedStoreLogo(store);
+    final isAssetLogo = logo != null && logo.startsWith('assets/');
+    final isRemoteLogo = logo != null && !isAssetLogo;
+    return {
+      'seller_id': sellerId,
+      'name': businessName,
+      'business_name': businessName,
+      'logo_url': isRemoteLogo ? logo : null,
+      'logo': isAssetLogo ? logo : null,
+      'category': store['category']?.toString() ?? '',
+    };
+  }
+
+  void _openStoreFromCart(Map<String, dynamic> store) {
+    final storeName = store['storeName']?.toString().trim() ?? '';
+    final sellerId = store['sellerId']?.toString().trim() ?? '';
+    if (storeName.isEmpty && sellerId.isEmpty) return;
+
+    final products = (store['products'] as List?)
+            ?.map((entry) => (entry as Map<String, dynamic>)['productObject'])
+            .whereType<Product>()
+            .toList(growable: false) ??
+        const <Product>[];
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BusinessDetailPage(
+          business: _businessMapFromStore(store),
+          storeProducts: products.isEmpty ? null : products,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStoreLogoAvatar(
+    Map<String, dynamic> store, {
+    required bool isNarrow,
+  }) {
+    final size = isNarrow ? 40.0 : 44.0;
+    final groupKey = _storeGroupKeyFromStore(store);
+    final businessName = _cartStoreBusinessName(store);
+    _loadCartStorePublicInfo(store);
+
+    final logo = _resolvedStoreLogo(store);
+    final isLoading = _storePublicInfoLoadingKeys.contains(groupKey) &&
+        (logo == null || logo.isEmpty);
+
+    Widget logoWidget;
+    if (logo != null && logo.startsWith('assets/')) {
+      logoWidget = Image.asset(
+        logo,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+      );
+    } else if (logo != null && logo.isNotEmpty) {
+      logoWidget = OptimizedImage(
+        imageUrlOrPath: logo,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _storeLogoLetter(businessName, size),
+      );
+    } else if (isLoading) {
+      logoWidget = Center(
+        child: Icon(
+          Icons.storefront_outlined,
+          size: isNarrow ? 16 : 18,
+          color: AppColors.primary.withValues(alpha: 0.5),
+        ),
+      );
+    } else {
+      logoWidget = _storeLogoLetter(businessName, size);
+    }
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F0FF),
+        borderRadius: BorderRadius.circular(size / 2),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: logoWidget,
+    );
+  }
 
   void _showMobileSummarySheet() {
     showModalBottomSheet(
@@ -364,17 +564,78 @@ class _CartPageState extends State<CartPage>
   }
 
   // Sepetteki ürünler
-  bool _isFoodProduct(Product product) {
-    final cat = (product.category ?? '').toLowerCase();
-    return cat.contains('yemek') ||
-        cat.contains('restoran') ||
-        cat.contains('kafe') ||
-        cat.contains('cafe');
+  bool _isFoodProduct(Product product) =>
+      CartState.tabKindForProduct(product) == CartTabKind.food;
+
+  bool _isMarketProduct(Product product) =>
+      CartState.tabKindForProduct(product) == CartTabKind.market;
+
+  List<Map<String, dynamic>> _storesForTabIndex(int index) {
+    switch (index) {
+      case 1:
+        return marketItems;
+      case 2:
+        return foodItems;
+      default:
+        return cartItems;
+    }
   }
 
-  bool _isMarketProduct(Product product) {
-    final cat = (product.category ?? '').toLowerCase();
-    return cat.contains('market') || cat.contains('süpermarket');
+  Iterable<Map<String, dynamic>> _effectiveStoreGroups() sync* {
+    if (_isMobileLayout) {
+      yield* _storesForTabIndex(_activeTabIndex);
+      return;
+    }
+    yield* cartItems;
+    yield* marketItems;
+    yield* foodItems;
+  }
+
+  int _countItemsInStores(Iterable<Map<String, dynamic>> stores) {
+    var count = 0;
+    for (final store in stores) {
+      for (final product in store['products'] as List) {
+        count += product['quantity'] as int;
+      }
+    }
+    return count;
+  }
+
+  List<Map<String, dynamic>> _selectedProductsInStores(
+    Iterable<Map<String, dynamic>> stores,
+  ) {
+    final products = <Map<String, dynamic>>[];
+    for (final store in stores) {
+      for (final product in store['products']) {
+        if (product['isSelected'] == true) {
+          products.add(product as Map<String, dynamic>);
+        }
+      }
+    }
+    return products;
+  }
+
+  double _totalPriceInStores(Iterable<Map<String, dynamic>> stores) {
+    var total = 0.0;
+    for (final store in stores) {
+      for (final product in store['products']) {
+        if (product['isSelected'] != true) continue;
+        var itemTotal =
+            (product['price'] as double) * (product['quantity'] as int);
+
+        if (product['appliedCoupon'] != null) {
+          final coupon = product['appliedCoupon'];
+          if (coupon['isPercentage'] == true) {
+            itemTotal -= itemTotal * (coupon['discountAmount'] / 100);
+          } else {
+            itemTotal -= coupon['discountAmount'];
+          }
+        }
+
+        total += itemTotal > 0 ? itemTotal : 0;
+      }
+    }
+    return total;
   }
 
   double _parseProductPrice(Product product) {
@@ -578,20 +839,34 @@ class _CartPageState extends State<CartPage>
       final productMap = Map<String, dynamic>.from(
         (mappedItem['products'] as List).first as Map<String, dynamic>,
       );
+      final identity = _storeHeaderIdentityCache[key];
+      final businessName = () {
+        final cachedName = identity?['businessName']?.trim() ?? '';
+        if (cachedName.isNotEmpty) return cachedName;
+        final productStore = product.store?.trim() ?? '';
+        if (productStore.isNotEmpty) return productStore;
+        return storeName;
+      }();
 
       groupedStores.putIfAbsent(
         key,
         () => {
           'storeName': storeName,
-          'sellerId': sellerId,
+          'businessName': businessName,
+          'sellerId': (identity?['sellerId']?.trim().isNotEmpty ?? false)
+              ? identity!['sellerId']!.trim()
+              : sellerId,
+          'logoUrl': identity?['logoUrl'] ?? '',
           'storeRating': mappedItem['storeRating'],
           'deliveryType': mappedItem['deliveryType'],
           'deliveryIcon': mappedItem['deliveryIcon'],
+          'category': product.category,
           'products': <Map<String, dynamic>>[],
         },
       );
 
       final store = groupedStores[key]!;
+      _applyStoreHeaderIdentity(store);
       (store['products'] as List<Map<String, dynamic>>).add(productMap);
 
       final currentRating = (store['storeRating'] as num?)?.toDouble() ?? 0;
@@ -635,14 +910,70 @@ class _CartPageState extends State<CartPage>
     return _groupProductsByStore(products);
   }
 
+  void _syncTabControllerWithAppState() {
+    if (!mounted || !_isMobileLayout) return;
+
+    final desiredTab = _appState.selectedCartTabIndex.clamp(0, 2);
+    if (_activeTabIndex == desiredTab && _tabController.index == desiredTab) {
+      return;
+    }
+
+    _activeTabIndex = desiredTab;
+    if (_tabController.index != desiredTab) {
+      _tabController.index = desiredTab;
+    }
+  }
+
+  void _onCartTabInteraction() {
+    if (_tabController.indexIsChanging) return;
+    _activeTabIndex = _tabController.index;
+    _appState.setSelectedCartTabIndex(_tabController.index);
+  }
+
+  Widget _buildCartTabLabel(String label, int count) {
+    final isVeryNarrow = _isVeryNarrowPhone(context);
+    return Tab(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+          if (count > 0) ...[
+            const SizedBox(width: 3),
+            Text(
+              '($count)',
+              style: TextStyle(
+                fontSize: isVeryNarrow ? 10 : 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _activeTabIndex = _appState.selectedCartTabIndex.clamp(0, 2);
+    _tabController = TabController(
+      length: 3,
+      vsync: this,
+      initialIndex: _activeTabIndex,
+    );
+    _tabController.addListener(_onCartTabInteraction);
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onCartTabInteraction);
     _tabController.dispose();
     _couponScrollController.dispose();
     super.dispose();
@@ -812,64 +1143,16 @@ class _CartPageState extends State<CartPage>
     );
   }
 
-  int get totalItems {
-    int count = 0;
-    for (var store in cartItems) {
-      for (var product in store['products']) {
-        count += product['quantity'] as int;
-      }
+  int get scopedProductCount {
+    if (_isMobileLayout) {
+      return _appState.cartCountForTab(_activeTabIndex);
     }
-    for (var store in marketItems) {
-      for (var product in store['products']) {
-        count += product['quantity'] as int;
-      }
-    }
-    for (var store in foodItems) {
-      for (var product in store['products']) {
-        count += product['quantity'] as int;
-      }
-    }
-    return count;
+    return _appState.cart.length;
   }
 
-  double get totalPrice {
-    double total = 0;
-    for (var store in cartItems) {
-      for (var product in store['products']) {
-        if (product['isSelected'] == true) {
-          double itemTotal =
-              (product['price'] as double) * (product['quantity'] as int);
+  int get totalItems => _countItemsInStores(_effectiveStoreGroups());
 
-          // Kupon indirimi uygula
-          if (product['appliedCoupon'] != null) {
-            final coupon = product['appliedCoupon'];
-            if (coupon['isPercentage'] == true) {
-              itemTotal -= itemTotal * (coupon['discountAmount'] / 100);
-            } else {
-              itemTotal -= coupon['discountAmount'];
-            }
-          }
-
-          total += itemTotal > 0 ? itemTotal : 0;
-        }
-      }
-    }
-    for (var store in marketItems) {
-      for (var product in store['products']) {
-        if (product['isSelected'] == true) {
-          total += (product['price'] as double) * (product['quantity'] as int);
-        }
-      }
-    }
-    for (var store in foodItems) {
-      for (var product in store['products']) {
-        if (product['isSelected'] == true) {
-          total += (product['price'] as double) * (product['quantity'] as int);
-        }
-      }
-    }
-    return total;
-  }
+  double get totalPrice => _totalPriceInStores(_effectiveStoreGroups());
 
   double get deliveryFee {
     if (selectedProducts.isEmpty) return 0;
@@ -1027,31 +1310,8 @@ class _CartPageState extends State<CartPage>
     );
   }
 
-  List<Map<String, dynamic>> get selectedProducts {
-    List<Map<String, dynamic>> products = [];
-    for (var store in cartItems) {
-      for (var product in store['products']) {
-        if (product['isSelected'] == true) {
-          products.add(product);
-        }
-      }
-    }
-    for (var store in marketItems) {
-      for (var product in store['products']) {
-        if (product['isSelected'] == true) {
-          products.add(product);
-        }
-      }
-    }
-    for (var store in foodItems) {
-      for (var product in store['products']) {
-        if (product['isSelected'] == true) {
-          products.add(product);
-        }
-      }
-    }
-    return products;
-  }
+  List<Map<String, dynamic>> get selectedProducts =>
+      _selectedProductsInStores(_effectiveStoreGroups());
 
   // Fiyat formatı: 1.234,56 TL veya 1.234 TL
   String _formatPrice(double price) {
@@ -1079,7 +1339,15 @@ class _CartPageState extends State<CartPage>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<AppState>();
+
     final isWeb = MediaQuery.of(context).size.width >= 900;
+    _isMobileLayout = !isWeb;
+    if (_isMobileLayout) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _syncTabControllerWithAppState();
+      });
+    }
 
     if (isWeb) {
       return _buildWebView();
@@ -1133,7 +1401,7 @@ class _CartPageState extends State<CartPage>
                           borderRadius: BorderRadius.circular(18),
                         ),
                         child: Text(
-                          '$totalItems Ürün',
+                          '$scopedProductCount Ürün',
                           style: _softTextStyle(
                             size: isNarrow ? 13 : 14,
                             weight: FontWeight.w700,
@@ -1182,7 +1450,10 @@ class _CartPageState extends State<CartPage>
                   border: Border.all(color: AppColors.primary, width: 0.7),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Tab(text: 'Alışveriş'),
+                child: _buildCartTabLabel(
+                  'Alışveriş',
+                  _appState.cartCountForTab(0),
+                ),
               ),
               Container(
                 height: isNarrow ? 30 : 32,
@@ -1192,7 +1463,10 @@ class _CartPageState extends State<CartPage>
                   border: Border.all(color: AppColors.primary, width: 0.7),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Tab(text: 'Market'),
+                child: _buildCartTabLabel(
+                  'Market',
+                  _appState.cartCountForTab(1),
+                ),
               ),
               Container(
                 height: isNarrow ? 30 : 32,
@@ -1202,7 +1476,10 @@ class _CartPageState extends State<CartPage>
                   border: Border.all(color: AppColors.primary, width: 0.7),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Tab(text: 'Yemek'),
+                child: _buildCartTabLabel(
+                  'Yemek',
+                  _appState.cartCountForTab(2),
+                ),
               ),
             ],
           ),
@@ -1686,11 +1963,13 @@ class _CartPageState extends State<CartPage>
   ) {
     final isNarrow = _isNarrowPhone(context);
     final productCount = (store['products'] as List).length;
+    _applyStoreHeaderIdentity(store);
+    final storeName = store['storeName']?.toString() ?? '';
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.grey.shade200, width: 1),
         boxShadow: [
           BoxShadow(
@@ -1702,75 +1981,66 @@ class _CartPageState extends State<CartPage>
       ),
       child: Column(
         children: [
-          Padding(
+          InkWell(
+            onTap: () => _openStoreFromCart(store),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            child: Padding(
             padding: EdgeInsets.fromLTRB(
-              isNarrow ? 14 : 16,
-              isNarrow ? 14 : 16,
-              isNarrow ? 14 : 16,
-              12,
+              isNarrow ? 10 : 12,
+              isNarrow ? 10 : 12,
+              isNarrow ? 10 : 12,
+              8,
             ),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Container(
-                  width: isNarrow ? 42 : 48,
-                  height: isNarrow ? 42 : 48,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF4F0FF),
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    (store['storeName']?.toString().isNotEmpty ?? false)
-                        ? store['storeName']
-                              .toString()
-                              .substring(0, 1)
-                              .toUpperCase()
-                        : 'M',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ),
-                SizedBox(width: isNarrow ? 10 : 12),
+                _buildStoreLogoAvatar(store, isNarrow: isNarrow),
+                SizedBox(width: isNarrow ? 8 : 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
+                      Text(
+                        storeName,
+                        style: _softTextStyle(
+                          size: isNarrow ? 14.5 : 15,
+                          weight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
                         children: [
-                          ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: isNarrow ? 140 : 180,
-                            ),
-                            child: Text(
-                              store['storeName'],
-                              style: _softTextStyle(
-                                size: isNarrow ? 15 : 16,
-                                weight: FontWeight.w700,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          const Icon(
+                            Icons.star_rounded,
+                            color: Colors.amber,
+                            size: 15,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            ((store['storeRating'] as num?)?.toDouble() ?? 0)
+                                .toStringAsFixed(1),
+                            style: _softTextStyle(
+                              size: isNarrow ? 12 : 12.5,
+                              weight: FontWeight.w700,
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Container(
                             padding: EdgeInsets.symmetric(
-                              horizontal: isNarrow ? 10 : 12,
-                              vertical: isNarrow ? 6 : 8,
+                              horizontal: isNarrow ? 8 : 9,
+                              vertical: isNarrow ? 3 : 4,
                             ),
                             decoration: BoxDecoration(
                               color: const Color(0xFFF1EBFF),
-                              borderRadius: BorderRadius.circular(18),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
                               '$productCount Ürün',
                               style: _softTextStyle(
-                                size: isNarrow ? 12 : 13,
+                                size: isNarrow ? 11 : 11.5,
                                 weight: FontWeight.w700,
                                 color: AppColors.primary,
                               ),
@@ -1778,38 +2048,16 @@ class _CartPageState extends State<CartPage>
                           ),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.star_rounded,
-                            color: Colors.amber,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            ((store['storeRating'] as num?)?.toDouble() ?? 0)
-                                .toStringAsFixed(1),
-                            style: _softTextStyle(
-                              size: isNarrow ? 13 : 14,
-                              weight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Satıcı puanı',
-                            style: _softTextStyle(
-                              size: isNarrow ? 12 : 13,
-                              weight: FontWeight.w500,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
-                      ),
                     ],
                   ),
                 ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: Colors.grey.shade400,
+                  size: 18,
+                ),
               ],
+            ),
             ),
           ),
           Padding(
@@ -1834,9 +2082,10 @@ class _CartPageState extends State<CartPage>
   ) {
     final isNarrow = _isNarrowPhone(context);
     final isVeryNarrow = _isVeryNarrowPhone(context);
-    final checkboxSize = isNarrow ? 18.0 : 20.0;
-    final imageSize = isNarrow ? 70.0 : 82.0;
-    final columnGap = isNarrow ? 8.0 : 10.0;
+    final checkboxSize = isNarrow ? 17.0 : 18.0;
+    final imageSize = isNarrow ? 56.0 : 64.0;
+    final columnGap = isNarrow ? 6.0 : 8.0;
+    final checkboxTop = (imageSize - checkboxSize) / 2;
     final productObject = product['productObject'];
     final productPrice = product['price'] as double;
     double discountedPrice = productPrice;
@@ -1861,10 +2110,10 @@ class _CartPageState extends State<CartPage>
 
     return Container(
       padding: EdgeInsets.fromLTRB(
-        isNarrow ? 12 : 16,
-        14,
-        isNarrow ? 12 : 16,
-        14,
+        isNarrow ? 10 : 12,
+        11,
+        isNarrow ? 10 : 12,
+        11,
       ),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: Colors.grey.shade100, width: 1)),
@@ -1881,7 +2130,7 @@ class _CartPageState extends State<CartPage>
                 child: Container(
                   width: checkboxSize,
                   height: checkboxSize,
-                  margin: EdgeInsets.only(top: isNarrow ? 24 : 28),
+                  margin: EdgeInsets.only(top: checkboxTop),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: product['isSelected']
@@ -1917,11 +2166,11 @@ class _CartPageState extends State<CartPage>
                   height: imageSize,
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(12),
                     child:
                         product['image'] != null &&
                             product['image'].toString().isNotEmpty
@@ -1997,11 +2246,11 @@ class _CartPageState extends State<CartPage>
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                const SizedBox(height: 4),
+                                const SizedBox(height: 2),
                                 Text(
                                   specs.join(' • '),
                                   style: _softTextStyle(
-                                    size: isVeryNarrow ? 10.5 : 11.5,
+                                    size: isVeryNarrow ? 10 : 11,
                                     weight: FontWeight.w500,
                                     color: Colors.grey.shade600,
                                     height: 1.2,
@@ -2017,47 +2266,58 @@ class _CartPageState extends State<CartPage>
                           onTap: () =>
                               _deleteProduct(items, storeIndex, productIndex),
                           child: Padding(
-                            padding: const EdgeInsets.only(left: 8, top: 2),
+                            padding: const EdgeInsets.only(left: 6, top: 1),
                             child: Icon(
                               Icons.delete_outline_rounded,
                               color: Colors.grey.shade600,
-                              size: 24,
+                              size: 20,
                             ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: isNarrow ? 4 : 6,
-                      runSpacing: isNarrow ? 4 : 6,
+                    const SizedBox(height: 6),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildInfoPill(
-                          icon: Icons.circle,
-                          text: product['stockText'] ?? 'Stokta',
-                          backgroundColor: const Color(0xFFEAF7EE),
-                          foregroundColor: const Color(0xFF16A34A),
-                          iconSize: 8,
-                          compact: isNarrow,
+                        Wrap(
+                          spacing: isNarrow ? 4 : 5,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            _buildInfoPill(
+                              icon: Icons.circle,
+                              text: product['stockText'] ?? 'Stokta',
+                              backgroundColor: const Color(0xFFEAF7EE),
+                              foregroundColor: const Color(0xFF16A34A),
+                              iconSize: 7,
+                              compact: isNarrow,
+                            ),
+                            if ((product['campaignLabel'] ?? '')
+                                .toString()
+                                .isNotEmpty)
+                              _buildInfoPill(
+                                icon: Icons.local_offer_outlined,
+                                text: product['campaignLabel'],
+                                backgroundColor: const Color(0xFFFFF1F2),
+                                foregroundColor: const Color(0xFFBE123C),
+                                compact: isNarrow,
+                              ),
+                          ],
                         ),
-                        if ((product['campaignLabel'] ?? '')
-                            .toString()
-                            .isNotEmpty)
-                          _buildInfoPill(
-                            icon: Icons.local_offer_outlined,
-                            text: product['campaignLabel'],
-                            backgroundColor: const Color(0xFFFFF1F2),
-                            foregroundColor: const Color(0xFFBE123C),
+                        const SizedBox(height: 5),
+                        SizedBox(
+                          width: double.infinity,
+                          child: _buildInfoPill(
+                            icon:
+                                product['deliveryIcon'] ??
+                                Icons.local_shipping_outlined,
+                            text: product['deliveryText'] ?? 'Yarın teslim',
+                            backgroundColor: const Color(0xFFF1EBFF),
+                            foregroundColor: AppColors.primary,
                             compact: isNarrow,
+                            multiline: true,
                           ),
-                        _buildInfoPill(
-                          icon:
-                              product['deliveryIcon'] ??
-                              Icons.local_shipping_outlined,
-                          text: product['deliveryText'] ?? 'Yarın teslim',
-                          backgroundColor: const Color(0xFFF1EBFF),
-                          foregroundColor: AppColors.primary,
-                          compact: isNarrow,
                         ),
                       ],
                     ),
@@ -2066,158 +2326,153 @@ class _CartPageState extends State<CartPage>
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (coupon != null)
-                      Text(
-                        _formatPrice(productPrice),
-                        style: _softTextStyle(
-                          size: 11.5,
-                          weight: FontWeight.w500,
-                          color: Colors.grey.shade500,
-                        ).copyWith(decoration: TextDecoration.lineThrough),
-                      ),
-                    Text(
-                      _formatPrice(discountedPrice),
-                      style: _softTextStyle(
-                        size: isVeryNarrow ? 17 : 19,
-                        weight: FontWeight.w700,
-                        color: const Color(0xFF111827),
-                        height: 1.0,
-                        letterSpacing: -0.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
               Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (productObject != null)
-                    InkWell(
-                      onTap: () {
-                        setState(() {
-                          _appState.toggleFastDelivery(productObject);
-                        });
-                      },
-                      borderRadius: BorderRadius.circular(14),
-                      child: Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: isNarrow ? 8 : 10,
-                          vertical: isNarrow ? 6 : 7,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _appState.hasFastDelivery(productObject)
-                              ? const Color(0xFFFFF0E8)
-                              : Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.bolt_rounded,
-                              color: _appState.hasFastDelivery(productObject)
-                                  ? Colors.deepOrange
-                                  : Colors.grey.shade600,
-                              size: 15,
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              _appState.hasFastDelivery(productObject)
-                                  ? 'Hızlı Teslimat aktif'
-                                  : 'Hızlı Teslimat ekle',
-                              style: _softTextStyle(
-                                size: isVeryNarrow ? 10 : 11,
-                                weight: FontWeight.w700,
-                                color: _appState.hasFastDelivery(productObject)
-                                    ? Colors.deepOrange
-                                    : Colors.grey.shade700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                  if (coupon != null)
+                    Text(
+                      _formatPrice(productPrice),
+                      style: _softTextStyle(
+                        size: 10.5,
+                        weight: FontWeight.w500,
+                        color: Colors.grey.shade500,
+                      ).copyWith(decoration: TextDecoration.lineThrough),
                     ),
-                  const SizedBox(height: 8),
-                  Container(
+                  Text(
+                    _formatPrice(discountedPrice),
+                    style: _softTextStyle(
+                      size: isVeryNarrow ? 15.5 : 17,
+                      weight: FontWeight.w700,
+                      color: const Color(0xFF111827),
+                      height: 1.0,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              if (productObject != null) ...[
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _appState.toggleFastDelivery(productObject);
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isNarrow ? 6 : 8,
+                      vertical: 5,
+                    ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF3F1F8),
-                      borderRadius: BorderRadius.circular(18),
+                      color: _appState.hasFastDelivery(productObject)
+                          ? const Color(0xFFFFF0E8)
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        InkWell(
-                          onTap: () => _updateQuantity(
-                            items,
-                            storeIndex,
-                            productIndex,
-                            -1,
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: isNarrow ? 10 : 12,
-                              vertical: 10,
-                            ),
-                            child: Icon(
-                              Icons.remove,
-                              size: isNarrow ? 16 : 18,
-                              color: Colors.grey.shade800,
-                            ),
-                          ),
+                        Icon(
+                          Icons.bolt_rounded,
+                          color: _appState.hasFastDelivery(productObject)
+                              ? Colors.deepOrange
+                              : Colors.grey.shade600,
+                          size: 13,
                         ),
-                        Container(
-                          constraints: BoxConstraints(
-                            minWidth: isNarrow ? 16 : 20,
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            '${product['quantity']}',
-                            style: _softTextStyle(
-                              size: isNarrow ? 13 : 14,
-                              weight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        InkWell(
-                          onTap: () => _updateQuantity(
-                            items,
-                            storeIndex,
-                            productIndex,
-                            1,
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: isNarrow ? 10 : 12,
-                              vertical: 10,
-                            ),
-                            child: const Icon(
-                              Icons.add,
-                              size: 20,
-                              color: AppColors.primary,
-                            ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _appState.hasFastDelivery(productObject)
+                              ? 'Hızlı'
+                              : 'Hızlı ekle',
+                          style: _softTextStyle(
+                            size: isVeryNarrow ? 9.5 : 10,
+                            weight: FontWeight.w700,
+                            color: _appState.hasFastDelivery(productObject)
+                                ? Colors.deepOrange
+                                : Colors.grey.shade700,
                           ),
                         ),
                       ],
                     ),
                   ),
-                ],
+                ),
+                SizedBox(width: isNarrow ? 6 : 8),
+              ],
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3F1F8),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    InkWell(
+                      onTap: () => _updateQuantity(
+                        items,
+                        storeIndex,
+                        productIndex,
+                        -1,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isNarrow ? 8 : 9,
+                          vertical: 6,
+                        ),
+                        child: Icon(
+                          Icons.remove,
+                          size: isNarrow ? 15 : 16,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      constraints: BoxConstraints(
+                        minWidth: isNarrow ? 14 : 18,
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        '${product['quantity']}',
+                        style: _softTextStyle(
+                          size: isNarrow ? 12.5 : 13,
+                          weight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => _updateQuantity(
+                        items,
+                        storeIndex,
+                        productIndex,
+                        1,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isNarrow ? 8 : 9,
+                          vertical: 6,
+                        ),
+                        child: Icon(
+                          Icons.add,
+                          size: isNarrow ? 17 : 18,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
           if ((product['hasDiscount'] || product['appliedCoupon'] != null) &&
               product['isSecondHand'] != true) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             GestureDetector(
               onTap: () {
                 if (product['productKey'] is int &&
@@ -2230,15 +2485,15 @@ class _CartPageState extends State<CartPage>
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 7,
+                  horizontal: 8,
+                  vertical: 5,
                 ),
                 decoration: BoxDecoration(
                   color: coupon != null
                       ? AppColors.primary.withValues(alpha: 0.08)
                       : Colors.white,
                   border: Border.all(color: AppColors.primary, width: 1),
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   coupon != null ? 'Kupon Uygulandı' : 'Kupon Ekle',
@@ -2252,7 +2507,7 @@ class _CartPageState extends State<CartPage>
             ),
           ],
           if ((product['selectedParts'] as List?)?.isNotEmpty ?? false) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             GestureDetector(
               onTap: () => _showPartsPopup(
                 context,
@@ -2260,22 +2515,22 @@ class _CartPageState extends State<CartPage>
               ),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
+                  horizontal: 8,
+                  vertical: 5,
                 ),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.build_outlined, size: 15, color: Colors.black54),
-                    SizedBox(width: 6),
+                    Icon(Icons.build_outlined, size: 13, color: Colors.black54),
+                    SizedBox(width: 5),
                     Text(
                       'Seçili parçaları gör',
                       style: TextStyle(
-                        fontSize: 11.5,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -2296,30 +2551,49 @@ class _CartPageState extends State<CartPage>
     required Color foregroundColor,
     double iconSize = 14,
     bool compact = false,
+    bool multiline = false,
   }) {
+    final fontSize = compact ? 9.5 : 10.5;
+    final textStyle = TextStyle(
+      fontSize: fontSize,
+      fontWeight: FontWeight.w700,
+      color: foregroundColor,
+      height: multiline ? 1.2 : 1.0,
+    );
+
     return Container(
+      width: multiline ? double.infinity : null,
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 8 : 10,
-        vertical: compact ? 6 : 7,
+        horizontal: compact ? 6 : 8,
+        vertical: compact ? 4 : 5,
       ),
       decoration: BoxDecoration(
         color: backgroundColor,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(multiline ? 12 : 999),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: multiline ? MainAxisSize.max : MainAxisSize.min,
+        crossAxisAlignment:
+            multiline ? CrossAxisAlignment.start : CrossAxisAlignment.center,
         children: [
           Icon(icon, size: iconSize, color: foregroundColor),
-          const SizedBox(width: 5),
-          Text(
-            text,
-            style: TextStyle(
-              fontSize: compact ? 10.5 : 11.5,
-              fontWeight: FontWeight.w700,
-              color: foregroundColor,
+          const SizedBox(width: 4),
+          if (multiline)
+            Expanded(
+              child: Text(
+                text,
+                style: textStyle,
+                softWrap: true,
+                maxLines: 2,
+              ),
+            )
+          else
+            Text(
+              text,
+              style: textStyle,
+              softWrap: false,
+              maxLines: 1,
             ),
-            overflow: TextOverflow.ellipsis,
-          ),
         ],
       ),
     );
@@ -2612,7 +2886,7 @@ class _CartPageState extends State<CartPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Sepetim ($totalItems Ürün)',
+                'Sepetim (${_appState.cart.length} Ürün)',
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -2949,7 +3223,7 @@ class _CartPageState extends State<CartPage>
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    store['storeRating'],
+                    readString(store['storeRating'], fallback: '0'),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 11,
