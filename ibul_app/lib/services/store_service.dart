@@ -1609,6 +1609,7 @@ class StoreService {
     String? waiterName,
     String? tableLabel,
     DateTime? closedAt,
+    String? areaName,
   }) {
     return _tableService.ensureTableHistoryRecorded(
       sellerId: sellerId,
@@ -1620,6 +1621,7 @@ class StoreService {
       waiterName: waiterName,
       tableLabel: tableLabel,
       closedAt: closedAt,
+      areaName: areaName,
     );
   }
 
@@ -1660,6 +1662,8 @@ class StoreService {
     String? waiterId,
     String? waiterName,
     String? sessionKey,
+    String? tableLabel,
+    String? areaName,
   }) {
     return _tableService.closeTableWithHistory(
       sellerId: sellerId,
@@ -1669,6 +1673,8 @@ class StoreService {
       waiterId: waiterId,
       waiterName: waiterName,
       sessionKey: sessionKey,
+      tableLabel: tableLabel,
+      areaName: areaName,
     );
   }
 

@@ -2857,6 +2857,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           _hasLoadedSellerWalletData = true;
           unawaited(_loadSellerWalletBalance(silent: true));
         }
+        unawaited(
+          _reloadRestaurantDashboardMetrics(
+            source: '_ensureModuleDataLoaded_finance',
+          ),
+        );
         break;
       case SellerModule.reviews:
       case SellerModule.support:
@@ -4449,6 +4454,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     required int tableNumber,
     required String tableLabel,
     required List<Map<String, dynamic>> closedOrders,
+    String? paymentMethod,
+    String? areaName,
   }) {
     if (!_isFoodStoreCategory(_storeCategory)) return;
     final grandTotal = closedOrders.fold<double>(
@@ -4477,6 +4484,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         'table_number': tableNumber,
         'table_name': tableLabel,
         'display_table_label': tableLabel,
+        if (areaName != null && areaName.trim().isNotEmpty)
+          'table_area_name': areaName.trim(),
+        if (paymentMethod != null && paymentMethod.trim().isNotEmpty)
+          'payment_method': paymentMethod.trim(),
         'grand_total': grandTotal,
         'archived_at': closedAt,
         'closed_at': closedAt,
@@ -14364,6 +14375,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Future<void> _closeGarsonTable({
     required int tableNumber,
     required String tableLabel,
+    required String paymentMethod,
     List<Map<String, dynamic>>? existingOrders,
   }) async {
     final sellerId = await _resolveCanonicalGarsonSellerId(
@@ -14384,6 +14396,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     try {
       // ── 1. Fetch live orders from DB (prefer passed list to avoid a
       //       redundant round-trip, but always verify via DB IDs later).
+      final tableRow = _storeTableRowByNumber(tableNumber);
+      final areaName = tableRow?['area_name']?.toString().trim() ?? '';
       final tableOrders = await _storeService.getTableOrdersByTable(
         sellerId: sellerId,
         tableNumber: tableNumber,
@@ -14440,7 +14454,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         await _storeService.closeTableWithHistory(
           sellerId: sellerId,
           tableNumber: tableNumber,
-          paymentMethod: 'cash',
+          paymentMethod: paymentMethod,
+          tableLabel: tableLabel,
+          areaName: areaName,
           waiterId: currentUser?.id,
           waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
         );
@@ -14657,6 +14673,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         tableNumber: tableNumber,
         tableLabel: tableLabel,
         closedOrders: sessionOrders,
+        paymentMethod: paymentMethod,
+        areaName: areaName,
       );
       _dashboardClosedHistorySignature = null;
       unawaited(
@@ -14668,7 +14686,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       final firstOrderId = sessionOrders.isNotEmpty
           ? sessionOrders.first['id']?.toString() ?? '-'
           : '-';
-      final tableRow = _storeTableRowByNumber(tableNumber);
       logGarsonCloseTableSuccess(
         resolvedLabel: tableLabel,
         tableId: tableRow?['id']?.toString() ?? '-',
@@ -14906,34 +14923,76 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       tableId: tableRow?['id']?.toString() ?? '-',
       orderId: orderId,
     );
-    final shouldClose = await showDialog<bool>(
+    final shouldClose = await showDialog<String?>(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: Text(dialogTitle),
-          content: const Text(
-            'Bu işlem masadaki aktif sipariş kayıtlarını kapatır.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Vazgeç'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.red.shade600,
+        var selectedMethod = 'cash';
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(dialogTitle),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Bu işlem masadaki aktif sipariş kayıtlarını kapatır.',
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Ödeme Yöntemi',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  _PaymentMethodTile(
+                    label: 'Nakit',
+                    icon: Icons.payments_rounded,
+                    color: const Color(0xFF16A34A),
+                    selected: selectedMethod == 'cash',
+                    onTap: () => setDialogState(() => selectedMethod = 'cash'),
+                  ),
+                  const SizedBox(height: 6),
+                  _PaymentMethodTile(
+                    label: 'POS / Kart',
+                    icon: Icons.credit_card_rounded,
+                    color: const Color(0xFF2563EB),
+                    selected: selectedMethod == 'card',
+                    onTap: () => setDialogState(() => selectedMethod = 'card'),
+                  ),
+                  const SizedBox(height: 6),
+                  _PaymentMethodTile(
+                    label: 'Online / QR',
+                    icon: Icons.qr_code_scanner_rounded,
+                    color: const Color(0xFF7C3AED),
+                    selected: selectedMethod == 'online',
+                    onTap: () =>
+                        setDialogState(() => selectedMethod = 'online'),
+                  ),
+                ],
               ),
-              child: const Text('Evet, Kapat'),
-            ),
-          ],
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Vazgeç'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, selectedMethod),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.red.shade600,
+                  ),
+                  child: const Text('Evet, Kapat'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
-    if (shouldClose == true) {
+    if (shouldClose != null && shouldClose.isNotEmpty) {
       await _closeGarsonTable(
         tableNumber: tableNumber,
         tableLabel: tableLabel,
+        paymentMethod: shouldClose,
         existingOrders: existingOrders,
       );
     }
@@ -15349,11 +15408,19 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         );
         _financeRefreshToken++;
       },
-      onTableClosedSessionArchived: (closedTableNumber, closedOrders, label) {
+      onTableClosedSessionArchived: (
+        closedTableNumber,
+        closedOrders,
+        label, {
+        paymentMethod,
+        areaName,
+      }) {
         _applyOptimisticClosedTableSession(
           tableNumber: closedTableNumber,
           tableLabel: label,
           closedOrders: closedOrders,
+          paymentMethod: paymentMethod,
+          areaName: areaName,
         );
       },
       onConfirmCustomerKitchenPrint:
@@ -33903,8 +33970,10 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final void Function(
     int tableNumber,
     List<Map<String, dynamic>> closedOrders,
-    String tableLabel,
-  )?
+    String tableLabel, {
+    String? paymentMethod,
+    String? areaName,
+  })?
   onTableClosedSessionArchived;
 
   /// Called before [closeTableWithHistory] so the parent grid can hide the
@@ -38276,6 +38345,15 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     await _closeTableAfterPayment(tableOrders, paymentMethod: result);
   }
 
+  String _resolveStoreTableAreaName(int tableNumber) {
+    for (final row in widget.storeTables) {
+      final number = int.tryParse(row['table_number']?.toString() ?? '') ?? 0;
+      if (number != tableNumber) continue;
+      return row['area_name']?.toString().trim() ?? '';
+    }
+    return '';
+  }
+
   Future<void> _closeTableAfterPayment(
     List<Map<String, dynamic>> orders, {
     required String paymentMethod,
@@ -38290,10 +38368,15 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         widget.sellerId,
         tableNumber: widget.tableNumber,
       );
+      final tableLabel =
+          widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}';
+      final areaName = _resolveStoreTableAreaName(widget.tableNumber);
       await _storeService.closeTableWithHistory(
         sellerId: widget.sellerId,
         tableNumber: widget.tableNumber,
         paymentMethod: paymentMethod,
+        tableLabel: tableLabel,
+        areaName: areaName,
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
         sessionKey: _getOrCreateSessionKey(),
@@ -38312,7 +38395,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         paymentMethod: paymentMethod,
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
-        tableLabel: widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}',
+        tableLabel: tableLabel,
+        areaName: areaName,
         closedAt: closeCompletedAt,
       );
       final remainingActiveOrders = await _storeService.getTableOrdersSnapshot(
@@ -38362,7 +38446,9 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       widget.onTableClosedSessionArchived?.call(
         widget.tableNumber,
         sessionOrders,
-        widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}',
+        tableLabel,
+        paymentMethod: paymentMethod,
+        areaName: areaName,
       );
       widget.onTableClosed?.call(widget.tableNumber);
       ScaffoldMessenger.of(context).showSnackBar(
