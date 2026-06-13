@@ -10,8 +10,9 @@ import 'home_screen.dart';
 import 'list_detail_page.dart';
 import 'product_detail_page.dart';
 import 'login_page.dart';
+import '../widgets/account_search_filter_row.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/product_card.dart';
 import '../widgets/premium_interactions.dart';
 import '../widgets/restaurant_order/product_quick_view_dialog.dart';
@@ -305,132 +306,107 @@ class _FavoritesPageState extends State<FavoritesPage> {
         children: [
           WebHeader(onSearch: (q) {}),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
+            child: WebStickyFooterScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 40,
+                      horizontal: 24,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(
+                          width: 280,
+                          child: AccountSidebar(
+                            activePage: 'Favorilerim',
+                          ),
                         ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 40,
-                                horizontal: 24,
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                        const SizedBox(width: 32),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
-                                  const SizedBox(
-                                    width: 280,
-                                    child: AccountSidebar(
-                                      activePage: 'Favorilerim',
+                                  Text(
+                                    _selectedTab == 'Beğeniler'
+                                        ? 'Favorilerim'
+                                        : _selectedTab,
+                                    style: const TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF1F2937),
                                     ),
                                   ),
-                                  const SizedBox(width: 32),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              _selectedTab == 'Beğeniler'
-                                                  ? 'Favorilerim'
-                                                  : _selectedTab,
-                                              style: const TextStyle(
-                                                fontSize: 24,
-                                                fontWeight: FontWeight.bold,
-                                                color: Color(0xFF1F2937),
-                                              ),
-                                            ),
-                                            Container(
-                                              padding: const EdgeInsets.all(4),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                                border: Border.all(
-                                                  color: Colors.grey.shade200,
+                                  Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: Colors.grey.shade200,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: _tabs.map((tab) {
+                                        final isSelected = _selectedTab == tab;
+                                        return InkWell(
+                                          onTap: () => setState(
+                                            () => _selectedTab = tab,
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          child: Container(
+                                            padding:
+                                                const EdgeInsets.symmetric(
+                                                  horizontal: 24,
+                                                  vertical: 10,
                                                 ),
-                                              ),
-                                              child: Row(
-                                                children: _tabs.map((tab) {
-                                                  final isSelected =
-                                                      _selectedTab == tab;
-                                                  return InkWell(
-                                                    onTap: () => setState(
-                                                      () => _selectedTab = tab,
-                                                    ),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          8,
-                                                        ),
-                                                    child: Container(
-                                                      padding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 24,
-                                                            vertical: 10,
-                                                          ),
-                                                      decoration: BoxDecoration(
-                                                        color: isSelected
-                                                            ? AppColors.primary
-                                                            : Colors
-                                                                  .transparent,
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              8,
-                                                            ),
-                                                      ),
-                                                      child: Text(
-                                                        tab,
-                                                        style: TextStyle(
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.w600,
-                                                          color: isSelected
-                                                              ? Colors.white
-                                                              : Colors
-                                                                    .grey
-                                                                    .shade600,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  );
-                                                }).toList(),
+                                            decoration: BoxDecoration(
+                                              color: isSelected
+                                                  ? AppColors.primary
+                                                  : Colors.transparent,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            child: Text(
+                                              tab,
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                                color: isSelected
+                                                    ? Colors.white
+                                                    : Colors.grey.shade600,
                                               ),
                                             ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 24),
-                                        if (_selectedTab == 'Beğeniler')
-                                          _buildWebFavoritesGrid()
-                                        else if (_selectedTab == 'Listelerim')
-                                          _buildWebListsView()
-                                        else
-                                          _buildWebRecommendationsGrid(),
-                                        const SizedBox(height: 60),
-                                      ],
+                                          ),
+                                        );
+                                      }).toList(),
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
+                              const SizedBox(height: 24),
+                              if (_selectedTab == 'Beğeniler')
+                                _buildWebFavoritesGrid()
+                              else if (_selectedTab == 'Listelerim')
+                                _buildWebListsView()
+                              else
+                                _buildWebRecommendationsGrid(),
+                              const SizedBox(height: 60),
+                            ],
                           ),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],
@@ -878,70 +854,13 @@ class _FavoritesPageState extends State<FavoritesPage> {
         children: [
           // Search and Filter
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: 40,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Center(
-                      child: TextField(
-                        decoration: InputDecoration(
-                          hintText: 'Arama yap',
-                          hintStyle: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade400,
-                          ),
-                          prefixIcon: Icon(
-                            Icons.search,
-                            color: AppColors.primary,
-                            size: 20,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () {
-                    if (_selectedTab == 'Listelerim') {
-                      _showCreateListDialog();
-                    }
-                  },
-                  child: Container(
-                    height: 40,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: AppColors.primary),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          _selectedTab == 'Listelerim' ? Icons.add : Icons.tune,
-                          color: AppColors.primary,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          _selectedTab == 'Listelerim' ? 'Ekle' : 'Filtre',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: AccountSearchFilterRow(
+              filterLabel: _selectedTab == 'Listelerim' ? 'Ekle' : 'Filtre',
+              filterIcon: _selectedTab == 'Listelerim' ? Icons.add : Icons.tune,
+              onFilterTap: _selectedTab == 'Listelerim'
+                  ? _showCreateListDialog
+                  : null,
             ),
           ),
 

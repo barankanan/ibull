@@ -5,7 +5,7 @@ import '../core/auth/user_identity.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
 import '../services/order_service.dart';
 import 'order_detail_page.dart';
@@ -181,40 +181,31 @@ class _OrdersPageState extends State<OrdersPage> {
         children: [
           WebHeader(onSearch: (q) {}),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
+            child: WebStickyFooterScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 40,
+                      horizontal: 24,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(
+                          width: 280,
+                          child: AccountSidebar(
+                            activePage: 'Siparişlerim',
+                          ),
                         ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 40,
-                                horizontal: 24,
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(
-                                    width: 280,
-                                    child: AccountSidebar(
-                                      activePage: 'Siparişlerim',
-                                    ),
-                                  ),
-                                  const SizedBox(width: 32),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const Text(
-                                          'Siparişlerim',
+                        const SizedBox(width: 32),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Siparişlerim',
                                           style: TextStyle(
                                             fontSize: 24,
                                             fontWeight: FontWeight.bold,
@@ -350,21 +341,15 @@ class _OrdersPageState extends State<OrdersPage> {
                                           ),
                                         ),
                                         const SizedBox(height: 24),
-                                        ..._buildOrdersList(isWeb: true),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                              ..._buildOrdersList(isWeb: true),
+                            ],
                           ),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],

@@ -155,6 +155,18 @@ logs/
 *~
 
 # =============================================================================
+# Ruflo / Claude Flow runtime (keep config + helpers; ignore local state)
+# =============================================================================
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+.claude-flow/neural/
+.claude-flow/**/*.db
+.claude-flow/**/*.sqlite*
+.swarm/
+.claude/memory.db
+
+# =============================================================================
 # Misc (legacy / tooling)
 # =============================================================================
 *.class

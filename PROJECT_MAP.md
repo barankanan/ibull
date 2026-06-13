@@ -646,7 +646,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `ibul_app/lib/features/seller/finance/helpers/store_table_area_resolver.dart`
   - Finance breakdown için alan adı çözümlemesi: önce `table_order_history.table_area_name`, boşsa `store_tables.area_name` (`table_id` / `table_number` eşleşmesi).
 - `ibul_app/lib/features/seller/finance/widgets/today_income_detail_sheet.dart`
-  - Bugünkü Gelir Detayı modal/sheet UI; alan badge, insight kartları ve slice bölümleri.
+  - Bugünkü Gelir Detayı modal/sheet UI; kompakt dashboard-style sunum (`TodayRevenueBreakdown` → alan/ödeme/masa kırılımı, veri mantığına dokunmaz).
 - `ibul_app/supabase/migrations/20260615_table_order_history_finance_analytics.sql`
   - `table_order_history` için `table_area_name`, masa etiket kolonları ve `close_table_with_history` RPC genişlemesi (payment/area/label persist).
 - `ibul_app/lib/utils/table_labels.dart`
@@ -821,6 +821,70 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 6. `firebase.json`: CSP + HSTS header ekle
 
 # Update Log
+
+## 2026-06-13 (garson ilk açılış + geçmiş kart hizalama)
+
+- **Kök neden (1):** Bootstrap bitmeden `shouldShowGarsonInitialLoading` false dönüyordu (`initialLoading` henüz true olmadan); empty/error state erken render ediliyordu. Owner id hydrate olmadan `sellerId.isEmpty` → "Oturum bulunamadı" flash'i.
+- **Kök neden (2):** `TableHistoryScreen` `Align(topCenter)` + `ConstrainedBox(maxWidth:640)` + `compact:true` tam genişlik satır layout kullanıyordu → kartlar ortalanıyor, strip kart hissinden uzaklaşıyordu.
+- `shouldShowGarsonInitialLoading`: `!initialBootstrapFinished && !initialVisibleSeedDone` iken loading.
+- `resolveGarsonRenderBundle`: bootstrap bitmeden grid boşsa `willShowLoading=true`.
+- `_buildGarsonModule`: owner id fallback + bootstrap sırasında spinner; empty/error yalnızca bootstrap bittikten sonra.
+- `TableHistoryScreen`: ortalama kaldırıldı; `GarsonClosedTableCard(width:220)` soldan hizalı dikey kart.
+
+## 2026-06-13 (garson history — delete doğrulama + restore supersede)
+
+- **Kök neden (delete):** `delete().eq(seller_id).eq(id)` 0 satırda da başarı dönüyordu; waiter/owner `seller_id` uyumsuzluğunda snackbar yine başarı gösteriyordu. RLS DELETE policy uygulanmamışsa sessiz no-op.
+- **Kök neden (duplicate devam):** restore→re-close sonrası eski history satırı DB'de kalıyordu; `session_key` farklı zincirler `dedupeHistoryRowsLatestPerChain` ile birleşmiyordu.
+- `deleteTableOrderHistoryRecord`: yalnız `id` ile delete + `.select('id')` → gerçek silme doğrulaması, `false` dönüş.
+- `supersedeRestoredHistoryOnReclose`: restore kaynağı history id re-close sonrası silinir.
+- Delete UI: `record.sellerId` / owner id; snackbar yalnız `deleted==true`; liste optimistic remove + refresh.
+
+## 2026-06-13 (garson restore/re-close — duplicate history zinciri)
+
+- **Kök neden (3 parça):** (1) `close_table_with_history` RPC her aktif `table_order` için ayrı history satırı insert eder (aynı `session_key` ile). (2) Restore sonrası re-close yeni `session_key` üretir; eski zincirle bağ kopar, listede 2 kayıt kalır. (3) `_closeGarsonTable` board kapanışında `sessionKey` geçirmiyordu; `ensureTableHistoryRecorded` fallback'i farklı `session_key` ile ikinci satır riski taşıyordu.
+- `restore` → `sessionKeyOverride`: history `session_key` flow page + panel map'e taşınır.
+- `consolidateDuplicateHistoryChain`: aynı `session_key` zincirinde yalnızca en güncel `closed_at` satırı kalır (fazlalar DB'den silinir).
+- `getTableOrderHistory`: `dedupeHistoryRowsLatestPerChain` güvenlik ağı.
+- `ensureTableHistoryRecorded`: RPC ile aynı `session_key` fallback insert'te kullanılır.
+
+## 2026-06-13 (garson restore/re-close — masa kimliği + geçmiş silme)
+
+- **Kök neden (2 parça):** (1) `close_table_with_history` RPC history satırını label alanları olmadan yazabiliyor; ardından `ensureTableHistoryRecorded` yeni `table_order` id'leriyle ikinci insert deniyordu — dedup yalnızca `original_order_id` / `session_key` eşleşmesine bakıyordu. (2) Label eksik history + UI'da `Masa ${table_number}` fallback'i fiziksel numarayı (11) gösteriyordu; alan içi numara (Bahçe 1) kayboluyordu.
+- `table_close_history_fallback.dart`: aynı `table_number` için 3 dakikalık close dedup; duplicate'te insert yerine identity patch.
+- `table_order_history_utils.dart`: `tableLabel` öncelik sırası (display → archived_orders → area+number → fallback); `historyIdentityForArchive` / `historyRowMissingIdentity`.
+- `store_table_service.dart`: history insert'lerde identity alanları; `_patchRecentHistoryIdentityIfMissing`; `restoreTableFromHistory` history identity'yi `tableRow`'a taşır; `deleteTableOrderHistoryRecord`.
+- `garson_closed_tables_strip.dart` + `TableOrderHistoryRecord.fromMap`: kart başlığı `tableLabel`; sol üst sil ikonu.
+- `table_history_screen.dart` + `seller_panel_page.dart`: onaylı tek kayıt silme + liste refresh.
+- `ibul_app/SUPABASE_TABLE_HISTORY_DELETE_POLICY.sql`: `table_order_history` DELETE + UPDATE RLS (seller / `user_can_access_restaurant`).
+
+## 2026-06-13 (garson geçmiş masalar — yatay kompakt kart)
+
+- **Kök neden:** `TableHistoryScreen` `GarsonClosedTableCard`'ı `width: null` ile tam genişlik + dikey kolon layout'ta render ediyordu; kartlar yatayda fazla geniş ve yüksek görünüyordu.
+- `GarsonClosedTableCard`: `compact: true` modu — yatay satır layout (sol: masa/alan/özet/zaman, sağ: tutar + mini ikonlar); padding 8×6, radius 8.
+- `TableHistoryScreen`: liste `maxWidth: 640` ile ortalandı; kartlar `compact: true`; separator/padding küçültüldü.
+
+## 2026-06-13 (garson geçmiş masalar — buton-only kompakt liste)
+
+- **Kök neden:** Garson ana sayfada inline `GarsonClosedTablesStrip` şeridi ile `TableHistoryScreen` tam ekran listesi farklı kart bileşenleri (`GarsonClosedTableCard` vs `_HistoryRecordCard`) kullanıyordu; üst şerit + buton çift giriş kafa karıştırıcıydı.
+- `seller_panel_page.dart`: garson modülünden inline strip kaldırıldı; erişim yalnızca üst bar / masa yönetimi "Geçmiş Masalar" butonlarından.
+- `GarsonClosedTableCard`: strip'ten export edildi; tam genişlik dikey liste modu (`width: null`) eklendi.
+- `TableHistoryScreen`: büyük analitik kart + özet bar kaldırıldı; aynı kompakt kart + dönem filtreleri + sayfalama; veri kaynağı `getTableOrderHistory` ve detay sheet/print/restore callback'leri aynı.
+
+## 2026-06-13 (garson geçmiş masa — close sonrası görünmeme fix)
+
+- **Kök neden (3 parça):** (1) `getTableOrderHistory` Supabase sorgusunda `order('closed_at')` yoktu — `limit` rastgele satır döndürüp Bugün filtresi sonrası yeni kapanış kaybolabiliyordu. (2) Geçmiş okuma `_resolveGarsonSellerId()` (auth fallback) ile yazma `_resolveCanonicalGarsonSellerId()` (owner) arasında seller_id uyumsuzluğu riski. (3) `ensureTableHistoryRecorded` tablo yokken `false` dönüp snackbar yine başarı gösteriyordu; gerçek DB insert doğrulanmıyordu.
+- `getTableOrderHistory`: `order('closed_at', desc)` + `range(offset…)` + `toDate` üst sınırı; `_resolveSellerId` ile owner id.
+- `_closeGarsonTable`: kapanış sonrası `hasRecentTableHistory` doğrulaması — kayıt yoksa snackbar yok; owner id persist; optimistic row doğru `seller_id`.
+- `GarsonClosedTablesStrip` / `TableHistoryScreen`: Bugün filtresi `endOfLocalDay`; garson modülü `_resolveSellerDataOwnerId()` kullanır.
+
+## 2026-06-13 (garson geçmiş masalar — inline strip + restore)
+
+- **Kök neden:** Garson modülünde "Geçmiş Masalar" yalnızca ayrı `TableHistoryScreen` navigasyonu olarak vardı; board üstünde gerçek `table_order_history` verisiyle kart listesi yoktu. Kapalı masayı tekrar açma (`restore`) servisi hiç tanımlı değildi; miktar düzenleme kapalı kayıt üzerinde güvenli değildi.
+- `GarsonClosedTablesStrip`: garson board üstünde Bugün/Hafta/30 Gün/Tarih Seç filtreli kompakt yatay kart şeridi; kaynak `StoreService.getTableOrderHistory` (`table_order_history`, `closed_at` merkezli).
+- `GarsonHistoryDetailSheet`: tam sipariş listesi + adisyon/mutfak yazdır + "Masayı Tekrar Aç"; miktar +/- kapalı kayıtta restore yönlendirmesi yapar.
+- `StoreTableService.restoreTableFromHistory`: history satırından `table_orders` insert (guard: masa zaten açıksa hata); history satırı değiştirilmez.
+- `TableOrderHistoryRecord` + `TableOrderHistoryUtils`: alan/özet/ archived_orders birleşimi; kartlarda alan adı, açılış-kapanış, ürün özeti, toplam.
+- `seller_panel_page.dart`: strip embed, restore/print callback'leri, kapanış sonrası strip refresh token.
 
 ## 2026-06-13 (home web kategori — footer reserve + main slot fill)
 

@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
+import '../services/location_access_service.dart';
 
 class NearbySellersMapPage extends StatefulWidget {
   final Product product;
@@ -48,12 +49,13 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
   }
 
   Future<void> _checkLocationPermissionAndStart() async {
+    final locationAccess = LocationAccessService.instance;
+
     if (kIsWeb) {
       try {
         Position? position;
         try {
-          // Force get position with timeout and LOWER accuracy for Web
-          position = await Geolocator.getCurrentPosition(
+          position = await locationAccess.getCurrentPosition(
             locationSettings: const LocationSettings(
               accuracy: LocationAccuracy.low,
               timeLimit: Duration(seconds: 20),
@@ -61,8 +63,6 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
           );
         } catch (e) {
           debugPrint('Primary location fetch failed: $e');
-          // Try last known position as fallback
-          position = await Geolocator.getLastKnownPosition();
         }
 
         if (mounted && position != null) {
@@ -103,38 +103,31 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
     }
 
     // Mobile Logic (Existing)
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    // Test if location services are enabled.
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    final serviceEnabled = await locationAccess.isLocationServiceEnabled();
     if (!serviceEnabled) {
       return;
     }
 
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return;
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
+    final permission = await locationAccess.ensurePermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
       return;
     }
 
-    // Get initial position
-    final position = await Geolocator.getCurrentPosition();
-    if (mounted) {
-      setState(() {
-        _userLocation = LatLng(position.latitude, position.longitude);
-        // Also center map on mobile
-        if (_userLocation != null) {
-          _mapController.move(_userLocation!, 15.0);
-        }
-      });
+    final position = await locationAccess.getCurrentPosition(
+      requestPermissionIfNeeded: false,
+    );
+    if (position == null || !mounted) {
+      return;
     }
+
+    setState(() {
+      _userLocation = LatLng(position.latitude, position.longitude);
+      // Also center map on mobile
+      if (_userLocation != null) {
+        _mapController.move(_userLocation!, 15.0);
+      }
+    });
 
     _startLiveLocationUpdates();
   }
@@ -149,12 +142,14 @@ class _NearbySellersMapPageState extends State<NearbySellersMapPage>
         }
 
         try {
-          final position = await Geolocator.getCurrentPosition(
+          final position = await LocationAccessService.instance.getCurrentPosition(
             locationSettings: const LocationSettings(
               accuracy: LocationAccuracy.low,
               timeLimit: Duration(seconds: 3),
             ),
+            requestPermissionIfNeeded: false,
           );
+          if (position == null) return;
 
           if (mounted) {
             setState(() {

@@ -24,7 +24,9 @@ extension _AppStateAuthDomain on AppState {
         if (localCart is List) {
           _cartState.replaceCart(
             localCart.whereType<Map>().map(
-              (e) => Product.fromJson(Map<String, dynamic>.from(e)),
+              (e) => Product.fromJson(
+                normalizeProductCartItem(Map<String, dynamic>.from(e)),
+              ),
             ),
             notify: false,
           );
@@ -40,7 +42,7 @@ extension _AppStateAuthDomain on AppState {
             ..clear()
             ..addAll(
               localAddresses.whereType<Map>().map(
-                (e) => Map<String, String>.from(e),
+                (e) => readStringMap(e),
               ),
             );
         }
@@ -54,7 +56,7 @@ extension _AppStateAuthDomain on AppState {
             ..clear()
             ..addAll(
               localCards.whereType<Map>().map(
-                (e) => Map<String, String>.from(e),
+                (e) => readStringMap(e),
               ),
             );
         }
@@ -73,8 +75,7 @@ extension _AppStateAuthDomain on AppState {
             );
         }
 
-        final prefs = await _getPrefs();
-        final persistedCurrentAddress = prefs.getString(
+        final persistedCurrentAddress = await SecureLocalStore.instance.readString(
           AppState._deviceCurrentDeliveryAddressKey,
         );
         if ((persistedCurrentAddress ?? '').trim().isNotEmpty) {
@@ -133,7 +134,9 @@ extension _AppStateAuthDomain on AppState {
         if (resolvedCart != null && resolvedCart is List) {
           _cartState.replaceCart(
             resolvedCart.map(
-              (e) => Product.fromJson(Map<String, dynamic>.from(e)),
+              (e) => Product.fromJson(
+                normalizeProductCartItem(Map<String, dynamic>.from(e)),
+              ),
             ),
           );
           await _resolveLegacyCartProductIds(requestVersion: requestVersion);
@@ -156,7 +159,7 @@ extension _AppStateAuthDomain on AppState {
         }
         if (resolvedAddresses != null && resolvedAddresses is List) {
           _deliveryAddresses.addAll(
-            resolvedAddresses.map((e) => Map<String, String>.from(e)),
+            resolvedAddresses.map((e) => readStringMap(e)),
           );
         }
 
@@ -195,7 +198,7 @@ extension _AppStateAuthDomain on AppState {
         }
         if (resolvedCards != null && resolvedCards is List) {
           _savedCards.addAll(
-            resolvedCards.map((e) => Map<String, String>.from(e)),
+            resolvedCards.map((e) => readStringMap(e)),
           );
         }
 

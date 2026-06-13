@@ -16,6 +16,7 @@ extension _AppStateCartFavoritesDomain on AppState {
           : product.productId,
     );
     _cartState.addOrReplace(resolvedProduct);
+    _selectedCartTabIndex = CartState.tabIndexForProduct(resolvedProduct);
     _clearCartAttention(resolvedProduct);
     _persistCartState();
     _syncPushInterests();

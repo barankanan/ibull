@@ -1,0 +1,75 @@
+{
+  "agents": {
+    "researcher": {
+      "agentId": "researcher",
+      "agentType": "researcher",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-06-13T10:37:31.162Z",
+      "domain": "ibul_app",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "coder": {
+      "agentId": "coder",
+      "agentType": "coder",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-06-13T10:39:04.424Z",
+      "domain": "ibul_app",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "security-architect": {
+      "agentId": "security-architect",
+      "agentType": "security-architect",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-06-13T10:23:05.581Z",
+      "domain": "ibul_app",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "tester": {
+      "agentId": "tester",
+      "agentType": "tester",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "haiku"
+      },
+      "createdAt": "2026-06-13T10:28:24.268Z",
+      "domain": "ibul_app",
+      "model": "haiku",
+      "modelRoutedBy": "explicit"
+    },
+    "reviewer": {
+      "agentId": "reviewer",
+      "agentType": "reviewer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-06-13T10:28:23.457Z",
+      "domain": "ibul_app",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    }
+  },
+  "version": "3.0.0"
+}

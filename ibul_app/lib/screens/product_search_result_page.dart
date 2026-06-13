@@ -366,14 +366,17 @@ class _ProductSearchResultPageState extends State<ProductSearchResultPage> {
                                       const SliverGridDelegateWithFixedCrossAxisCount(
                                         crossAxisCount: 2,
                                         childAspectRatio:
-                                            0.48, // Adjusted to prevent overflow
+                                            0.68, // Matches content-sized ProductCard
                                         crossAxisSpacing: 12,
                                         mainAxisSpacing: 12,
                                       ),
                                   itemCount: _searchResults.length,
                                   itemBuilder: (context, index) {
-                                    return ProductCard(
-                                      product: _searchResults[index],
+                                    return Align(
+                                      alignment: Alignment.topCenter,
+                                      child: ProductCard(
+                                        product: _searchResults[index],
+                                      ),
                                     );
                                   },
                                 ),
@@ -593,7 +596,7 @@ class _ProductSearchResultPageState extends State<ProductSearchResultPage> {
               physics: const NeverScrollableScrollPhysics(),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                childAspectRatio: 0.48,
+                childAspectRatio: 0.68,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
               ),

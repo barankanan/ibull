@@ -14,7 +14,7 @@ import 'business_detail_page.dart';
 import 'checkout_page.dart';
 import 'product_detail_page.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -2867,8 +2867,8 @@ class _CartPageState extends State<CartPage>
         children: [
           WebHeader(onSearch: (q) {}, activeMenu: 'cart'),
           Expanded(
-            child: SingleChildScrollView(
-              child: Column(children: [_buildWebContent(), const WebFooter()]),
+            child: WebStickyFooterScrollView(
+              child: _buildWebContent(),
             ),
           ),
         ],

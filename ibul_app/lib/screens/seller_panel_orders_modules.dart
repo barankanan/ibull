@@ -66,13 +66,15 @@ extension _SellerPanelOrdersModules on _SellerPanelPageState {
     if (selectedId != null) {
       final resolved =
           _sellerOrderById[selectedId] ?? _selectedSellerOrderDetail;
-      if (resolved != null) {
+      if (resolved != null && _shouldIncludeInSellerOrdersModule(resolved)) {
         return _buildSellerOrderDetailPage(resolved);
       }
-      if (_selectedSellerOrderDetail != null) {
+      if (_selectedSellerOrderDetail != null &&
+          _shouldIncludeInSellerOrdersModule(_selectedSellerOrderDetail!)) {
         return _buildSellerOrderDetailPage(_selectedSellerOrderDetail!);
       }
-    } else if (_selectedSellerOrderDetail != null) {
+    } else if (_selectedSellerOrderDetail != null &&
+        _shouldIncludeInSellerOrdersModule(_selectedSellerOrderDetail!)) {
       return _buildSellerOrderDetailPage(_selectedSellerOrderDetail!);
     }
 

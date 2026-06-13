@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../../services/auth_service.dart';
+import '../../utils/dynamic_value_helpers.dart';
 
 class UserProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -102,7 +103,9 @@ class UserProvider extends ChangeNotifier {
       final addressesData = await _authService.getUserDataField('addresses');
       if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
       if (addressesData != null && addressesData is List) {
-        _deliveryAddresses.addAll(addressesData.map((e) => Map<String, String>.from(e)));
+        _deliveryAddresses.addAll(
+          addressesData.map((e) => readStringMap(e)),
+        );
         if (_deliveryAddresses.isNotEmpty && _currentDeliveryAddress == null) {
           _currentDeliveryAddress = _deliveryAddresses.first['detail'];
         }

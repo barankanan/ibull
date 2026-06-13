@@ -1610,6 +1610,7 @@ class StoreService {
     String? tableLabel,
     DateTime? closedAt,
     String? areaName,
+    String? sessionKey,
   }) {
     return _tableService.ensureTableHistoryRecorded(
       sellerId: sellerId,
@@ -1622,6 +1623,7 @@ class StoreService {
       tableLabel: tableLabel,
       closedAt: closedAt,
       areaName: areaName,
+      sessionKey: sessionKey,
     );
   }
 
@@ -1747,6 +1749,62 @@ class StoreService {
       toDate: toDate,
       limit: limit,
       offset: offset,
+    );
+  }
+
+  Future<bool> hasRecentTableHistory({
+    required String sellerId,
+    required int tableNumber,
+    required DateTime since,
+  }) {
+    return _tableService.hasRecentTableHistory(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      since: since,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> restoreTableFromHistory({
+    required String sellerId,
+    required String historyId,
+  }) {
+    return _tableService.restoreTableFromHistory(
+      sellerId: sellerId,
+      historyId: historyId,
+    );
+  }
+
+  Future<bool> deleteTableOrderHistoryRecord({
+    required String sellerId,
+    required String historyId,
+  }) {
+    return _tableService.deleteTableOrderHistoryRecord(
+      sellerId: sellerId,
+      historyId: historyId,
+    );
+  }
+
+  Future<bool> supersedeRestoredHistoryOnReclose({
+    required String sellerId,
+    required String supersededHistoryId,
+  }) {
+    return _tableService.supersedeRestoredHistoryOnReclose(
+      sellerId: sellerId,
+      supersededHistoryId: supersededHistoryId,
+    );
+  }
+
+  Future<int> consolidateDuplicateHistoryChain({
+    required String sellerId,
+    required int tableNumber,
+    String? sessionKey,
+    DateTime? closedAfter,
+  }) {
+    return _tableService.consolidateDuplicateHistoryChain(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      sessionKey: sessionKey,
+      closedAfter: closedAfter,
     );
   }
 

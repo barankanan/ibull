@@ -11,7 +11,7 @@ import '../models/product_model.dart';
 import 'business_detail_page.dart';
 import 'product_detail_page.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
 
 class FollowedStoresPage extends StatefulWidget {
@@ -130,48 +130,36 @@ class _FollowedStoresPageState extends State<FollowedStoresPage> {
         children: [
           WebHeader(onSearch: (q) {}, activeMenu: 'account'),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
+            child: WebStickyFooterScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 40,
+                      horizontal: 24,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(
+                          width: 280,
+                          child: AccountSidebar(
+                            activePage: 'Takip Ettiklerim',
+                          ),
                         ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 40,
-                                horizontal: 24,
-                              ),
-                              child: Row(
+                        const SizedBox(width: 32),
+                        Expanded(
+                          child: Consumer<AppState>(
+                            builder: (context, appState, child) {
+                              final followedStores = appState.followedStores;
+                              final previewFuture =
+                                  _getStorePreviewFuture(followedStores);
+                              return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const SizedBox(
-                                    width: 280,
-                                    child: AccountSidebar(
-                                      activePage: 'Takip Ettiklerim',
-                                    ),
-                                  ),
-                                  const SizedBox(width: 32),
-                                  Expanded(
-                                    child: Consumer<AppState>(
-                                      builder: (context, appState, child) {
-                                        final followedStores =
-                                            appState.followedStores;
-                                        final previewFuture =
-                                            _getStorePreviewFuture(
-                                              followedStores,
-                                            );
-                                        return Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            const Text(
-                                              'Takip Ettiğim Mağazalar',
+                                  const Text(
+                                    'Takip Ettiğim Mağazalar',
                                               style: TextStyle(
                                                 fontSize: 24,
                                                 fontWeight: FontWeight.bold,
@@ -226,22 +214,16 @@ class _FollowedStoresPageState extends State<FollowedStoresPage> {
                                                   );
                                                 },
                                               ),
-                                          ],
-                                        );
-                                      },
-                                    ),
-                                  ),
                                 ],
-                              ),
-                            ),
+                              );
+                            },
                           ),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],

@@ -1118,15 +1118,15 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     final horizontalPadding = isWeb ? 24.0 : 12.0;
     final cardCount = isWeb ? 10 : 6;
     final gridDelegate = isWeb
-        ? const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 5,
-            childAspectRatio: 0.58,
+        ? const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 250,
+            childAspectRatio: 0.82,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
           )
         : const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            childAspectRatio: 0.65,
+            childAspectRatio: 0.70,
             mainAxisSpacing: 12,
             crossAxisSpacing: 10,
           );
@@ -1162,7 +1162,10 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
               physics: const NeverScrollableScrollPhysics(),
               gridDelegate: gridDelegate,
               itemCount: cardCount,
-              itemBuilder: (context, index) => const ProductCardSkeleton(),
+              itemBuilder: (context, index) => ProductCardSkeleton(
+                tight: !isWeb,
+                margin: EdgeInsets.zero,
+              ),
             ),
           ],
         ),

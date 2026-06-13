@@ -379,6 +379,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   StreamSubscription<List<Map<String, dynamic>>>?
   _cancelAppealNotificationsSubscription;
   final Map<int, DateTime> _webGarsonClosedTableAt = <int, DateTime>{};
+  final Map<int, String> _garsonRestoredSessionKeyByTable = <int, String>{};
+  final Map<int, String> _garsonRestoredHistoryIdByTable = <int, String>{};
   static const Duration _garsonClosedTableVisibilityHold = Duration(minutes: 2);
   // null = tümü, 'occupied' = dolu, 'preparing' = hazırlanıyor, 'payment_pending' = ödeme bekliyor
   String? _garsonStatusFilter;
@@ -4456,6 +4458,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     required List<Map<String, dynamic>> closedOrders,
     String? paymentMethod,
     String? areaName,
+    String? sellerId,
   }) {
     if (!_isFoodStoreCategory(_storeCategory)) return;
     final grandTotal = closedOrders.fold<double>(
@@ -4465,6 +4468,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     if (grandTotal <= 0) return;
 
     final closedAt = DateTime.now().toUtc().toIso8601String();
+    final historySellerId =
+        (sellerId ?? _resolveSellerDataOwnerId()).trim().isNotEmpty
+        ? (sellerId ?? _resolveSellerDataOwnerId()).trim()
+        : _normalizeSellerIdentity(_authService.currentUser?.id);
     setState(() {
       _dashboardTableOrders = _dashboardTableOrders
           .where(
@@ -4480,7 +4487,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       final optimisticRow = <String, dynamic>{
         'id':
             'optimistic-$tableNumber-${DateTime.now().millisecondsSinceEpoch}',
-        'seller_id': _authService.currentUser?.id,
+        'seller_id': historySellerId,
         'table_number': tableNumber,
         'table_name': tableLabel,
         'display_table_label': tableLabel,
@@ -5907,6 +5914,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     return shouldShowGarsonInitialLoading(
       initialLoading: _isGarsonInitialLoading,
       initialVisibleSeedDone: _garsonInitialVisibleSeedDone,
+      initialBootstrapFinished: _garsonInitialBootstrapFinished,
       visibleOrderCount: orders.length,
       storeTableCount: _garsonVisibleTablesForUi().length,
       lastGoodTableCount: _garsonBoardState.lastGoodTables.length,
@@ -10869,6 +10877,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               sellerId: sellerId,
                               onReprint: _printHistoryKitchenTicket,
                               onPrintAdisyon: _printHistoryAdisyon,
+                              onRestoreTable: _restoreGarsonTableFromHistory,
+                              onDeleteHistory: _deleteGarsonTableHistoryRecord,
                             ),
                           ),
                         );
@@ -11438,13 +11448,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       if (_garsonInitialLoadError != null &&
                           orders.isEmpty &&
                           uiTables.isEmpty &&
-                          !_isGarsonInitialLoading) {
+                          !_isGarsonInitialLoading &&
+                          _garsonInitialBootstrapFinished &&
+                          _garsonInitialBootstrapFailed) {
                         return _buildGarsonInitialLoadErrorState();
                       }
 
                       if (orders.isEmpty &&
                           uiTables.isEmpty &&
                           !_isGarsonInitialLoading &&
+                          _garsonInitialBootstrapFinished &&
                           _shouldShowGarsonEmptyState(
                             orders: orders,
                             source: 'mobile_garson_fallback',
@@ -11740,13 +11753,16 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                 if (_garsonInitialLoadError != null &&
                     orders.isEmpty &&
                     uiTables.isEmpty &&
-                    !_isGarsonInitialLoading) {
+                    !_isGarsonInitialLoading &&
+                    _garsonInitialBootstrapFinished &&
+                    _garsonInitialBootstrapFailed) {
                   return _buildGarsonInitialLoadErrorState();
                 }
 
                 if (orders.isEmpty &&
                     uiTables.isEmpty &&
                     !_isGarsonInitialLoading &&
+                    _garsonInitialBootstrapFinished &&
                     _shouldShowGarsonEmptyState(
                       orders: orders,
                       source: 'mobile_garson_stream',
@@ -13974,8 +13990,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
-  /// Geçmiş (kapanmış) bir masa için adisyonu "(ESKİ MASA)" başlığıyla
-  /// yeniden yazdırma kuyruğuna alır. Canlı `table_orders` satırı oluşturmaz.
   Future<void> _printHistoryAdisyon(TableOrderHistoryRecord record) async {
     final sellerId = _resolveGarsonSellerId();
     if (sellerId.isEmpty) {
@@ -14072,6 +14086,145 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         fallback: '(Eski Masa) adisyon yazdırma kuyruğuna alınamadı.',
       );
       _showPrinterWorkflowSnackBar(message, warning: true);
+    }
+  }
+
+  Future<bool> _restoreGarsonTableFromHistory(
+    TableOrderHistoryRecord record,
+  ) async {
+    final sellerId = _resolveGarsonSellerId();
+    if (sellerId.isEmpty) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Satıcı oturumu bulunamadı.')),
+      );
+      return false;
+    }
+    if (record.id.isEmpty) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Geçmiş masa kaydı geçersiz.')),
+      );
+      return false;
+    }
+
+    try {
+      final restoredOrders = await _storeService.restoreTableFromHistory(
+        sellerId: sellerId,
+        historyId: record.id,
+      );
+      if (!mounted) return false;
+
+      Map<String, dynamic>? initialOrder;
+      if (restoredOrders.isNotEmpty) {
+        initialOrder = restoredOrders.firstWhere(
+          (order) => !_isGarsonCompletedStatus(order['status']?.toString()),
+          orElse: () => restoredOrders.first,
+        );
+      }
+
+      setState(() {
+        _garsonManualRefreshGeneration += 1;
+        _clearGarsonClosedTableMarker(
+          record.tableNumber,
+          source: 'garson_history_restore',
+        );
+      });
+
+      final restoredSessionKey = record.sessionKey?.trim() ?? '';
+      if (restoredSessionKey.isNotEmpty) {
+        _garsonRestoredSessionKeyByTable[record.tableNumber] =
+            restoredSessionKey;
+      }
+      if (record.id.isNotEmpty) {
+        _garsonRestoredHistoryIdByTable[record.tableNumber] = record.id;
+      }
+
+      await _refreshGarsonDataManually(source: 'garson_history_restore');
+      if (!mounted) return false;
+
+      _openGarsonTableFlowPage(
+        tableNumber: record.tableNumber,
+        initialOrder: initialOrder,
+        sessionKeyOverride: restoredSessionKey.isNotEmpty
+            ? restoredSessionKey
+            : null,
+        restoredFromHistoryId: record.id.isNotEmpty ? record.id : null,
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${TableOrderHistoryUtils.tableLabel(record.toMap())} tekrar açıldı. Siparişler geri yüklendi.',
+          ),
+        ),
+      );
+      return true;
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[GarsonHistoryRestore] failed historyId=${record.id} '
+        'table=${record.tableNumber} error=$error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return false;
+      final message = error is Exception
+          ? error.toString().replaceFirst('Exception: ', '')
+          : 'Masa tekrar açılamadı. Lütfen tekrar deneyin.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> _deleteGarsonTableHistoryRecord(
+    TableOrderHistoryRecord record,
+  ) async {
+    final sellerId = record.sellerId.trim().isNotEmpty
+        ? record.sellerId.trim()
+        : _resolveSellerDataOwnerId().trim();
+    if (sellerId.isEmpty || record.id.isEmpty) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Geçmiş masa kaydı silinemedi.')),
+      );
+      return false;
+    }
+
+    try {
+      final deleted = await _storeService.deleteTableOrderHistoryRecord(
+        sellerId: sellerId,
+        historyId: record.id,
+      );
+      if (!mounted) return false;
+      if (!deleted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Geçmiş masa kaydı silinemedi. Yetki veya RLS politikası kontrol edin.',
+            ),
+          ),
+        );
+        return false;
+      }
+      setState(() => _garsonManualRefreshGeneration += 1);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${TableOrderHistoryUtils.tableLabel(record.toMap())} geçmiş kaydı silindi.',
+          ),
+        ),
+      );
+      return true;
+    } catch (error) {
+      if (!mounted) return false;
+      final message = error is Exception
+          ? error.toString().replaceFirst('Exception: ', '')
+          : 'Geçmiş masa kaydı silinemedi.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      return false;
     }
   }
 
@@ -14388,6 +14541,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       );
       return;
     }
+    _rememberSellerDataOwnerId(sellerId, source: '_closeGarsonTable');
 
     // Snapshot of board state taken BEFORE any mutation. Restored if DB
     // operations fail so the board never shows stale empty state.
@@ -14446,6 +14600,11 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       var ordersClosedTotal = 0;
 
       // ── 4. Archive to table_order_history then remove active orders.
+      final restoredSessionKey =
+          _garsonRestoredSessionKeyByTable[tableNumber]?.trim();
+      final closeSessionKey = restoredSessionKey?.isNotEmpty == true
+          ? restoredSessionKey
+          : null;
       // Revenue (Genel Bakış / Finans) reads ONLY from table_order_history
       // with closed_at — closeTableOrders() skips the archive and leaves
       // ciro stuck at 0 until this path runs.
@@ -14457,6 +14616,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           paymentMethod: paymentMethod,
           tableLabel: tableLabel,
           areaName: areaName,
+          sessionKey: closeSessionKey,
           waiterId: currentUser?.id,
           waiterName: _sellerPrintJobService.safeUserDisplayName(currentUser),
         );
@@ -14591,13 +14751,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               sellerId: sellerId,
               tableNumber: tableNumber,
               closedOrders: sessionOrders,
-              paymentMethod: 'cash',
+              paymentMethod: paymentMethod,
               waiterId: currentUser?.id,
               waiterName: _sellerPrintJobService.safeUserDisplayName(
                 currentUser,
               ),
               tableLabel: tableLabel,
               closedAt: closeCompletedAt,
+              areaName: areaName,
+              sessionKey: closeSessionKey,
             );
         debugPrint(
           '[GARSON_CLOSE_HISTORY_ENSURE] '
@@ -14605,6 +14767,39 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           'inserted_fallback=$insertedFallbackHistory '
           'orders=${tableOrders.length}',
         );
+
+        await _storeService.consolidateDuplicateHistoryChain(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          sessionKey: closeSessionKey,
+          closedAfter: closeCompletedAt,
+        );
+        final supersededHistoryId =
+            _garsonRestoredHistoryIdByTable[tableNumber]?.trim() ?? '';
+        if (supersededHistoryId.isNotEmpty) {
+          final superseded = await _storeService.supersedeRestoredHistoryOnReclose(
+            sellerId: sellerId,
+            supersededHistoryId: supersededHistoryId,
+          );
+          debugPrint(
+            '[GARSON_CLOSE_HISTORY_SUPERSEDE] '
+            'table=$tableNumber historyId=$supersededHistoryId deleted=$superseded',
+          );
+        }
+        _garsonRestoredSessionKeyByTable.remove(tableNumber);
+        _garsonRestoredHistoryIdByTable.remove(tableNumber);
+
+        final historyExists = await _storeService.hasRecentTableHistory(
+          sellerId: sellerId,
+          tableNumber: tableNumber,
+          since: closeCompletedAt.subtract(const Duration(minutes: 30)),
+        );
+        if (!historyExists) {
+          throw Exception(
+            'Masa kapatıldı ancak geçmiş kaydı oluşturulamadı. '
+            'Lütfen tekrar deneyin veya yöneticinize bildirin.',
+          );
+        }
       } catch (historyError) {
         debugPrint(
           '[GARSON_CLOSE_HISTORY_ENSURE_FAILED] '
@@ -14675,12 +14870,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         closedOrders: sessionOrders,
         paymentMethod: paymentMethod,
         areaName: areaName,
+        sellerId: sellerId,
       );
       _dashboardClosedHistorySignature = null;
       unawaited(
         _reloadRestaurantDashboardMetrics(source: 'garson_close_table_final'),
       );
       _financeRefreshToken++;
+      _garsonManualRefreshGeneration++;
 
       final snackbarText = garsonCloseTableSnackbarText(tableLabel);
       final firstOrderId = sessionOrders.isNotEmpty
@@ -15276,11 +15473,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   void _openGarsonTableFlowPage({
     required int tableNumber,
     Map<String, dynamic>? initialOrder,
+    String? sessionKeyOverride,
+    String? restoredFromHistoryId,
   }) {
     unawaited(
       _pushGarsonTableFlowPage(
         tableNumber: tableNumber,
         initialOrder: initialOrder,
+        sessionKeyOverride: sessionKeyOverride,
+        restoredFromHistoryId: restoredFromHistoryId,
       ),
     );
   }
@@ -15288,6 +15489,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Future<void> _pushGarsonTableFlowPage({
     required int tableNumber,
     Map<String, dynamic>? initialOrder,
+    String? sessionKeyOverride,
+    String? restoredFromHistoryId,
   }) async {
     final sellerId = await _resolveCanonicalGarsonSellerId(
       source: '_pushGarsonTableFlowPage',
@@ -15321,6 +15524,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       sellerId: sellerId,
       tableNumber: tableNumber,
       tableTitleOverride: tableTitle,
+      sessionKeyOverride: sessionKeyOverride,
+      restoredFromHistoryId: restoredFromHistoryId,
       products: List<SellerProduct>.from(_products),
       initialTabIndex: initialOrder == null ? 0 : 2,
       initialOrderId: initialOrder?['id']?.toString(),
@@ -15369,6 +15574,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       },
       onTableClosed: (closedTableNumber) {
         if (!mounted) return;
+        _garsonRestoredSessionKeyByTable.remove(closedTableNumber);
+        _garsonRestoredHistoryIdByTable.remove(closedTableNumber);
         setState(() {
           _invalidateSellerTableOrdersFallbackFuture();
           _markGarsonTableRecentlyClosed(
@@ -15421,6 +15628,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           closedOrders: closedOrders,
           paymentMethod: paymentMethod,
           areaName: areaName,
+          sellerId: _resolveSellerDataOwnerId(),
         );
       },
       onConfirmCustomerKitchenPrint:
@@ -25019,6 +25227,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 sellerId: sellerId,
                                 onReprint: _printHistoryKitchenTicket,
                                 onPrintAdisyon: _printHistoryAdisyon,
+                                onRestoreTable: _restoreGarsonTableFromHistory,
+                                onDeleteHistory: _deleteGarsonTableHistoryRecord,
                               ),
                             ),
                           );
@@ -25506,7 +25716,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   // ─── GARSON MODÜLÜ ────────────────────────────────────────────────────────
 
   Widget _buildGarsonModule() {
-    final sellerId = _resolveGarsonSellerId();
+    final ownerId = _resolveSellerDataOwnerId().trim();
+    final sellerId = ownerId.isNotEmpty ? ownerId : _resolveGarsonSellerId().trim();
     _garsonBuildRenderCount += 1;
     _guardGarsonStaleTableRouteOnBoard(source: 'garson_module_build');
     debugPrint(
@@ -25545,12 +25756,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
 
         Expanded(
           child: sellerId.isEmpty
-              ? const Center(
-                  child: Text(
-                    'Oturum bulunamadı.',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                )
+              ? (_garsonInitialBootstrapFinished
+                    ? const Center(
+                        child: Text(
+                          'Oturum bulunamadı.',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      )
+                    : const Center(child: CircularProgressIndicator()))
               : StreamBuilder<List<Map<String, dynamic>>>(
                   initialData: _garsonOrdersSnapshotForUi(),
                   stream: _garsonVisibleOrdersController.stream,
@@ -25585,12 +25798,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           if (_garsonInitialLoadError != null &&
                               allOrders.isEmpty &&
                               uiTables.isEmpty &&
-                              !_isGarsonInitialLoading) {
+                              !_isGarsonInitialLoading &&
+                              _garsonInitialBootstrapFinished &&
+                              _garsonInitialBootstrapFailed) {
                             return _buildGarsonInitialLoadErrorState();
                           }
                           if (allOrders.isEmpty &&
                               uiTables.isEmpty &&
                               !_isGarsonInitialLoading &&
+                              _garsonInitialBootstrapFinished &&
                               _shouldShowGarsonEmptyState(
                                 orders: allOrders,
                                 source: 'web_garson_fallback',
@@ -25603,6 +25819,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           }
                           if (allOrders.isEmpty &&
                               uiTables.isEmpty &&
+                              !_isGarsonInitialLoading &&
+                              _garsonInitialBootstrapFinished &&
                               _shouldShowGarsonEmptyState(
                                 orders: allOrders,
                                 source: 'web_garson_fallback_secondary',
@@ -25766,11 +25984,15 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                     if (_garsonInitialLoadError != null &&
                         allOrders.isEmpty &&
                         uiTables.isEmpty &&
-                        !_isGarsonInitialLoading) {
+                        !_isGarsonInitialLoading &&
+                        _garsonInitialBootstrapFinished &&
+                        _garsonInitialBootstrapFailed) {
                       return _buildGarsonInitialLoadErrorState();
                     }
                     if (allOrders.isEmpty &&
                         uiTables.isEmpty &&
+                        !_isGarsonInitialLoading &&
+                        _garsonInitialBootstrapFinished &&
                         _shouldShowGarsonEmptyState(
                           orders: allOrders,
                           source: 'web_garson_stream',
@@ -26207,6 +26429,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         sellerId: sellerId,
                         onReprint: _printHistoryKitchenTicket,
                         onPrintAdisyon: _printHistoryAdisyon,
+                        onRestoreTable: _restoreGarsonTableFromHistory,
+                        onDeleteHistory: _deleteGarsonTableHistoryRecord,
                       ),
                     ),
                   ),
@@ -33903,6 +34127,8 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     required this.sellerId,
     required this.tableNumber,
     this.tableTitleOverride,
+    this.sessionKeyOverride,
+    this.restoredFromHistoryId,
     required this.products,
     required this.initialTabIndex,
     required this.configureProductItem,
@@ -33939,6 +34165,8 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final String sellerId;
   final int tableNumber;
   final String? tableTitleOverride;
+  final String? sessionKeyOverride;
+  final String? restoredFromHistoryId;
   final List<SellerProduct> products;
   final int initialTabIndex;
   final String? initialOrderId;
@@ -34058,6 +34286,8 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   String? _sessionKey;
 
   String _getOrCreateSessionKey() {
+    final restored = widget.sessionKeyOverride?.trim() ?? '';
+    if (restored.isNotEmpty) return restored;
     _sessionKey ??=
         'session_${widget.sellerId}_${widget.tableNumber}_${DateTime.now().millisecondsSinceEpoch}';
     return _sessionKey!;
@@ -38371,6 +38601,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
       final tableLabel =
           widget.tableTitleOverride ?? 'Masa ${widget.tableNumber}';
       final areaName = _resolveStoreTableAreaName(widget.tableNumber);
+      final closeSessionKey = _getOrCreateSessionKey();
       await _storeService.closeTableWithHistory(
         sellerId: widget.sellerId,
         tableNumber: widget.tableNumber,
@@ -38379,7 +38610,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         areaName: areaName,
         waiterId: _currentWaiterId(),
         waiterName: _currentWaiterName(),
-        sessionKey: _getOrCreateSessionKey(),
+        sessionKey: closeSessionKey,
       );
       await _storeService.closeRestaurantOrdersForTable(
         sellerId: widget.sellerId,
@@ -38398,7 +38629,25 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         tableLabel: tableLabel,
         areaName: areaName,
         closedAt: closeCompletedAt,
+        sessionKey: closeSessionKey,
       );
+      await _storeService.consolidateDuplicateHistoryChain(
+        sellerId: widget.sellerId,
+        tableNumber: widget.tableNumber,
+        sessionKey: closeSessionKey,
+        closedAfter: closeCompletedAt,
+      );
+      final supersededHistoryId = widget.restoredFromHistoryId?.trim() ?? '';
+      if (supersededHistoryId.isNotEmpty) {
+        final superseded = await _storeService.supersedeRestoredHistoryOnReclose(
+          sellerId: widget.sellerId,
+          supersededHistoryId: supersededHistoryId,
+        );
+        debugPrint(
+          '[GarsonTableFlow] supersede historyId=$supersededHistoryId '
+          'table=${widget.tableNumber} deleted=$superseded',
+        );
+      }
       final remainingActiveOrders = await _storeService.getTableOrdersSnapshot(
         widget.sellerId,
         tableNumber: widget.tableNumber,

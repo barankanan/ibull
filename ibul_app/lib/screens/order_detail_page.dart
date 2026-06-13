@@ -9,7 +9,7 @@ import '../core/constants.dart';
 import '../models/product_model.dart';
 import '../services/order_service.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
 import 'ask_product_question_page.dart';
 import 'business_detail_page.dart';
@@ -107,47 +107,33 @@ class OrderDetailPage extends StatelessWidget {
         children: [
           WebHeader(onSearch: (q) {}),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
-                        ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1180),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 32,
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(
-                                    width: 280,
-                                    child: AccountSidebar(
-                                      activePage: 'Siparişlerim',
-                                    ),
-                                  ),
-                                  const SizedBox(width: 24),
-                                  Expanded(
-                                    child: _buildContent(context, isWeb: true),
-                                  ),
-                                ],
-                              ),
-                            ),
+            child: WebStickyFooterScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1180),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 32,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(
+                          width: 280,
+                          child: AccountSidebar(
+                            activePage: 'Siparişlerim',
                           ),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                        const SizedBox(width: 24),
+                        Expanded(
+                          child: _buildContent(context, isWeb: true),
+                        ),
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],

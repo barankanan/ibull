@@ -1,0 +1,1092 @@
+lib/ads/enums/ad_enums.dart:56:  completed,
+lib/ads/enums/ad_enums.dart:57:  rejected,
+lib/ads/enums/ad_enums.dart:68:    CampaignStatus.completed => 'completed',
+lib/ads/enums/ad_enums.dart:69:    CampaignStatus.rejected => 'rejected',
+lib/ads/enums/ad_enums.dart:78:  rejected,
+lib/ads/enums/ad_enums.dart:84:    CampaignReviewStatus.rejected => 'rejected',
+lib/ads/enums/ad_enums.dart:217:  refunded;
+lib/ads/enums/ad_enums.dart:223:    WalletTransactionStatus.refunded => 'refunded',
+lib/ads/repositories/ads_repository.dart:521:          if (status == CampaignStatus.rejected)
+lib/ads/repositories/ads_repository.dart:522:            'rejected_at': DateTime.now().toUtc().toIso8601String(),
+lib/ads/models/ad_campaign.dart:28:    this.rejectedAt,
+lib/ads/models/ad_campaign.dart:62:  final DateTime? rejectedAt;
+lib/ads/models/ad_campaign.dart:120:      rejectedAt: AdJsonHelper.asDateTime(json['rejected_at']),
+lib/ads/models/ad_campaign.dart:174:      'rejected_at': rejectedAt?.toUtc().toIso8601String(),
+lib/ads/models/ad_campaign.dart:214:    DateTime? rejectedAt,
+lib/ads/models/ad_campaign.dart:248:      rejectedAt: rejectedAt ?? this.rejectedAt,
+lib/ads/models/ad_revenue_overview.dart:11:    required this.refundedPayments,
+lib/ads/models/ad_revenue_overview.dart:25:  final double refundedPayments;
+lib/ads/models/ad_revenue_overview.dart:47:      refundedPayments: AdJsonHelper.asDouble(json['refunded_payments']),
+lib/ads/models/ad_revenue_overview.dart:65:      'refunded_payments': refundedPayments,
+lib/ads/preview/ads_preview_data_source.dart:111:      rejectedAt: status == CampaignStatus.rejected
+lib/ads/preview/ads_preview_data_source.dart:113:          : campaign.rejectedAt,
+lib/ads/presentation/pages/admin_ads_manager_content.dart:26:  DropdownMenuItem(value: 'rejected', child: Text('rejected')),
+lib/ads/presentation/pages/admin_ads_manager_content.dart:33:  DropdownMenuItem(value: 'rejected', child: Text('rejected')),
+lib/ads/presentation/pages/admin_ads_manager_content.dart:496:        refundedPayments: 0,
+lib/ads/presentation/pages/admin_ads_manager_content.dart:1327:    if (campaign.status == CampaignStatus.rejected) {
+lib/ads/presentation/pages/admin_ads_manager_content.dart:1328:      return 'rejected';
+lib/ads/presentation/pages/campaign_wizard_page.dart:801:        '[AdCredit][Seller] lookup request completed code=$requestedCode canRedeem=${preview?.canRedeem} reason=${preview?.reason}',
+lib/ads/presentation/pages/campaign_wizard_page.dart:2940:        'Seller ads draft save completed id=${saved.id} status=${saved.status.dbValue} sellerId=${saved.sellerId} storeId=${saved.storeId}',
+lib/ads/presentation/pages/seller_ads_manager_content.dart:75:    'rejected',
+lib/ads/presentation/pages/seller_ads_manager_content.dart:527:    final confirmed = await showDialog<bool>(
+lib/ads/presentation/pages/seller_ads_manager_content.dart:545:    if (confirmed != true) return;
+lib/ads/presentation/pages/seller_ads_manager_content.dart:586:    final confirmed = await showDialog<bool>(
+lib/ads/presentation/pages/seller_ads_manager_content.dart:606:    if (confirmed != true) return;
+lib/ads/presentation/pages/seller_ads_manager_content.dart:756:      refundedPayments: 0,
+lib/ads/presentation/pages/seller_ads_manager_content.dart:1451:    ('rejected', 'Reddedildi'),
+lib/ads/presentation/pages/seller_ads_manager_content.dart:2971:      'Seller ads create wizard closed resultId=${result?.id ?? '(null)'} resultStatus=${result?.status.dbValue ?? '(null)'} resultSeller=${result?.sellerId ?? '(null)'} activeSeller=$_effectiveSellerId',
+lib/ads/presentation/pages/seller_ads_manager_content.dart:3044:    final confirmed = await showDialog<bool>(
+lib/ads/presentation/pages/seller_ads_manager_content.dart:3061:    if (confirmed != true) return;
+lib/ads/presentation/widgets/admin_ad_credit_codes_panel.dart:77:        '[AdCredit][Admin] loading codes completed codes=${_recentCreditCodes.length} redemptions=${_recentRedemptions.length}',
+lib/ads/presentation/widgets/ads_data_table.dart:113:    final preservedOrder = _columnOrder
+lib/ads/presentation/widgets/ads_data_table.dart:118:      if (!preservedOrder.contains(id)) {
+lib/ads/presentation/widgets/ads_data_table.dart:119:        preservedOrder.add(id);
+lib/ads/presentation/widgets/ads_data_table.dart:129:    _columnOrder = preservedOrder;
+lib/ads/presentation/widgets/ads_data_table.dart:620:        builder: (context, candidateData, rejectedData) {
+lib/ads/presentation/widgets/status_chip.dart:55:      case 'rejected':
+lib/ads/helpers/funnel_helper.dart:77:    if (campaign.status == CampaignStatus.rejected ||
+lib/ads/helpers/funnel_helper.dart:84:      return CampaignStatus.completed;
+lib/ads/helpers/funnel_helper.dart:90:      return CampaignStatus.completed;
+lib/ads/helpers/ad_wallet_helper.dart:78:      status: WalletTransactionStatus.refunded,
+lib/ads/helpers/ad_wallet_helper.dart:140:          .where((record) => record.sourceStatus != 'refunded')
+lib/ads/helpers/ad_wallet_helper.dart:177:      refundedPayments: records
+lib/ads/helpers/ad_wallet_helper.dart:178:          .where((record) => record.sourceStatus == 'refunded')
+lib/ads/services/ad_credit_code_service.dart:83:      '[AdCredit] admin batch create completed batchId=$batchId created=${parsed.length}',
+lib/ads/services/ad_credit_code_service.dart:96:    debugPrint('[AdCredit] loading codes completed count=${parsed.length}');
+lib/ads/services/ad_credit_code_service.dart:114:      '[AdCredit] loading redemptions completed count=${parsed.length}',
+lib/ads/services/ad_credit_code_service.dart:131:      debugPrint('[AdCredit] preview request completed code=$normalized empty');
+lib/ads/services/ad_credit_code_service.dart:136:      '[AdCredit] preview request completed code=$normalized canRedeem=${preview.canRedeem} reason=${preview.reason}',
+lib/ads/services/ad_credit_code_service.dart:154:      throw StateError('Credit code redemption returned no rows.');
+lib/ads/services/campaign_review_service.dart:49:      CampaignStatus.rejected,
+lib/ads/services/campaign_review_service.dart:58:        status: CampaignReviewStatus.rejected,
+lib/ads/services/ads_service.dart:246:      refundedPayments: 0,
+lib/viewmodels/product_detail_viewmodel.dart:639:      // If DB returned no variants, add fallback options
+lib/l10n/arb/app_localizations.dart:14:/// returned by `AppLocalizations.of(context)`.
+lib/core/app_image_cdn.dart:9:///   - When [AppImageCdn.cdnBaseUrl] is empty (default), the raw URL is returned
+lib/app/app_bootstrap.dart:35:    debugPrint('Supabase bootstrap: initialize completed.');
+lib/features/seller/panel/helpers/seller_panel_module_helpers.dart:181:///             the user explicitly chose; the write was rejected.
+lib/features/seller/panel/helpers/seller_panel_module_helpers.dart:185:/// Pure decision returned by [evaluateSellerNavigationWrite].
+lib/features/seller/panel/helpers/seller_panel_module_helpers.dart:209:///    regardless of the lock; the user implicitly returned to the parent
+lib/features/seller/panel/helpers/seller_panel_module_helpers.dart:215:/// dashboard write MUST be rejected because the user is currently doing
+lib/features/seller/panel/helpers/seller_panel_module_helpers.dart:761:///  * `status`                          — open/closed/cancelled drives metrics
+lib/features/seller/panel/widgets/seller_panel_shell.dart:365:                  // Always show the "closed" icon since drawer is hidden by default.
+lib/features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart:51:          'value': statusCounts['closed_today'] ?? 0,
+lib/features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart:56:          'value': statusCounts['restaurant_cancelled'] ?? 0,
+lib/features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart:79:          'value': statusCounts['shipped'] ?? 0,
+lib/features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart:84:          'value': statusCounts['delivered'] ?? 0,
+lib/features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart:107:                    (statusCounts['closed_today'] ?? 0) +
+lib/features/seller/dashboard/widgets/seller_dashboard_detail_sections.dart:108:                    (statusCounts['restaurant_cancelled'] ?? 0))
+lib/features/seller/finance/repositories/finance_repository.dart:121:            .select('amount, is_paid, due_date, expense_date')
+lib/features/seller/finance/repositories/finance_repository.dart:125:            .select('original_amount, paid_amount, due_date, status')
+lib/features/seller/finance/repositories/finance_repository.dart:179:        final isPaid = row['is_paid'] as bool? ?? false;
+lib/features/seller/finance/repositories/finance_repository.dart:201:        final paidAmount = _toDouble(row['paid_amount']);
+lib/features/seller/finance/repositories/finance_repository.dart:202:        final remaining = (originalAmount - paidAmount).clamp(
+lib/features/seller/finance/repositories/finance_repository.dart:209:        if (status != 'paid' && status != 'cancelled') {
+lib/features/seller/finance/repositories/finance_repository.dart:388:            'items, status, closed_at, archived_at, archived_orders, '
+lib/features/seller/finance/repositories/finance_repository.dart:398:        q = q.or('closed_at.gte.$wideFrom,archived_at.gte.$wideFrom');
+lib/features/seller/finance/repositories/finance_repository.dart:433:            'items, status, closed_at, archived_at, archived_orders, '
+lib/features/seller/finance/repositories/finance_repository.dart:442:      q = q.or('closed_at.gte.$wideFrom,archived_at.gte.$wideFrom');
+lib/features/seller/finance/repositories/finance_repository.dart:540:            'grand_total, items, status, closed_at, archived_at, archived_orders, table_number',
+lib/features/seller/finance/repositories/finance_repository.dart:548:        q = q.or('closed_at.gte.$wideFrom,archived_at.gte.$wideFrom');
+lib/features/seller/finance/repositories/finance_repository.dart:602:  /// closed_at) ve sipariş adedi döner. [from]..[to] arası tüm günler (ciro 0
+lib/features/seller/finance/repositories/finance_repository.dart:644:    // ── Garson: table_order_history (closed_at veya archived_at) ──
+lib/features/seller/finance/repositories/finance_repository.dart:653:            'grand_total, items, status, closed_at, archived_at, archived_orders',
+lib/features/seller/finance/repositories/finance_repository.dart:656:          .or('closed_at.gte.$wideFrom,archived_at.gte.$wideFrom')
+lib/features/seller/finance/repositories/finance_repository.dart:662:        final closed = TableOrderHistoryUtils.closedAt(row);
+lib/features/seller/finance/repositories/finance_repository.dart:663:        if (closed == null) continue;
+lib/features/seller/finance/repositories/finance_repository.dart:664:        if (closed.isBefore(fromStart) || closed.isAfter(toEnd)) continue;
+lib/features/seller/finance/repositories/finance_repository.dart:665:        final key = dayKey(closed);
+lib/features/seller/finance/repositories/finance_repository.dart:756:            'grand_total, items, status, closed_at, archived_at, archived_orders',
+lib/features/seller/finance/repositories/finance_repository.dart:759:          .or('closed_at.gte.$wideFrom,archived_at.gte.$wideFrom')
+lib/features/seller/finance/repositories/finance_repository.dart:765:        final key = keyFor(row['closed_at'] ?? row['archived_at']);
+lib/features/seller/finance/repositories/finance_repository.dart:976:    bool? paid,
+lib/features/seller/finance/repositories/finance_repository.dart:990:    if (paid != null) q = q.eq('is_paid', paid);
+lib/features/seller/finance/repositories/finance_repository.dart:1011:          'is_paid': true,
+lib/features/seller/finance/repositories/finance_repository.dart:1012:          'paid_at': DateTime.now().toIso8601String(),
+lib/features/seller/finance/repositories/finance_repository.dart:1477:        .eq('is_paid', true);
+lib/features/seller/finance/repositories/finance_repository.dart:1503:        .select('id, description, amount, due_date, is_paid, category')
+lib/features/seller/finance/repositories/finance_repository.dart:1505:        .eq('is_paid', false)
+lib/features/seller/finance/repositories/finance_repository.dart:1513:          'id, creditor_name, original_amount, paid_amount, due_date, status, debt_type',
+lib/features/seller/finance/repositories/finance_repository.dart:1516:        .not('status', 'in', '("paid","cancelled")')
+lib/features/seller/finance/repositories/finance_repository.dart:1546:      final paid = double.tryParse(d['paid_amount'].toString()) ?? 0;
+lib/features/seller/finance/repositories/finance_repository.dart:1552:        'amount': original - paid,
+lib/features/seller/finance/models/finance_models.dart:125:  partiallyPaid('partially_paid', 'Kısmen Ödendi', Color(0xFFF59E0B)),
+lib/features/seller/finance/models/finance_models.dart:126:  paid('paid', 'Ödendi', Color(0xFF10B981)),
+lib/features/seller/finance/models/finance_models.dart:128:  cancelled('cancelled', 'İptal', Color(0xFF6B7280));
+lib/features/seller/finance/models/finance_models.dart:144:  paid('paid', 'Ödendi', Color(0xFF10B981));
+lib/features/seller/finance/models/finance_models.dart:436:    this.paidAt,
+lib/features/seller/finance/models/finance_models.dart:454:  final DateTime? paidAt;
+lib/features/seller/finance/models/finance_models.dart:474:    isPaid: (j['is_paid'] as bool?) ?? false,
+lib/features/seller/finance/models/finance_models.dart:475:    paidAt: j['paid_at'] != null
+lib/features/seller/finance/models/finance_models.dart:476:        ? DateTime.parse(j['paid_at'] as String)
+lib/features/seller/finance/models/finance_models.dart:495:    'is_paid': isPaid,
+lib/features/seller/finance/models/finance_models.dart:514:    this.paidAmount = 0,
+lib/features/seller/finance/models/finance_models.dart:528:  final double paidAmount;
+lib/features/seller/finance/models/finance_models.dart:535:  double get remainingAmount => originalAmount - paidAmount;
+lib/features/seller/finance/models/finance_models.dart:536:  double get paidPercent => originalAmount > 0
+lib/features/seller/finance/models/finance_models.dart:537:      ? (paidAmount / originalAmount * 100).clamp(0, 100)
+lib/features/seller/finance/models/finance_models.dart:547:    paidAmount: _toDouble(j['paid_amount']),
+lib/features/seller/finance/models/finance_models.dart:688:    this.paidAmount = 0,
+lib/features/seller/finance/models/finance_models.dart:706:  final double paidAmount;
+lib/features/seller/finance/models/finance_models.dart:711:      (netSalary - paidAmount).clamp(0, double.infinity);
+lib/features/seller/finance/models/finance_models.dart:727:    paidAmount: _toDouble(j['paid_amount']),
+lib/features/seller/finance/screens/tabs/payments_tab.dart:8:// A unified payment schedule item returned by the repository helper
+lib/features/seller/finance/screens/tabs/payments_tab.dart:75:      final isPaid = r['is_paid'] == true;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:20:  bool? _paidFilter;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:38:        paid: _paidFilter,
+lib/features/seller/finance/screens/tabs/expense_tab.dart:50:  double get _paidAmount =>
+lib/features/seller/finance/screens/tabs/expense_tab.dart:52:  double get _unpaidAmount =>
+lib/features/seller/finance/screens/tabs/expense_tab.dart:105:        _paidFilter = false;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:131:              _paidFilter = false;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:142:              _paidFilter = false;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:153:              _paidFilter = null;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:174:              child: _chip('Ödendi', fmtCurrency(_paidAmount),
+lib/features/seller/finance/screens/tabs/expense_tab.dart:178:              child: _chip('Bekliyor', fmtCurrency(_unpaidAmount),
+lib/features/seller/finance/screens/tabs/expense_tab.dart:216:          _fc('Tümü', _paidFilter == null && _categoryFilter == null, () {
+lib/features/seller/finance/screens/tabs/expense_tab.dart:218:              _paidFilter = null;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:224:          _fc('Ödenmedi', _paidFilter == false, () {
+lib/features/seller/finance/screens/tabs/expense_tab.dart:226:              _paidFilter = false;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:233:            // filter: overdue (unpaid & due in past)
+lib/features/seller/finance/screens/tabs/expense_tab.dart:235:              _paidFilter = false;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:244:                _paidFilter = null;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:536:    final unpaidExpenses = _expenses.where((expense) => !expense.isPaid).toList(growable: false);
+lib/features/seller/finance/screens/tabs/expense_tab.dart:538:    if (unpaidExpenses.isEmpty) {
+lib/features/seller/finance/screens/tabs/expense_tab.dart:545:    Expense selectedExpense = unpaidExpenses.first;
+lib/features/seller/finance/screens/tabs/expense_tab.dart:564:                items: unpaidExpenses
+lib/features/seller/finance/screens/tabs/salary_tab.dart:71:  double _paid(FinanceEmployee e) => _recordFor(e)?.paidAmount ?? 0;
+lib/features/seller/finance/screens/tabs/salary_tab.dart:73:      (_net(e) - _paid(e)).clamp(0, double.infinity);
+lib/features/seller/finance/screens/tabs/salary_tab.dart:180:    final totalPaid = _employees.fold<double>(0, (s, e) => s + _paid(e));
+lib/features/seller/finance/screens/tabs/salary_tab.dart:324:        DataCell(Text(fmtCurrency(_paid(e)),
+lib/features/seller/finance/screens/tabs/salary_tab.dart:680:    final remaining = (r.netSalary - r.paidAmount).clamp(0, double.infinity);
+lib/features/seller/finance/screens/tabs/salary_tab.dart:1109:                _chip('Ödenen', fmtCurrency(r.paidAmount),
+lib/features/seller/finance/screens/tabs/salary_tab.dart:1112:                _chip('Kalan', fmtCurrency(r.netSalary - r.paidAmount),
+lib/features/seller/finance/screens/tabs/debt_tab.dart:20:  String? _statusFilter; // null = active+partially_paid+overdue
+lib/features/seller/finance/screens/tabs/debt_tab.dart:38:        // default: exclude paid and cancelled
+lib/features/seller/finance/screens/tabs/debt_tab.dart:40:            .where((d) => d.status != DebtStatus.paid && d.status != DebtStatus.cancelled)
+lib/features/seller/finance/screens/tabs/debt_tab.dart:184:      ('Kısmen Ödendi', 'partially_paid'),
+lib/features/seller/finance/screens/tabs/debt_tab.dart:243:    final percent = d.paidPercent;
+lib/features/seller/finance/screens/tabs/debt_tab.dart:308:                          fmtCurrency(d.paidAmount),
+lib/features/seller/finance/screens/tabs/debt_tab.dart:737:                _amountChip('Ödenen', fmtCurrency(d.paidAmount),
+lib/features/seller/finance/helpers/today_income_builder.dart:157:  final closedAt = TableOrderHistoryUtils.closedAt(row);
+lib/features/seller/finance/helpers/today_income_builder.dart:159:      '${closedAt?.toIso8601String() ?? ''}:${amount.toStringAsFixed(2)}';
+lib/features/seller/finance/helpers/today_income_builder.dart:167:  final closedAt = TableOrderHistoryUtils.closedAt(row);
+lib/features/seller/finance/helpers/today_income_builder.dart:168:  return 'fallback:${closedAt?.toIso8601String() ?? ''}:'
+lib/features/seller/finance/helpers/today_income_builder.dart:201:    final rowOccurredAt = TableOrderHistoryUtils.closedAt(row);
+lib/utils/garson_active_orders_fetch.dart:16:  'served',
+lib/utils/garson_active_orders_fetch.dart:24:  'confirmed',
+lib/utils/garson_active_orders_fetch.dart:44:/// leave one stale.  The previous implementation returned `order_status`
+lib/utils/garson_active_orders_fetch.dart:46:/// `status='closed'` + `order_status='pending'` looked **active** on the
+lib/utils/garson_active_orders_fetch.dart:47:/// garson board even though the customer had been paid.
+lib/utils/garson_active_orders_fetch.dart:50:/// considered closed.  This makes the helper resistant to dual-source drift.
+lib/utils/garson_table_metrics.dart:7:    required this.cancelledCount,
+lib/utils/garson_table_metrics.dart:13:  final int cancelledCount;
+lib/utils/garson_table_metrics.dart:37:  var cancelled = 0;
+lib/utils/garson_table_metrics.dart:45:    if (mappedStatus == 'cancelled') {
+lib/utils/garson_table_metrics.dart:46:      cancelled++;
+lib/utils/garson_table_metrics.dart:71:    cancelledCount: cancelled,
+lib/utils/garson_table_metrics.dart:78:    case 'cancelled':
+lib/utils/garson_table_metrics.dart:81:    case 'refunded':
+lib/utils/garson_table_metrics.dart:83:      return 'cancelled';
+lib/utils/garson_board_state.dart:518:  required String closedLabel,
+lib/utils/garson_board_state.dart:528:    'closedLabel=$closedLabel '
+lib/utils/garson_board_state.dart:596:  required String closedLabel,
+lib/utils/garson_board_state.dart:597:  required int closedTableNumber,
+lib/utils/garson_board_state.dart:598:  required String closedOrderId,
+lib/utils/garson_board_state.dart:610:    'closed_label=$closedLabel '
+lib/utils/garson_board_state.dart:611:    'closed_table_number=$closedTableNumber '
+lib/utils/garson_board_state.dart:612:    'closed_order_id=$closedOrderId '
+lib/utils/garson_board_state.dart:663:/// `orders_closed == 0` is the NORMAL outcome for garson-only tables: the
+lib/utils/garson_board_state.dart:687:  required String closedOrderId,
+lib/utils/table_labels.dart:262:    return normalized == 'closed' ||
+lib/utils/table_labels.dart:263:        normalized == 'paid' ||
+lib/utils/table_labels.dart:264:        normalized == 'cancelled' ||
+lib/utils/table_labels.dart:266:        normalized == 'completed' ||
+lib/utils/table_labels.dart:268:        normalized == 'completed_payment' ||
+lib/utils/table_labels.dart:269:        normalized == 'payment_completed';
+lib/utils/garson_table_order_state.dart:23:    this.preservedTables = const <GarsonVisibleOrderPreservation>[],
+lib/utils/garson_table_order_state.dart:28:  final List<GarsonVisibleOrderPreservation> preservedTables;
+lib/utils/garson_table_order_state.dart:309:  required List<GarsonVisibleOrderPreservation> preservedTables,
+lib/utils/garson_table_order_state.dart:312:  if (userInitiated && !hasIncomingOrders && preservedTables.isNotEmpty) {
+lib/utils/garson_table_order_state.dart:323:  if (preservedTables.isNotEmpty) {
+lib/utils/garson_table_order_state.dart:337:List<GarsonVisibleOrderPreservation> _collectGarsonPreservedTables({
+lib/utils/garson_table_order_state.dart:352:  final preservedTables = <GarsonVisibleOrderPreservation>[];
+lib/utils/garson_table_order_state.dart:399:    preservedTables.add(
+lib/utils/garson_table_order_state.dart:407:  return preservedTables;
+lib/utils/garson_table_order_state.dart:431:      final preservedTables = _collectGarsonPreservedTables(
+lib/utils/garson_table_order_state.dart:443:          preservedTables: preservedTables,
+lib/utils/garson_table_order_state.dart:446:        preservedTables: preservedTables,
+lib/utils/garson_table_order_state.dart:553:  final preservedTables = _collectGarsonPreservedTables(
+lib/utils/garson_table_order_state.dart:566:      preservedTables: preservedTables,
+lib/utils/garson_table_order_state.dart:569:    preservedTables: preservedTables,
+lib/utils/garson_table_order_state.dart:607:  required DateTime closedAt,
+lib/utils/garson_table_order_state.dart:612:  final normalizedClosedAt = closedAt.toLocal();
+lib/utils/garson_area_sections.dart:287:    // BUG-FIX (Render Gap): Previously this branch returned `blockedLoading`
+lib/models/garson_operation_rules.dart:24:  static const served = 'served';
+lib/models/garson_operation_rules.dart:25:  static const closed = 'closed';
+lib/models/garson_operation_rules.dart:26:  static const completed = 'completed';
+lib/models/garson_operation_rules.dart:67:  ///   - 'closed'    — table already paid and archived; undo has no target.
+lib/models/garson_operation_rules.dart:68:  ///   - 'completed' — same as closed.
+lib/models/garson_operation_rules.dart:69:  ///   - 'served'    — order delivered; undo would re-open a served item.
+lib/models/garson_operation_rules.dart:96:  ///   - 'served' / 'closed' / 'completed' → blocked (order is finalised).
+lib/models/garson_operation_rules.dart:165:  static const _served = GarsonOperationRules._(
+lib/models/garson_operation_rules.dart:166:    status: GarsonOrderStatus.served,
+lib/models/garson_operation_rules.dart:177:  static const _closed = GarsonOperationRules._(
+lib/models/garson_operation_rules.dart:178:    status: GarsonOrderStatus.closed,
+lib/models/garson_operation_rules.dart:206:    GarsonOrderStatus.served: _served,
+lib/models/garson_operation_rules.dart:207:    GarsonOrderStatus.closed: _closed,
+lib/models/garson_operation_rules.dart:208:    GarsonOrderStatus.completed: _closed, // same rules as closed
+lib/models/garson_operation_rules.dart:236:/// | Edit: served/closed/completed | `canResend == false` → blocked by [GarsonOperationRules] | — | — |
+lib/models/garson_operation_rules.dart:292:  /// Typically false only when every order is already `served`, `closed`, or
+lib/models/garson_operation_rules.dart:293:  /// `completed` — which should not occur on an active table.
+lib/models/garson_operation_rules.dart:299:  /// A table can be **paid** if at least one order is not in a terminal state
+lib/models/garson_operation_rules.dart:300:  /// (`closed` / `completed`).
+lib/models/garson_operation_rules.dart:303:        return n != GarsonOrderStatus.closed &&
+lib/models/garson_operation_rules.dart:304:            n != GarsonOrderStatus.completed;
+lib/models/restaurant_ops_models.dart:76:    this.paidBy,
+lib/models/restaurant_ops_models.dart:90:  final String? paidBy;
+lib/models/restaurant_ops_models.dart:105:      paidBy: map['paid_by']?.toString(),
+lib/models/restaurant_ops_models.dart:120:      if (paidBy != null && paidBy!.isNotEmpty) 'paid_by': paidBy,
+lib/models/restaurant_ops_models.dart:158:  double get paidTotal =>
+lib/models/restaurant_ops_models.dart:162:    final r = grandTotal - paidTotal;
+lib/models/restaurant_ops_models.dart:172:    final paid = paidTotal;
+lib/models/restaurant_ops_models.dart:173:    return '$count ödeme — ${_formatMoney(paid)}';
+lib/models/restaurant_ops_models.dart:220:    required this.closedAt,
+lib/models/restaurant_ops_models.dart:240:  final DateTime closedAt;
+lib/models/restaurant_ops_models.dart:253:    return closedAt.difference(start);
+lib/models/restaurant_ops_models.dart:268:      status: map['status']?.toString() ?? 'closed',
+lib/models/restaurant_ops_models.dart:271:      closedAt:
+lib/models/restaurant_ops_models.dart:272:          DateTime.tryParse(map['closed_at']?.toString() ?? '')?.toLocal() ??
+lib/models/restaurant_ops_models.dart:388:    this.closedAt,
+lib/models/restaurant_ops_models.dart:392:    this.closedByName,
+lib/models/restaurant_ops_models.dart:415:  /// Last significant update (for live orders). Same as [closedAt] for history.
+lib/models/restaurant_ops_models.dart:417:  /// Timestamp when the table session was closed (history records only).
+lib/models/restaurant_ops_models.dart:418:  final DateTime? closedAt;
+lib/models/restaurant_ops_models.dart:424:  /// Who closed the table session. Populated from history records.
+lib/models/restaurant_ops_models.dart:425:  final String? closedByName;
+lib/models/restaurant_ops_models.dart:440:  /// Duration of the table session (only meaningful when [closedAt] and
+lib/models/restaurant_ops_models.dart:443:    final end = closedAt;
+lib/models/restaurant_ops_models.dart:526:      updatedAt: h.closedAt,
+lib/models/restaurant_ops_models.dart:527:      closedAt: h.closedAt,
+lib/models/restaurant_ops_models.dart:531:      closedByName: h.waiterName,   // table_order_history: waiter_name = closer
+lib/models/mixed_service_order.dart:1564:        normalizedStatus != 'rejected' &&
+lib/models/print_job_model.dart:20:    this.completedAt,
+lib/models/print_job_model.dart:41:  final DateTime? completedAt;
+lib/models/print_job_model.dart:76:      completedAt: DateTime.tryParse(map['completed_at']?.toString() ?? ''),
+lib/models/print_job_model.dart:87:      return 'completed';
+lib/models/print_job_model.dart:92:  bool get isCompleted => normalizedStatus == 'completed';
+lib/models/print_job_model.dart:132:      'completed_at': completedAt?.toIso8601String(),
+lib/screens/seller/desktop_printer_setup_page.dart:1287:    final confirmed = await showDialog<bool>(
+lib/screens/seller/desktop_printer_setup_page.dart:1308:    if (confirmed != true || !mounted) return;
+lib/screens/seller/desktop_printer_setup_page.dart:2541:      final confirmed = await showDialog<bool>(
+lib/screens/seller/desktop_printer_setup_page.dart:2562:      if (confirmed != true || !mounted) {
+lib/screens/seller/desktop_printer_setup_page.dart:2578:        final confirmed = await showDialog<bool>(
+lib/screens/seller/desktop_printer_setup_page.dart:2597:        if (confirmed == true && mounted) {
+lib/screens/seller/printer_quick_setup.dart:17:/// Returns the saved [PrinterModel] on success, null if the user cancelled.
+lib/screens/seller/kitchen_print_management_page.dart:1480:      final confirmed = await showDialog<bool>(
+lib/screens/seller/kitchen_print_management_page.dart:1501:      if (confirmed != true || !mounted) {
+lib/screens/seller/kitchen_print_management_page.dart:1517:        final confirmed = await showDialog<bool>(
+lib/screens/seller/kitchen_print_management_page.dart:1538:        if (confirmed == true && mounted) {
+lib/screens/seller/kitchen_print_management_page.dart:1812:    final confirmed = await showDialog<bool>(
+lib/screens/seller/kitchen_print_management_page.dart:1833:    if (confirmed != true || !mounted) return;
+lib/screens/seller/kitchen_print_management_page.dart:4932:      case 'closed':
+lib/screens/seller/kitchen_print_management_page.dart:4949:      case 'closed':
+lib/screens/seller/kitchen_print_management_page.dart:4994:                  return status != 'closed';
+lib/screens/seller/kitchen_print_management_page.dart:5338:      ('completed', 'Tamamlandı'),
+lib/screens/seller/kitchen_print_management_page.dart:5476:                    'completed' => const Color(0xFF16A34A),
+lib/screens/seller/add_product_page.dart:1875:    final completedChecks = checks.where((item) => item.done).length;
+lib/screens/seller/add_product_page.dart:1876:    final progress = checks.isEmpty ? 0.0 : completedChecks / checks.length;
+lib/screens/seller/add_product_page.dart:1900:                '$completedChecks / ${checks.length} temel alan hazır',
+lib/screens/seller/add_product_page.dart:3459:        ProductMediaStage.cancelled => 5,
+lib/screens/seller/add_product_page.dart:6815:      ProductMediaStage.cancelled => 'İptal edildi',
+lib/screens/seller/product_management/bulk_product_price_stock_update_models.dart:43:      'reddedildi': 'rejected',
+lib/screens/seller/product_management/bulk_product_price_stock_update_models.dart:44:      'rejected': 'rejected',
+lib/screens/seller/product_management/bulk_product_price_stock_update_models.dart:104:  if (normalized == 'rejected' || normalized == 'reddedildi') {
+lib/screens/seller/product_management/bulk_product_price_stock_update_models.dart:105:    return 'rejected';
+lib/screens/seller/product_management/bulk_product_price_stock_update_models.dart:135:    case 'rejected':
+lib/screens/seller/product_management/product_quick_edit_models.dart:156:      case 'rejected':
+lib/screens/seller/product_management/product_quick_edit_models.dart:176:        return 'rejected';
+lib/screens/seller/table_history_screen.dart:8:/// Historical closed-table orders browser.
+lib/screens/seller/table_history_screen.dart:513:  /// Average closed-table grand total across filtered records.
+lib/screens/seller/table_history_screen.dart:1104:                          _dateFmt.format(record.closedAt),
+lib/screens/seller/table_history_screen.dart:1120:                            _timeFmt.format(record.closedAt),
+lib/screens/orders_page.dart:593:      'hasReviewButton': resolvedStatus == 'delivered',
+lib/screens/orders_page.dart:594:      'canRequestReturn': resolvedStatus == 'delivered',
+lib/screens/orders_page.dart:611:    if (statuses.every((s) => s == 'delivered')) return 'delivered';
+lib/screens/orders_page.dart:612:    if (statuses.any((s) => s == 'cancelled')) return 'cancelled';
+lib/screens/orders_page.dart:615:          s == 'shipped' ||
+lib/screens/orders_page.dart:620:      return 'shipped';
+lib/screens/orders_page.dart:625:    if (statuses.any((s) => s == 'confirmed' || s == 'new')) {
+lib/screens/orders_page.dart:626:      return 'confirmed';
+lib/screens/orders_page.dart:635:      case 'return_shipped_back':
+lib/screens/orders_page.dart:637:      case 'returned':
+lib/screens/orders_page.dart:638:      case 'refunded':
+lib/screens/orders_page.dart:647:      case 'confirmed':
+lib/screens/orders_page.dart:649:      case 'shipped':
+lib/screens/orders_page.dart:651:          'label': status == 'shipped'
+lib/screens/orders_page.dart:654:          'icon': status == 'shipped'
+lib/screens/orders_page.dart:657:          'color': status == 'shipped' ? Colors.orange : Colors.green,
+lib/screens/orders_page.dart:660:      case 'delivered':
+lib/screens/orders_page.dart:667:      case 'cancelled':
+lib/screens/orders_page.dart:676:      case 'return_shipped_back':
+lib/screens/orders_page.dart:678:      case 'returned':
+lib/screens/orders_page.dart:679:      case 'refunded':
+lib/screens/notifications_page.dart:232:    if (type == 'return_refund_completed') return true;
+lib/screens/notifications_page.dart:1014:                  cancelledData: data,
+lib/screens/notifications_page.dart:1025:              notificationStatus == 'delivered';
+lib/screens/notifications_page.dart:1928:                        color: step.completed
+lib/screens/notifications_page.dart:1934:                          color: step.completed || step.active
+lib/screens/notifications_page.dart:1942:                        step.completed ? Icons.check : step.icon,
+lib/screens/notifications_page.dart:1944:                        color: step.completed
+lib/screens/notifications_page.dart:1955:                        color: step.completed
+lib/screens/notifications_page.dart:1973:                            color: step.active || step.completed
+lib/screens/notifications_page.dart:2270:      return status == 'shipped' ||
+lib/screens/notifications_page.dart:2272:          status == 'cancelled' ||
+lib/screens/notifications_page.dart:2273:          status == 'delivered' ||
+lib/screens/notifications_page.dart:2274:          status == 'returned' ||
+lib/screens/notifications_page.dart:2275:          status == 'refunded';
+lib/screens/notifications_page.dart:2421:    return 'confirmed';
+lib/screens/notifications_page.dart:2450:        'return_shipped_back' ||
+lib/screens/notifications_page.dart:2452:        'returned' ||
+lib/screens/notifications_page.dart:2453:        'refunded' => 2,
+lib/screens/notifications_page.dart:2481:    if (normalizedStatus == 'cancelled') {
+lib/screens/notifications_page.dart:2501:      'confirmed',
+lib/screens/notifications_page.dart:2503:      'shipped',
+lib/screens/notifications_page.dart:2507:      'delivered',
+lib/screens/notifications_page.dart:2567:      case 'confirmed':
+lib/screens/notifications_page.dart:2574:      case 'shipped':
+lib/screens/notifications_page.dart:2582:      case 'cancelled':
+lib/screens/notifications_page.dart:2584:      case 'delivered':
+lib/screens/notifications_page.dart:2595:      case 'return_shipped_back':
+lib/screens/notifications_page.dart:2598:      case 'returned':
+lib/screens/notifications_page.dart:2599:      case 'refunded':
+lib/screens/notifications_page.dart:2601:      case 'cancelled_by_ibul':
+lib/screens/notifications_page.dart:2602:      case 'seller_rejected':
+lib/screens/notifications_page.dart:2603:      case 'closed_by_ibul':
+lib/screens/notifications_page.dart:2633:    return normalized == 'cancelled_by_ibul' ||
+lib/screens/notifications_page.dart:2634:        normalized == 'seller_rejected' ||
+lib/screens/notifications_page.dart:2635:        normalized == 'closed_by_ibul';
+lib/screens/notifications_page.dart:2647:      case 'return_shipped_back':
+lib/screens/notifications_page.dart:2649:      case 'returned':
+lib/screens/notifications_page.dart:2650:      case 'refunded':
+lib/screens/notifications_page.dart:2651:      case 'cancelled_by_ibul':
+lib/screens/notifications_page.dart:2652:      case 'seller_rejected':
+lib/screens/notifications_page.dart:2653:      case 'closed_by_ibul':
+lib/screens/notifications_page.dart:2662:      case 'shipped':
+lib/screens/notifications_page.dart:2675:    return _normalizeTrackingStatus(data['status']?.toString()) == 'cancelled';
+lib/screens/notifications_page.dart:2717:    required Map<String, dynamic> cancelledData,
+lib/screens/notifications_page.dart:2725:      final key = cancelledData[keyName]?.toString().trim() ?? '';
+lib/screens/notifications_page.dart:2957:  final bool completed;
+lib/screens/notifications_page.dart:2964:    this.completed,
+lib/screens/order_detail_page.dart:66:  String get _status => _rawOrder['status']?.toString() ?? 'confirmed';
+lib/screens/order_detail_page.dart:74:    if (itemStatuses.every((status) => status == 'delivered')) {
+lib/screens/order_detail_page.dart:75:      return 'delivered';
+lib/screens/order_detail_page.dart:77:    if (itemStatuses.any((status) => status == 'cancelled')) {
+lib/screens/order_detail_page.dart:78:      return 'cancelled';
+lib/screens/order_detail_page.dart:82:          status == 'shipped' ||
+lib/screens/order_detail_page.dart:87:      return 'shipped';
+lib/screens/order_detail_page.dart:427:    final canRequestReturn = itemStatus == 'delivered';
+lib/screens/order_detail_page.dart:918:      case 'shipped':
+lib/screens/order_detail_page.dart:920:      case 'delivered':
+lib/screens/order_detail_page.dart:922:      case 'cancelled':
+lib/screens/order_detail_page.dart:926:      case 'return_shipped_back':
+lib/screens/order_detail_page.dart:928:      case 'returned':
+lib/screens/order_detail_page.dart:929:      case 'refunded':
+lib/screens/order_detail_page.dart:932:      case 'confirmed':
+lib/screens/order_detail_page.dart:940:      case 'shipped':
+lib/screens/order_detail_page.dart:942:      case 'delivered':
+lib/screens/order_detail_page.dart:944:      case 'cancelled':
+lib/screens/order_detail_page.dart:948:      case 'return_shipped_back':
+lib/screens/order_detail_page.dart:950:      case 'returned':
+lib/screens/order_detail_page.dart:951:      case 'refunded':
+lib/screens/order_detail_page.dart:954:      case 'confirmed':
+lib/screens/order_detail_page.dart:962:      case 'shipped':
+lib/screens/order_detail_page.dart:964:      case 'delivered':
+lib/screens/order_detail_page.dart:966:      case 'cancelled':
+lib/screens/order_detail_page.dart:970:      case 'return_shipped_back':
+lib/screens/order_detail_page.dart:972:      case 'returned':
+lib/screens/order_detail_page.dart:973:      case 'refunded':
+lib/screens/order_detail_page.dart:976:      case 'confirmed':
+lib/screens/order_detail_page.dart:986:      case 'return_shipped_back':
+lib/screens/order_detail_page.dart:988:      case 'returned':
+lib/screens/order_detail_page.dart:989:      case 'refunded':
+lib/screens/admin/store_application_detail_dialog.dart:68:        'rejected',
+lib/screens/admin/support_complaints_page.dart:234:        .where((ticket) => ticket.status != TicketStatus.closed)
+lib/screens/admin/support_complaints_page.dart:404:                '${supportTickets.where((ticket) => ticket.status != TicketStatus.closed && ticket.status != TicketStatus.resolved).length}',
+lib/screens/admin/support_complaints_page.dart:1525:      case TicketStatus.closed:
+lib/screens/admin/support_complaints_page.dart:1547:      case 'rejected':
+lib/screens/admin/ihiz_admin_page.dart:261:        value: _compact(data.delivered24hCount),
+lib/screens/admin/ihiz_data_analytics_page.dart:264:        _compact(data.delivered24hCount),
+lib/screens/admin/ihiz_application_approval_page.dart:22:    ('Red Edilenler', 'rejected'),
+lib/screens/admin/ihiz_application_approval_page.dart:29:      case 'rejected':
+lib/screens/admin/ihiz_application_approval_page.dart:40:      case 'rejected':
+lib/screens/admin/ihiz_application_approval_page.dart:110:          : (status == 'rejected'
+lib/screens/admin/ihiz_application_approval_page.dart:150:              _updateStatus(targetRow, 'rejected', rejectionReason: reason),
+lib/screens/admin/ihiz_application_approval_page.dart:354:                                            'rejected',
+lib/screens/admin/ihiz_application_approval_page.dart:785:    final rejected = await widget.onReject(widget.row, reason);
+lib/screens/admin/ihiz_application_approval_page.dart:791:    if (rejected && mounted) {
+lib/screens/admin/data_analytics_page.dart:507:    final deliveredRate = data.totalShipments == 0
+lib/screens/admin/data_analytics_page.dart:509:        : data.deliveredShipments / data.totalShipments;
+lib/screens/admin/data_analytics_page.dart:523:            'Teslim edilen oran: ${_percent(deliveredRate)}',
+lib/screens/admin/data_analytics_page.dart:534:              value: _compactNumber(data.deliveredShipments),
+lib/screens/admin/store_management_page.dart:130:        'rejected',
+lib/screens/admin/store_management_page.dart:199:        final rejectedApplicationsCount = (snapshot.data ?? const [])
+lib/screens/admin/store_management_page.dart:203:                  'rejected',
+lib/screens/admin/store_management_page.dart:216:                      rejectedApplicationsCount: rejectedApplicationsCount,
+lib/screens/admin/store_management_page.dart:293:  Widget _buildOverviewHero({required int rejectedApplicationsCount}) {
+lib/screens/admin/store_management_page.dart:328:            rejectedApplicationsCount: rejectedApplicationsCount,
+lib/screens/admin/store_management_page.dart:452:    required int rejectedApplicationsCount,
+lib/screens/admin/store_management_page.dart:473:          value: '$rejectedApplicationsCount',
+lib/screens/admin/store_management_page.dart:1203:      'rejected' => const Color(0xFFFFF1F2),
+lib/screens/admin/store_management_page.dart:1208:      'rejected' => const Color(0xFFE11D48),
+lib/screens/admin/store_management_page.dart:1213:      'rejected' => 'Reddedildi',
+lib/screens/admin/store_management_page.dart:1490:      'rejected' => const Color(0xFFFFF1F2),
+lib/screens/admin/store_management_page.dart:1495:      'rejected' => const Color(0xFFE11D48),
+lib/screens/admin/store_management_page.dart:1500:      'rejected' => 'Reddedildi',
+lib/screens/admin/finance_page.dart:211:    return status == 'delivered' || status == 'teslim edildi';
+lib/screens/admin/finance_page.dart:219:        status == 'cancelled' ||
+lib/screens/admin/finance_page.dart:240:    final deliveredByMonth = <String, List<AdminFinanceOrderItem>>{};
+lib/screens/admin/finance_page.dart:243:      deliveredByMonth
+lib/screens/admin/finance_page.dart:281:              deliveredByMonth[key] ?? const <AdminFinanceOrderItem>[];
+lib/screens/admin/finance_page.dart:310:            completedOrders: orderIds.length,
+lib/screens/admin/finance_page.dart:330:    final deliveredByDay = <String, double>{};
+lib/screens/admin/finance_page.dart:335:      deliveredByDay.update(
+lib/screens/admin/finance_page.dart:372:      final grossOrderFlow = deliveredByDay[key] ?? 0;
+lib/screens/admin/finance_page.dart:794:    final confirmed = await showDialog<bool>(
+lib/screens/admin/finance_page.dart:815:    if (confirmed != true || !mounted) return;
+lib/screens/admin/finance_page.dart:859:    final confirmed = await showDialog<bool>(
+lib/screens/admin/finance_page.dart:880:    if (confirmed != true || !mounted) return;
+lib/screens/admin/finance_page.dart:1098:    final deliveredOrders = _sumIntBy((item) => item.completedOrders);
+lib/screens/admin/finance_page.dart:1102:        subtitle: '$deliveredOrders teslim siparişten hesaplandı',
+lib/screens/admin/finance_page.dart:1145:    final totalOrders = _sumIntBy((item) => item.completedOrders);
+lib/screens/admin/finance_page.dart:1476:    final totalOrders = _sumIntBy((item) => item.completedOrders);
+lib/screens/admin/finance_page.dart:3277:    required this.completedOrders,
+lib/screens/admin/finance_page.dart:3288:  final int completedOrders;
+lib/screens/nearby_sellers_map_page.dart:289:      if (status == AnimationStatus.completed ||
+lib/screens/account_page.dart:441:          return status != 'delivered' && status != 'cancelled';
+lib/screens/account_page.dart:804:      case 'confirmed':
+lib/screens/account_page.dart:808:      case 'shipped':
+lib/screens/account_page.dart:810:      case 'delivered':
+lib/screens/account_page.dart:812:      case 'cancelled':
+lib/screens/account_page.dart:821:      case 'confirmed':
+lib/screens/account_page.dart:825:      case 'shipped':
+lib/screens/account_page.dart:827:      case 'delivered':
+lib/screens/account_page.dart:829:      case 'cancelled':
+lib/screens/seller_panel_orders_modules.dart:43:              _buildMobileOrderFilterChip('shipped', 'Kargoda'),
+lib/screens/courier_info_page.dart:231:    if (value == 'shipped') return 'out_for_delivery';
+lib/screens/courier_info_page.dart:236:    if (status == 'delivered') return 'Teslim Eden Kurye';
+lib/screens/courier_info_page.dart:244:      case 'delivered':
+lib/screens/courier_info_page.dart:246:      case 'cancelled':
+lib/screens/map_page.dart:507:          if ((status == AnimationStatus.completed ||
+lib/screens/map_page.dart:1053:          // Assume randomly some are closed for demo or check business hours if available
+lib/screens/map_page.dart:1054:          // For now, let's just say index % 5 == 0 are closed
+lib/screens/seller_panel_support_modules.dart:18:              ticket.status == TicketStatus.closed ||
+lib/screens/seller_panel_support_modules.dart:141:          ticket.status == TicketStatus.closed ||
+lib/screens/seller_panel_support_modules.dart:167:                                ticket.status == TicketStatus.closed ||
+lib/screens/order_confirmation_page.dart:379:      case 'confirmed':
+lib/screens/order_confirmation_page.dart:383:      case 'shipped':
+lib/screens/order_confirmation_page.dart:385:      case 'delivered':
+lib/screens/order_confirmation_page.dart:387:      case 'cancelled':
+lib/screens/qr_entry_screen.dart:130:      // Fallback: try by business name if lookup by seller ID returned nothing.
+lib/screens/seller_panel_page_preview.dart:282:                          key: ValueKey<String>('flow-closed'),
+lib/screens/settings_page.dart:94:    final confirmed = await showDialog<bool>(
+lib/screens/settings_page.dart:113:    if (confirmed == true) {
+lib/screens/home_screen.dart:116:  /// Set to true the moment QR intent is confirmed so that concurrent home-init
+lib/screens/business_detail_page.dart:130:  String _lastObservedProductListsSignature = '';
+lib/screens/business_detail_page.dart:155:    if (nextSignature == _lastObservedProductListsSignature) {
+lib/screens/business_detail_page.dart:158:    _lastObservedProductListsSignature = nextSignature;
+lib/screens/business_detail_page.dart:398:    _lastObservedProductListsSignature = _productListsSignature(
+lib/screens/business_detail_page.dart:784:        'cancelled=$_isQrAutoFlowCancelled '
+lib/screens/business_detail_page.dart:837:      '[BDP/QR] QR flow cancelled — reason=$reason '
+lib/screens/business_detail_page.dart:886:          '[BDP/QR] dialog closed before navigation — '
+lib/screens/business_detail_page.dart:1032:        logLabel: 'async loop cancelled',
+lib/screens/business_detail_page.dart:1041:        logLabel: 'async loop cancelled',
+lib/screens/business_detail_page.dart:1763:      // Web layout is returned early.  It MUST also be wrapped in PopScope so
+lib/screens/business_detail_page.dart:5122:        logLabel: 'async loop cancelled',
+lib/screens/business_detail_page.dart:5131:        logLabel: 'async loop cancelled',
+lib/main.dart:94:      '[Boot] ${bootWatch.elapsedMilliseconds}ms — runApp returned (first frame scheduled)',
+lib/main.dart:129:    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — runApp returned');
+lib/services/kitchen_hub_payload_stamp.dart:306:      <String, Object?>{'rejectedHeader': headerArea},
+lib/services/desktop_print_hub.dart:108:///   5. Mark jobs completed / failed in the DB.
+lib/services/desktop_print_hub.dart:136:  /// `true` once the LaunchAgent plist existence check has completed.
+lib/services/desktop_print_hub.dart:195:  /// Track when the last successful sweep completed for diagnostics.
+lib/services/desktop_print_hub.dart:760:            'dispatch_started_at, printer_write_started_at, completed_at',
+lib/services/desktop_print_hub.dart:1501:        // Mark completed in background — don't block the success path.
+lib/services/desktop_print_hub.dart:1502:        final completedAt = DateTime.now();
+lib/services/desktop_print_hub.dart:1509:          completedAt: completedAt,
+lib/services/desktop_print_hub.dart:1513:          completedAt: completedAt,
+lib/services/desktop_print_hub.dart:1542:                event: 'hub_kitchen_physical_print_completed',
+lib/services/desktop_print_hub.dart:1563:                event: 'kitchen_physical_print_completed',
+lib/services/desktop_print_hub.dart:1594:          '[PrintHub] completed jobId=$jobId '
+lib/services/desktop_print_hub.dart:1598:          '[PrintPipeline] trace=$trace stage=completed '
+lib/services/desktop_print_hub.dart:1599:          'at=${completedAt.toIso8601String()} '
+lib/services/desktop_print_hub.dart:1612:          'completed_at=${latencySummary.completedAt ?? '-'} '
+lib/services/desktop_print_hub.dart:2128:    required DateTime completedAt,
+lib/services/desktop_print_hub.dart:2136:            'status': 'completed',
+lib/services/desktop_print_hub.dart:2138:            'printed_at': completedAt.toIso8601String(),
+lib/services/desktop_print_hub.dart:2139:            'completed_at': completedAt.toIso8601String(),
+lib/services/desktop_print_hub.dart:2145:            'printer_write_completed_at':
+lib/services/desktop_print_hub.dart:2146:                bridgeResult?['printer_write_completed_at'],
+lib/services/desktop_print_hub.dart:2316:    required DateTime completedAt,
+lib/services/desktop_print_hub.dart:2336:      completedAt: completedAt.toIso8601String(),
+lib/services/desktop_print_hub.dart:2342:      fMs: diffMs(printerWriteStartedAt, completedAt),
+lib/services/desktop_print_hub.dart:2349:        fMs: diffMs(printerWriteStartedAt, completedAt),
+lib/services/desktop_print_hub.dart:2421:          // /warmup returned but not ok — fall back to health
+lib/services/desktop_print_hub.dart:2423:            '[PrintHub] warm-up: /warmup returned non-ok, falling back to health',
+lib/services/desktop_print_hub.dart:2492:    this.completedAt,
+lib/services/desktop_print_hub.dart:2508:  final String? completedAt;
+lib/services/store_service.dart:975:          case 'rejected':
+lib/services/store_service.dart:1272:          'status': 'rejected',
+lib/services/store_service.dart:1274:          'rejected_at': DateTime.now().toIso8601String(),
+lib/services/store_service.dart:1295:      case 'rejected':
+lib/services/store_service.dart:1297:        return 'rejected';
+lib/services/store_service.dart:1536:  /// Returns the number of rows actually closed.  A value of `0` is a
+lib/services/store_service.dart:1573:    required List<Map<String, dynamic>> closedOrders,
+lib/services/store_service.dart:1579:    DateTime? closedAt,
+lib/services/store_service.dart:1584:      closedOrders: closedOrders,
+lib/services/store_service.dart:1590:      closedAt: closedAt,
+lib/services/store_service.dart:2097:          'rejected_at': DateTime.now().toIso8601String(),
+lib/services/local_print_service.dart:175:        fallback: 'Local print health check returned an invalid response.',
+lib/services/local_print_service.dart:910:        final writeCompleted = result['printer_write_completed_at'];
+lib/services/local_print_service.dart:916:            'printer_write_completed_at=$writeCompleted '
+lib/services/admin_service.dart:465:    required this.deliveredShipments,
+lib/services/admin_service.dart:478:  final int deliveredShipments;
+lib/services/admin_service.dart:519:    required this.delivered24hCount,
+lib/services/admin_service.dart:533:  final int delivered24hCount;
+lib/services/admin_service.dart:805:      'rejected_at',
+lib/services/admin_service.dart:1109:          level: status.toLowerCase() == 'cancelled' ? 'warning' : 'info',
+lib/services/admin_service.dart:1586:    var deliveredShipments = 0;
+lib/services/admin_service.dart:1611:        deliveredShipments++;
+lib/services/admin_service.dart:1646:      deliveredShipments: deliveredShipments,
+lib/services/admin_service.dart:1680:    var delivered24hCount = 0;
+lib/services/admin_service.dart:1717:        delivered24hCount++;
+lib/services/admin_service.dart:1755:      delivered24hCount: delivered24hCount,
+lib/services/admin_service.dart:2822:      case 'cancelled':
+lib/services/admin_service.dart:2836:    if (event.status == 'cancelled') {
+lib/services/admin_service.dart:2903:        normalizedStatus != 'rejected' &&
+lib/services/admin_service.dart:2925:    } else if (normalizedStatus == 'rejected') {
+lib/services/admin_service.dart:3199:    } else if (status == 'rejected') {
+lib/services/admin_service.dart:3252:    // Assuming we want to mark it as deleted or closed
+lib/services/admin_service.dart:3269:          'status': 'rejected',
+lib/services/admin_service.dart:3270:          'rejected_at': DateTime.now().toIso8601String(),
+lib/services/admin_service.dart:3340:          'status': 'rejected',
+lib/services/admin_service.dart:3341:          'rejected_at': DateTime.now().toIso8601String(),
+lib/services/macos_admin_release_executor_io.dart:36:            ? 'user_cancelled'
+lib/services/macos_admin_release_executor_io.dart:59:      raw.contains('user cancelled') ||
+lib/services/print_job_repository.dart:13:    if (normalizedFilter == 'completed' || normalizedFilter == 'printed') {
+lib/services/print_job_repository.dart:14:      return job.normalizedStatus == 'completed';
+lib/services/print_job_repository.dart:53:      if (normalizedStatus == 'completed' || normalizedStatus == 'printed') {
+lib/services/print_job_repository.dart:54:        query = query.inFilter('status', ['completed', 'printed']);
+lib/services/admin/admin_mapping_helpers.dart:81:    case 'delivered':
+lib/services/admin/admin_mapping_helpers.dart:85:    case 'shipped':
+lib/services/admin/admin_mapping_helpers.dart:92:    case 'confirmed':
+lib/services/admin/admin_mapping_helpers.dart:95:    case 'cancelled':
+lib/services/admin/admin_mapping_helpers.dart:96:    case 'cancelled_by_user':
+lib/services/admin/admin_mapping_helpers.dart:98:    case 'returned':
+lib/services/auth_service.dart:171:          status: 'cancelled',
+lib/services/auth_service.dart:173:          errorCode: 'cancelled_by_user',
+lib/services/auth_service.dart:210:          status: googleUser == null ? 'cancelled' : 'failed',
+lib/services/auth_service.dart:213:              _authErrorCode(e) ?? (googleUser == null ? 'cancelled' : null),
+lib/services/auth_service.dart:293:        case 'email_not_confirmed':
+lib/services/kitchen_routing_service.dart:915:          source = 'rejected_dining_station_id';
+lib/services/seller_dashboard_service.dart:260:    final deliveredOrders = selectedOrders.where((order) {
+lib/services/seller_dashboard_service.dart:262:      return status == 'delivered' || status == 'teslim edildi';
+lib/services/seller_dashboard_service.dart:308:          : (deliveredOrders / selectedOrderCount) * 100,
+lib/services/support_service.dart:3:enum TicketStatus { open, inProgress, closed, resolved }
+lib/services/order_print_job_service.dart:1824:          completedAt: DateTime.now(),
+lib/services/order_print_job_service.dart:1832:          'completed_at=${DateTime.now().toIso8601String()}',
+lib/services/order_print_job_service.dart:2335:                  'reason': 'printPhysicalToPrinter_returned_not_ok',
+lib/services/order_print_job_service.dart:2430:          completedAt: DateTime.now(),
+lib/services/order_print_job_service.dart:2438:          'completed_at=${DateTime.now().toIso8601String()}',
+lib/services/order_print_job_service.dart:2636:    required DateTime completedAt,
+lib/services/order_print_job_service.dart:2643:          'status': 'completed',
+lib/services/order_print_job_service.dart:2645:          'printed_at': completedAt.toIso8601String(),
+lib/services/order_print_job_service.dart:2646:          'completed_at': completedAt.toIso8601String(),
+lib/services/order_print_job_service.dart:2651:          'printer_write_completed_at':
+lib/services/order_print_job_service.dart:2652:              bridgeResult?['printer_write_completed_at'],
+lib/services/order_print_job_service.dart:2680:          'status': 'completed',
+lib/services/order_print_job_service.dart:2684:          'completed_at': DateTime.now().toIso8601String(),
+lib/services/desktop_print_orchestrator.dart:406:    PrinterRoleSelection? preservedReceipt = existing.receiptSelection;
+lib/services/desktop_print_orchestrator.dart:407:    PrinterRoleSelection? preservedKitchen = existing.kitchenSelection;
+lib/services/desktop_print_orchestrator.dart:408:    if (preservedReceipt == null &&
+lib/services/desktop_print_orchestrator.dart:416:        preservedReceipt = PrinterRoleSelection(
+lib/services/desktop_print_orchestrator.dart:422:    if (preservedKitchen == null &&
+lib/services/desktop_print_orchestrator.dart:430:        preservedKitchen = PrinterRoleSelection(
+lib/services/desktop_print_orchestrator.dart:443:            kitchenSelection: preservedKitchen,
+lib/services/desktop_print_orchestrator.dart:450:            receiptSelection: preservedReceipt,
+lib/services/desktop_print_orchestrator.dart:1282:        label: 'setup completed',
+lib/services/desktop_print_orchestrator.dart:3692:                      'error': 'user_cancelled',
+lib/services/desktop_print_orchestrator.dart:3711:                errorMessage: 'user_cancelled',
+lib/services/desktop_print_orchestrator.dart:3732:            if (adminRelease.error != 'user_cancelled') {
+lib/services/desktop_print_orchestrator.dart:3949:                    ? 'kitchen_physical_print_completed'
+lib/services/store/table_close_history_fallback.dart:19:  required List<Map<String, dynamic>> closedOrders,
+lib/services/store/table_close_history_fallback.dart:28:  for (final order in closedOrders) {
+lib/services/store/close_table_workflow.dart:20:///             try DELETE; if that fails try UPDATE status='closed'.
+lib/services/store/close_table_workflow.dart:41:  /// Marks a single order as closed via UPDATE status='closed'.
+lib/services/store/close_table_workflow.dart:99:        // Fallback: mark as closed via UPDATE
+lib/services/store/table_order_history_utils.dart:6:/// `table_order_history` satırlarını okurken hem migration (closed_at + items)
+lib/services/store/table_order_history_utils.dart:11:  static DateTime? closedAt(Map<dynamic, dynamic> row) {
+lib/services/store/table_order_history_utils.dart:12:    final raw = row['closed_at'] ?? row['archived_at'];
+lib/services/store/table_order_history_utils.dart:22:    final at = closedAt(row);
+lib/services/store/table_order_history_utils.dart:103:    final closedAt = TableOrderHistoryUtils.closedAt(row);
+lib/services/store/table_order_history_utils.dart:105:    return 'history-$tableNo-${closedAt?.millisecondsSinceEpoch ?? 0}';
+lib/services/store/store_table_service.dart:451:  /// non-closed (active) order in [table_orders] for [sellerId].
+lib/services/store/store_table_service.dart:596:    // IMPORTANT: Stream delivers EVERY row, including archived/closed orders
+lib/services/store/store_table_service.dart:598:    // re-inserted into board state and make a closed table appear "open again"
+lib/services/store/store_table_service.dart:727:    // guard against closed/archived orders "coming back" after a page refresh:
+lib/services/store/store_table_service.dart:791:    // `table_orders`; without a DB-level terminal filter here, every closed
+lib/services/store/store_table_service.dart:874:          'latest_closed_at=${latestClosedAt.toIso8601String()} '
+lib/services/store/store_table_service.dart:972:          .select('table_number, closed_at, archived_at')
+lib/services/store/store_table_service.dart:982:        final closedAt = TableOrderHistoryUtils.closedAt(row);
+lib/services/store/store_table_service.dart:983:        if (closedAt == null) continue;
+lib/services/store/store_table_service.dart:985:        if (previous == null || closedAt.isAfter(previous)) {
+lib/services/store/store_table_service.dart:986:          latest[tableNumber] = closedAt;
+lib/services/store/store_table_service.dart:1144:  /// targeted order was actually deleted/closed — a filter-based re-query
+lib/services/store/store_table_service.dart:1208:  /// given (sellerId, tableNumber) as `closed`.  The garson board reads from
+lib/services/store/store_table_service.dart:1223:  /// Returns the number of `orders` rows actually flipped to `closed`.
+lib/services/store/store_table_service.dart:1256:      final closedCount = _coerceAffectedRowCount(rpcResult);
+lib/services/store/store_table_service.dart:1260:        'orders_closed=$closedCount',
+lib/services/store/store_table_service.dart:1262:      return closedCount;
+lib/services/store/store_table_service.dart:1311:        'warning=orders_update_will_likely_be_RLS_rejected_to_zero_rows',
+lib/services/store/store_table_service.dart:1332:        'reason=store_tables_returned_zero_rows '
+lib/services/store/store_table_service.dart:1341:            'status': 'closed',
+lib/services/store/store_table_service.dart:1342:            'order_status': 'closed',
+lib/services/store/store_table_service.dart:1356:      final closedCount = updatedList.length;
+lib/services/store/store_table_service.dart:1361:        'orders_closed=$closedCount '
+lib/services/store/store_table_service.dart:1364:      if (closedCount == 0) {
+lib/services/store/store_table_service.dart:1383:          'interpretation=${visibleToClient == 0 ? (identityMatches ? 'no_active_customer_orders_for_this_table' : 'rls_likely_blocked_due_to_auth_uid_mismatch') : 'rows_visible_to_read_but_update_returned_zero_rows_'
+lib/services/store/store_table_service.dart:1387:      return closedCount;
+lib/services/store/store_table_service.dart:1419:        for (final key in ['closed_count', 'count', 'rows_affected']) {
+lib/services/store/store_table_service.dart:1428:      for (final key in ['closed_count', 'count', 'rows_affected']) {
+lib/services/store/store_table_service.dart:1517:    String? paidBy,
+lib/services/store/store_table_service.dart:1529:      if (paidBy != null && paidBy.isNotEmpty) 'paid_by': paidBy,
+lib/services/store/store_table_service.dart:1646:  /// Ensures a just-closed table session is queryable from `table_order_history`
+lib/services/store/store_table_service.dart:1655:    required List<Map<String, dynamic>> closedOrders,
+lib/services/store/store_table_service.dart:1661:    DateTime? closedAt,
+lib/services/store/store_table_service.dart:1663:    if (tableNumber <= 0 || closedOrders.isEmpty) return false;
+lib/services/store/store_table_service.dart:1666:    final effectiveClosedAt = (closedAt ?? DateTime.now()).toUtc();
+lib/services/store/store_table_service.dart:1675:              'items, status, closed_at, '
+lib/services/store/store_table_service.dart:1682:              'closed_at.gte.${recentFrom.toIso8601String()},'
+lib/services/store/store_table_service.dart:1704:      closedOrders: closedOrders,
+lib/services/store/store_table_service.dart:1753:          'status': 'closed',
+lib/services/store/store_table_service.dart:1754:          'closed_at': effectiveClosedAt.toIso8601String(),
+lib/services/store/store_table_service.dart:1780:  ///      per-order UPDATE status = 'closed'. Both outcomes make the orders
+lib/services/store/store_table_service.dart:1888:                'status': 'closed',
+lib/services/store/store_table_service.dart:1899:                'closed_at': archivedAt,
+lib/services/store/store_table_service.dart:1929:              'status': 'closed',
+lib/services/store/store_table_service.dart:1956:  /// Returns paginated historical (closed) orders for a seller.
+lib/services/store/store_table_service.dart:1978:        query = query.or('closed_at.gte.$wideFrom,archived_at.gte.$wideFrom');
+lib/services/store/store_table_service.dart:1996:        final aAt = TableOrderHistoryUtils.closedAt(
+lib/services/store/store_table_service.dart:1999:        final bAt = TableOrderHistoryUtils.closedAt(
+lib/services/media/product_media_types.dart:13:  cancelled,
+lib/services/media/product_media_types.dart:151:  bool _cancelled = false;
+lib/services/media/product_media_types.dart:153:  bool get isCancelled => _cancelled;
+lib/services/media/product_media_types.dart:156:    _cancelled = true;
+lib/widgets/game/fortune_wheel_dialog.dart:44:      if (status == AnimationStatus.completed) {
+lib/widgets/garson/order_preview_sheet.dart:728:    final hasClosedAt = r.closedAt != null;
+lib/widgets/garson/order_preview_sheet.dart:731:    final closedBy = r.closedByName ?? r.waiterName;
+lib/widgets/garson/order_preview_sheet.dart:777:                  time: dtFmt.format(r.closedAt!),
+lib/widgets/garson/order_preview_sheet.dart:837:            if (hasClosedAt && closedBy != null)
+lib/widgets/garson/order_preview_sheet.dart:838:              _DetailRow(label: 'Kim Kapattı', value: closedBy),
+lib/widgets/garson/order_preview_sheet.dart:856:                _DetailRow(label: 'Tarih', value: dtFmt.format(r.closedAt!)),
+lib/widgets/garson/order_preview_sheet.dart:921:                    ? 'completed'
+lib/widgets/garson/order_preview_sheet.dart:923:                final statusColor = normalizedStatus == 'completed'
+lib/widgets/garson/order_preview_sheet.dart:1508:    case 'served':
+lib/widgets/garson/order_preview_sheet.dart:1510:    case 'closed':
+lib/widgets/garson/order_preview_sheet.dart:1511:    case 'completed':
+lib/widgets/garson/order_preview_sheet.dart:1530:    case 'served':
+lib/widgets/garson/order_preview_sheet.dart:1532:    case 'closed':
+lib/widgets/garson/order_preview_sheet.dart:1534:    case 'completed':
+lib/widgets/garson/transfer_table_modal.dart:48:  /// True when the table currently has at least one active (non-closed) order.
+lib/widgets/garson/payment_bottom_sheet.dart:84:  double get _paidTotal =>
+lib/widgets/garson/payment_bottom_sheet.dart:88:    final r = widget.grandTotal - _paidTotal;
+lib/widgets/garson/payment_bottom_sheet.dart:253:                label: 'Ödenen', value: _paidTotal, color: _green),
+lib/widgets/garson/payment_bottom_sheet.dart:316:                      '$time${payment.paidBy != null ? ' • ${payment.paidBy}' : ''}',
+lib/widgets/account_sidebar.dart:30:    final confirmed = await showDialog<bool>(
+lib/widgets/account_sidebar.dart:54:    if (confirmed == true) {
+lib/widgets/product_card.dart:324:    final reservedHeight = widget.compact
+lib/widgets/product_card.dart:329:      innerHeight - reservedHeight,
+test/garson_critical_operations_test.dart:113:    // ── 1f. served statüsü ───────────────────────────────────────────────
+test/garson_critical_operations_test.dart:114:    test('served: undo=FALSE, edit=TRUE, transfer=FALSE', () {
+test/garson_critical_operations_test.dart:115:      final r = GarsonOperationRules.forStatus('served');
+test/garson_critical_operations_test.dart:122:    // ── 1g. closed statüsü ───────────────────────────────────────────────
+test/garson_critical_operations_test.dart:123:    test('closed: undo=FALSE, edit=FALSE, transfer=FALSE', () {
+test/garson_critical_operations_test.dart:124:      final r = GarsonOperationRules.forStatus('closed');
+test/garson_critical_operations_test.dart:130:    // ── 1h. completed (closed ile aynı kurallar) ─────────────────────────
+test/garson_critical_operations_test.dart:131:    test('completed → closed ile aynı kısıtlamalar', () {
+test/garson_critical_operations_test.dart:132:      final closed = GarsonOperationRules.forStatus('closed');
+test/garson_critical_operations_test.dart:133:      final completed = GarsonOperationRules.forStatus('completed');
+test/garson_critical_operations_test.dart:134:      expect(completed.canUndo, equals(closed.canUndo));
+test/garson_critical_operations_test.dart:135:      expect(completed.canEdit, equals(closed.canEdit));
+test/garson_critical_operations_test.dart:136:      expect(completed.canTransfer, equals(closed.canTransfer));
+test/garson_critical_operations_test.dart:311:    // closed/served statüsündeki sipariş aktarılamaz
+test/garson_critical_operations_test.dart:312:    test('3.4 closed sipariş aktar — canTransfer=false', () {
+test/garson_critical_operations_test.dart:313:      final rules = GarsonOperationRules.forStatus(GarsonOrderStatus.closed);
+test/garson_critical_operations_test.dart:317:    test('3.5 served sipariş aktar — canTransfer=false', () {
+test/garson_critical_operations_test.dart:318:      final rules = GarsonOperationRules.forStatus(GarsonOrderStatus.served);
+test/garson_critical_operations_test.dart:373:        'paid_by': null,
+test/garson_critical_operations_test.dart:392:    test('4.2 TablePaymentSession — paidTotal ve remainingTotal hesabı', () {
+test/garson_critical_operations_test.dart:421:      expect(session.paidTotal, closeTo(350.0, 0.001));
+test/garson_critical_operations_test.dart:449:    test('4.4 Ödeme aşımı — paidTotal > grandTotal durumu güvenli', () {
+test/garson_critical_operations_test.dart:469:      expect(session.paidTotal, closeTo(350.0, 0.001));
+test/garson_critical_operations_test.dart:484:      expect(session.paidTotal, closeTo(0.0, 0.001));
+test/garson_critical_operations_test.dart:632:      final closedAt = DateTime.utc(2026, 4, 7, 15, 0);
+test/garson_critical_operations_test.dart:639:        'status': 'closed',
+test/garson_critical_operations_test.dart:646:        'closed_at': closedAt.toIso8601String(),
+test/garson_critical_operations_test.dart:664:      final closedAt = DateTime(2026, 4, 7, 10, 30);
+test/garson_critical_operations_test.dart:666:        closedAt.isAfter(today.subtract(const Duration(seconds: 1))) &&
+test/garson_critical_operations_test.dart:667:            closedAt.isBefore(today.add(const Duration(days: 1))),
+test/garson_critical_operations_test.dart:669:        reason: 'closedAt bugün sınırları içinde',
+test/garson_critical_operations_test.dart:675:      final closedAt = DateTime(2026, 4, 6, 23, 59);
+test/garson_critical_operations_test.dart:676:      final isToday = closedAt.isAfter(today.subtract(const Duration(seconds: 1))) &&
+test/garson_critical_operations_test.dart:677:          closedAt.isBefore(today.add(const Duration(days: 1)));
+test/garson_critical_operations_test.dart:683:        {'table_number': 5, 'closed_at': '2026-04-07T12:00:00Z'},
+test/garson_critical_operations_test.dart:684:        {'table_number': 7, 'closed_at': '2026-04-07T13:00:00Z'},
+test/garson_critical_operations_test.dart:685:        {'table_number': 5, 'closed_at': '2026-04-07T14:00:00Z'},
+test/garson_critical_operations_test.dart:959:      final closedAt = DateTime.utc(2026, 4, 7, 13, 30);
+test/garson_critical_operations_test.dart:966:        'status': 'closed',
+test/garson_critical_operations_test.dart:975:        'closed_at': closedAt.toIso8601String(),
+test/garson_critical_operations_test.dart:988:      expect(preview.closedByName, 'Ali',
+test/garson_critical_operations_test.dart:989:          reason: 'waiterName → closedByName dönüşümü doğru olmalı');
+test/garson_critical_operations_test.dart:991:      expect(preview.closedAt, isNotNull);
+test/garson_critical_operations_test.dart:997:      final closedAt = DateTime.utc(2026, 4, 7, 11, 30);
+test/garson_critical_operations_test.dart:1004:        'status': 'closed',
+test/garson_critical_operations_test.dart:1011:        'closed_at': closedAt.toIso8601String(),
+test/garson_critical_operations_test.dart:1120:      final closedAt = DateTime.utc(2026, 4, 8, 12, 45);
+test/garson_critical_operations_test.dart:1127:        'status': 'closed',
+test/garson_critical_operations_test.dart:1136:        'closed_at': closedAt.toIso8601String(),
+test/garson_critical_operations_test.dart:1152:    // 10.2 items list preserved verbatim (same length + content)
+test/garson_critical_operations_test.dart:1153:    test('10.2 fromHistory: items list preserved verbatim', () {
+test/garson_critical_operations_test.dart:1170:    // 10.3 grandTotal preserved
+test/garson_critical_operations_test.dart:1171:    test('10.3 fromHistory: grandTotal preserved exactly', () {
+test/garson_critical_operations_test.dart:1179:    // 10.4 paymentMethod preserved
+test/garson_critical_operations_test.dart:1180:    test('10.4 fromHistory: paymentMethod preserved', () {
+test/garson_critical_operations_test.dart:1187:    // 10.5 closedByName == waiterName (the person who closed the table)
+test/garson_critical_operations_test.dart:1188:    test('10.5 fromHistory: closedByName == history.waiterName', () {
+test/garson_critical_operations_test.dart:1193:      expect(preview.closedByName, closer,
+test/garson_critical_operations_test.dart:1194:          reason: 'closedByName must map from history.waiterName');
+test/garson_critical_operations_test.dart:1199:    // 10.6 revision preserved
+test/garson_critical_operations_test.dart:1200:    test('10.6 fromHistory: revision preserved', () {
+test/garson_critical_operations_test.dart:1225:      expect(adisyonRecord.closedByName, onizleRecord.closedByName);
+test/features/seller/panel/seller_realtime_lifecycle_test.dart:76:    test('cached seller key is preserved across reuse decisions', () {
+test/features/seller/panel/seller_navigation_preservation_test.dart:668:        {'id': 'o-1', 'status': 'closed', 'updated_at': 't', 'total_price': 1},
+test/utils/garson_detail_preload_test.dart:357:    test('closed is terminal', () {
+test/utils/garson_detail_preload_test.dart:358:      expect(isGarsonTerminalOrderStatus('closed'), isTrue);
+test/utils/garson_detail_preload_test.dart:360:    test('paid is terminal', () {
+test/utils/garson_detail_preload_test.dart:361:      expect(isGarsonTerminalOrderStatus('paid'), isTrue);
+test/utils/garson_close_table_manual_purge_test.dart:6:// called applyRoutePopped with the stale snapshot, and re-inserted the closed
+test/utils/garson_close_table_manual_purge_test.dart:61:    test('removes exactly the closed table orders', () {
+test/utils/garson_close_table_manual_purge_test.dart:70:    test('is a no-op when closed table has no orders in manual list', () {
+test/utils/garson_close_table_manual_purge_test.dart:79:    test('results in empty list when only the closed table had orders', () {
+test/utils/garson_close_table_manual_purge_test.dart:125:        'purged current + empty incoming → closed table absent from merged result',
+test/utils/garson_close_table_manual_purge_test.dart:152:        reason: 'closed table must not reappear after manual purge',
+test/utils/garson_close_table_manual_purge_test.dart:157:        reason: 'other tables must be preserved',
+test/utils/garson_close_table_manual_purge_test.dart:193:    test('does not re-add closed table orders to board state', () {
+test/utils/garson_close_table_manual_purge_test.dart:226:        reason: 'applyRoutePopped must not re-insert closed table orders',
+test/utils/garson_close_table_manual_purge_test.dart:268:        'empty orders (close confirmed by backend)', () {
+test/utils/garson_close_table_manual_purge_test.dart:271:      // hasIncomingOrders=false (server confirmed table is empty).
+test/utils/garson_close_table_manual_purge_test.dart:280:          hasIncomingOrders: false, // server reports 0 orders (close confirmed)
+test/utils/garson_close_table_manual_purge_test.dart:283:        reason: 'explicit close with server ack must not be preserved',
+test/utils/garson_close_table_manual_purge_test.dart:293:      // preserved no longer includes the closed table's orders.
+test/utils/garson_close_table_manual_purge_test.dart:318:          hasIncomingOrders: false, // server confirmed 0 orders
+test/utils/garson_close_table_manual_purge_test.dart:326:      // Background stream updates arriving empty should be preserved;
+test/utils/garson_close_table_manual_purge_test.dart:354:        closedOrderId: 'order-t1',
+test/utils/garson_area_sections_test.dart:89:      // BUG-FIX (Render Gap): Previously this returned blockedLoading + empty
+test/utils/garson_board_render_preservation_test.dart:544:      final closedOrder = <String, dynamic>{
+test/utils/garson_board_render_preservation_test.dart:547:        'status': 'closed',
+test/utils/garson_board_render_preservation_test.dart:557:        orders: <Map<String, dynamic>>[closedOrder, otherOrder],
+test/utils/garson_board_render_preservation_test.dart:560:        lastGoodOrders: <Map<String, dynamic>>[closedOrder, otherOrder],
+test/utils/garson_board_render_preservation_test.dart:568:        closedOrderId: 'order-tbl1',
+test/utils/garson_board_render_preservation_test.dart:574:      expect(next.orders.length, 1, reason: 'closed table order removed from orders');
+test/utils/garson_board_render_preservation_test.dart:575:      expect(next.lastGoodOrders.length, 1, reason: 'closed table order removed from lastGoodOrders');
+test/utils/order_status_constants_test.dart:7:      expect(OrderStatusConstants.isTerminalStatus('closed'), isTrue);
+test/utils/order_status_constants_test.dart:9:      expect(OrderStatusConstants.isTerminalStatus('cancelled'), isTrue);
+test/utils/order_status_constants_test.dart:10:      expect(OrderStatusConstants.isTerminalStatus('completed'), isTrue);
+test/utils/order_status_constants_test.dart:11:      expect(OrderStatusConstants.isTerminalStatus('delivered'), isTrue);
+test/utils/order_status_constants_test.dart:21:    test('isCancelledStatus correctly identifies cancelled statuses', () {
+test/utils/order_status_constants_test.dart:22:      expect(OrderStatusConstants.isCancelledStatus('cancelled'), isTrue);
+test/utils/order_status_constants_test.dart:26:      expect(OrderStatusConstants.isCancelledStatus('refunded'), isTrue);
+test/utils/order_status_constants_test.dart:29:      expect(OrderStatusConstants.isCancelledStatus('closed'), isFalse);
+test/utils/order_status_constants_test.dart:30:      expect(OrderStatusConstants.isCancelledStatus('paid'), isFalse);
+test/utils/order_status_constants_test.dart:31:      expect(OrderStatusConstants.isCancelledStatus('delivered'), isFalse);
+test/utils/order_status_constants_test.dart:37:      expect(OrderStatusConstants.isActiveEcommerce('confirmed'), isTrue);
+test/utils/order_status_constants_test.dart:40:      expect(OrderStatusConstants.isActiveEcommerce('shipped'), isTrue);
+test/utils/order_status_constants_test.dart:45:      expect(OrderStatusConstants.isActiveEcommerce('delivered'), isFalse);
+test/utils/order_status_constants_test.dart:46:      expect(OrderStatusConstants.isActiveEcommerce('cancelled'), isFalse);
+test/utils/order_status_constants_test.dart:52:      expect(OrderStatusConstants.isEcommerceTerminal('delivered'), isTrue);
+test/utils/order_status_constants_test.dart:53:      expect(OrderStatusConstants.isEcommerceTerminal('cancelled'), isTrue);
+test/utils/order_status_constants_test.dart:57:      expect(OrderStatusConstants.isEcommerceTerminal('shipped'), isFalse);
+test/utils/garson_table_order_state_test.dart:72:      final closedAt = DateTime.parse('2026-06-07T10:00:00.000Z').toLocal();
+test/utils/garson_table_order_state_test.dart:81:          closedAt: closedAt,
+test/utils/garson_table_order_state_test.dart:82:          now: closedAt.add(const Duration(seconds: 20)),
+test/utils/garson_table_order_state_test.dart:89:      final closedAt = DateTime.parse('2026-06-07T10:00:00.000Z').toLocal();
+test/utils/garson_table_order_state_test.dart:98:          closedAt: closedAt,
+test/utils/garson_table_order_state_test.dart:99:          now: closedAt.add(const Duration(seconds: 40)),
+test/utils/garson_table_order_state_test.dart:106:      final closedAt = DateTime.parse('2026-06-07T10:00:00.000Z').toLocal();
+test/utils/garson_table_order_state_test.dart:115:          closedAt: closedAt,
+test/utils/garson_table_order_state_test.dart:116:          now: closedAt.add(const Duration(minutes: 3)),
+test/utils/garson_empty_state_self_heal_test.dart:31:    test('never warns when customer orders were actually closed', () {
+test/utils/garson_active_orders_fetch_test.dart:19:        'served',
+test/utils/garson_active_orders_fetch_test.dart:25:        'confirmed',
+test/utils/garson_active_orders_fetch_test.dart:37:        'closed',
+test/utils/garson_active_orders_fetch_test.dart:38:        'paid',
+test/utils/garson_active_orders_fetch_test.dart:39:        'cancelled',
+test/utils/garson_active_orders_fetch_test.dart:40:        'completed_payment',
+test/utils/garson_active_orders_fetch_test.dart:58:          'status': 'confirmed',
+test/utils/garson_active_orders_fetch_test.dart:130:          'status': 'confirmed',
+test/utils/garson_active_orders_fetch_test.dart:221:          'status': 'confirmed',
+test/screens/kitchen_print_management_page_test.dart:156:      expect(find.textContaining('Bridge toggle rejected'), findsWidgets);
+test/screens/kitchen_print_management_page_test.dart:335:      throw Exception('Bridge toggle rejected');
+test/screens/seller_panel_garson_operations_test.dart:110:    expect(find.byKey(const ValueKey<String>('flow-closed')), findsOneWidget);
+test/screens/seller_panel_garson_operations_test.dart:115:    expect(find.byKey(const ValueKey<String>('flow-closed')), findsNothing);
+test/screens/seller_panel_garson_operations_test.dart:540:    expect(result.preservedTables, hasLength(1));
+test/screens/seller_panel_garson_operations_test.dart:541:    expect(result.preservedTables.first.table?['id'], 'table-bahce-1');
+test/screens/seller_panel_garson_operations_test.dart:640:    expect(result.preservedTables, isEmpty);
+test/screens/seller_panel_garson_operations_test.dart:674:      'status': 'completed_payment',
+test/screens/seller_panel_garson_operations_test.dart:689:    expect(result.mergedOrders.first['status'], 'completed_payment');
+test/garson_integration_hardening_test.dart:104:      test('served → diff (sipariş teslim edildi)', () {
+test/garson_integration_hardening_test.dart:105:        expect(KitchenPrintPolicy.shouldDispatchFullTicket('served'), isFalse);
+test/garson_integration_hardening_test.dart:108:      test('closed → diff (masa kapalı)', () {
+test/garson_integration_hardening_test.dart:109:        expect(KitchenPrintPolicy.shouldDispatchFullTicket('closed'), isFalse);
+test/garson_integration_hardening_test.dart:355:      expect(session.paidTotal, closeTo(0.0, 0.001));
+test/garson_integration_hardening_test.dart:406:      expect(session.paidTotal, closeTo(500.0, 0.001));
+test/garson_integration_hardening_test.dart:438:    final closedAt = DateTime(2026, 4, 7, 13, 47);
+test/garson_integration_hardening_test.dart:448:          'status': 'closed',
+test/garson_integration_hardening_test.dart:451:          'closed_at': closedAt.toIso8601String(),
+test/garson_integration_hardening_test.dart:468:    test('E2. sessionDuration: openedAt → closedAt = 1sa 47dk', () {
+test/garson_integration_hardening_test.dart:478:        ..['closed_at'] =
+test/garson_integration_hardening_test.dart:570:        GarsonOrderStatus.served,
+test/garson_integration_hardening_test.dart:571:        GarsonOrderStatus.closed,
+test/garson_integration_hardening_test.dart:572:        GarsonOrderStatus.completed,
+test/garson_integration_hardening_test.dart:623:    // served/closed/completed: canEdit=false → isLocked=true
+test/garson_integration_hardening_test.dart:624:    for (final s in ['served', 'closed', 'completed']) {
+test/garson_integration_hardening_test.dart:634:        'draft', 'waiting', 'sent', 'preparing', 'ready', 'served', 'closed',
+test/garson_integration_hardening_test.dart:671:    test('H4. closed → diff, canEdit:false (ödeme yapılmış masa değiştirilemez)', () {
+test/garson_integration_hardening_test.dart:672:      expect(KitchenPrintPolicy.shouldDispatchFullTicket('closed'), isFalse);
+test/garson_integration_hardening_test.dart:673:      final r = GarsonOperationRules.forStatus('closed');
+test/garson_integration_hardening_test.dart:705:      test('yalnızca aktarılamaz statüler (served/closed) → false', () {
+test/garson_integration_hardening_test.dart:707:          TableLevelPolicy.canTransfer(['served', 'closed']),
+test/garson_integration_hardening_test.dart:721:          TableLevelPolicy.canTransfer(['closed', 'sent']),
+test/garson_integration_hardening_test.dart:740:      test('yalnızca closed → false', () {
+test/garson_integration_hardening_test.dart:741:        expect(TableLevelPolicy.canPay(['closed']), isFalse);
+test/garson_integration_hardening_test.dart:744:      test('yalnızca completed → false', () {
+test/garson_integration_hardening_test.dart:745:        expect(TableLevelPolicy.canPay(['completed']), isFalse);
+test/garson_integration_hardening_test.dart:752:      test('karışık: closed + sent → true (en az bir aktif)', () {
+test/garson_integration_hardening_test.dart:753:        expect(TableLevelPolicy.canPay(['closed', 'sent']), isTrue);
+test/garson_integration_hardening_test.dart:816:      test('served → false', () {
+test/garson_integration_hardening_test.dart:817:        expect(KitchenPrintPolicy.canReprint('served'), isFalse);
+test/garson_integration_hardening_test.dart:819:      test('closed → false', () {
+test/garson_integration_hardening_test.dart:820:        expect(KitchenPrintPolicy.canReprint('closed'), isFalse);
+test/garson_integration_hardening_test.dart:843:      test('yalnızca served/closed → false', () {
+test/garson_integration_hardening_test.dart:845:          TableLevelPolicy.canReprint(['served', 'closed']),
+test/garson_integration_hardening_test.dart:1007:          status: 'closed',
+test/garson_integration_hardening_test.dart:1011:          closedAt: DateTime(2026, 1, 15, 14),
+test/garson_integration_hardening_test.dart:1017:        expect(r.status, equals('closed'));
+test/garson_integration_hardening_test.dart:1023:      test('closedAt → updatedAt olarak atanır', () {
+test/garson_integration_hardening_test.dart:1024:        final closed = DateTime(2026, 1, 15, 14, 30);
+test/garson_integration_hardening_test.dart:1031:          status: 'closed',
+test/garson_integration_hardening_test.dart:1035:          closedAt: closed,
+test/garson_integration_hardening_test.dart:1039:        expect(r.updatedAt, equals(closed));
+test/garson_integration_hardening_test.dart:1042:      test('K5c. closedByName ve paymentNote tarihe taşınır', () {
+test/garson_integration_hardening_test.dart:1049:          status: 'closed',
+test/garson_integration_hardening_test.dart:1053:          closedAt: DateTime(2026, 1, 15, 14),
+test/garson_integration_hardening_test.dart:1058:        expect(r.closedByName, equals('Ahmet'));
+test/garson_integration_hardening_test.dart:1062:      test('K5d. sessionDuration: openedAt → closedAt farkı doğru', () {
+test/garson_integration_hardening_test.dart:1064:        final closed = DateTime(2026, 1, 15, 14);
+test/garson_integration_hardening_test.dart:1071:          status: 'closed',
+test/garson_integration_hardening_test.dart:1075:          closedAt: closed,
+test/garson_integration_hardening_test.dart:1080:        expect(r.closedAt, equals(closed));
+test/garson_integration_hardening_test.dart:1086:        final closed = DateTime(2026, 1, 15, 13, 30);
+test/garson_integration_hardening_test.dart:1093:          status: 'closed',
+test/garson_integration_hardening_test.dart:1097:          closedAt: closed,
+test/garson_integration_hardening_test.dart:1110:          'status': 'closed',
+test/garson_integration_hardening_test.dart:1113:          'closed_at': '2026-01-15T14:00:00.000',
+test/garson_integration_hardening_test.dart:1128:          'status': 'closed',
+test/garson_integration_hardening_test.dart:1131:          'closed_at': '2026-01-15T14:00:00.000',
+test/desktop_print_orchestrator_test.dart:998:            'queue_status': 'completed',
+test/desktop_print_orchestrator_test.dart:1017:        restaurantId: 'rest-cups-unconfirmed',
+test/desktop_print_orchestrator_test.dart:1788:          'queue_status': 'completed',
+test/desktop_print_orchestrator_test.dart:1895:            error: 'user_cancelled',
+test/finance/today_income_builder_test.dart:32:              'status': 'closed',
+test/finance/today_income_builder_test.dart:33:              'closed_at': sessionTime.toUtc().toIso8601String(),
+test/finance/today_income_builder_test.dart:43:              'status': 'closed',
+test/finance/today_income_builder_test.dart:44:              'closed_at': sessionTime
+test/finance/today_income_builder_test.dart:72:      final closedAt = from.add(const Duration(hours: 12));
+test/finance/today_income_builder_test.dart:84:            'status': 'closed',
+test/finance/today_income_builder_test.dart:85:            'closed_at': closedAt.toUtc().toIso8601String(),
+test/finance/today_income_builder_test.dart:93:            'status': 'closed',
+test/finance/today_income_builder_test.dart:94:            'closed_at': closedAt.toUtc().toIso8601String(),
+test/finance/today_income_builder_test.dart:103:    test('cancelled and refunded rows are excluded from totals', () {
+test/finance/today_income_builder_test.dart:114:      final closedAt = from.add(const Duration(hours: 11));
+test/finance/today_income_builder_test.dart:125:            'status': 'closed',
+test/finance/today_income_builder_test.dart:126:            'closed_at': closedAt.toUtc().toIso8601String(),
+test/finance/today_income_builder_test.dart:133:            'status': 'refunded',
+test/finance/today_income_builder_test.dart:134:            'closed_at': closedAt.toUtc().toIso8601String(),
+test/finance/today_income_builder_test.dart:141:            'status': 'delivered',
+test/finance/today_income_builder_test.dart:142:            'created_at': closedAt.toUtc().toIso8601String(),
+test/finance/today_income_builder_test.dart:147:            'status': 'cancelled',
+test/finance/today_income_builder_test.dart:148:            'created_at': closedAt.toUtc().toIso8601String(),
+test/finance/today_income_builder_test.dart:183:            'status': 'closed',
+test/finance/today_income_builder_test.dart:184:            'closed_at': includedLocal.toUtc().toIso8601String(),
+test/finance/today_income_builder_test.dart:191:            'status': 'closed',
+test/finance/today_income_builder_test.dart:192:            'closed_at': excludedLocal.toUtc().toIso8601String(),
+test/services/seller_dashboard_service_test.dart:6:    test('fromOnlineOrder parses correctly and flags cancelled status', () {
+test/services/seller_dashboard_service_test.dart:27:        'status': 'closed',
+test/services/seller_dashboard_service_test.dart:36:      expect(metric.status, 'closed');
+test/services/seller_dashboard_service_test.dart:45:    test('ignores cancelled orders when summing revenue', () {
+test/services/seller_dashboard_service_test.dart:49:          'status': 'delivered',
+test/services/seller_dashboard_service_test.dart:72:      // Only the 100 amount from the delivered order should be summed
+test/services/table_close_history_fallback_test.dart:10:          closedOrders: const [
+test/services/table_close_history_fallback_test.dart:37:          closedOrders: const [
+test/services/orders_close_consistency_test.dart:33:      // Customer flow wrote status='closed' but legacy field still says
+test/services/orders_close_consistency_test.dart:37:        'status': 'closed',
+test/services/orders_close_consistency_test.dart:39:      expect(resolveGarsonOrderStatusField(order), 'closed');
+test/services/orders_close_consistency_test.dart:40:      expect(isGarsonActiveOrderStatus('closed'), isFalse);
+test/services/orders_close_consistency_test.dart:45:        'order_status': 'completed',
+test/services/orders_close_consistency_test.dart:48:      expect(resolveGarsonOrderStatusField(order), 'completed');
+test/services/orders_close_consistency_test.dart:49:      expect(isGarsonActiveOrderStatus('completed'), isFalse);
+test/services/orders_close_consistency_test.dart:54:        'order_status': 'paid',
+test/services/orders_close_consistency_test.dart:58:      expect(['paid', 'archived'], contains(resolved));
+test/services/orders_close_consistency_test.dart:101:            'status': 'closed', // already terminal — should never have been fetched
+test/services/orders_close_consistency_test.dart:108:      expect(resolveGarsonOrderStatusField(merged.first), 'closed');
+test/services/orders_close_consistency_test.dart:170:        'status': 'confirmed',
+test/services/orders_close_consistency_test.dart:201:        'status': 'confirmed',
+test/services/orders_close_consistency_test.dart:227:        'status': 'confirmed',
+test/services/close_table_workflow_test.dart:51:        'closed',
+test/services/close_table_workflow_test.dart:52:        'paid',
+test/services/close_table_workflow_test.dart:53:        'cancelled',
+test/services/close_table_workflow_test.dart:55:        'completed',
+test/services/close_table_workflow_test.dart:58:        'payment_completed',
+test/services/close_table_workflow_test.dart:59:        'completed_payment',
+test/services/close_table_workflow_test.dart:61:        '  paid  ', // whitespace-tolerant
+test/services/close_table_workflow_test.dart:189:        // verify: rows now have status='closed' (terminal)
+test/services/close_table_workflow_test.dart:191:            ids.map((id) => _row(id, status: 'closed')).toList(),
+test/services/close_table_workflow_test.dart:207:            ids.map((id) => _row(id, status: 'closed')).toList(),
+test/services/close_table_workflow_test.dart:293:    test('verify accepts rows with terminal status as successfully closed', () async {
+test/services/close_table_workflow_test.dart:294:      // Mixed: some rows deleted (absent from verify), some marked 'closed'.
+test/services/close_table_workflow_test.dart:306:            _row('id-2', status: 'closed'), // terminal
+test/services/close_table_workflow_test.dart:307:            _row('id-3', status: 'paid'), // also terminal
+test/services/dashboard_food_business_test.dart:64:    test('non-cancelled order is revenue eligible', () {
+test/services/dashboard_food_business_test.dart:67:        'status': 'delivered',
+test/services/dashboard_food_business_test.dart:77:    test('cancelled order is NOT revenue eligible', () {
+test/services/dashboard_food_business_test.dart:80:        'status': 'cancelled',
+test/services/dashboard_food_business_test.dart:88:    test('refunded order is NOT revenue eligible', () {
+test/services/dashboard_food_business_test.dart:91:        'status': 'refunded',
+test/services/dashboard_food_business_test.dart:102:        'status': 'confirmed',
+test/services/dashboard_food_business_test.dart:127:    test('closed table order is revenue eligible', () {
+test/services/dashboard_food_business_test.dart:130:        'status': 'closed',
+test/services/dashboard_food_business_test.dart:138:    test('cancelled table order is NOT revenue eligible', () {
+test/services/dashboard_food_business_test.dart:141:        'status': 'cancelled',
+test/services/dashboard_food_business_test.dart:160:      String status = 'delivered',
+test/services/dashboard_food_business_test.dart:173:      String status = 'closed',
+test/services/dashboard_food_business_test.dart:177:      // closed → 'delivered', new → 'new', cancelled → 'cancelled'.
+test/services/dashboard_food_business_test.dart:179:        'cancelled' => 'cancelled',
+test/services/dashboard_food_business_test.dart:180:        'closed' => 'delivered',
+test/services/dashboard_food_business_test.dart:212:    test('L-2: cancelled online order is excluded from revenue', () {
+test/services/dashboard_food_business_test.dart:213:      final cancelledOrder = onlineOrder(
+test/services/dashboard_food_business_test.dart:216:        status: 'cancelled',
+test/services/dashboard_food_business_test.dart:220:        orders: [cancelledOrder, activeOrder],
+test/services/dashboard_food_business_test.dart:229:      // SellerDashboardService sums all orders including cancelled ones
+test/services/dashboard_food_business_test.dart:253:    test('L-5: closed-table order is included in today revenue', () {
+test/services/dashboard_food_business_test.dart:254:      final closedTableOrder = tableOrder(
+test/services/dashboard_food_business_test.dart:257:        status: 'closed',
+test/services/dashboard_food_business_test.dart:260:        orders: [closedTableOrder],
+test/services/dashboard_food_business_test.dart:305:      case 'cancelled':
+test/services/dashboard_food_business_test.dart:308:      case 'refunded':
+test/services/dashboard_food_business_test.dart:310:        return 'cancelled';
+test/services/dashboard_food_business_test.dart:311:      case 'closed':
+test/services/dashboard_food_business_test.dart:312:      case 'paid':
+test/services/dashboard_food_business_test.dart:313:      case 'completed':
+test/services/dashboard_food_business_test.dart:314:        return 'delivered';
+test/services/dashboard_food_business_test.dart:352:      'closed → delivered (bugün kapanan)',
+test/services/dashboard_food_business_test.dart:353:      () => expect(mapStatus('closed'), 'delivered'),
+test/services/dashboard_food_business_test.dart:355:    test('paid → delivered', () => expect(mapStatus('paid'), 'delivered'));
+test/services/dashboard_food_business_test.dart:357:      'completed → delivered',
+test/services/dashboard_food_business_test.dart:358:      () => expect(mapStatus('completed'), 'delivered'),
+test/services/dashboard_food_business_test.dart:362:      'cancelled → cancelled (gelirden hariç)',
+test/services/dashboard_food_business_test.dart:363:      () => expect(mapStatus('cancelled'), 'cancelled'),
+test/services/dashboard_food_business_test.dart:366:      'canceled → cancelled',
+test/services/dashboard_food_business_test.dart:367:      () => expect(mapStatus('canceled'), 'cancelled'),
+test/services/dashboard_food_business_test.dart:369:    test('void → cancelled', () => expect(mapStatus('void'), 'cancelled'));
+test/services/dashboard_food_business_test.dart:371:      'refunded → cancelled',
+test/services/dashboard_food_business_test.dart:372:      () => expect(mapStatus('refunded'), 'cancelled'),
+test/services/dashboard_food_business_test.dart:375:      'deleted → cancelled',
+test/services/dashboard_food_business_test.dart:376:      () => expect(mapStatus('deleted'), 'cancelled'),
+test/services/dashboard_food_business_test.dart:416:    test('all tables closed or cancelled keeps open table count at 0', () {
+test/services/dashboard_food_business_test.dart:424:            'status': 'closed',
+test/services/dashboard_food_business_test.dart:436:            'status': 'cancelled',
+supabase/migrations/20260606_print_jobs_table_labels.sql:143:    'confirmed',
+supabase/migrations/20260613_waiter_order_requests_qr_preview.sql:58:        'rejected',
+supabase/migrations/20260613_waiter_order_requests_qr_preview.sql:60:        'cancelled'
+supabase/migrations/20260613_waiter_order_requests_qr_preview.sql:556:    status = 'rejected',
+supabase/migrations/20260613_waiter_order_requests_qr_preview.sql:756:  and status = 'cancelled'
+supabase/migrations/20260427_print_station_architecture.sql:48:  add column if not exists printer_write_completed_at timestamptz,
+supabase/migrations/20260427_print_station_architecture.sql:88:  last_job_completed_at timestamptz,
+supabase/migrations/20260314_ads_backend_core.sql:59:  rejected_at timestamptz,
+supabase/migrations/20260607_fix_create_table_order_with_print_jobs_impl_orders_schema.sql:163:    'confirmed',
+supabase/migrations/20260607_kitchen_payload_headers_and_daily_counter.sql:175:    'confirmed',
+supabase/migrations/20260607_fix_create_table_order_with_print_jobs_v_item_alias.sql:158:    'confirmed',
+supabase/migrations/20260609_close_table_waiter_access.sql:29:--   şartını sağlayan aktif satırları `status='closed'` ile güncelleyen bir
+supabase/migrations/20260609_close_table_waiter_access.sql:200:      AND COALESCE(status, '') NOT IN ('archived','closed','cancelled','canceled','completed','complete','paid')
+supabase/migrations/20260609_close_table_waiter_access.sql:219:  --   public.orders → status='closed' for the SAME physical table only.
+supabase/migrations/20260609_close_table_waiter_access.sql:234:  closed_orders AS (
+supabase/migrations/20260609_close_table_waiter_access.sql:236:    SET status       = 'closed',
+supabase/migrations/20260609_close_table_waiter_access.sql:237:        order_status = 'closed',
+supabase/migrations/20260609_close_table_waiter_access.sql:243:        'closed','paid','cancelled','canceled',
+supabase/migrations/20260609_close_table_waiter_access.sql:244:        'completed','complete','archived','payment_completed'
+supabase/migrations/20260609_close_table_waiter_access.sql:248:  SELECT COUNT(*) INTO v_orders_updated FROM closed_orders;
+supabase/migrations/20260609_close_table_waiter_access.sql:364:      AND COALESCE(status, '') NOT IN ('archived','closed','cancelled','canceled','completed','complete','paid')
+supabase/migrations/20260609_close_table_waiter_access.sql:420:      AND COALESCE(status, '') NOT IN ('archived','closed','cancelled','canceled','completed','complete','paid')
+supabase/migrations/20260609_close_table_waiter_access.sql:426:  --   public.orders → status='closed' (schema-safe, table_id ile sınırlı).
+supabase/migrations/20260609_close_table_waiter_access.sql:434:  closed_orders AS (
+supabase/migrations/20260609_close_table_waiter_access.sql:436:    SET status       = 'closed',
+supabase/migrations/20260609_close_table_waiter_access.sql:437:        order_status = 'closed',
+supabase/migrations/20260609_close_table_waiter_access.sql:443:        'closed','paid','cancelled','canceled',
+supabase/migrations/20260609_close_table_waiter_access.sql:444:        'completed','complete','archived','payment_completed'
+supabase/migrations/20260609_close_table_waiter_access.sql:448:  SELECT COUNT(*) INTO v_orders_updated FROM closed_orders;
+supabase/migrations/20260609_close_table_waiter_access.sql:570:  closed_orders AS (
+supabase/migrations/20260609_close_table_waiter_access.sql:572:    SET status       = 'closed',
+supabase/migrations/20260609_close_table_waiter_access.sql:573:        order_status = 'closed',
+supabase/migrations/20260609_close_table_waiter_access.sql:579:        'closed','paid','cancelled','canceled',
+supabase/migrations/20260609_close_table_waiter_access.sql:580:        'completed','complete','archived','payment_completed'
+supabase/migrations/20260609_close_table_waiter_access.sql:584:  SELECT COUNT(*) INTO v_orders_updated FROM closed_orders;
+supabase/migrations/20260405_table_order_status_lifecycle.sql:6:--          'kitchen', 'ready', 'served' durumlarını ekler.
+supabase/migrations/20260405_table_order_status_lifecycle.sql:13:--   'served'           → Servis Edildi (yeşil) [Phase 2]
+supabase/migrations/20260405_table_order_status_lifecycle.sql:14:--   'closed'           → Kapatıldı (silinmeden önce)
+supabase/migrations/20260405_table_order_status_lifecycle.sql:48:--    Phase 1 statuses: draft, new, waiting, sent, done, preparing, closed
+supabase/migrations/20260405_table_order_status_lifecycle.sql:49:--    Phase 2 statuses: kitchen, ready, served
+supabase/migrations/20260405_table_order_status_lifecycle.sql:61:    'served',      -- servis edildi
+supabase/migrations/20260405_table_order_status_lifecycle.sql:62:    'closed'       -- adisyon kapatıldı (genellikle delete ile)
+supabase/migrations/20260420_print_job_completion_lifecycle.sql:7:set status = 'completed'
+supabase/migrations/20260420_print_job_completion_lifecycle.sql:12:  check (status in ('pending', 'claimed', 'printing', 'completed', 'failed'));
+supabase/migrations/20260420_print_job_completion_lifecycle.sql:18:is 'Lifecycle: pending -> claimed -> printing -> completed|failed';
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:6:--   2. table_order_history   — permanent archive when orders are closed
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:24:  paid_by       text,                             -- customer name / identifier
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:49:-- are deleted/closed, so historical queries always work.
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:57:  status            text not null default 'closed',
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:68:  closed_at         timestamptz not null default timezone('utc',now()),
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:84:create index if not exists idx_table_order_history_seller_closed
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:85:  on public.table_order_history (seller_id, closed_at desc);
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:87:create index if not exists idx_table_order_history_seller_table_closed
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:88:  on public.table_order_history (seller_id, table_number, closed_at desc);
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:132:  min(h.closed_at)                  as first_order_at,
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:133:  max(h.closed_at)                  as last_order_at
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:143:  date_trunc('hour', closed_at at time zone 'UTC') as hour_bucket,
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:198:      opened_at, closed_at, created_at
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:202:      'closed',
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:347:      and h.closed_at between p_from and p_to
+supabase/migrations/20260407_restaurant_ops_upgrade.sql:429:comment on table  public.table_order_history  is 'Permanent archive of closed table orders. Never deleted.';
+supabase/migrations/20260303zz_admin_auth_login_events.sql:23:    status in ('success', 'failed', 'cancelled')
+supabase/migrations/20260303zz_admin_auth_login_events.sql:85:  if normalized_status not in ('success', 'failed', 'cancelled') then
+supabase/migrations/20260504_print_system_enabled_and_paused_status.sql:12:  check (status in ('pending', 'claimed', 'printing', 'completed', 'failed', 'paused_by_operator'));
+supabase/migrations/20260504_print_system_enabled_and_paused_status.sql:23:  is 'Print job status: pending (ready for dispatch), claimed (being processed), printing (sent to printer), completed (successfully printed), failed (max retries exceeded), paused_by_operator (system disabled by operator).';
+supabase/migrations/20260512_history_table_reprint_rpcs.sql:29:  status            text not null default 'closed',
+supabase/migrations/20260512_history_table_reprint_rpcs.sql:40:  closed_at         timestamptz not null default timezone('utc', now()),
+supabase/migrations/20260512_history_table_reprint_rpcs.sql:64:create index if not exists idx_table_order_history_seller_closed
+supabase/migrations/20260512_history_table_reprint_rpcs.sql:65:  on public.table_order_history (seller_id, closed_at desc);
+supabase/migrations/20260512_history_table_reprint_rpcs.sql:67:create index if not exists idx_table_order_history_seller_table_closed
+supabase/migrations/20260512_history_table_reprint_rpcs.sql:68:  on public.table_order_history (seller_id, table_number, closed_at desc);
+supabase/functions/mark_shipped/index.ts:9:    const data = await callRpc<Record<string, unknown>>(serviceClient, 'seller_ops.mark_order_shipped', {
+supabase/functions/receive_return/index.ts:3:type RequestBody = { return_id: string; mark_shipped_back?: boolean; note?: string };
+supabase/functions/receive_return/index.ts:12:      p_mark_shipped_back: body.mark_shipped_back ?? false,
+supabase/functions/delivery_confirm/index.ts:121:          .update({ wallet_reserve_status: 'reserved' })
+supabase/functions/create_order/index.ts:20:    const data = await callRpc<Record<string, unknown>>(serviceClient, 'seller_ops.create_paid_order', {

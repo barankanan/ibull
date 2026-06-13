@@ -9,6 +9,7 @@ import '../widgets/product_card.dart';
 import '../widgets/staggered_reveal.dart';
 import '../widgets/custom_header.dart';
 import '../widgets/address_bar.dart';
+import '../utils/category_product_filter.dart';
 import 'product_detail_page.dart';
 
 class CategoryProductsPage extends StatefulWidget {
@@ -63,18 +64,6 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
     'Akıllı Telefonlar',
   ];
 
-  String _normalize(String value) {
-    var t = value.toLowerCase().trim();
-    t = t.replaceAll('ı', 'i').replaceAll('İ', 'i');
-    t = t.replaceAll('ş', 's').replaceAll('Ş', 's');
-    t = t.replaceAll('ğ', 'g').replaceAll('Ğ', 'g');
-    t = t.replaceAll('ü', 'u').replaceAll('Ü', 'u');
-    t = t.replaceAll('ö', 'o').replaceAll('Ö', 'o');
-    t = t.replaceAll('ç', 'c').replaceAll('Ç', 'c');
-    t = t.replaceAll(RegExp(r'\s+'), ' ');
-    return t;
-  }
-
   String _productRevealToken(Product product) {
     final productId = product.productId?.trim();
     if (productId != null && productId.isNotEmpty) {
@@ -128,24 +117,14 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
 
   List<Product> _getDisplayProducts() {
     if (widget.products.isNotEmpty) {
-      final selectedCategory = _normalize(widget.category);
-      final selectedSubCategory = _normalize(widget.subCategory);
-
       final filtered = widget.products.where((product) {
-        final productCategory = _normalize(product.category ?? '');
-        final productSubCategory = _normalize(product.subCategory ?? '');
-
-        final categoryMatch = productCategory == selectedCategory;
-
-        if (widget.subCategory == 'HEPSİ') {
-          return categoryMatch;
-        }
-
-        final subCategoryMatch =
-            productSubCategory.isNotEmpty &&
-            productSubCategory == selectedSubCategory;
-
-        return categoryMatch && subCategoryMatch;
+        return CategoryProductFilter.productMatchesSelection(
+          mainCategory: widget.category,
+          subCategory: widget.subCategory,
+          productMainCategory: product.category,
+          productSubCategory: product.subCategory,
+          productName: product.name,
+        );
       }).toList();
 
       return filtered;

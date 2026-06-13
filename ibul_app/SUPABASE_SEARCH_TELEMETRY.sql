@@ -45,8 +45,29 @@ with check (
 );
 
 drop policy if exists "search_telemetry_select_authenticated" on public.search_telemetry;
-create policy "search_telemetry_select_authenticated"
+drop policy if exists "search_telemetry_select_own" on public.search_telemetry;
+drop policy if exists "search_telemetry_select_admin" on public.search_telemetry;
+
+-- Authenticated users may only read their own telemetry rows.
+create policy "search_telemetry_select_own"
 on public.search_telemetry
 for select
 to authenticated
-using (true);
+using (user_id is not null and auth.uid() = user_id);
+
+-- Admin roles may read aggregate telemetry for analytics screens.
+create policy "search_telemetry_select_admin"
+on public.search_telemetry
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.users u
+    where u.id = auth.uid()
+      and (
+        lower(coalesce(u.role, '')) in ('admin', 'super_admin')
+        or lower(coalesce(u.role, '')) like 'admin_%'
+      )
+  )
+);

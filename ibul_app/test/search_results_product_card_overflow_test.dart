@@ -80,7 +80,7 @@ void main() {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            childAspectRatio: 0.65,
+            childAspectRatio: 0.70,
             mainAxisSpacing: 12,
             crossAxisSpacing: 10,
           ),
@@ -119,7 +119,7 @@ void main() {
           GridView.builder(
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 250,
-              childAspectRatio: 0.65,
+              childAspectRatio: 0.82,
               mainAxisSpacing: 16,
               crossAxisSpacing: 16,
             ),

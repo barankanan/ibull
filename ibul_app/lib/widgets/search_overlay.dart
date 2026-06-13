@@ -9,7 +9,6 @@ import '../../core/constants.dart';
 import '../../core/app_state.dart';
 import '../../models/product_model.dart';
 import '../../services/database_helper.dart';
-import '../../services/search_telemetry_service.dart';
 import 'advanced_filter_drawer.dart';
 
 class SearchOverlay extends StatefulWidget {
@@ -145,17 +144,6 @@ class _SearchOverlayState extends State<SearchOverlay> {
     for (var i = 0; i < localHistory.length; i++) {
       // Daha yeni aramaya biraz daha yüksek ağırlık ver.
       addScore(localHistory[i], localHistory.length - i);
-    }
-
-    try {
-      final recent = await SearchTelemetryService.instance.getRecentSearches(
-        days: 30,
-      );
-      for (final event in recent) {
-        addScore(event.query, 1);
-      }
-    } catch (_) {
-      // Telemetry hazır değilse local geçmişle devam ederiz.
     }
 
     final candidates = queryScores.entries.toList()

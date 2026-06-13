@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../core/app_image_cdn.dart';
 import 'product_pricing.dart';
+import '../utils/dynamic_value_helpers.dart';
 import '../utils/preparation_time_formatter.dart';
 
 class Product {
@@ -308,11 +309,11 @@ class Product {
 
   factory Product.fromJson(Map<String, dynamic> json) {
     return Product(
-      name: json['name'] ?? '',
+      name: readString(json['name']),
       productId:
           json['productId']?.toString() ?? json['product_id']?.toString(),
-      brand: json['brand'] ?? '',
-      price: json['price'] ?? '0',
+      brand: readString(json['brand']),
+      price: readString(json['price'], fallback: '0'),
         pricingMode:
           json['pricingMode']?.toString() ??
           json['pricing_mode']?.toString() ??
@@ -379,24 +380,22 @@ class Product {
           (json['maxWeightGrams'] as num?)?.toInt() ??
           (json['max_weight_grams'] as num?)?.toInt(),
       rating: (json['rating'] as num?)?.toDouble() ?? 0.0,
-      reviewCount: json['reviewCount'] ?? 0,
-      tags: List<String>.from(json['tags'] ?? []),
-      images: List<String>.from(json['images'] ?? []),
+      reviewCount: readInt(json['reviewCount']),
+      tags: _parseStringList(json['tags']) ?? const [],
+      images: _parseStringList(json['images']) ?? const [],
       isDigital: json['isDigital'] ?? false,
-      accessories: json['accessories'] != null
-          ? List<String>.from(json['accessories'])
-          : null,
-      threeSixtyImages: json['threeSixtyImages'] != null
-          ? List<String>.from(json['threeSixtyImages'])
-          : null,
-      store: json['store'],
+      accessories: _parseStringList(json['accessories']),
+      threeSixtyImages: _parseStringList(json['threeSixtyImages']),
+      store: readNullableString(json['store'] ?? json['store_name']),
       sellerId: json['sellerId']?.toString() ?? json['seller_id']?.toString(),
-      category: json['category'],
-      subCategory: json['subCategory'],
+      category: readNullableString(json['category'] ?? json['main_category']),
+      subCategory: readNullableString(
+        json['subCategory'] ?? json['sub_category'],
+      ),
       shortDescription:
           json['shortDescription']?.toString() ??
           json['short_description']?.toString(),
-      description: json['description'],
+      description: readNullableString(json['description']),
       specifications: _normalizeJsonText(json['specifications']),
       preparationTime:
           json['preparationTime']?.toString() ??
@@ -407,30 +406,29 @@ class Product {
         json['ingredients'] ?? json['ingredient_list'],
       ),
       features: _parseStringList(json['features']),
-      oldPrice: json['oldPrice'],
-      variantOptions: json['variantOptions'],
-      variantGroupId: json['variantGroupId'],
-      selectedServices: List<String>.from(json['selectedServices'] ?? []),
-      attributes: json['attributes'] != null
-          ? List<String>.from(json['attributes'])
-          : null,
-      videoUrl:
-          json['video_public_url'] ?? json['videoUrl'] ?? json['video_url'],
-      videoPath: json['video_path'],
-      videoPublicUrl: json['video_public_url'],
-      thumbnailPath: json['thumbnail_path'],
-      thumbnailPublicUrl: json['thumbnail_public_url'],
+      oldPrice: readNullableString(json['oldPrice'] ?? json['old_price']),
+      variantOptions: readNullableString(
+        json['variantOptions'] ?? json['variant_options'],
+      ),
+      variantGroupId: readNullableString(
+        json['variantGroupId'] ?? json['variant_group_id'],
+      ),
+      selectedServices: _parseStringList(json['selectedServices']) ?? const [],
+      attributes: _parseStringList(json['attributes']),
+      videoUrl: readNullableString(
+        json['video_public_url'] ?? json['videoUrl'] ?? json['video_url'],
+      ),
+      videoPath: readNullableString(json['video_path']),
+      videoPublicUrl: readNullableString(json['video_public_url']),
+      thumbnailPath: readNullableString(json['thumbnail_path']),
+      thumbnailPublicUrl: readNullableString(json['thumbnail_public_url']),
       videoDurationSeconds: (json['video_duration_seconds'] as num?)?.toInt(),
       videoSizeBytes: (json['video_size_bytes'] as num?)?.toInt(),
       thumbnailSizeBytes: (json['thumbnail_size_bytes'] as num?)?.toInt(),
-      videoStatus: json['video_status'],
+      videoStatus: readNullableString(json['video_status']),
       variants: json['variants'],
-      additionalInfo: json['additional_info'],
-      faq: json['faq'] != null
-          ? (json['faq'] as List)
-                .map((e) => Map<String, String>.from(e))
-                .toList()
-          : null,
+      additionalInfo: readNullableString(json['additional_info']),
+      faq: _parseFaqList(json['faq']),
     );
   }
 
@@ -675,12 +673,8 @@ class Product {
     String? additionalInfo;
     List<Map<String, String>>? faq;
     if (dbProduct is Map) {
-      additionalInfo = dbProduct['additional_info'];
-      if (dbProduct['faq'] != null) {
-        faq = (dbProduct['faq'] as List)
-            .map((e) => Map<String, String>.from(e))
-            .toList();
-      }
+      additionalInfo = readNullableString(dbProduct['additional_info']);
+      faq = _parseFaqList(dbProduct['faq']);
     } else {
       try {
         additionalInfo = (dbProduct as dynamic).additionalInfo;
@@ -970,13 +964,25 @@ class Product {
       cookingTime = (dbProduct as dynamic).cookingTime?.toString();
     } catch (_) {}
     try {
-      oldPrice = (dbProduct as dynamic).oldPrice?.toString();
-    } catch (_) {}
-    try {
-      variantOptions = (dbProduct as dynamic).variantOptions?.toString();
-    } catch (_) {}
-    try {
-      variantGroupId = (dbProduct as dynamic).variantGroupId?.toString();
+      if (dbProduct is Map) {
+        oldPrice = readNullableString(
+          dbProduct['old_price'] ?? dbProduct['oldPrice'],
+        );
+        variantOptions = readNullableString(
+          dbProduct['variant_options'] ?? dbProduct['variantOptions'],
+        );
+        variantGroupId = readNullableString(
+          dbProduct['variant_group_id'] ?? dbProduct['variantGroupId'],
+        );
+      } else {
+        oldPrice = readNullableString((dbProduct as dynamic).oldPrice);
+        variantOptions = readNullableString(
+          (dbProduct as dynamic).variantOptions,
+        );
+        variantGroupId = readNullableString(
+          (dbProduct as dynamic).variantGroupId,
+        );
+      }
     } catch (_) {}
 
     final resolvedPricingType = ProductPricingType.fromValue(pricingType);
@@ -1487,6 +1493,20 @@ class Product {
         .map((e) => e?.trim() ?? '')
         .where((e) => e.isNotEmpty)
         .toList(growable: false);
+  }
+
+  static List<Map<String, String>>? _parseFaqList(dynamic raw) {
+    if (raw is! List) return null;
+    final parsed = <Map<String, String>>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      parsed.add(
+        entry.map(
+          (key, value) => MapEntry(key.toString(), readString(value)),
+        ),
+      );
+    }
+    return parsed.isEmpty ? null : parsed;
   }
 
   static String? _normalizedText(dynamic raw) {

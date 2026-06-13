@@ -5,6 +5,8 @@ import '../models/finance_models.dart';
 import '../helpers/store_table_area_resolver.dart';
 import '../widgets/finance_widgets.dart';
 
+/// Bugünkü gelir detayı — yalnızca sunum katmanı.
+/// Veri: [TodayRevenueBreakdown] ← `buildTodayRevenueBreakdown` ← FinanceRepository.
 class TodayIncomeDetailSheet extends StatelessWidget {
   const TodayIncomeDetailSheet({
     super.key,
@@ -19,6 +21,19 @@ class TodayIncomeDetailSheet extends StatelessWidget {
   final String? error;
   final ScrollController? scrollController;
 
+  static const _titleStyle = TextStyle(
+    fontSize: 15,
+    fontWeight: FontWeight.w700,
+    color: Color(0xFF0F172A),
+  );
+
+  static const _sectionStyle = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w700,
+    color: Color(0xFF64748B),
+    letterSpacing: 0.2,
+  );
+
   static Future<void> show(
     BuildContext context, {
     required TodayRevenueBreakdown breakdown,
@@ -30,10 +45,10 @@ class TodayIncomeDetailSheet extends StatelessWidget {
       return showDialog<void>(
         context: context,
         builder: (_) => Dialog(
-          insetPadding: const EdgeInsets.symmetric(horizontal: 48, vertical: 24),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 56, vertical: 32),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 820, maxHeight: 760),
+            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
             child: TodayIncomeDetailSheet(
               breakdown: breakdown,
               loading: loading,
@@ -49,14 +64,14 @@ class TodayIncomeDetailSheet extends StatelessWidget {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.9,
-        minChildSize: 0.5,
-        maxChildSize: 0.96,
+        initialChildSize: 0.72,
+        minChildSize: 0.4,
+        maxChildSize: 0.88,
         builder: (context, controller) {
           return Container(
             decoration: const BoxDecoration(
-              color: kFinanceSurface,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
             ),
             child: TodayIncomeDetailSheet(
               breakdown: breakdown,
@@ -83,18 +98,7 @@ class TodayIncomeDetailSheet extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 12, 0),
-          child: Row(
-            children: [
-              Expanded(child: _buildHeader()),
-              IconButton(
-                onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
-              ),
-            ],
-          ),
-        ),
+        _buildHeader(context),
         if (loading)
           const Expanded(
             child: FinLoadingOverlay(message: 'Gelir detayı yükleniyor...'),
@@ -105,42 +109,38 @@ class TodayIncomeDetailSheet extends StatelessWidget {
           Expanded(
             child: ListView(
               controller: scrollController,
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               children: [
                 if (!breakdown.hasPersistedPaymentMethods ||
                     !breakdown.hasPersistedAreaNames)
                   _buildDataNotice(),
                 _buildSummaryChips(),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 _buildInsightRow(),
-                const SizedBox(height: 18),
-                _buildSliceSection(
+                const SizedBox(height: 12),
+                _buildBreakdownSection(
                   title: 'Alan Bazlı Gelir',
-                  icon: Icons.place_outlined,
-                  accent: const Color(0xFF6366F1),
                   slices: breakdown.byArea,
+                  accent: const Color(0xFF6366F1),
                   emptyMessage: 'Bugün kapanan masa kaydı yok.',
                 ),
-                const SizedBox(height: 16),
-                _buildSliceSection(
+                const SizedBox(height: 10),
+                _buildBreakdownSection(
                   title: 'Ödeme Tipi Bazlı Gelir',
-                  icon: Icons.payments_outlined,
-                  accent: const Color(0xFF0EA5E9),
                   slices: breakdown.byPaymentMethod,
+                  accent: const Color(0xFF0EA5E9),
                   emptyMessage: 'Ödeme tipi bilgisi henüz kaydedilmemiş.',
                 ),
-                const SizedBox(height: 16),
-                _sectionTitle('Masa / Kaynak Bazlı Gelir'),
                 const SizedBox(height: 10),
+                const Text('Masa / Kaynak Bazlı Gelir', style: _sectionStyle),
+                const SizedBox(height: 6),
                 if (breakdown.tableLines.isEmpty)
                   _emptyHint('Bugün için gelir kaydı bulunamadı.')
                 else
-                  ...breakdown.tableLines.map((line) {
-                    final closedLabel = line.closedAt == null
-                        ? '-'
-                        : timeFmt.format(line.closedAt!);
-                    return _buildTableLineCard(line, closedLabel);
-                  }),
+                  _buildSourceList(
+                    breakdown.tableLines,
+                    timeFmt,
+                  ),
               ],
             ),
           ),
@@ -148,63 +148,46 @@ class TodayIncomeDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader() {
-    return FinSurfaceCard(
-      padding: const EdgeInsets.all(18),
+  Widget _buildHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 4, 8),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF0EA5E9), Color(0xFF10B981)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.insights_rounded,
-              color: Colors.white,
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Bugünkü Gelir Detayı',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                    letterSpacing: -0.2,
-                  ),
-                ),
-                const SizedBox(height: 4),
+                const Text('Bugünkü Gelir Detayı', style: _titleStyle),
+                const SizedBox(height: 2),
                 Text(
                   fmtCurrency(breakdown.totalRevenue),
                   style: const TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w900,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
                     color: kFinancePrimary,
-                    letterSpacing: -0.6,
+                    letterSpacing: -0.4,
+                    height: 1.1,
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  'Kapanan masa, online ve manuel gelirler',
+                const Text(
+                  'Kapanan masa + online + manuel gelir',
                   style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                    height: 1.3,
+                    fontSize: 11,
+                    color: Color(0xFF94A3B8),
+                    height: 1.2,
                   ),
                 ),
               ],
             ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            onPressed: () => Navigator.of(context).maybePop(),
+            icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
           ),
         ],
       ),
@@ -212,46 +195,33 @@ class TodayIncomeDetailSheet extends StatelessWidget {
   }
 
   Widget _buildSummaryChips() {
-    final chips = <Widget>[
-      _summaryChip(
-        icon: Icons.receipt_long_outlined,
-        label: '${breakdown.tableLines.length} kayıt',
-      ),
-      _summaryChip(
-        icon: Icons.table_restaurant_outlined,
-        label: '$_tableRecordCount masa',
-      ),
-      if (breakdown.byArea.isNotEmpty)
-        _summaryChip(
-          icon: Icons.grid_view_rounded,
-          label: '$_distinctAreaCount alan',
-        ),
+    final labels = <String>[
+      '${breakdown.tableLines.length} kayıt',
+      '$_tableRecordCount masa',
+      if (breakdown.byArea.isNotEmpty) '$_distinctAreaCount alan',
     ];
-    return Wrap(spacing: 8, runSpacing: 8, children: chips);
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: labels.map(_summaryChip).toList(growable: false),
+    );
   }
 
-  Widget _summaryChip({required IconData icon, required String label}) {
+  Widget _summaryChip(String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: kFinanceDivider),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: kFinancePrimary),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF334155),
-            ),
-          ),
-        ],
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF475569),
+        ),
       ),
     );
   }
@@ -259,37 +229,28 @@ class TodayIncomeDetailSheet extends StatelessWidget {
   Widget _buildDataNotice() {
     final parts = <String>[];
     if (!breakdown.hasPersistedAreaNames) {
-      parts.add(
-        'Eski kayıtlarda alan adı boş olabilir; mümkün olanlar store_tables üzerinden çözümlenir',
-      );
+      parts.add('Eski kayıtlarda alan adı boş olabilir');
     }
     if (!breakdown.hasPersistedPaymentMethods) {
       parts.add('Ödeme tipi eski kapanışlarda kaydedilmemiş olabilir');
     }
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFDE68A)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.info_outline_rounded, size: 16, color: Color(0xFFD97706)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              parts.join('. '),
-              style: const TextStyle(
-                fontSize: 12,
-                color: Color(0xFF92400E),
-                height: 1.35,
-              ),
-            ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFFBEB),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFFDE68A)),
+        ),
+        child: Text(
+          parts.join(' · '),
+          style: const TextStyle(
+            fontSize: 11,
+            color: Color(0xFF92400E),
+            height: 1.3,
           ),
-        ],
+        ),
       ),
     );
   }
@@ -298,84 +259,68 @@ class TodayIncomeDetailSheet extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: _insightCard(
+          child: _compactStatCard(
             title: 'En Çok Kazandıran Alan',
-            value: breakdown.topArea?.label ?? 'Veri yok',
+            value: breakdown.topArea?.label ?? '—',
             amount: breakdown.topArea?.amount,
-            color: const Color(0xFF6366F1),
-            icon: Icons.place_outlined,
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Expanded(
-          child: _insightCard(
+          child: _compactStatCard(
             title: 'En Çok Kullanılan Ödeme',
-            value: breakdown.topPaymentMethod?.label ?? 'Veri yok',
+            value: breakdown.topPaymentMethod?.label ?? '—',
             amount: breakdown.topPaymentMethod?.amount,
-            color: const Color(0xFF0EA5E9),
-            icon: Icons.payments_outlined,
           ),
         ),
       ],
     );
   }
 
-  Widget _insightCard({
+  Widget _compactStatCard({
     required String title,
     required String value,
-    required Color color,
-    required IconData icon,
     double? amount,
   }) {
-    return FinSurfaceCard(
-      padding: const EdgeInsets.all(16),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: kFinanceDivider),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, size: 15, color: color),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: color,
-                    height: 1.2,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
           Text(
-            value,
-            maxLines: 2,
+            title,
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF94A3B8),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
               color: Color(0xFF0F172A),
             ),
           ),
           if (amount != null) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             Text(
               fmtCurrency(amount),
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: color,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: kFinanceAccent,
               ),
             ),
           ],
@@ -384,54 +329,45 @@ class TodayIncomeDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildSliceSection({
+  Widget _buildBreakdownSection({
     required String title,
-    required IconData icon,
-    required Color accent,
     required List<RevenueSlice> slices,
+    required Color accent,
     required String emptyMessage,
   }) {
-    return FinSurfaceCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: accent),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF0F172A),
-                ),
-              ),
-            ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: _sectionStyle),
+        const SizedBox(height: 6),
+        if (slices.isEmpty)
+          _emptyHint(emptyMessage)
+        else
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: kFinanceDivider),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                for (var i = 0; i < slices.length; i++) ...[
+                  _breakdownRow(slices[i], accent),
+                  if (i < slices.length - 1)
+                    const Divider(height: 1, color: kFinanceDivider),
+                ],
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          if (slices.isEmpty)
-            _emptyHint(emptyMessage)
-          else
-            ...slices.map((slice) => _sliceTile(slice, accent)),
-        ],
-      ),
+      ],
     );
   }
 
-  Widget _sliceTile(RevenueSlice slice, Color accent) {
+  Widget _breakdownRow(RevenueSlice slice, Color accent) {
     final share = breakdown.totalRevenue <= 0
         ? 0.0
         : (slice.amount / breakdown.totalRevenue).clamp(0, 1);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: kFinanceSurface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kFinanceDivider),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -441,8 +377,8 @@ class TodayIncomeDetailSheet extends StatelessWidget {
                 child: Text(
                   slice.label,
                   style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
                     color: Color(0xFF0F172A),
                   ),
                 ),
@@ -450,115 +386,101 @@ class TodayIncomeDetailSheet extends StatelessWidget {
               Text(
                 fmtCurrency(slice.amount),
                 style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
                   color: Color(0xFF10B981),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 5),
           ClipRRect(
             borderRadius: BorderRadius.circular(99),
             child: LinearProgressIndicator(
               value: share.toDouble(),
-              minHeight: 7,
+              minHeight: 3,
               backgroundColor: const Color(0xFFE2E8F0),
               color: accent,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 3),
           Text(
             '${slice.count} kayıt · %${(share * 100).toStringAsFixed(0)}',
-            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+            style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTableLineCard(TableRevenueLine line, String closedLabel) {
-    final isUnresolved = line.areaName == StoreTableAreaResolver.unresolvedLabel;
-    final areaColor = isUnresolved
-        ? const Color(0xFF94A3B8)
-        : const Color(0xFF6366F1);
-
+  Widget _buildSourceList(
+    List<TableRevenueLine> lines,
+    DateFormat timeFmt,
+  ) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: FinSurfaceCard(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    line.tableName,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                ),
-                Text(
-                  fmtCurrency(line.amount),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF10B981),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                _areaBadge(line.areaName, areaColor, isUnresolved),
-                _metaChip(line.paymentLabel),
-                _metaChip('Saat $closedLabel'),
-                if (line.orderItemCount > 0)
-                  _metaChip('${line.orderItemCount} kalem'),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _areaBadge(String label, Color color, bool muted) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: muted ? const Color(0xFFF1F5F9) : color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: muted ? const Color(0xFFE2E8F0) : color.withValues(alpha: 0.22),
-        ),
+        border: Border.all(color: kFinanceDivider),
+        borderRadius: BorderRadius.circular(8),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: muted ? const Color(0xFF64748B) : color,
-        ),
+      child: Column(
+        children: [
+          for (var i = 0; i < lines.length; i++) ...[
+            _sourceRow(
+              lines[i],
+              lines[i].closedAt == null ? '-' : timeFmt.format(lines[i].closedAt!),
+            ),
+            if (i < lines.length - 1)
+              const Divider(height: 1, color: kFinanceDivider),
+          ],
+        ],
       ),
     );
   }
 
-  Widget _sectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w800,
-        color: Color(0xFF0F172A),
-        letterSpacing: -0.1,
+  Widget _sourceRow(TableRevenueLine line, String closedLabel) {
+    final meta = <String>[
+      line.areaName,
+      line.paymentLabel,
+      'Saat $closedLabel',
+      if (line.orderItemCount > 0) '${line.orderItemCount} kalem',
+    ];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  line.tableName,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+              ),
+              Text(
+                fmtCurrency(line.amount),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF10B981),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            meta.join(' · '),
+            style: const TextStyle(
+              fontSize: 10,
+              color: Color(0xFF94A3B8),
+              height: 1.25,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -566,33 +488,15 @@ class TodayIncomeDetailSheet extends StatelessWidget {
   Widget _emptyHint(String message) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
-        color: kFinanceSurface,
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: kFinanceDivider),
       ),
       child: Text(
         message,
-        style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-      ),
-    );
-  }
-
-  Widget _metaChip(String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: Color(0xFF475569),
-        ),
+        style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
       ),
     );
   }

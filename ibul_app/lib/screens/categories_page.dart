@@ -20,6 +20,23 @@ class CategoriesPage extends StatefulWidget {
 
 class _CategoriesPageState extends State<CategoriesPage> {
   static const Set<String> _hiddenMobileCategories = {'Yakın Lokasyon'};
+
+  // Shared layout tokens — top bar + sub-category grid use the same rhythm.
+  static const double _topBarHeight = 104;
+  static const double _topItemWidth = 76;
+  static const double _topIconSize = 52;
+  static const double _topIconRadius = 16;
+  static const double _topItemSpacing = 4;
+  /// Two-line label slot: fontSize 11 × height 1.15 × 2 lines ≈ 25.3 → 26.
+  static const double _topLabelHeight = 26;
+  static const double _topBarPaddingV = 6;
+  static const double _topIconLabelGap = 5;
+  static const double _subGridSpacing = 8;
+  static const double _subCardRadius = 12;
+  static const double _subImageRadius = 8;
+  static const double _pagePaddingH = 12;
+  static const double _pagePaddingV = 10;
+
   int _selectedIndex = 0;
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
   bool _isLoading = true;
@@ -191,7 +208,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.background,
       body: SafeArea(
         child: Stack(
           children: [
@@ -226,17 +243,22 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   Widget _buildTopCategoryBar() {
     if (_categoryTree.isEmpty) {
-      return const SizedBox(height: 132);
+      return const SizedBox(height: _topBarHeight);
     }
 
-    return SizedBox(
-      height: 132,
-      child: ListView.builder(
+    return Container(
+      height: _topBarHeight,
+      color: AppColors.background,
+      child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: _categoryTree.length,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: _pagePaddingH,
+          vertical: _topBarPaddingV,
+        ),
         cacheExtent: 300,
         physics: const BouncingScrollPhysics(),
+        separatorBuilder: (_, _) => const SizedBox(width: _topItemSpacing),
         itemBuilder: (context, index) {
           final isSelected = _selectedIndex == index;
           final category = _categoryTree[index];
@@ -246,60 +268,68 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 _selectedIndex = index;
               });
             },
-            child: Container(
-              width: 94,
-              margin: const EdgeInsets.symmetric(horizontal: 6),
+            child: SizedBox(
+              width: _topItemWidth,
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(3),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.all(2),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(24),
-                      border: isSelected
-                          ? Border.all(color: AppColors.primary, width: 2.5)
+                      borderRadius: BorderRadius.circular(_topIconRadius + 4),
+                      border: Border.all(
+                        color: isSelected
+                            ? AppColors.primary
+                            : Colors.transparent,
+                        width: 2,
+                      ),
+                      boxShadow: isSelected
+                          ? [
+                              BoxShadow(
+                                color: AppColors.primary.withValues(alpha: 0.14),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ]
                           : null,
                     ),
                     child: Container(
-                      width: 60,
-                      height: 60,
+                      width: _topIconSize,
+                      height: _topIconSize,
                       decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withValues(alpha: 0.16),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
+                        color: isSelected
+                            ? AppColors.primary
+                            : AppColors.primary.withValues(alpha: 0.88),
+                        borderRadius: BorderRadius.circular(_topIconRadius),
                       ),
                       clipBehavior: Clip.antiAlias,
                       child: _buildCategoryBarImage(category),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    category.name,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                      color: isSelected ? AppColors.primary : Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  AnimatedOpacity(
-                    duration: const Duration(milliseconds: 180),
-                    opacity: isSelected ? 1 : 0,
-                    child: Container(
-                      width: 46,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(999),
+                  const SizedBox(height: _topIconLabelGap),
+                  SizedBox(
+                    height: _topLabelHeight,
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 180),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                            isSelected ? FontWeight.w700 : FontWeight.w500,
+                        color:
+                            isSelected ? AppColors.primary : AppColors.textDark,
+                        height: 1.15,
+                      ),
+                      child: Text(
+                        category.name,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        strutStyle: const StrutStyle(
+                          fontSize: 11,
+                          height: 1.15,
+                          forceStrutHeight: true,
+                        ),
                       ),
                     ),
                   ),
@@ -330,87 +360,139 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return _buildUnifiedGridView(category);
   }
 
-  Widget _buildUnifiedGridView(MobileCategoryNode category) {
-    final items = category.subCategories;
+  SliverGridDelegate _subCategoryGridDelegate(double maxWidth) {
+    const aspectRatio = 0.78;
+    if (maxWidth > 900) {
+      return const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 118,
+        crossAxisSpacing: _subGridSpacing,
+        mainAxisSpacing: _subGridSpacing,
+        childAspectRatio: aspectRatio,
+      );
+    }
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Text(
-          category.name,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 16),
-        if (items.isEmpty)
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.grey[50],
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: const Text('Bu kategori için henüz alt kategori bulunmuyor.'),
-          )
-        else
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: items.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 4,
-              crossAxisSpacing: 6,
-              mainAxisSpacing: 10,
-              childAspectRatio: 0.74,
-            ),
-            itemBuilder: (context, i) {
-              final subCategory = items[i];
-              return GestureDetector(
-                onTap: () {
-                  _showCategoryProducts(category.name, subCategory.name);
-                },
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      height: 62,
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: Colors.grey.shade200),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.04),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: _buildSubCategoryImage(subCategory),
-                      ),
-                    ),
-                    const SizedBox(height: 7),
-                    Text(
-                      subCategory.name,
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.black87,
-                        height: 1.2,
-                      ),
+    final crossAxisCount = maxWidth >= 380 ? 4 : 3;
+    return SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: crossAxisCount,
+      crossAxisSpacing: _subGridSpacing,
+      mainAxisSpacing: _subGridSpacing,
+      childAspectRatio: aspectRatio,
+    );
+  }
+
+  Widget _buildSubCategoryTile({
+    required MobileCategoryNode subCategory,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(_subCardRadius),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(_subCardRadius),
+                  border: Border.all(color: Colors.grey.shade200),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.035),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-              );
-            },
+                child: Padding(
+                  padding: const EdgeInsets.all(7),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(_subImageRadius),
+                    child: _buildSubCategoryImage(subCategory),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              subCategory.name,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textDark,
+                height: 1.15,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUnifiedGridView(MobileCategoryNode category) {
+    final items = category.subCategories;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gridDelegate = _subCategoryGridDelegate(constraints.maxWidth);
+
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(
+            _pagePaddingH,
+            _pagePaddingV,
+            _pagePaddingH,
+            16,
           ),
-      ],
+          children: [
+            Text(
+              category.name,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textDark,
+                letterSpacing: -0.2,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (items.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(_subCardRadius),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Text(
+                  'Bu kategori için henüz alt kategori bulunmuyor.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textGrey,
+                  ),
+                ),
+              )
+            else
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: items.length,
+                gridDelegate: gridDelegate,
+                itemBuilder: (context, i) {
+                  final subCategory = items[i];
+                  return _buildSubCategoryTile(
+                    subCategory: subCategory,
+                    onTap: () =>
+                        _showCategoryProducts(category.name, subCategory.name),
+                  );
+                },
+              ),
+          ],
+        );
+      },
     );
   }
   

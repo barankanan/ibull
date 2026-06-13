@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import '../finance_quick_actions.dart';
 import '../models/finance_models.dart';
 import '../providers/finance_provider.dart';
+import '../widgets/finance_performance_section.dart';
 import '../widgets/finance_widgets.dart';
+import '../widgets/today_income_detail_sheet.dart';
 import 'tabs/cash_tab.dart';
 import 'tabs/debt_tab.dart';
 import 'tabs/expense_tab.dart';
@@ -68,6 +70,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
   CompanySettings? _companySettings;
   double _todayIncome = 0;
   double _upcomingPaymentAmount = 0;
+  TodayRevenueBreakdown _todayBreakdown = TodayRevenueBreakdown.empty;
 
   @override
   void initState() {
@@ -98,24 +101,25 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         repo.getCashMovements(limit: 4),
         repo.getIncomeRecords(limit: 4),
         repo.getExpenses(limit: 4),
-        repo.getIncomeRecords(
-          from: DateTime(now.year, now.month, now.day),
-          to: now,
-          limit: 100,
-        ),
         repo.getPaymentScheduleItems(
           from: now.subtract(const Duration(days: 14)),
           to: now.add(const Duration(days: 21)),
         ),
         repo.getExpenseSummaryByCategory(year: now.year, month: now.month),
         repo.getCompanySettings(),
+        repo.getSalesRevenue(
+          from: DateTime(now.year, now.month, now.day),
+          to: DateTime(now.year, now.month, now.day, 23, 59, 59),
+        ),
+        repo.getTodayRevenueBreakdown(),
       ]);
 
       final movements = results[0] as List<CashMovement>;
       final incomes = results[1] as List<IncomeRecord>;
       final expenses = results[2] as List<Expense>;
-      final todayIncomes = results[3] as List<IncomeRecord>;
-      final schedule = results[4] as List<Map<String, dynamic>>;
+      final schedule = results[3] as List<Map<String, dynamic>>;
+      final todaySalesRevenue = results[6] as double;
+      final todayBreakdown = results[7] as TodayRevenueBreakdown;
 
       final items =
           <Map<String, dynamic>>[
@@ -167,12 +171,10 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
       setState(() {
         _recentActivities = items.take(8).toList(growable: false);
         _paymentSchedule = schedule.take(6).toList(growable: false);
-        _expenseSummary = results[5] as Map<String, double>;
-        _companySettings = results[6] as CompanySettings?;
-        _todayIncome = todayIncomes.fold<double>(
-          0,
-          (sum, item) => sum + item.netAmount,
-        );
+        _expenseSummary = results[4] as Map<String, double>;
+        _companySettings = results[5] as CompanySettings?;
+        _todayIncome = todaySalesRevenue;
+        _todayBreakdown = todayBreakdown;
         _upcomingPaymentAmount = schedule.fold<double>(0, (sum, item) {
           final dueDate = item['due_date'] as DateTime;
           final amount = (item['amount'] as num?)?.toDouble() ?? 0;
@@ -223,7 +225,14 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
                     flex: 8,
                     child: Column(
                       children: [
-                        _buildPerformanceCard(provider),
+                        FinancePerformanceSection(
+                          loadTrend: (from, to) =>
+                              provider.repo.getDailyFinanceTrend(from: from, to: to),
+                          monthIncome: overview.monthIncome,
+                          monthExpense: overview.monthExpense,
+                          monthSalaryLoad: overview.monthSalaryLoad,
+                          totalLiquidity: overview.totalLiquidity,
+                        ),
                         const SizedBox(height: 12),
                         _buildRecentActivityCard(),
                       ],
@@ -247,7 +256,14 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
                 ],
               )
             else ...[
-              _buildPerformanceCard(provider),
+              FinancePerformanceSection(
+                loadTrend: (from, to) =>
+                    provider.repo.getDailyFinanceTrend(from: from, to: to),
+                monthIncome: overview.monthIncome,
+                monthExpense: overview.monthExpense,
+                monthSalaryLoad: overview.monthSalaryLoad,
+                totalLiquidity: overview.totalLiquidity,
+              ),
               const SizedBox(height: 12),
               _buildPaymentSummaryPanel(overview),
               const SizedBox(height: 12),
@@ -344,14 +360,40 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
     );
   }
 
+  Future<void> _openTodayIncomeDetail() async {
+    try {
+      final breakdown =
+          await context.read<FinanceProvider>().repo.getTodayRevenueBreakdown();
+      if (!mounted) return;
+      setState(() {
+        _todayBreakdown = breakdown;
+        _todayIncome = breakdown.totalRevenue;
+      });
+      await TodayIncomeDetailSheet.show(
+        context,
+        breakdown: breakdown,
+        loading: false,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      await TodayIncomeDetailSheet.show(
+        context,
+        breakdown: _todayBreakdown,
+        loading: false,
+        error: error.toString(),
+      );
+    }
+  }
+
   Widget _buildKpiGrid(FinanceOverview overview) {
     final cards = [
       (
         title: 'Bugünkü Gelir',
         value: fmtCurrency(_todayIncome),
-        subtitle: 'Günün tahakkuk eden geliri',
+        subtitle: 'Detay için dokunun',
         icon: Icons.today_rounded,
         accent: const Color(0xFF0EA5E9),
+        onTap: _openTodayIncomeDetail,
       ),
       (
         title: 'Bu Ay Gelir',
@@ -359,6 +401,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         subtitle: 'Ay içindeki toplam gelir',
         icon: Icons.trending_up_rounded,
         accent: const Color(0xFF10B981),
+        onTap: null,
       ),
       (
         title: 'Bu Ay Gider',
@@ -366,6 +409,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         subtitle: 'Ay içindeki toplam gider',
         icon: Icons.trending_down_rounded,
         accent: const Color(0xFFEF4444),
+        onTap: null,
       ),
       (
         title: 'Net Durum',
@@ -377,6 +421,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         accent: overview.monthNetPosition >= 0
             ? const Color(0xFF16A34A)
             : const Color(0xFFDC2626),
+        onTap: null,
       ),
       (
         title: 'Bekleyen Tahsilat',
@@ -384,6 +429,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         subtitle: 'Henüz toplanmamış gelir',
         icon: Icons.schedule_send_rounded,
         accent: const Color(0xFFF59E0B),
+        onTap: null,
       ),
       (
         title: 'Toplam Borç',
@@ -391,6 +437,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         subtitle: 'Kalan aktif borç bakiyesi',
         icon: Icons.credit_card_rounded,
         accent: const Color(0xFFF97316),
+        onTap: null,
       ),
       (
         title: 'Nakit Kasa',
@@ -398,6 +445,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         subtitle: 'Kasa hesapları',
         icon: Icons.account_balance_wallet_rounded,
         accent: const Color(0xFF3B82F6),
+        onTap: null,
       ),
       (
         title: 'Banka / POS',
@@ -405,6 +453,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         subtitle: 'Banka ve POS hesapları',
         icon: Icons.account_balance_rounded,
         accent: const Color(0xFF7C3AED),
+        onTap: null,
       ),
       (
         title: 'Maaş Yükü',
@@ -412,6 +461,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         subtitle: 'Aylık maaş yükümlülüğü',
         icon: Icons.badge_rounded,
         accent: const Color(0xFF8B5CF6),
+        onTap: null,
       ),
       (
         title: 'Yaklaşan Ödemeler',
@@ -419,6 +469,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         subtitle: '${overview.upcomingPayments} kayıt yakın vadede',
         icon: Icons.event_note_rounded,
         accent: const Color(0xFF6366F1),
+        onTap: null,
       ),
     ];
 
@@ -440,115 +491,9 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
           subtitle: item.subtitle,
           icon: item.icon,
           color: item.accent,
+          onTap: item.onTap,
         );
       },
-    );
-  }
-
-  Widget _buildPerformanceCard(FinanceProvider provider) {
-    final trendPoints = provider.trend
-        .map(
-          (point) => (
-            label: point.label,
-            income: point.income,
-            expense: point.expense,
-          ),
-        )
-        .toList(growable: false);
-    final overview = provider.overview;
-
-    return FinSurfaceCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Finansal Performans',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF0F172A),
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Ana grafik görünümü korunur; gelir ve gider trendi burada izlenir.',
-            style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-          ),
-          const SizedBox(height: 16),
-          if (trendPoints.isEmpty)
-            Container(
-              height: 260,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Text(
-                'Trend verisi hazır değil. Fallback hesaplama veya yeni hareketler geldikçe grafik dolacak.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-              ),
-            )
-          else
-            FinTrendChart(points: trendPoints, height: 260),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _miniStat(
-                'Bu Ay Gelir',
-                fmtCurrency(overview.monthIncome),
-                const Color(0xFF10B981),
-              ),
-              _miniStat(
-                'Bu Ay Gider',
-                fmtCurrency(overview.monthExpense),
-                const Color(0xFFEF4444),
-              ),
-              _miniStat(
-                'Maaş Yükü',
-                fmtCurrency(overview.monthSalaryLoad),
-                const Color(0xFF8B5CF6),
-              ),
-              _miniStat(
-                'Toplam Likidite',
-                fmtCurrency(overview.totalLiquidity),
-                kFinancePrimary,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _miniStat(String label, String value, Color color) {
-    return Container(
-      width: 170,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-              color: color,
-            ),
-          ),
-        ],
-      ),
     );
   }
 

@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:ibul_app/widgets/optimized_image.dart';
 import '../utils/order_status_constants.dart';
+import '../utils/dynamic_value_helpers.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/user_identity.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
 import 'settings_page.dart';
 import 'orders_page.dart';
@@ -21,6 +23,8 @@ import 'login_page.dart';
 import 'seller_login_page.dart';
 import '../core/app_motion.dart';
 import '../services/order_service.dart';
+import 'order_detail_page.dart';
+import 'shipment_tracking_page.dart';
 
 class AccountPage extends StatefulWidget {
   const AccountPage({super.key});
@@ -67,45 +71,31 @@ class _AccountPageState extends State<AccountPage> {
         children: [
           WebHeader(onSearch: (q) {}, activeMenu: 'account'),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
-                        ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 40,
-                                horizontal: 24,
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(
-                                    width: 280,
-                                    child: AccountSidebar(
-                                      activePage: 'Hesap Özeti',
-                                    ),
-                                  ),
-                                  const SizedBox(width: 32),
-                                  Expanded(child: _buildWebDashboard(appState)),
-                                ],
-                              ),
-                            ),
+            child: WebStickyFooterScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 40,
+                      horizontal: 24,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(
+                          width: 280,
+                          child: AccountSidebar(
+                            activePage: 'Hesap Özeti',
                           ),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                        const SizedBox(width: 32),
+                        Expanded(child: _buildWebDashboard(appState)),
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],
@@ -120,162 +110,151 @@ class _AccountPageState extends State<AccountPage> {
         children: [
           WebHeader(onSearch: (q) {}, activeMenu: 'account'),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const SizedBox(height: 40),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Center(
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 420),
-                              child: Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 28,
-                                  vertical: 36,
+            child: WebStickyFooterScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              contentFooterGap: 56,
+              footerBottomPadding: 24,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 40),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 28,
+                            vertical: 36,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: Colors.grey.shade200,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(
+                                  alpha: 0.06,
                                 ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: Colors.grey.shade200,
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.06,
-                                      ),
-                                      blurRadius: 20,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
-                                ),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.account_circle_outlined,
-                                      size: 80,
-                                      color: AppColors.primary,
-                                    ),
-                                    const SizedBox(height: 28),
-                                    const Text(
-                                      'Hesabınıza Giriş Yapın',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 14),
-                                    Text(
-                                      'Siparişlerinizi takip etmek ve fırsatlardan '
-                                      'yararlanmak için giriş yapın.',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.grey.shade600,
-                                        height: 1.45,
-                                        fontSize: 15,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 36),
-                                    SizedBox(
-                                      width: double.infinity,
-                                      height: 48,
-                                      child: ElevatedButton(
-                                        onPressed: () {
-                                          Navigator.push(
-                                            context,
-                                            PageRouteBuilder(
-                                              pageBuilder: (context, animation,
-                                                      secondaryAnimation) =>
-                                                  const LoginPage(),
-                                              transitionDuration: Duration.zero,
-                                              reverseTransitionDuration:
-                                                  Duration.zero,
-                                            ),
-                                          );
-                                        },
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: AppColors.primary,
-                                          foregroundColor: Colors.white,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                          ),
-                                        ),
-                                        child: const Text(
-                                          'Üye Girişi / Üye Ol',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    SizedBox(
-                                      width: double.infinity,
-                                      height: 48,
-                                      child: OutlinedButton.icon(
-                                        onPressed: () {
-                                          Navigator.push(
-                                            context,
-                                            PageRouteBuilder(
-                                              pageBuilder: (context, animation,
-                                                      secondaryAnimation) =>
-                                                  const SellerLoginPage(),
-                                              transitionDuration: Duration.zero,
-                                              reverseTransitionDuration:
-                                                  Duration.zero,
-                                            ),
-                                          );
-                                        },
-                                        icon: const Icon(
-                                          Icons.storefront_outlined,
-                                          size: 18,
-                                        ),
-                                        label: const Text(
-                                          'Satıcı Girişi',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor:
-                                              const Color(0xFF111827),
-                                          side: BorderSide(
-                                            color: Colors.grey.shade300,
-                                          ),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.account_circle_outlined,
+                                size: 80,
+                                color: AppColors.primary,
+                              ),
+                              const SizedBox(height: 28),
+                              const Text(
+                                'Hesabınıza Giriş Yapın',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            ),
+                              const SizedBox(height: 14),
+                              Text(
+                                'Siparişlerinizi takip etmek ve fırsatlardan '
+                                'yararlanmak için giriş yapın.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  height: 1.45,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              const SizedBox(height: 36),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 48,
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      PageRouteBuilder(
+                                        pageBuilder: (context, animation,
+                                                secondaryAnimation) =>
+                                            const LoginPage(),
+                                        transitionDuration: Duration.zero,
+                                        reverseTransitionDuration:
+                                            Duration.zero,
+                                      ),
+                                    );
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppColors.primary,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'Üye Girişi / Üye Ol',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 48,
+                                child: OutlinedButton.icon(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      PageRouteBuilder(
+                                        pageBuilder: (context, animation,
+                                                secondaryAnimation) =>
+                                            const SellerLoginPage(),
+                                        transitionDuration: Duration.zero,
+                                        reverseTransitionDuration:
+                                            Duration.zero,
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(
+                                    Icons.storefront_outlined,
+                                    size: 18,
+                                  ),
+                                  label: const Text(
+                                    'Satıcı Girişi',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF111827),
+                                    side: BorderSide(
+                                      color: Colors.grey.shade300,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 56),
-                        const WebFooter(),
-                        const SizedBox(height: 24),
-                      ],
+                      ),
                     ),
                   ),
-                );
-              },
+                ],
+              ),
             ),
           ),
         ],
@@ -626,12 +605,31 @@ class _AccountPageState extends State<AccountPage> {
                             ?.cast<Map<String, dynamic>>() ??
                         const <Map<String, dynamic>>[];
                     final firstItem = items.isNotEmpty ? items.first : null;
+                    final productName = resolveOrderProductTitle(
+                      primaryItem: firstItem,
+                      order: order,
+                      extraItems: items.skip(1),
+                      fallback: 'Sipariş',
+                    );
+                    final orderNumber = readString(
+                      order['order_number'],
+                      fallback: '-',
+                    );
+                    final trackingNumber = readNullableString(
+                      firstItem?['tracking_number'],
+                    );
                     return _buildOrderRow(
-                      orderId: order['order_number']?.toString() ?? '-',
+                      order: order,
+                      item: firstItem,
+                      productName: productName,
+                      orderNumber: orderNumber,
+                      trackingNumber: trackingNumber,
+                      productImageUrl: readNullableString(
+                        firstItem?['product_image_url'],
+                      ),
                       date: _formatOrderDate(order['created_at']),
                       status: _statusLabel(order['status']?.toString()),
                       price: _formatAmount(order['total_amount']),
-                      items: firstItem?['product_name']?.toString() ?? 'Ürün',
                       statusColor: _statusColor(order['status']?.toString()),
                     );
                   }).toList(),
@@ -890,80 +888,214 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  String _resolveShipmentStep({
+    required Map<String, dynamic> order,
+    Map<String, dynamic>? item,
+  }) {
+    final step = readNullableString(item?['shipment_step']);
+    if (step != null && step.isNotEmpty) return step;
+    final itemStatus = readNullableString(item?['status']);
+    if (itemStatus != null && itemStatus.isNotEmpty) return itemStatus;
+    return readString(order['status']);
+  }
+
+  bool _shouldShowRecentOrderTracking({
+    required Map<String, dynamic> order,
+    Map<String, dynamic>? item,
+    String? trackingNumber,
+  }) {
+    if (trackingNumber == null || trackingNumber.isEmpty || trackingNumber == '-') {
+      return false;
+    }
+    return OrderStatusConstants.isInTransitShipmentStatus(
+      _resolveShipmentStep(order: order, item: item),
+    );
+  }
+
+  Future<void> _openRecentOrderDetail(Map<String, dynamic> order) async {
+    await Navigator.push<dynamic>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => OrderDetailPage(
+          orderData: wrapOrderForDetailPage(order),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openRecentOrderTracking({
+    required Map<String, dynamic> order,
+    required Map<String, dynamic> item,
+  }) async {
+    final itemId = item['id']?.toString();
+    var history = const <Map<String, dynamic>>[];
+    if (itemId != null && itemId.isNotEmpty) {
+      history = await OrderService.instance.getOrderItemTracking(itemId);
+    }
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ShipmentTrackingPage(
+          order: order,
+          item: item,
+          history: history,
+        ),
+      ),
+    );
+  }
+
   Widget _buildOrderRow({
-    required String orderId,
+    required Map<String, dynamic> order,
+    Map<String, dynamic>? item,
+    required String productName,
+    required String orderNumber,
+    String? trackingNumber,
+    String? productImageUrl,
     required String date,
     required String status,
     required String price,
-    required String items,
     required Color statusColor,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.shopping_bag_outlined, color: Colors.grey),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  orderId,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
+    final hasTracking = _shouldShowRecentOrderTracking(
+      order: order,
+      item: item,
+      trackingNumber: trackingNumber,
+    );
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _openRecentOrderDetail(order),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: productImageUrl != null && productImageUrl.isNotEmpty
+                      ? OptimizedImage(
+                          imageUrlOrPath: productImageUrl,
+                          fit: BoxFit.cover,
+                          width: 48,
+                          height: 48,
+                          errorBuilder: (_, _, _) =>
+                              _buildOrderRowImageFallback(),
+                        )
+                      : _buildOrderRowImageFallback(),
                 ),
-                Text(
-                  items,
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Text(
-              date,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              price,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              status,
-              style: TextStyle(
-                color: statusColor,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
               ),
-            ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      productName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Sipariş: $orderNumber',
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 12,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (hasTracking && item != null) ...[
+                          const SizedBox(width: 12),
+                          Flexible(
+                            child: GestureDetector(
+                              onTap: () => _openRecentOrderTracking(
+                                order: order,
+                                item: item,
+                              ),
+                              child: Text(
+                                'Takip: $trackingNumber',
+                                style: TextStyle(
+                                  color: AppColors.primary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: AppColors.primary,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.end,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    date,
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    price,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      status,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right, color: Colors.grey.shade400),
+            ],
           ),
-          const SizedBox(width: 16),
-          const Icon(Icons.chevron_right, color: Colors.grey),
-        ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildOrderRowImageFallback() {
+    return Container(
+      color: Colors.grey.shade100,
+      child: const Icon(Icons.shopping_bag_outlined, color: Colors.grey),
     );
   }
 
@@ -1082,6 +1214,8 @@ class _AccountPageState extends State<AccountPage> {
       currentUser: appState.currentUser,
       fallback: isGuestUser ? 'Misafir Kullanıcı' : 'Kullanıcı',
     );
+    final heightWeightSummary =
+        UserIdentity.formatHeightWeightSummary(appState.currentUser);
 
     // Unified Layout for both Guest and Normal Users
     return Scaffold(
@@ -1096,15 +1230,9 @@ class _AccountPageState extends State<AccountPage> {
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    // Profile Image
-                    CircleAvatar(
+                    _buildAccountProfileAvatar(
+                      appState.currentUser,
                       radius: 32,
-                      backgroundColor: Colors.grey.shade300,
-                      child: const Icon(
-                        Icons.person,
-                        size: 36,
-                        color: Colors.white,
-                      ),
                     ),
                     const SizedBox(width: 12),
                     // User Info
@@ -1119,15 +1247,16 @@ class _AccountPageState extends State<AccountPage> {
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          // Display actual user weight/height if available, else placeholder or hide
-                          Text(
-                            'Boy: 175 cm    Kilo: 70 kg', // Mock data for UI consistency
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey.shade600,
+                          if (heightWeightSummary != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              heightWeightSummary,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -1565,6 +1694,61 @@ class _AccountPageState extends State<AccountPage> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAccountProfileAvatar(
+    Map<String, dynamic>? currentUser, {
+    required double radius,
+  }) {
+    final photoUrl = UserIdentity.resolveProfilePhotoUrl(currentUser);
+
+    if (photoUrl != null && photoUrl.startsWith('preset:')) {
+      final presetId = photoUrl.substring('preset:'.length);
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: UserIdentity.profilePresetColor(presetId),
+        child: Icon(Icons.person, size: radius, color: Colors.white),
+      );
+    }
+
+    if (photoUrl != null && photoUrl.startsWith('http')) {
+      return ClipOval(
+        child: SizedBox(
+          width: radius * 2,
+          height: radius * 2,
+          child: OptimizedImage(
+            imageUrlOrPath: photoUrl,
+            width: radius * 2,
+            height: radius * 2,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => _buildAccountProfileFallbackAvatar(
+              currentUser,
+              radius: radius,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return _buildAccountProfileFallbackAvatar(currentUser, radius: radius);
+  }
+
+  Widget _buildAccountProfileFallbackAvatar(
+    Map<String, dynamic>? currentUser, {
+    required double radius,
+  }) {
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.grey.shade300,
+      child: Text(
+        UserIdentity.initialsOf(currentUser),
+        style: TextStyle(
+          fontSize: radius * 0.85,
+          color: Colors.white,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );

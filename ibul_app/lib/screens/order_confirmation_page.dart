@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/web_header.dart';
 import 'orders_page.dart';
 
@@ -34,29 +34,17 @@ class OrderConfirmationPage extends StatelessWidget {
         children: [
           if (isWeb) WebHeader(onSearch: (q) {}),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
+            child: WebStickyFooterScrollView(
+              showFooter: isWeb,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Center(
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight,
-                    ),
-                    child: Column(
-                      children: [
-                        Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 960),
-                            child: _buildContent(context, items, helpful),
-                          ),
-                        ),
-                        if (isWeb) const SizedBox(height: 32),
-                        if (isWeb) const WebFooter(),
-                      ],
-                    ),
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: _buildContent(context, items, helpful),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],

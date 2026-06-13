@@ -299,6 +299,8 @@ class FinKpiCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (onTap != null)
+                  Icon(Icons.chevron_right_rounded, size: 16, color: color),
               ],
             ),
             const SizedBox(height: 8),

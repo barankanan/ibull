@@ -127,14 +127,20 @@ class _SellerLoginPageState extends State<SellerLoginPage>
           'Bu e-posta adresi seller/garson hesabına ait değil. Rol: ${resolution.rawRole ?? 'unknown'}',
         );
       } catch (e) {
-        if (hadExistingUserSession) {
-          try {
-            await _authService.restoreUserSessionAfterSellerExit();
-          } catch (_) {
+        try {
+          if (hadExistingUserSession) {
+            try {
+              await _authService.restoreUserSessionAfterSellerExit();
+            } catch (_) {
+              await _authService.clearSellerSwitchBackup();
+            }
+          } else {
             await _authService.clearSellerSwitchBackup();
           }
-        } else {
-          await _authService.clearSellerSwitchBackup();
+        } catch (cleanupError) {
+          debugPrint(
+            '[SellerLogin] session cleanup failed after login error: $cleanupError',
+          );
         }
         if (!mounted) return;
         final message = _authService.describeSignInError(

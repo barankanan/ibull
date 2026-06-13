@@ -16,8 +16,8 @@ import '../ads/presentation/pages/campaign_wizard_page.dart';
 import '../ads/enums/ad_enums.dart';
 import '../services/store_service.dart';
 import '../widgets/product_card.dart';
-import '../widgets/web_footer.dart';
 import '../widgets/web_header.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 
 class ListDetailPage extends StatefulWidget {
   final Map<String, dynamic> listData;
@@ -183,51 +183,37 @@ class _ListDetailPageState extends State<ListDetailPage> {
         children: [
           WebHeader(onSearch: (_) {}),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
-                        ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1260),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 32,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  TextButton.icon(
-                                    onPressed: () => Navigator.pop(context),
-                                    icon: const Icon(
-                                      Icons.arrow_back,
-                                      size: 18,
-                                    ),
-                                    label: const Text('Listelerim'),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  _buildHeaderCard(isWeb: true),
-                                  const SizedBox(height: 20),
-                                  _buildTabRow(isWeb: true),
-                                  const SizedBox(height: 24),
-                                  _buildTabContent(isWeb: true),
-                                ],
-                              ),
-                            ),
+            child: WebStickyFooterScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1260),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 32,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextButton.icon(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            size: 18,
                           ),
+                          label: const Text('Listelerim'),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                        const SizedBox(height: 12),
+                        _buildHeaderCard(isWeb: true),
+                        const SizedBox(height: 20),
+                        _buildTabRow(isWeb: true),
+                        const SizedBox(height: 24),
+                        _buildTabContent(isWeb: true),
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],

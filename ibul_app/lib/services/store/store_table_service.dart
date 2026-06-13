@@ -1721,6 +1721,7 @@ class StoreTableService {
     String? tableLabel,
     DateTime? closedAt,
     String? areaName,
+    String? sessionKey,
   }) async {
     if (tableNumber <= 0 || closedOrders.isEmpty) return false;
 
@@ -1770,24 +1771,63 @@ class StoreTableService {
           '[StoreTableService.ensureTableHistoryRecorded] '
           'table_order_history unavailable, skipping fallback archive.',
         );
-        return false;
+        throw Exception(
+          'Geçmiş masa tablosu bulunamadı. '
+          'Migration 20260407_restaurant_ops_upgrade.sql uygulanmalı.',
+        );
       }
       rethrow;
     }
 
     final fallbackPlan = planTableCloseHistoryFallback(
+      tableNumber: tableNumber,
       closedOrders: closedOrders,
       recentHistoryRows: recentHistoryRows,
+      closedAt: effectiveClosedAt.toLocal(),
     );
-    if (!fallbackPlan.shouldInsert) return false;
 
-    final normalizedLabel = tableLabel?.trim();
-    final normalizedArea = areaName?.trim();
+    Map<String, dynamic>? storeTableRow;
+    try {
+      final tableRows = await _supabase
+          .from('store_tables')
+          .select()
+          .eq('seller_id', resolvedSellerId)
+          .eq('table_number', tableNumber)
+          .limit(1)
+          .timeout(tableOrderTimeout);
+      final tables = List<Map<String, dynamic>>.from(tableRows as List);
+      if (tables.isNotEmpty) {
+        storeTableRow = Map<String, dynamic>.from(tables.first);
+      }
+    } catch (_) {}
+
+    final identityFields = TableOrderHistoryUtils.historyIdentityForArchive(
+      tableNumber: tableNumber,
+      tableLabel: tableLabel,
+      tableAreaNameHint: areaName,
+      storeTableRow: storeTableRow,
+      orders: closedOrders,
+    );
+
+    if (!fallbackPlan.shouldInsert) {
+      await _patchRecentHistoryIdentityIfMissing(
+        sellerId: resolvedSellerId,
+        tableNumber: tableNumber,
+        recentHistoryRows: recentHistoryRows,
+        identityFields: identityFields,
+        closedAt: effectiveClosedAt,
+      );
+      return false;
+    }
+
+    final normalizedLabel = identityFields['display_table_label'];
+    final normalizedArea = identityFields['table_area_name'];
     final ordersToArchive = fallbackPlan.ordersToArchive;
     final singleOrder = ordersToArchive.length == 1
         ? ordersToArchive.first
         : null;
     final singleOrderId = singleOrder?['id']?.toString().trim() ?? '';
+    final normalizedSessionKey = sessionKey?.trim() ?? '';
     final earliestCreatedAt = ordersToArchive
         .map(
           (order) => DateTime.tryParse(order['created_at']?.toString() ?? ''),
@@ -1805,8 +1845,9 @@ class StoreTableService {
             .insert({
               'seller_id': resolvedSellerId,
               'table_number': tableNumber,
-              'session_key':
-                  'fallback_${resolvedSellerId}_${tableNumber}_${effectiveClosedAt.millisecondsSinceEpoch}',
+              'session_key': normalizedSessionKey.isNotEmpty
+                  ? normalizedSessionKey
+                  : 'fallback_${resolvedSellerId}_${tableNumber}_${effectiveClosedAt.millisecondsSinceEpoch}',
               'payment_method': paymentMethod,
               if (paymentNote != null && paymentNote.isNotEmpty)
                 'payment_note': paymentNote,
@@ -1926,6 +1967,29 @@ class StoreTableService {
 
     final normalizedLabel = tableLabel?.trim();
     final normalizedArea = areaName?.trim();
+    Map<String, dynamic>? storeTableRow;
+    try {
+      final tableRows = await _supabase
+          .from('store_tables')
+          .select()
+          .eq('seller_id', sellerId)
+          .eq('table_number', tableNumber)
+          .limit(1)
+          .timeout(tableOrderTimeout);
+      final tables = List<Map<String, dynamic>>.from(tableRows as List);
+      if (tables.isNotEmpty) {
+        storeTableRow = Map<String, dynamic>.from(tables.first);
+      }
+    } catch (_) {}
+    final identityFields = TableOrderHistoryUtils.historyIdentityForArchive(
+      tableNumber: tableNumber,
+      tableLabel: normalizedLabel,
+      tableAreaNameHint: normalizedArea,
+      storeTableRow: storeTableRow,
+      orders: activeOrders,
+    );
+    final resolvedLabel = identityFields['display_table_label'];
+    final resolvedArea = identityFields['table_area_name'];
     var historyArchived = false;
     try {
       await _runWithTableOrderHistorySchemaFallback(
@@ -1943,13 +2007,13 @@ class StoreTableService {
                   'waiter_id': waiterId,
                 if (waiterName != null && waiterName.isNotEmpty)
                   'waiter_name': waiterName,
-                if (normalizedLabel != null && normalizedLabel.isNotEmpty) ...{
-                  'display_table_label': normalizedLabel,
-                  'table_display_name': normalizedLabel,
-                  'table_name': normalizedLabel,
+                if (resolvedLabel != null && resolvedLabel.isNotEmpty) ...{
+                  'display_table_label': resolvedLabel,
+                  'table_display_name': resolvedLabel,
+                  'table_name': resolvedLabel,
                 },
-                if (normalizedArea != null && normalizedArea.isNotEmpty)
-                  'table_area_name': normalizedArea,
+                if (resolvedArea != null && resolvedArea.isNotEmpty)
+                  'table_area_name': resolvedArea,
                 'grand_total': grandTotalAll,
                 'archived_orders': activeOrders,
                 'status': 'closed',
@@ -2000,6 +2064,13 @@ class StoreTableService {
                 'opened_at': order['created_at'],
                 'closed_at': archivedAt,
                 'created_at': order['created_at'] ?? archivedAt,
+                if (resolvedLabel != null && resolvedLabel.isNotEmpty) ...{
+                  'display_table_label': resolvedLabel,
+                  'table_display_name': resolvedLabel,
+                  'table_name': resolvedLabel,
+                },
+                if (resolvedArea != null && resolvedArea.isNotEmpty)
+                  'table_area_name': resolvedArea,
               })
               .timeout(tableOrderTimeout);
           debugPrint(
@@ -2064,13 +2135,14 @@ class StoreTableService {
     int limit = 50,
     int offset = 0,
   }) async {
+    final resolvedSellerId = _resolveSellerId(sellerId);
     try {
       final rows = await _runWithTableOrderHistorySchemaFallback(
         operation: (includeArchivedAt) {
           var query = _supabase
               .from('table_order_history')
               .select()
-              .eq('seller_id', sellerId);
+              .eq('seller_id', resolvedSellerId);
           if (tableNumber != null && tableNumber > 0) {
             query = query.eq('table_number', tableNumber);
           }
@@ -2088,7 +2160,18 @@ class StoreTableService {
                   )
                 : query.gte('closed_at', wideFrom);
           }
-          return query.limit(limit + 200).timeout(tableOrderTimeout);
+          if (toDate != null) {
+            final wideTo = toDate
+                .add(const Duration(days: 1))
+                .toUtc()
+                .toIso8601String();
+            query = query.lte('closed_at', wideTo);
+          }
+          final fetchLimit = math.max(limit + offset + 50, limit + 200);
+          return query
+              .order('closed_at', ascending: false)
+              .range(offset, offset + fetchLimit - 1)
+              .timeout(tableOrderTimeout);
         },
       );
       var list = List<Map<String, dynamic>>.from(rows as List);
@@ -2105,15 +2188,7 @@ class StoreTableService {
             )
             .toList(growable: false);
       }
-      list.sort((a, b) {
-        final aAt = TableOrderHistoryUtils.closedAt(
-          Map<dynamic, dynamic>.from(a),
-        );
-        final bAt = TableOrderHistoryUtils.closedAt(
-          Map<dynamic, dynamic>.from(b),
-        );
-        return (bAt ?? DateTime(2000)).compareTo(aAt ?? DateTime(2000));
-      });
+      list = TableOrderHistoryUtils.dedupeHistoryRowsLatestPerChain(list);
       if (list.length > limit) {
         list = list.sublist(0, limit);
       }
@@ -2135,6 +2210,395 @@ class StoreTableService {
       throw _tableOrderException('Geçmiş sipariş listesi', error);
     } on TimeoutException {
       throw Exception('Geçmiş siparişler alınamadı. Tekrar deneyin.');
+    }
+  }
+
+  /// Returns true when at least one history row exists for the table since [since].
+  Future<bool> hasRecentTableHistory({
+    required String sellerId,
+    required int tableNumber,
+    required DateTime since,
+  }) async {
+    if (tableNumber <= 0) return false;
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final sinceUtc = since.toUtc().toIso8601String();
+    try {
+      final rows = await _runWithTableOrderHistorySchemaFallback(
+        operation: (includeArchivedAt) {
+          var query = _supabase
+              .from('table_order_history')
+              .select('id, table_number, closed_at')
+              .eq('seller_id', resolvedSellerId)
+              .eq('table_number', tableNumber);
+          query = includeArchivedAt
+              ? query.or(
+                  _tableOrderHistorySinceFilter(
+                    wideFromIso: sinceUtc,
+                    includeArchivedAt: true,
+                  ),
+                )
+              : query.gte('closed_at', sinceUtc);
+          return query
+              .order('closed_at', ascending: false)
+              .limit(1)
+              .timeout(tableOrderTimeout);
+        },
+      );
+      return (rows as List).isNotEmpty;
+    } on PostgrestException catch (error) {
+      final message = error.message.toLowerCase();
+      if (error.code == '42P01' ||
+          message.contains('does not exist') ||
+          message.contains('could not find table') ||
+          message.contains('schema cache')) {
+        return false;
+      }
+      rethrow;
+    }
+  }
+
+  /// Re-opens a closed table session by inserting archived items back into
+  /// [table_orders]. Does not mutate the history row.
+  ///
+  /// Guard: throws when the table already has non-terminal active orders.
+  Future<List<Map<String, dynamic>>> restoreTableFromHistory({
+    required String sellerId,
+    required String historyId,
+  }) async {
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final normalizedHistoryId = historyId.trim();
+    if (resolvedSellerId.isEmpty || normalizedHistoryId.isEmpty) {
+      throw Exception('Geçmiş masa geri yüklenemedi: eksik kimlik.');
+    }
+
+    Map<String, dynamic>? historyRow;
+    try {
+      final rows = await _runWithTableOrderHistorySchemaFallback(
+        operation: (_) {
+          return _supabase
+              .from('table_order_history')
+              .select()
+              .eq('seller_id', resolvedSellerId)
+              .eq('id', normalizedHistoryId)
+              .limit(1)
+              .timeout(tableOrderTimeout);
+        },
+      );
+      final list = List<Map<String, dynamic>>.from(rows as List);
+      if (list.isNotEmpty) {
+        historyRow = Map<String, dynamic>.from(list.first);
+      }
+    } on PostgrestException catch (error) {
+      throw _tableOrderException('Geçmiş masa kaydı', error);
+    }
+
+    if (historyRow == null || historyRow.isEmpty) {
+      throw Exception('Geçmiş masa kaydı bulunamadı.');
+    }
+
+    final tableNumber =
+        int.tryParse(historyRow['table_number']?.toString() ?? '') ?? 0;
+    if (tableNumber <= 0) {
+      throw Exception('Geçmiş masa kaydında geçersiz masa numarası var.');
+    }
+
+    final activeOrders = await getTableOrdersByTable(
+      sellerId: resolvedSellerId,
+      tableNumber: tableNumber,
+    );
+    final blockingOrders = activeOrders.where((order) {
+      return !OrderStatusConstants.isTerminalStatus(
+        order['status']?.toString(),
+      );
+    }).toList(growable: false);
+    if (blockingOrders.isNotEmpty) {
+      throw Exception(
+        'Masa $tableNumber zaten açık. Önce mevcut oturumu kapatın.',
+      );
+    }
+
+    final archivedOrders = TableOrderHistoryUtils.parseJsonList(
+      historyRow['archived_orders'],
+    );
+    final ordersToRestore = archivedOrders.isNotEmpty
+        ? archivedOrders
+        : <Map<String, dynamic>>[
+            if (TableOrderHistoryUtils.displayItems(historyRow).isNotEmpty)
+              <String, dynamic>{
+                'items': TableOrderHistoryUtils.displayItems(historyRow),
+                'status': historyRow['status']?.toString() ?? 'sent',
+                'revision': historyRow['revision'],
+                'last_edit_summary': historyRow['last_edit_summary'],
+                'last_edit_note': historyRow['last_edit_note'],
+                'created_at': historyRow['opened_at'] ?? historyRow['created_at'],
+              },
+          ];
+
+    if (ordersToRestore.isEmpty) {
+      throw Exception('Geri yüklenecek sipariş satırı bulunamadı.');
+    }
+
+    Map<String, dynamic>? tableRow;
+    try {
+      final tableRows = await _supabase
+          .from('store_tables')
+          .select()
+          .eq('seller_id', resolvedSellerId)
+          .eq('table_number', tableNumber)
+          .limit(1)
+          .timeout(tableOrderTimeout);
+      final tables = List<Map<String, dynamic>>.from(tableRows as List);
+      if (tables.isNotEmpty) {
+        tableRow = Map<String, dynamic>.from(tables.first);
+      }
+    } catch (error) {
+      debugPrint(
+        '[StoreTableService.restoreTableFromHistory] '
+        'table_row_lookup_failed table=$tableNumber error=$error',
+      );
+    }
+
+    final historyIdentity = TableOrderHistoryUtils.historyIdentityForArchive(
+      tableNumber: tableNumber,
+      tableLabel: TableOrderHistoryUtils.tableLabel(historyRow),
+      tableAreaNameHint: TableOrderHistoryUtils.areaName(historyRow),
+      storeTableRow: tableRow,
+      orders: ordersToRestore,
+    );
+    if (tableRow != null) {
+      final enrichedTableRow = Map<String, dynamic>.from(tableRow)
+        ..addAll(historyIdentity);
+      if (historyIdentity['table_area_name']?.isNotEmpty == true) {
+        enrichedTableRow['area_name'] = historyIdentity['table_area_name'];
+      }
+      if (historyIdentity['display_table_label']?.isNotEmpty == true) {
+        enrichedTableRow['display_label'] = historyIdentity['display_table_label'];
+      }
+      tableRow = enrichedTableRow;
+    } else if (historyIdentity.isNotEmpty) {
+      tableRow = Map<String, dynamic>.from(historyIdentity);
+    }
+
+    final restoredOrders = <Map<String, dynamic>>[];
+    for (final sourceOrder in ordersToRestore) {
+      final items = TableOrderHistoryUtils.parseJsonList(sourceOrder['items']);
+      if (items.isEmpty) continue;
+
+      final rawStatus = sourceOrder['status']?.toString().trim() ?? 'sent';
+      final restoreStatus = OrderStatusConstants.isTerminalStatus(rawStatus)
+          ? 'sent'
+          : rawStatus;
+
+      final inserted = await submitTableOrder(
+        sellerId: resolvedSellerId,
+        tableNumber: tableNumber,
+        items: items,
+        status: restoreStatus,
+        tableRow: tableRow,
+        placementSource: 'history_restore',
+      );
+
+      final insertedId = inserted['id']?.toString() ?? '';
+      final revision = sourceOrder['revision'];
+      final lastEditSummary = sourceOrder['last_edit_summary'];
+      final lastEditNote = sourceOrder['last_edit_note'];
+      if (insertedId.isNotEmpty &&
+          (revision != null ||
+              (lastEditSummary is Map && lastEditSummary.isNotEmpty) ||
+              (lastEditNote?.toString().trim().isNotEmpty ?? false))) {
+        final updated = await updateTableOrder(
+          insertedId,
+          revision: revision is num ? revision.toInt() : null,
+          lastEditSummary: lastEditSummary is Map
+              ? Map<String, dynamic>.from(lastEditSummary)
+              : null,
+          lastEditNote: lastEditNote?.toString(),
+        );
+        restoredOrders.add(updated ?? inserted);
+      } else {
+        restoredOrders.add(inserted);
+      }
+    }
+
+    if (restoredOrders.isEmpty) {
+      throw Exception('Masa geri yüklenemedi: sipariş satırları boş.');
+    }
+
+    debugPrint(
+      '[StoreTableService.restoreTableFromHistory] '
+      'historyId=$normalizedHistoryId table=$tableNumber '
+      'restoredCount=${restoredOrders.length}',
+    );
+    return restoredOrders;
+  }
+
+  /// Deletes a single archived table session from [table_order_history].
+  /// Returns `true` only when the row was actually removed (RLS / id mismatch → `false`).
+  Future<bool> deleteTableOrderHistoryRecord({
+    required String sellerId,
+    required String historyId,
+  }) async {
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final normalizedHistoryId = historyId.trim();
+    if (normalizedHistoryId.isEmpty) {
+      throw Exception('Geçmiş masa kaydı silinemedi: eksik kimlik.');
+    }
+
+    try {
+      final deleted = await _supabase
+          .from('table_order_history')
+          .delete()
+          .eq('id', normalizedHistoryId)
+          .select('id')
+          .timeout(tableOrderTimeout);
+      final rows = List<Map<String, dynamic>>.from(deleted as List);
+      if (rows.isEmpty) {
+        debugPrint(
+          '[StoreTableService.deleteTableOrderHistoryRecord] '
+          'no_rows_deleted historyId=$normalizedHistoryId seller=$resolvedSellerId',
+        );
+        return false;
+      }
+      return true;
+    } on PostgrestException catch (error) {
+      throw _tableOrderException('Geçmiş masa kaydı silme', error);
+    }
+  }
+
+  /// After restore → re-close, remove the superseded history row so the list
+  /// shows a single chain entry (latest close only).
+  Future<bool> supersedeRestoredHistoryOnReclose({
+    required String sellerId,
+    required String supersededHistoryId,
+  }) async {
+    final normalizedId = supersededHistoryId.trim();
+    if (normalizedId.isEmpty) return false;
+    return deleteTableOrderHistoryRecord(
+      sellerId: sellerId,
+      historyId: normalizedId,
+    );
+  }
+
+  /// Removes duplicate history rows that share the same [session_key] chain,
+  /// keeping only the latest [closed_at] entry (RPC inserts one row per order).
+  Future<int> consolidateDuplicateHistoryChain({
+    required String sellerId,
+    required int tableNumber,
+    String? sessionKey,
+    DateTime? closedAfter,
+  }) async {
+    if (tableNumber <= 0) return 0;
+
+    final resolvedSellerId = _resolveSellerId(sellerId);
+    final since = (closedAfter ?? DateTime.now())
+        .subtract(const Duration(minutes: 30))
+        .toUtc();
+
+    List<Map<String, dynamic>> rows;
+    try {
+      var query = _supabase
+          .from('table_order_history')
+          .select('id, session_key, table_number, closed_at, original_order_id')
+          .eq('seller_id', resolvedSellerId)
+          .eq('table_number', tableNumber)
+          .gte('closed_at', since.toIso8601String());
+      final normalizedSessionKey = sessionKey?.trim() ?? '';
+      if (normalizedSessionKey.isNotEmpty) {
+        query = query.eq('session_key', normalizedSessionKey);
+      }
+      rows = List<Map<String, dynamic>>.from(
+        await query.timeout(tableOrderTimeout),
+      );
+    } on PostgrestException catch (error) {
+      final message = error.message.toLowerCase();
+      if (error.code == '42P01' ||
+          message.contains('does not exist') ||
+          message.contains('could not find table') ||
+          message.contains('schema cache')) {
+        return 0;
+      }
+      throw _tableOrderException('Geçmiş masa zinciri birleştirme', error);
+    }
+
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (final row in rows) {
+      final chainKey = TableOrderHistoryUtils.historyChainKey(row);
+      grouped.putIfAbsent(chainKey, () => <Map<String, dynamic>>[]).add(row);
+    }
+
+    var deletedCount = 0;
+    for (final group in grouped.values) {
+      if (group.length <= 1) continue;
+      group.sort((a, b) {
+        final aAt =
+            TableOrderHistoryUtils.closedAt(a) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final bAt =
+            TableOrderHistoryUtils.closedAt(b) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        return bAt.compareTo(aAt);
+      });
+
+      for (var index = 1; index < group.length; index++) {
+        final historyId = group[index]['id']?.toString().trim() ?? '';
+        if (historyId.isEmpty) continue;
+        final deleted = await deleteTableOrderHistoryRecord(
+          sellerId: resolvedSellerId,
+          historyId: historyId,
+        );
+        if (deleted) deletedCount++;
+      }
+    }
+
+    if (deletedCount > 0) {
+      debugPrint(
+        '[StoreTableService.consolidateDuplicateHistoryChain] '
+        'table=$tableNumber session=${sessionKey ?? '-'} deleted=$deletedCount',
+      );
+    }
+    return deletedCount;
+  }
+
+  Future<void> _patchRecentHistoryIdentityIfMissing({
+    required String sellerId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> recentHistoryRows,
+    required Map<String, String> identityFields,
+    required DateTime closedAt,
+  }) async {
+    if (identityFields.isEmpty || recentHistoryRows.isEmpty) return;
+
+    final candidates = recentHistoryRows.where((row) {
+      final rowTableNumber =
+          int.tryParse(row['table_number']?.toString() ?? '') ?? 0;
+      if (rowTableNumber != tableNumber) return false;
+      if (!TableOrderHistoryUtils.historyRowMissingIdentity(row)) return false;
+      final rowClosedAt = TableOrderHistoryUtils.closedAt(row);
+      if (rowClosedAt == null) return false;
+      return closedAt.toLocal().difference(rowClosedAt).abs() <
+          const Duration(minutes: 3);
+    }).toList(growable: false);
+
+    for (final row in candidates) {
+      final historyId = row['id']?.toString().trim() ?? '';
+      if (historyId.isEmpty) continue;
+      try {
+        await _supabase
+            .from('table_order_history')
+            .update(identityFields)
+            .eq('seller_id', sellerId)
+            .eq('id', historyId)
+            .timeout(tableOrderTimeout);
+        debugPrint(
+          '[StoreTableService._patchRecentHistoryIdentityIfMissing] '
+          'historyId=$historyId table=$tableNumber patched=${identityFields.keys.join(',')}',
+        );
+      } catch (error) {
+        debugPrint(
+          '[StoreTableService._patchRecentHistoryIdentityIfMissing] '
+          'historyId=$historyId error=$error',
+        );
+      }
     }
   }
 

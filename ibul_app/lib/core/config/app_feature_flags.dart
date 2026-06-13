@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 
 class AppFeatureFlags {
   static const bool allowGuestMode = false;
-  static const bool enableDemoAiAssistant = true;
-  static const bool enableDemoVisualIntelligence = true;
+  static final bool enableDemoAiAssistant = !kReleaseMode;
+  static final bool enableDemoVisualIntelligence = !kReleaseMode;
   static const bool enableVerboseDebugLogs = kDebugMode;
 
   const AppFeatureFlags._();

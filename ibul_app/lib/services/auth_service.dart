@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/foundation.dart'
@@ -8,9 +10,8 @@ import 'package:flutter/foundation.dart'
         debugPrint,
         debugPrintStack,
         kIsWeb;
-import 'package:shared_preferences/shared_preferences.dart';
-
 import '../core/config/runtime_config.dart';
+import '../core/secure_local_store.dart';
 import 'store_service.dart';
 
 enum LoginResolvedRole { seller, waiter, admin, user, unknown }
@@ -484,31 +485,31 @@ class AuthService {
 
   Future<void> backupCurrentSessionForSellerSwitch() async {
     final session = _supabase.auth.currentSession;
-    final prefs = await SharedPreferences.getInstance();
     if (session == null) {
-      await prefs.remove(_sellerSwitchSessionBackupKey);
+      await SecureLocalStore.instance.delete(_sellerSwitchSessionBackupKey);
       return;
     }
-    await prefs.setString(
+    await SecureLocalStore.instance.writeString(
       _sellerSwitchSessionBackupKey,
       jsonEncode(session.toJson()),
     );
   }
 
   Future<bool> hasSellerSwitchBackup() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_sellerSwitchSessionBackupKey);
+    final raw = await SecureLocalStore.instance.readString(
+      _sellerSwitchSessionBackupKey,
+    );
     return raw != null && raw.trim().isNotEmpty;
   }
 
   Future<void> clearSellerSwitchBackup() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_sellerSwitchSessionBackupKey);
+    await SecureLocalStore.instance.delete(_sellerSwitchSessionBackupKey);
   }
 
   Future<bool> restoreUserSessionAfterSellerExit() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rawSession = prefs.getString(_sellerSwitchSessionBackupKey);
+    final rawSession = await SecureLocalStore.instance.readString(
+      _sellerSwitchSessionBackupKey,
+    );
 
     try {
       await _googleSignIn?.signOut();
@@ -518,12 +519,12 @@ class AuthService {
     await _supabase.auth.signOut();
 
     if (rawSession == null || rawSession.trim().isEmpty) {
-      await prefs.remove(_sellerSwitchSessionBackupKey);
+      await SecureLocalStore.instance.delete(_sellerSwitchSessionBackupKey);
       return false;
     }
 
     await _supabase.auth.recoverSession(rawSession);
-    await prefs.remove(_sellerSwitchSessionBackupKey);
+    await SecureLocalStore.instance.delete(_sellerSwitchSessionBackupKey);
     return true;
   }
 
@@ -573,9 +574,6 @@ class AuthService {
           displayName ??
           resolvedUser.userMetadata?['display_name'] ??
           resolvedUser.userMetadata?['name'],
-      'photo_url':
-          resolvedUser.userMetadata?['avatar_url'] ??
-          resolvedUser.userMetadata?['picture'],
       'updated_at': DateTime.now().toIso8601String(),
     };
 
@@ -585,6 +583,12 @@ class AuthService {
 
     if (existing == null) {
       updates['role'] = resolvedUser.userMetadata?['role'] ?? 'user';
+      final initialPhoto =
+          resolvedUser.userMetadata?['avatar_url'] ??
+          resolvedUser.userMetadata?['picture'];
+      if (initialPhoto != null && initialPhoto.toString().trim().isNotEmpty) {
+        updates['photo_url'] = initialPhoto;
+      }
     }
 
     await _supabase.from('users').upsert(updates, onConflict: 'id');
@@ -645,9 +649,12 @@ class AuthService {
     String? style,
     String? phone,
     String? address,
+    String? photoUrl,
   }) async {
     final user = _supabase.auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      throw Exception('Oturum açık değil');
+    }
 
     final updates = <String, dynamic>{};
 
@@ -659,18 +666,164 @@ class AuthService {
     if (phone != null) updates['phone'] = phone;
     if (address != null) updates['address'] = address;
     if (displayName != null) updates['display_name'] = displayName;
+    if (photoUrl != null) updates['photo_url'] = photoUrl;
 
     if (updates.isNotEmpty) {
       updates['updated_at'] = DateTime.now().toIso8601String();
       await _supabase.from('users').update(updates).eq('id', user.id);
     }
 
-    // Update Auth Metadata as well for display name
-    if (displayName != null) {
-      await _supabase.auth.updateUser(
-        UserAttributes(data: {'display_name': displayName}),
+    // Update Auth Metadata as well for display name / avatar
+    if (displayName != null || photoUrl != null) {
+      final metadata = <String, dynamic>{};
+      if (displayName != null) metadata['display_name'] = displayName;
+      if (photoUrl != null && photoUrl.startsWith('http')) {
+        metadata['avatar_url'] = photoUrl;
+      }
+      if (metadata.isNotEmpty) {
+        await _supabase.auth.updateUser(UserAttributes(data: metadata));
+      }
+    }
+  }
+
+  Future<String> uploadProfilePhotoBytes(
+    Uint8List bytes, {
+    String fileName = 'profile.jpg',
+  }) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      throw Exception('Oturum açık değil');
+    }
+
+    final normalizedName = fileName.trim().isNotEmpty ? fileName.trim() : 'profile.jpg';
+    final extension = normalizedName.contains('.')
+        ? normalizedName.split('.').last.toLowerCase()
+        : 'jpg';
+    final contentType = extension == 'png' ? 'image/png' : 'image/jpeg';
+    // store-images RLS: ilk klasör auth.uid() olmalı (bkz. SUPABASE_FIX_SELLER.sql).
+    final objectPath =
+        '${user.id}/profiles/${DateTime.now().millisecondsSinceEpoch}.$extension';
+
+    try {
+      await _supabase.storage.from('store-images').uploadBinary(
+            objectPath,
+            bytes,
+            fileOptions: FileOptions(contentType: contentType, upsert: true),
+          );
+    } on StorageException catch (e) {
+      final status = e.statusCode?.toString() ?? '';
+      if (status == '403') {
+        throw Exception(
+          'Profil fotoğrafı depolamaya yüklenemedi: depolama izni reddedildi (403). '
+          'Oturumunuzun geçerli olduğundan emin olun.',
+        );
+      }
+      throw Exception(
+        'Profil fotoğrafı depolamaya yüklenemedi: ${e.message}',
       );
     }
+
+    return _supabase.storage.from('store-images').getPublicUrl(objectPath);
+  }
+
+  Future<void> updateUserEmail(String newEmail) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      throw Exception('Oturum açık değil');
+    }
+
+    final trimmed = newEmail.trim();
+    if (trimmed.isEmpty || !trimmed.contains('@')) {
+      throw Exception('Geçerli bir e-posta adresi giriniz');
+    }
+
+    await _supabase.auth.updateUser(UserAttributes(email: trimmed));
+    await _supabase.from('users').update({
+      'email': trimmed,
+      'updated_at': DateTime.now().toIso8601String(),
+    }).eq('id', user.id);
+  }
+
+  Future<void> updateUserPassword(String newPassword) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      throw Exception('Oturum açık değil');
+    }
+    if (newPassword.length < 6) {
+      throw Exception('Şifre en az 6 karakter olmalıdır');
+    }
+
+    await _supabase.auth.updateUser(UserAttributes(password: newPassword));
+  }
+
+  bool hasEmailPasswordProvider() {
+    return hasEmailPasswordProviderFor(_supabase.auth.currentUser);
+  }
+
+  bool hasEmailPasswordProviderFor(User? user) {
+    if (user == null) return false;
+    final identities = user.identities;
+    if (identities != null && identities.isNotEmpty) {
+      return identities.any((identity) => identity.provider == 'email');
+    }
+    return false;
+  }
+
+  Future<void> verifyCurrentPassword(String currentPassword) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      throw Exception('Oturum açık değil');
+    }
+    if (!hasEmailPasswordProviderFor(user)) {
+      throw Exception(
+        'Bu hesap e-posta/şifre ile giriş desteklemiyor. '
+        'Google ile giriş yaptıysanız aşağıdaki şifre sıfırlama e-postasını kullanın.',
+      );
+    }
+
+    final email = user.email?.trim().toLowerCase();
+    if (email == null || email.isEmpty) {
+      throw Exception('Hesap e-posta adresi bulunamadı');
+    }
+
+    try {
+      await _supabase.auth.signInWithPassword(
+        email: email,
+        password: currentPassword,
+      );
+    } on AuthException catch (error) {
+      if (error.code == 'invalid_credentials') {
+        throw Exception('Mevcut şifre hatalı');
+      }
+      throw Exception(describeSignInError(error));
+    }
+  }
+
+  Future<void> changePasswordWithVerification({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    if (newPassword.length < 6) {
+      throw Exception('Şifre en az 6 karakter olmalıdır');
+    }
+    if (currentPassword == newPassword) {
+      throw Exception('Yeni şifre mevcut şifreden farklı olmalıdır');
+    }
+
+    await verifyCurrentPassword(currentPassword);
+    await updateUserPassword(newPassword);
+  }
+
+  Future<void> sendPasswordResetEmail({String? email}) async {
+    final user = _supabase.auth.currentUser;
+    final targetEmail = (email ?? user?.email)?.trim().toLowerCase();
+    if (targetEmail == null ||
+        targetEmail.isEmpty ||
+        !targetEmail.contains('@')) {
+      throw Exception('Geçerli bir e-posta adresi bulunamadı');
+    }
+
+    await _supabase.auth.resetPasswordForEmail(targetEmail);
   }
 
   // Get User Profile Data

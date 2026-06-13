@@ -1,3 +1,6 @@
+import '../../utils/dynamic_value_helpers.dart';
+import 'package:flutter/material.dart';
+
 class UserIdentity {
   static const String guestEmail = 'misafir@ibul.com';
   static const String defaultGuestDisplayName = 'Misafir Kullanıcı';
@@ -9,7 +12,9 @@ class UserIdentity {
     Map<String, dynamic>? profile,
     Map<String, dynamic>? userMetadata,
   }) {
-    final normalizedProfile = Map<String, dynamic>.from(profile ?? const {});
+    final normalizedProfile = normalizeUserProfileForApp(
+      profile == null ? null : Map<String, dynamic>.from(profile),
+    );
     final normalizedMetadata = Map<String, dynamic>.from(
       userMetadata ?? const {},
     );
@@ -22,6 +27,10 @@ class UserIdentity {
       currentUser: normalizedProfile,
       email: email,
     );
+    final resolvedPhotoUrl = resolveProfilePhotoUrl(normalizedProfile) ??
+        readNullableString(
+          normalizedMetadata['avatar_url'] ?? normalizedMetadata['picture'],
+        );
 
     return {
       ...normalizedProfile,
@@ -30,11 +39,10 @@ class UserIdentity {
       'name': resolvedName,
       'displayName': resolvedName,
       'display_name': resolvedName,
-      'photoURL':
-          normalizedMetadata['avatar_url'] ??
-          normalizedMetadata['picture'] ??
-          normalizedProfile['photoURL'] ??
-          normalizedProfile['photo_url'],
+      if (resolvedPhotoUrl != null) ...{
+        'photo_url': resolvedPhotoUrl,
+        'photoURL': resolvedPhotoUrl,
+      },
       'isPremium': normalizedProfile['isPremium'] ?? false,
     };
   }
@@ -97,6 +105,43 @@ class UserIdentity {
         .map((part) => part[0].toUpperCase())
         .join();
     return parts.isEmpty ? fallback : parts;
+  }
+
+  static String? resolveProfilePhotoUrl(Map<String, dynamic>? currentUser) {
+    final saved = readNullableString(currentUser?['photo_url']);
+    if (saved != null) return saved;
+    return readNullableString(currentUser?['photoURL']);
+  }
+
+  static String? formatHeightWeightSummary(Map<String, dynamic>? currentUser) {
+    final parts = <String>[];
+    final height = currentUser?['height'];
+    if (height != null) {
+      final value = readString(height);
+      if (value.isNotEmpty) {
+        parts.add('Boy: $value cm');
+      }
+    }
+    final weight = currentUser?['weight'];
+    if (weight != null) {
+      final value = readString(weight);
+      if (value.isNotEmpty) {
+        parts.add('Kilo: $value kg');
+      }
+    }
+    return parts.isEmpty ? null : parts.join('    ');
+  }
+
+  static Color profilePresetColor(String presetId, {Color fallback = const Color(0xFF7C3AED)}) {
+    const presetColors = <String, Color>{
+      'violet': Color(0xFF7C3AED),
+      'blue': Color(0xFF2563EB),
+      'emerald': Color(0xFF059669),
+      'rose': Color(0xFFE11D48),
+      'amber': Color(0xFFD97706),
+      'slate': Color(0xFF475569),
+    };
+    return presetColors[presetId] ?? fallback;
   }
 
   static String maskedDisplayNameOf(

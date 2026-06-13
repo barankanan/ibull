@@ -8,6 +8,7 @@ import 'auth/user_identity.dart';
 import 'cart_state.dart';
 import 'favorite_state.dart';
 import 'review_state.dart';
+import 'secure_local_store.dart';
 import '../services/auth_service.dart';
 import '../services/product_list_service.dart';
 import '../services/push_notification_service.dart';
@@ -16,6 +17,7 @@ import '../services/supabase_service.dart';
 import '../models/product_model.dart';
 import '../models/product_list_model.dart';
 import '../models/product_list_price_change.dart';
+import '../utils/dynamic_value_helpers.dart';
 
 /// Global uygulama state'i - favoriler ve sepet
 /// Provider pattern ile yönetilmektedir.
@@ -232,9 +234,15 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  bool _usesSecureDeviceCache(String field) =>
+      field == 'addresses' || field == 'savedCards';
+
   Future<dynamic> _loadDeviceCachedField(String field) async {
     final key = _deviceCacheKey(field);
     if (key == null) return null;
+    if (_usesSecureDeviceCache(field)) {
+      return SecureLocalStore.instance.readJson(key);
+    }
     final prefs = await _getPrefs();
     final raw = prefs.getString(key);
     if (raw == null || raw.isEmpty) return null;
@@ -248,6 +256,10 @@ class AppState extends ChangeNotifier {
   Future<void> _persistDeviceCachedField(String field, dynamic value) async {
     final key = _deviceCacheKey(field);
     if (key == null) return;
+    if (_usesSecureDeviceCache(field)) {
+      await SecureLocalStore.instance.writeJson(key, value);
+      return;
+    }
     final prefs = await _getPrefs();
     await prefs.setString(key, jsonEncode(value));
   }
@@ -300,14 +312,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _persistCurrentDeliveryAddressLocal() async {
-    final prefs = await _getPrefs();
-    if ((_currentDeliveryAddress ?? '').trim().isEmpty) {
-      await prefs.remove(_deviceCurrentDeliveryAddressKey);
+    final normalized = (_currentDeliveryAddress ?? '').trim();
+    if (normalized.isEmpty) {
+      await SecureLocalStore.instance.delete(_deviceCurrentDeliveryAddressKey);
       return;
     }
-    await prefs.setString(
+    await SecureLocalStore.instance.writeString(
       _deviceCurrentDeliveryAddressKey,
-      _currentDeliveryAddress!,
+      normalized,
     );
   }
 
@@ -368,10 +380,9 @@ class AppState extends ChangeNotifier {
   Future<void> _restoreCurrentDeliveryAddressFromLocal({
     int? requestVersion,
   }) async {
-    final prefs = await _getPrefs();
     if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
 
-    final persistedCurrentAddress = prefs.getString(
+    final persistedCurrentAddress = await SecureLocalStore.instance.readString(
       _deviceCurrentDeliveryAddressKey,
     );
     final normalizedPersisted = persistedCurrentAddress?.trim() ?? '';
@@ -409,6 +420,7 @@ class AppState extends ChangeNotifier {
     String? style,
     String? phone,
     String? address,
+    String? photoUrl,
   }) => _updateUserProfileImpl(
     displayName: displayName,
     weight: weight,
@@ -418,7 +430,32 @@ class AppState extends ChangeNotifier {
     style: style,
     phone: phone,
     address: address,
+    photoUrl: photoUrl,
   );
+
+  Future<void> updateUserEmail(String newEmail) => _updateUserEmailImpl(newEmail);
+
+  Future<String> uploadProfilePhotoBytes(Uint8List bytes, {String? fileName}) =>
+      _uploadProfilePhotoBytesOnlyImpl(bytes, fileName: fileName);
+
+  Future<void> uploadProfilePhoto(Uint8List bytes, {String? fileName}) =>
+      _uploadProfilePhotoImpl(bytes, fileName: fileName);
+
+  Future<void> updateUserPassword(String newPassword) =>
+      _updateUserPasswordImpl(newPassword);
+
+  Future<void> changeUserPasswordWithVerification({
+    required String currentPassword,
+    required String newPassword,
+  }) => _changeUserPasswordWithVerificationImpl(
+    currentPassword: currentPassword,
+    newPassword: newPassword,
+  );
+
+  Future<void> sendPasswordResetEmail({String? email}) =>
+      _sendPasswordResetEmailImpl(email: email);
+
+  bool get hasEmailPasswordProvider => _hasEmailPasswordProviderImpl();
 
   // Deprecated: used for mock login previously
   void login(String name, String email) {
@@ -1177,8 +1214,12 @@ class AppState extends ChangeNotifier {
   final ValueNotifier<List<Map<String, dynamic>>> followedStoresNotifier =
       ValueNotifier<List<Map<String, dynamic>>>([]);
 
+  int _selectedCartTabIndex = 0;
+
   List<Product> get favorites => _favoriteState.favorites;
   List<Product> get cart => _cartState.cart;
+  int get selectedCartTabIndex => _selectedCartTabIndex;
+  int cartCountForTab(int tabIndex) => _cartState.countForTabIndex(tabIndex);
   bool get cartNeedsAttention => _cartAttentionKeys.isNotEmpty;
   String? get cartAttentionMessage => _cartAttentionMessage;
   List<Product> get cartAttentionProducts => cart
@@ -1457,6 +1498,13 @@ class AppState extends ChangeNotifier {
   }
 
   void addToCart(Product product) => _addToCartImpl(product);
+
+  void setSelectedCartTabIndex(int index) {
+    final next = index.clamp(0, 2);
+    if (_selectedCartTabIndex == next) return;
+    _selectedCartTabIndex = next;
+    notifyListeners();
+  }
 
   void updateProductServices(Product product, List<String> services) {
     _cartState.updateProductServices(product, services);

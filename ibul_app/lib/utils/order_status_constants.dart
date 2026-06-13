@@ -54,6 +54,17 @@ class OrderStatusConstants {
   static bool isEcommerceTerminal(String? raw) {
     return _ecommerceTerminalStatuses.contains(normalize(raw));
   }
+
+  static const Set<String> inTransitShipmentStatuses = <String>{
+    ecommerceShipped,
+    ecommerceTransfer,
+    ecommerceBranch,
+    ecommerceOutForDelivery,
+  };
+
+  static bool isInTransitShipmentStatus(String? raw) {
+    return inTransitShipmentStatuses.contains(normalize(raw));
+  }
 }
 
 class AdminApprovalStatusConstants {

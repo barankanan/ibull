@@ -23,7 +23,10 @@ extension _HomeScreenSections on _HomeScreenState {
 
           Expanded(
             child: isWeb
-                ? SingleChildScrollView(child: _buildWebHomeContent())
+                ? WebStickyFooterScrollView(
+                    contentAlignment: Alignment.topCenter,
+                    child: _buildWebHomeContent(),
+                  )
                 : _buildMobileHomeContent(),
           ),
         ],
@@ -329,11 +332,56 @@ extension _HomeScreenSections on _HomeScreenState {
     );
   }
 
+  Widget _wrapWebCategoryMainSlot({
+    required Widget child,
+    required bool expandWhenShort,
+  }) {
+    if (!expandWhenShort) {
+      return child;
+    }
+
+    final bodyMinHeight =
+        WebStickyFooterBodyScope.maybeOf(context)?.bodyMinHeight;
+    if (bodyMinHeight == null) {
+      return child;
+    }
+
+    const topSectionReserve = 160.0;
+    final slotHeight = math.max(280.0, bodyMinHeight - topSectionReserve);
+
+    return SizedBox(
+      width: double.infinity,
+      height: slotHeight,
+      child: Align(
+        alignment: Alignment.center,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildWebCategoryEmptyState() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.category_outlined, size: 48, color: Colors.grey[300]),
+        const SizedBox(height: 16),
+        Text(
+          'Bu kategoride henüz ürün bulunamadı',
+          style: TextStyle(color: Colors.grey[600]),
+        ),
+      ],
+    );
+  }
+
   Widget _buildWebHomeContentImpl() {
     final isElectronics = _selectedCategory == 'Elektronik';
     final isHomePage = _selectedCategory == 'Ana Sayfa';
     final isCategorySelected = !isHomePage; // Herhangi bir kategori seçili mi?
     final popularProducts = _popularProductsForSelectedCategory();
+    final subCategoryProducts = _selectedSubCategory != null
+        ? _getProductsForCurrentSubCategory()
+        : const <DBProduct>[];
     final fastDeliveryProducts = isHomePage
         ? _getFastDeliveryProducts(limit: 10)
         : <DBProduct>[];
@@ -370,25 +418,33 @@ extension _HomeScreenSections on _HomeScreenState {
                 const SizedBox(height: 16),
 
                 // 2. Alt Kategori Filtreleme veya Teknoloji Dünyası
-                if (_selectedSubCategory != null) ...[
-                  _buildSubCategoryView(),
-                ] else if (isElectronics) ...[
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.02),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+                if (_selectedSubCategory != null)
+                  _wrapWebCategoryMainSlot(
+                    expandWhenShort:
+                        !_isLoadingProducts && subCategoryProducts.isEmpty,
+                    child: _buildSubCategoryView(),
+                  )
+                else if (isElectronics)
+                  _wrapWebCategoryMainSlot(
+                    expandWhenShort: true,
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.02),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: _buildTechSection(),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: _buildTechSection(),
-                  ),
-                ] else ...[
+                  )
+                else ...[
                   // DİĞER KATEGORİLER İÇİN SADECE ÜRÜN LİSTESİ
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -408,73 +464,55 @@ extension _HomeScreenSections on _HomeScreenState {
                   ),
                   const SizedBox(height: 16),
 
-                  _isLoadingProducts
-                      ? GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          cacheExtent: 800,
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 5,
-                                childAspectRatio: 0.58,
-                                crossAxisSpacing: 16,
-                                mainAxisSpacing: 16,
-                              ),
-                          itemCount: 10,
-                          itemBuilder: (context, index) {
-                            return const ProductCardSkeleton();
-                          },
-                        )
-                      : popularProducts.isEmpty
-                      ? SizedBox(
-                          height: 200,
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.category_outlined,
-                                  size: 48,
-                                  color: Colors.grey[300],
+                  _wrapWebCategoryMainSlot(
+                    expandWhenShort:
+                        _isLoadingProducts || popularProducts.isEmpty,
+                    child: _isLoadingProducts
+                        ? GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            cacheExtent: 800,
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 5,
+                                  childAspectRatio: 0.58,
+                                  crossAxisSpacing: 16,
+                                  mainAxisSpacing: 16,
                                 ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'Bu kategoride henüz ürün bulunamadı',
-                                  style: TextStyle(color: Colors.grey[600]),
+                            itemCount: 10,
+                            itemBuilder: (context, index) {
+                              return const ProductCardSkeleton();
+                            },
+                          )
+                        : popularProducts.isEmpty
+                        ? _buildWebCategoryEmptyState()
+                        : GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            cacheExtent: 800,
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 5,
+                                  childAspectRatio: 0.58,
+                                  crossAxisSpacing: 16,
+                                  mainAxisSpacing: 16,
                                 ),
-                              ],
-                            ),
+                            itemCount: popularProducts.length,
+                            itemBuilder: (context, index) {
+                              final dbProduct = popularProducts[index];
+                              return _wrapProductReveal(
+                                scope: 'home-category-grid',
+                                index: index,
+                                token: _productRevealTokenFromDb(dbProduct),
+                                child: ProductCard(
+                                  product: _convertToProduct(dbProduct),
+                                  margin: EdgeInsets.zero,
+                                ),
+                              );
+                            },
                           ),
-                        )
-                      : GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          cacheExtent: 800,
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 5,
-                                childAspectRatio: 0.58,
-                                crossAxisSpacing: 16,
-                                mainAxisSpacing: 16,
-                              ),
-                          itemCount: popularProducts.length,
-                          itemBuilder: (context, index) {
-                            final dbProduct = popularProducts[index];
-                            return _wrapProductReveal(
-                              scope: 'home-category-grid',
-                              index: index,
-                              token: _productRevealTokenFromDb(dbProduct),
-                              child: ProductCard(
-                                product: _convertToProduct(dbProduct),
-                                margin: EdgeInsets.zero,
-                              ),
-                            );
-                          },
-                        ),
+                  ),
                 ],
-
-                const SizedBox(height: 80),
-                const WebFooter(),
               ] else ...[
                 // NORMAL ANA SAYFA GÖRÜNÜMÜ
 
@@ -1377,9 +1415,6 @@ extension _HomeScreenSections on _HomeScreenState {
                     ],
                   ),
                 ),
-
-                // 7. Footer
-                const WebFooter(),
               ],
             ],
           ),

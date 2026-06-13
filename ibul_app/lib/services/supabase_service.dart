@@ -10,6 +10,7 @@ import '../models/product_model.dart';
 import '../models/product_pricing.dart';
 import 'store/store_mapping_helpers.dart';
 import '../utils/text_normalizer.dart';
+import '../utils/category_product_filter.dart';
 import 'store_follow_service.dart';
 import '../utils/product_edit_log.dart';
 
@@ -106,12 +107,13 @@ class SupabaseService {
       'specifications, attributes, video_url, variants, created_at, '
       'stores(business_name)';
   // Lightweight field set — used only for the home page product cards.
-  // Omits description, attributes, video_url, variants, stock which are never
-  // displayed in ProductCard, reducing payload by ~60%.
+  // Includes description/specifications/attributes for ProductQuickInfoSheet
+  // (eye icon preview). Omits video_url, variants, stock from the full select.
   static const String _homeProductSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
-      'portion_price, price_per_kg, size_options, discount_price, status, created_at, '
+      'portion_price, price_per_kg, size_options, discount_price, status, '
+      'description, specifications, attributes, created_at, '
       'stores(business_name)';
   /// Same as [_homeProductSelectFields] but without `stores(...)` embed.
   /// PostgREST can fail on embeds when FK hints are missing or store RLS differs;
@@ -119,7 +121,8 @@ class SupabaseService {
   static const String _homeProductSelectFieldsSansStore =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
-      'portion_price, price_per_kg, size_options, discount_price, status, created_at';
+      'portion_price, price_per_kg, size_options, discount_price, status, '
+      'description, specifications, attributes, created_at';
   static const String _productSelectFieldsSansStore =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
@@ -748,10 +751,16 @@ class SupabaseService {
           .inFilter('status', publicCatalogProductStatuses)
           .eq('main_category', trimmedCategory);
 
-      if (trimmedSubCategory.isNotEmpty &&
-          trimmedSubCategory.toUpperCase() != 'HEPSI' &&
-          trimmedSubCategory.toUpperCase() != 'HEPSİ') {
-        builder = builder.eq('sub_category', trimmedSubCategory);
+      if (!CategoryProductFilter.isAllSubCategory(trimmedSubCategory)) {
+        final subCategoryOrClause = CategoryProductFilter.buildSubCategoryOrClause(
+          mainCategory: trimmedCategory,
+          subCategory: trimmedSubCategory,
+        );
+        if (subCategoryOrClause != null) {
+          builder = builder.or(subCategoryOrClause);
+        } else {
+          builder = builder.eq('sub_category', trimmedSubCategory);
+        }
       }
 
       final response = await builder

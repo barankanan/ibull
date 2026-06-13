@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
@@ -14,9 +15,10 @@ import '../models/product_model.dart';
 import '../models/db_product.dart';
 import '../core/app_state.dart';
 import '../core/review_state.dart';
+import '../utils/log_mask_helpers.dart';
 import '../widgets/custom_header.dart';
 import '../widgets/web_header.dart'; // Web Header eklendi
-import '../widgets/web_footer.dart'; // Web Footer eklendi
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/filter_sidebar.dart'; // Filter Sidebar eklendi
 import '../widgets/address_bar.dart';
 import '../widgets/address_edit_sheet.dart';
@@ -707,10 +709,12 @@ class _HomeScreenState extends State<HomeScreen>
     final tableNumber = parseTableNumber(tableRaw);
     final token = firstNonEmptyParam(params, ['token', 'qr_token', 'qr', 't']);
 
-    debugPrint('[QR] sellerId    = $sellerId');
-    debugPrint('[QR] tableRaw    = $tableRaw');
-    debugPrint('[QR] tableNumber = $tableNumber');
-    debugPrint('[QR] token       = $token');
+    if (kDebugMode) {
+      debugPrint('[QR] sellerId    = $sellerId');
+      debugPrint('[QR] tableRaw    = $tableRaw');
+      debugPrint('[QR] tableNumber = $tableNumber');
+      debugPrint('[QR] token       = ${maskSensitiveToken(token)}');
+    }
 
     if (sellerId.isEmpty) {
       const msg = 'QR bağlantısı eksik: seller parametresi bulunamadı.';
@@ -728,7 +732,11 @@ class _HomeScreenState extends State<HomeScreen>
 
     var qrVerified = false;
     try {
-      debugPrint('[QR] Calling resolveStoreTableQr: sellerId=$sellerId tableNumber=$tableNumber token=$token');
+      if (kDebugMode) {
+        debugPrint(
+          '[QR] Calling resolveStoreTableQr: sellerId=$sellerId tableNumber=$tableNumber token=${maskSensitiveToken(token)}',
+        );
+      }
       // QR doğrulama ve mağaza sorgusunu paralel yap → daha hızlı açılış.
       final futures = await Future.wait<Object?>([
         (token.isNotEmpty && tableNumber != null && tableNumber > 0)
@@ -2080,47 +2088,7 @@ class _HomeScreenState extends State<HomeScreen>
       return cachedProduct;
     }
 
-    // Görselleri parse et
-    List<String> images = [];
-    if (dbProduct.imageUrls != null && dbProduct.imageUrls!.isNotEmpty) {
-      try {
-        final decoded = json.decode(dbProduct.imageUrls!);
-        if (decoded is List) {
-          images = decoded.map((e) => e.toString()).toList();
-        }
-      } catch (e) {
-        if (dbProduct.imageUrl.isNotEmpty) images.add(dbProduct.imageUrl);
-      }
-    } else if (dbProduct.imageUrl.isNotEmpty) {
-      images.add(dbProduct.imageUrl);
-    }
-
-    final product = Product(
-      productId: dbProduct.id,
-      name: dbProduct.name,
-      price: dbProduct.price,
-      oldPrice: dbProduct.oldPrice,
-      images: images.isEmpty ? [] : images,
-      category: dbProduct.category,
-      brand: dbProduct.brand,
-      description: dbProduct.description,
-      rating: dbProduct.rating,
-      reviewCount: dbProduct.reviewCount,
-      tags: dbProduct.tags.isNotEmpty
-          ? List<String>.from(json.decode(dbProduct.tags))
-          : [],
-      subCategory: dbProduct.subCategory,
-      store: dbProduct.store,
-      sellerId: dbProduct.sellerId,
-      thumbnailPath: dbProduct.thumbnailPath,
-      thumbnailPublicUrl: dbProduct.thumbnailPublicUrl,
-      thumbnailSizeBytes: dbProduct.thumbnailSizeBytes,
-      videoPath: dbProduct.videoPath,
-      videoPublicUrl: dbProduct.videoPublicUrl,
-      videoDurationSeconds: dbProduct.videoDurationSeconds,
-      videoSizeBytes: dbProduct.videoSizeBytes,
-      videoStatus: dbProduct.videoStatus,
-    );
+    final product = Product.fromDBProduct(dbProduct);
 
     if (cacheKey != null && cacheKey.isNotEmpty) {
       _productConversionCache[cacheKey] = product;

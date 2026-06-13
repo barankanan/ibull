@@ -925,11 +925,15 @@ GarsonRenderBundle resolveGarsonRenderBundle({
       uiTablesCount > 0 ||
       (lastGoodSections?.sections.isNotEmpty ?? false);
 
-  final willShowLoading = renderSections.isEmpty &&
-      !willShowGrid &&
-      currentSections.isLoading &&
-      !(isRefreshing && (lastGoodSections?.sections.isNotEmpty ?? false)) &&
-      initialLoading;
+  final willShowLoading = (!initialBootstrapFinished &&
+          !hasEverRenderedBoard &&
+          uiTablesCount == 0 &&
+          (lastGoodSections?.sections.isEmpty ?? true)) ||
+      (renderSections.isEmpty &&
+          !willShowGrid &&
+          currentSections.isLoading &&
+          !(isRefreshing && (lastGoodSections?.sections.isNotEmpty ?? false)) &&
+          initialLoading);
 
   final willShowEmpty = !willShowGrid &&
       !willShowLoading &&

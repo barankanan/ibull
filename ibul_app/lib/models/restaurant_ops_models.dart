@@ -1,6 +1,8 @@
 // Models for the restaurant operations upgrade.
 // See migration: 20260407_restaurant_ops_upgrade.sql
 
+import '../services/store/table_order_history_utils.dart';
+
 /// Payment methods accepted at the table.
 enum TablePaymentMethod {
   cash,
@@ -227,6 +229,9 @@ class TableOrderHistoryRecord {
     this.openedAt,
     this.lastEditSummary,
     this.lastEditNote,
+    this.tableAreaName,
+    this.displayTableLabel,
+    this.archivedOrders = const <Map<String, dynamic>>[],
   });
 
   final String id;
@@ -247,6 +252,9 @@ class TableOrderHistoryRecord {
   final DateTime? openedAt;
   final Map<String, dynamic>? lastEditSummary;
   final String? lastEditNote;
+  final String? tableAreaName;
+  final String? displayTableLabel;
+  final List<Map<String, dynamic>> archivedOrders;
 
   Duration get sessionDuration {
     final start = openedAt ?? createdAt;
@@ -255,9 +263,42 @@ class TableOrderHistoryRecord {
 
   factory TableOrderHistoryRecord.fromMap(Map<String, dynamic> map) {
     final rawItems = map['items'];
-    final items = rawItems is List
-        ? rawItems.cast<Map<String, dynamic>>()
+    var items = rawItems is List
+        ? rawItems
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false)
         : const <Map<String, dynamic>>[];
+    final rawArchived = map['archived_orders'];
+    final archivedOrders = rawArchived is List
+        ? rawArchived
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    if (items.isEmpty && archivedOrders.isNotEmpty) {
+      items = archivedOrders
+          .expand((order) {
+            final orderItems = order['items'];
+            if (orderItems is! List) return const <Map<String, dynamic>>[];
+            return orderItems
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item));
+          })
+          .toList(growable: false);
+    }
+
+    String readLabel(String key) => map[key]?.toString().trim() ?? '';
+    final displayTableLabel = [
+      readLabel('display_table_label'),
+      readLabel('table_display_name'),
+      readLabel('table_name'),
+    ].firstWhere((value) => value.isNotEmpty, orElse: () => '');
+    final tableAreaName = [
+      readLabel('table_area_name'),
+      readLabel('area_name'),
+      readLabel('table_area'),
+    ].firstWhere((value) => value.isNotEmpty, orElse: () => '');
 
     return TableOrderHistoryRecord(
       id: map['id']?.toString() ?? '',
@@ -285,7 +326,41 @@ class TableOrderHistoryRecord {
           ? Map<String, dynamic>.from(map['last_edit_summary'] as Map)
           : null,
       lastEditNote: map['last_edit_note']?.toString(),
+      tableAreaName: tableAreaName.isEmpty ? null : tableAreaName,
+      displayTableLabel: () {
+        final label = displayTableLabel.isEmpty
+            ? TableOrderHistoryUtils.tableLabel(map)
+            : displayTableLabel;
+        return label.isEmpty ? null : label;
+      }(),
+      archivedOrders: archivedOrders,
     );
+  }
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'id': id,
+      'original_order_id': originalOrderId,
+      'seller_id': sellerId,
+      'table_number': tableNumber,
+      'items': items,
+      'status': status,
+      'revision': revision,
+      'grand_total': grandTotal,
+      'closed_at': closedAt.toUtc().toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
+      if (paymentMethod != null) 'payment_method': paymentMethod,
+      if (paymentNote != null) 'payment_note': paymentNote,
+      if (waiterName != null) 'waiter_name': waiterName,
+      if (waiterId != null) 'waiter_id': waiterId,
+      if (sessionKey != null) 'session_key': sessionKey,
+      if (openedAt != null) 'opened_at': openedAt!.toUtc().toIso8601String(),
+      if (lastEditSummary != null) 'last_edit_summary': lastEditSummary,
+      if (lastEditNote != null) 'last_edit_note': lastEditNote,
+      if (tableAreaName != null) 'table_area_name': tableAreaName,
+      if (displayTableLabel != null) 'display_table_label': displayTableLabel,
+      if (archivedOrders.isNotEmpty) 'archived_orders': archivedOrders,
+    };
   }
 
   static int _parseIntS(dynamic v, {int fallback = 0}) {

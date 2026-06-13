@@ -507,11 +507,19 @@ bool shouldShowGarsonInitialLoading({
   int lastGoodTableCount = 0,
   bool hasEverRenderedBoard = false,
   bool manualRefreshInProgress = false,
+  bool initialBootstrapFinished = true,
 }) {
   if (manualRefreshInProgress && hasEverRenderedBoard) return false;
   if (hasEverRenderedBoard &&
       (storeTableCount > 0 || lastGoodTableCount > 0)) {
     return false;
+  }
+  if (!initialBootstrapFinished &&
+      !initialVisibleSeedDone &&
+      visibleOrderCount == 0 &&
+      storeTableCount == 0 &&
+      lastGoodTableCount == 0) {
+    return true;
   }
   if (!initialLoading) return false;
   if (initialVisibleSeedDone) return false;

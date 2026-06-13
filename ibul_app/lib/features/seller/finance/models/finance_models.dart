@@ -1130,6 +1130,89 @@ class DailySalesPoint {
   final int orderCount;
 }
 
+class TableRevenueLine {
+  const TableRevenueLine({
+    required this.tableName,
+    required this.areaName,
+    required this.paymentMethod,
+    required this.paymentLabel,
+    required this.closedAt,
+    required this.amount,
+    required this.orderItemCount,
+    this.tableNumber,
+    this.source = 'table',
+  });
+
+  final String tableName;
+  final String areaName;
+  final String paymentMethod;
+  final String paymentLabel;
+  final DateTime? closedAt;
+  final double amount;
+  final int orderItemCount;
+  final int? tableNumber;
+  final String source;
+}
+
+class RevenueSlice {
+  const RevenueSlice({
+    required this.key,
+    required this.label,
+    required this.amount,
+    required this.count,
+  });
+
+  final String key;
+  final String label;
+  final double amount;
+  final int count;
+}
+
+class TodayRevenueBreakdown {
+  const TodayRevenueBreakdown({
+    required this.totalRevenue,
+    required this.tableLines,
+    required this.byArea,
+    required this.byPaymentMethod,
+    required this.topArea,
+    required this.topPaymentMethod,
+    this.hasPersistedPaymentMethods = true,
+    this.hasPersistedAreaNames = true,
+  });
+
+  final double totalRevenue;
+  final List<TableRevenueLine> tableLines;
+  final List<RevenueSlice> byArea;
+  final List<RevenueSlice> byPaymentMethod;
+  final RevenueSlice? topArea;
+  final RevenueSlice? topPaymentMethod;
+  final bool hasPersistedPaymentMethods;
+  final bool hasPersistedAreaNames;
+
+  static const empty = TodayRevenueBreakdown(
+    totalRevenue: 0,
+    tableLines: [],
+    byArea: [],
+    byPaymentMethod: [],
+    topArea: null,
+    topPaymentMethod: null,
+  );
+}
+
+class DailyFinanceTrendPoint {
+  const DailyFinanceTrendPoint({
+    required this.date,
+    required this.income,
+    required this.expense,
+  });
+
+  final DateTime date;
+  final double income;
+  final double expense;
+
+  double get net => income - expense;
+}
+
 // ─────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────

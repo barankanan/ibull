@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RestaurantMutationInput } from "@/features/restaurant/domain/commands";
 import { RestaurantRuntimeError } from "@/features/restaurant/domain/errors";
+import { assertRestaurantApiAuthorized } from "@/features/restaurant/server/api-auth";
 import { getRestaurantServerRepository } from "@/features/restaurant/server/repository";
 
 function statusForError(error: RestaurantRuntimeError) {
@@ -22,6 +23,11 @@ function statusForError(error: RestaurantRuntimeError) {
 }
 
 export async function POST(request: NextRequest) {
+  const authFailure = assertRestaurantApiAuthorized(request);
+  if (authFailure) {
+    return authFailure;
+  }
+
   try {
     const body = (await request.json()) as { mutation?: RestaurantMutationInput };
     if (!body.mutation) {

@@ -5,9 +5,10 @@ import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
+import '../widgets/account_search_filter_row.dart';
 import '../widgets/account_sidebar.dart';
-import '../widgets/web_footer.dart';
 import '../widgets/web_header.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import 'home_screen.dart';
 import 'product_detail_page.dart';
 import 'search_results_page.dart';
@@ -22,6 +23,13 @@ class ReviewsPage extends StatefulWidget {
 }
 
 class _ReviewsPageState extends State<ReviewsPage> {
+  static const Color _surface = Color(0xFFF4F6FA);
+  static const Color _cardBorder = Color(0xFFE7EAF0);
+  static const Color _labelColor = Color(0xFF667085);
+  static const Color _titleColor = Color(0xFF101828);
+  static const Color _heroStart = Color(0xFF5A22E0);
+  static const Color _heroEnd = Color(0xFF3A0CA3);
+
   String _selectedTab = 'Tümü';
   String _searchQuery = '';
 
@@ -77,7 +85,7 @@ class _ReviewsPageState extends State<ReviewsPage> {
 
   Widget _buildWebView() {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F6FB),
+      backgroundColor: _surface,
       body: Column(
         children: [
           WebHeader(
@@ -98,45 +106,31 @@ class _ReviewsPageState extends State<ReviewsPage> {
             },
           ),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 32,
-                          ),
-                          child: Center(
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 1180),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(
-                                    width: 280,
-                                    child: AccountSidebar(
-                                      activePage: 'Değerlendirmelerim',
-                                    ),
-                                  ),
-                                  const SizedBox(width: 28),
-                                  Expanded(child: _buildContent(isWeb: true)),
-                                ],
-                              ),
-                            ),
+            child: WebStickyFooterScrollView(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 32,
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1180),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(
+                          width: 280,
+                          child: AccountSidebar(
+                            activePage: 'Değerlendirmelerim',
                           ),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                        const SizedBox(width: 28),
+                        Expanded(child: _buildContent(isWeb: true)),
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],
@@ -146,13 +140,15 @@ class _ReviewsPageState extends State<ReviewsPage> {
 
   Widget _buildMobileView() {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: _surface,
       appBar: AppBar(
         backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         leading: IconButton(
           icon: const Icon(
-            Icons.arrow_back_ios_new,
+            Icons.arrow_back_ios_new_rounded,
             color: AppColors.primary,
             size: 18,
           ),
@@ -161,15 +157,19 @@ class _ReviewsPageState extends State<ReviewsPage> {
         title: const Text(
           'Değerlendirmelerim',
           style: TextStyle(
-            color: Colors.black87,
-            fontWeight: FontWeight.w600,
-            fontSize: 18,
+            color: _titleColor,
+            fontWeight: FontWeight.w800,
+            fontSize: 17,
+            letterSpacing: -0.2,
           ),
         ),
         centerTitle: true,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Divider(height: 1, color: Colors.grey.shade300),
+          child: Container(
+            height: 1,
+            color: _cardBorder,
+          ),
         ),
       ),
       body: _buildContent(isWeb: false),
@@ -182,88 +182,35 @@ class _ReviewsPageState extends State<ReviewsPage> {
     final reviewedCount = allReviews.length;
 
     return Container(
-      padding: EdgeInsets.all(isWeb ? 24 : 16),
+      padding: EdgeInsets.all(isWeb ? 28 : 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(isWeb ? 24 : 0),
+        border: isWeb ? Border.all(color: _cardBorder) : null,
+        boxShadow: isWeb
+            ? const [
+                BoxShadow(
+                  color: Color(0x14101828),
+                  blurRadius: 28,
+                  offset: Offset(0, 10),
+                ),
+              ]
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (isWeb)
-            const Text(
-              'Değerlendirmelerim',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
-            ),
-          if (isWeb) const SizedBox(height: 22),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  onChanged: (value) => setState(() => _searchQuery = value),
-                  decoration: InputDecoration(
-                    hintText: 'Arama yap',
-                    prefixIcon: const Icon(
-                      Icons.search,
-                      color: AppColors.primary,
-                    ),
-                    filled: true,
-                    fillColor: const Color(0xFFF8F6FD),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 14,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    focusedBorder: const OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(14)),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                height: 48,
-                padding: const EdgeInsets.symmetric(horizontal: 18),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    Icon(Icons.tune, color: AppColors.primary, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Filtre',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _tabChip('Tümü', reviewedCount),
-                const SizedBox(width: 10),
-                _tabChip('Değerlendirilmeyen', 0),
-                const SizedBox(width: 10),
-                _tabChip('Değerlendirilen', reviewedCount),
-              ],
-            ),
+          if (isWeb) ...[
+            _buildPageHeader(isWeb: true, reviewedCount: reviewedCount),
+            const SizedBox(height: 24),
+          ],
+          AccountSearchFilterRow(
+            hintText: 'Ürün, mağaza veya yorum ara',
+            onSearchChanged: (value) => setState(() => _searchQuery = value),
           ),
           const SizedBox(height: 18),
+          _buildTabStrip(reviewedCount),
+          SizedBox(height: isWeb ? 22 : 18),
           if (reviews.isEmpty)
             _buildEmptyState()
           else if (isWeb)
@@ -285,24 +232,169 @@ class _ReviewsPageState extends State<ReviewsPage> {
     );
   }
 
+  Widget _buildPageHeader({required bool isWeb, required int reviewedCount}) {
+    if (isWeb) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Değerlendirmelerim',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    color: _titleColor,
+                    letterSpacing: -0.6,
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Satın aldığın ürünler için yazdığın yorumları buradan görüntüle.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.45,
+                    color: _labelColor.withValues(alpha: 0.95),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          _buildReviewStatBadge(reviewedCount),
+        ],
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildReviewStatBadge(int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [_heroStart, _heroEnd],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: _heroStart.withValues(alpha: 0.28),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$count',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              height: 1,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'değerlendirme',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.88),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabStrip(int reviewedCount) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _tabChip('Tümü', reviewedCount),
+          const SizedBox(width: 10),
+          _tabChip('Değerlendirilmeyen', 0),
+          const SizedBox(width: 10),
+          _tabChip('Değerlendirilen', reviewedCount),
+        ],
+      ),
+    );
+  }
+
   Widget _tabChip(String label, int count) {
     final selected = _selectedTab == label;
-    return InkWell(
-      onTap: () => setState(() => _selectedTab = label),
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.primary : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.primary),
-        ),
-        child: Text(
-          '$label $count',
-          style: TextStyle(
-            color: selected ? Colors.white : AppColors.primary,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _selectedTab = label),
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.primary : Colors.white,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? AppColors.primary : _cardBorder,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: AppColors.primary.withValues(alpha: 0.28),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : const [
+                    BoxShadow(
+                      color: Color(0x06101828),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? Colors.white : _titleColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.1,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? Colors.white.withValues(alpha: 0.2)
+                      : const Color(0xFFF2F4F7),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    color: selected ? Colors.white : _labelColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -458,28 +550,84 @@ class _ReviewsPageState extends State<ReviewsPage> {
   Widget _buildEmptyState() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 48),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 52),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8F6FD),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE5DEF1)),
+        gradient: const LinearGradient(
+          colors: [Color(0xFFFAF8FF), Color(0xFFF3EFFB)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE8DEF8)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D101828),
+            blurRadius: 20,
+            offset: Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(
         children: [
-          Icon(
-            Icons.rate_review_outlined,
-            size: 58,
-            color: Colors.grey.shade400,
+          Container(
+            width: 76,
+            height: 76,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [
+                  _heroStart.withValues(alpha: 0.16),
+                  _heroEnd.withValues(alpha: 0.08),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              border: Border.all(color: const Color(0xFFE4D9F7)),
+            ),
+            child: const Icon(
+              Icons.rate_review_outlined,
+              size: 34,
+              color: AppColors.primary,
+            ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 18),
           const Text(
             'Henüz değerlendirme yok',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: _titleColor,
+              letterSpacing: -0.3,
+            ),
           ),
           const SizedBox(height: 8),
-          Text(
+          const Text(
             'Değerlendirdiğin ürünler burada listelenecek.',
-            style: TextStyle(color: Colors.grey.shade600),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.45,
+              color: _labelColor,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.72),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: const Color(0xFFE7E0F2)),
+            ),
+            child: const Text(
+              'Sipariş sonrası ürün detayından yorum bırakabilirsin',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primary,
+                height: 1.35,
+              ),
+            ),
           ),
         ],
       ),

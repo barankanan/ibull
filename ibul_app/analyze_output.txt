@@ -1,0 +1,8 @@
+Analyzing ibul_app...
+
+warning - test/debug_test.dart:1:8 - Unused import: 'package:flutter_test/flutter_test.dart'. Try removing the import directive. - unused_import
+warning - test/debug_test.dart:2:8 - Unused import: 'package:ibul_app/widgets/restaurant_order/mixed_service_dialog.dart'. Try removing the import directive. - unused_import
+   info - lib/services/store/close_table_workflow.dart:1:1 - Dangling library doc comment. Add a 'library' directive after the library comment. - dangling_library_doc_comments
+   info - lib/utils/order_status_constants.dart:1:1 - Dangling library doc comment. Add a 'library' directive after the library comment. - dangling_library_doc_comments
+
+4 issues found.

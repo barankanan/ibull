@@ -6,7 +6,7 @@ import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../services/coupon_service.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
 
 class CouponsPage extends StatefulWidget {
@@ -124,118 +124,98 @@ class _CouponsPageState extends State<CouponsPage>
         children: [
           WebHeader(onSearch: (q) {}),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
-                        ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 40,
-                                horizontal: 24,
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(
-                                    width: 280,
-                                    child: AccountSidebar(
-                                      activePage: 'Kuponlarım',
-                                    ),
-                                  ),
-                                  const SizedBox(width: 32),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const Text(
-                                          'Kuponlarım',
-                                          style: TextStyle(
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.bold,
-                                            color: Color(0xFF1F2937),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 24),
-                                        Container(
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                            border: Border.all(
-                                              color: Colors.grey.shade200,
-                                            ),
-                                          ),
-                                          child: Column(
-                                            children: [
-                                              Container(
-                                                decoration: BoxDecoration(
-                                                  border: Border(
-                                                    bottom: BorderSide(
-                                                      color:
-                                                          Colors.grey.shade200,
-                                                    ),
-                                                  ),
-                                                ),
-                                                child: TabBar(
-                                                  controller: _tabController,
-                                                  labelColor: AppColors.primary,
-                                                  unselectedLabelColor:
-                                                      Colors.grey,
-                                                  indicatorColor:
-                                                      AppColors.primary,
-                                                  indicatorWeight: 3,
-                                                  labelStyle: const TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                  tabs: const [
-                                                    Tab(text: 'Aktif Kuponlar'),
-                                                    Tab(text: 'Pasif Kuponlar'),
-                                                  ],
-                                                ),
-                                              ),
-                                              SizedBox(
-                                                height: 500,
-                                                child: TabBarView(
-                                                  controller: _tabController,
-                                                  children: [
-                                                    _buildWebCouponGrid(
-                                                      _allActiveCoupons,
-                                                      isActive: true,
-                                                    ),
-                                                    _buildWebCouponGrid(
-                                                      _allExpiredCoupons,
-                                                      isActive: false,
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+            child: WebStickyFooterScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 40,
+                      horizontal: 24,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(
+                          width: 280,
+                          child: AccountSidebar(
+                            activePage: 'Kuponlarım',
                           ),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                        const SizedBox(width: 32),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Kuponlarım',
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF1F2937),
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.grey.shade200,
+                                  ),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          bottom: BorderSide(
+                                            color: Colors.grey.shade200,
+                                          ),
+                                        ),
+                                      ),
+                                      child: TabBar(
+                                        controller: _tabController,
+                                        labelColor: AppColors.primary,
+                                        unselectedLabelColor: Colors.grey,
+                                        indicatorColor: AppColors.primary,
+                                        indicatorWeight: 3,
+                                        labelStyle: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        tabs: const [
+                                          Tab(text: 'Aktif Kuponlar'),
+                                          Tab(text: 'Pasif Kuponlar'),
+                                        ],
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      height: 500,
+                                      child: TabBarView(
+                                        controller: _tabController,
+                                        children: [
+                                          _buildWebCouponGrid(
+                                            _allActiveCoupons,
+                                            isActive: true,
+                                          ),
+                                          _buildWebCouponGrid(
+                                            _allExpiredCoupons,
+                                            isActive: false,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],

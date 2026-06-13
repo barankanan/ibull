@@ -88,7 +88,7 @@ class SearchTelemetryService {
         'user_id': userId,
         'viewer_key': viewerKey,
         'is_registered': isRegistered,
-        'delivery_address': deliveryAddress,
+        'delivery_address': null,
         'city': region.$1,
         'district': region.$2,
         'result_count': resultCount,
@@ -102,10 +102,15 @@ class SearchTelemetryService {
     }
   }
 
-  Future<List<SearchTelemetryEvent>> getRecentSearches({int days = 30}) async {
+  /// Recent telemetry rows visible to the current session (own rows or admin).
+  Future<List<SearchTelemetryEvent>> getRecentSearches({
+    int days = 30,
+    int limit = 200,
+  }) async {
     final since = DateTime.now()
         .subtract(Duration(days: days))
         .toIso8601String();
+    final normalizedLimit = limit.clamp(1, 500);
 
     try {
       final rows = await _supabase
@@ -113,7 +118,7 @@ class SearchTelemetryService {
           .select()
           .gte('created_at', since)
           .order('created_at', ascending: false)
-          .limit(1500);
+          .limit(normalizedLimit);
 
       return List<Map<String, dynamic>>.from(
         rows as List,

@@ -204,10 +204,9 @@ class DesktopPrintHub extends ChangeNotifier {
   static const Duration _healthInterval = Duration(seconds: 30);
   static const Duration _healthTimeout = Duration(milliseconds: 1500);
 
-  /// Aggressive sweep interval: 300ms ensures any missed realtime event is
-  /// caught quickly.  Combined with realtime-first + broadcast delivery this
-  /// gives a worst-case pickup latency of ~500ms (300ms timer + ~200ms query).
-  static const Duration _pendingSweepInterval = Duration(milliseconds: 300);
+  /// Aggressive sweep interval tuned for realtime-first pickup; fallback poll
+  /// runs every 1s to reduce CPU/network load while staying responsive.
+  static const Duration _pendingSweepInterval = Duration(milliseconds: 1000);
   static const int _pendingSweepLimit = 50;
   static const int _maxPrintAttempts = 2;
 

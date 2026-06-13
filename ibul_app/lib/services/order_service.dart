@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/runtime_config.dart';
+import '../utils/dynamic_value_helpers.dart';
 import '../utils/order_status_constants.dart';
 import 'supabase_service.dart';
 
@@ -793,11 +794,16 @@ class OrderService {
     }
 
     return orders.map((o) {
-      final orderMap = Map<String, dynamic>.from(o as Map);
-      final oid = orderMap['id'].toString();
+      final orderMap = normalizeOrderIdentityFields(
+        Map<String, dynamic>.from(o as Map),
+      );
+      final oid = readString(orderMap['id']);
+      final items = (groupedItems[oid] ?? <Map<String, dynamic>>[])
+          .map(normalizeOrderIdentityFields)
+          .toList(growable: false);
       return {
         ...orderMap,
-        'items': groupedItems[oid] ?? <Map<String, dynamic>>[],
+        'items': items,
       };
     }).toList();
   }
@@ -851,7 +857,8 @@ class OrderService {
     }
 
     final currentStatus = (itemRow['status'] ?? '').toString().toLowerCase();
-    if (currentStatus != OrderStatusConstants.ecommerceDelivered && !_isReturnFlowStatus(currentStatus)) {
+    if (currentStatus != OrderStatusConstants.ecommerceDelivered &&
+        !_isReturnFlowStatus(currentStatus)) {
       throw Exception(
         'Bu ürün için iade talebi yalnızca teslim edilen siparişlerde açılabilir.',
       );
@@ -1989,7 +1996,7 @@ class OrderService {
         'orders',
         query: <String, String>{
           'select':
-              'id,order_number,user_id,status,total_amount,created_at,delivery_address,delivery_type,delivery_slot',
+              'id,order_number,user_id,status,total_amount,created_at,delivery_address,delivery_type,delivery_slot,order_type,restaurant_id,table_id',
           'id': 'in.(${orderIds.length} ids)',
         },
       );
@@ -2003,7 +2010,7 @@ class OrderService {
       orders = await _supabase
           .from('orders')
           .select(
-            'id, order_number, user_id, status, total_amount, created_at, delivery_address, delivery_type, delivery_slot',
+            'id, order_number, user_id, status, total_amount, created_at, delivery_address, delivery_type, delivery_slot, order_type, restaurant_id, table_id',
           )
           .inFilter('id', orderIds);
       _debugSellerOrdersFetch(
@@ -2088,8 +2095,11 @@ class OrderService {
     }
 
     final List<Map<String, dynamic>> result = [];
+    final orderSummaries = _summarizeSellerOrderItems(itemRows);
     for (final raw in itemRows) {
       final item = Map<String, dynamic>.from(raw as Map);
+      final orderId = item['order_id']?.toString() ?? '';
+      final summary = orderSummaries[orderId] ?? const <String, dynamic>{};
       final order = orderById[item['order_id'].toString()];
       if (order == null) {
         debugPrint(
@@ -2099,61 +2109,77 @@ class OrderService {
         final fallbackNumber = fallbackOrderId.isEmpty
             ? '-'
             : 'IBUL-${fallbackOrderId.replaceAll('-', '').substring(0, 6).toUpperCase()}';
-        result.add({
-          ...item,
-          'order_number': fallbackNumber,
-          'order_total_amount': item['total_price'] ?? item['unit_price'] ?? 0,
-          'order_status': item['status'] ?? OrderStatusConstants.ecommerceNew,
-          'customer_id': null,
-          'customer_name': 'Musteri bilgisi sinirli',
-          'customer_email': null,
-          'customer_phone': null,
-          'order_created_at': item['created_at'],
-          'delivery_address': const <String, dynamic>{},
-          'delivery_type': null,
-          'delivery_slot': null,
-          'is_priority': false,
-        });
+        result.add(
+          normalizeOrderIdentityFields({
+            ...item,
+            ...summary,
+            'order_number': fallbackNumber,
+            'order_total_amount': item['total_price'] ?? item['unit_price'] ?? 0,
+            'order_status': item['status'] ?? OrderStatusConstants.ecommerceNew,
+            'customer_id': null,
+            'customer_name': 'Musteri bilgisi sinirli',
+            'customer_email': null,
+            'customer_phone': null,
+            'order_created_at': item['created_at'],
+            'delivery_address': const <String, dynamic>{},
+            'delivery_type': null,
+            'delivery_slot': null,
+            'order_type': null,
+            'restaurant_id': null,
+            'table_id': null,
+            'is_table_order': fallbackNumber.toUpperCase().startsWith('TBL-'),
+            'is_priority': false,
+          }),
+        );
         continue;
       }
       final deliveryAddress = _asJsonMap(order['delivery_address']);
       final customerId = order['user_id']?.toString();
       final customer = customerId != null ? userById[customerId] : null;
+      final isTableOrder = _isTableLikeOrder(order);
       final addressName = [
         deliveryAddress['name']?.toString(),
         deliveryAddress['surname']?.toString(),
       ].where((e) => (e ?? '').trim().isNotEmpty).join(' ').trim();
-      result.add({
-        ...item,
-        'order_number': order['order_number'] ?? '-',
-        'order_total_amount': order['total_amount'] ?? 0,
-        'order_status': order['status'] ?? OrderStatusConstants.ecommerceConfirmed,
-        'customer_id': customerId,
-        'customer_name':
-            deliveryAddress['fullName']?.toString() ??
-            (addressName.isNotEmpty ? addressName : null) ??
-            deliveryAddress['title']?.toString() ??
-            customer?['display_name'],
-        'customer_email': customer?['email'],
-        'customer_phone':
-            deliveryAddress['phone']?.toString() ??
-            deliveryAddress['phoneNumber']?.toString() ??
-            deliveryAddress['gsm']?.toString() ??
-            customer?['phone'],
-        'order_created_at': order['created_at'],
-        'delivery_address': order['delivery_address'],
-        'delivery_type': order['delivery_type'],
-        'delivery_slot': order['delivery_slot'],
-        'is_priority':
-            (order['delivery_type']?.toString().toLowerCase().contains(
-                  'near',
-                ) ??
-                false) ||
-            (order['delivery_type']?.toString().toLowerCase().contains(
-                  'yakin',
-                ) ??
-                false),
-      });
+      result.add(
+        normalizeOrderIdentityFields({
+          ...item,
+          ...summary,
+          'order_number': readString(order['order_number'], fallback: '-'),
+          'order_total_amount': order['total_amount'] ?? 0,
+          'order_status':
+              order['status'] ?? OrderStatusConstants.ecommerceConfirmed,
+          'customer_id': customerId,
+          'customer_name':
+              deliveryAddress['fullName']?.toString() ??
+              (addressName.isNotEmpty ? addressName : null) ??
+              deliveryAddress['title']?.toString() ??
+              customer?['display_name'],
+          'customer_email': customer?['email'],
+          'customer_phone':
+              deliveryAddress['phone']?.toString() ??
+              deliveryAddress['phoneNumber']?.toString() ??
+              deliveryAddress['gsm']?.toString() ??
+              customer?['phone'],
+          'order_created_at': order['created_at'],
+          'delivery_address': order['delivery_address'],
+          'delivery_type': order['delivery_type'],
+          'delivery_slot': order['delivery_slot'],
+          'order_type': order['order_type'],
+          'restaurant_id': order['restaurant_id'],
+          'table_id': order['table_id'],
+          'is_table_order': isTableOrder,
+          'is_priority':
+              (order['delivery_type']?.toString().toLowerCase().contains(
+                    'near',
+                  ) ??
+                  false) ||
+              (order['delivery_type']?.toString().toLowerCase().contains(
+                    'yakin',
+                  ) ??
+                  false),
+        }),
+      );
     }
     _debugSellerOrdersFetch(
       'getSellerOrders:success',
@@ -2164,6 +2190,61 @@ class OrderService {
       note: 'rawItems=${itemRows.length}',
     );
     return result;
+  }
+
+  Map<String, Map<String, dynamic>> _summarizeSellerOrderItems(
+    List<Map<String, dynamic>> itemRows,
+  ) {
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (final raw in itemRows) {
+      final item = Map<String, dynamic>.from(raw);
+      final orderId = item['order_id']?.toString().trim() ?? '';
+      if (orderId.isEmpty) continue;
+      grouped.putIfAbsent(orderId, () => <Map<String, dynamic>>[]).add(item);
+    }
+
+    final summaries = <String, Map<String, dynamic>>{};
+    for (final entry in grouped.entries) {
+      final names = <String>[];
+      for (final item in entry.value) {
+        final name = item['product_name']?.toString().trim() ?? '';
+        if (name.isEmpty) continue;
+        if (!names.contains(name)) {
+          names.add(name);
+        }
+      }
+      summaries[entry.key] = <String, dynamic>{
+        'item_count': entry.value.length,
+        if (names.length > 1) 'secondary_product_name': names[1],
+        if (names.length > 2) 'third_product_name': names[2],
+      };
+    }
+    return summaries;
+  }
+
+  bool _isTableLikeOrder(Map<String, dynamic> order) {
+    final orderNumber = (order['order_number'] ?? '')
+        .toString()
+        .trim()
+        .toUpperCase();
+    if (orderNumber.startsWith('TBL-')) return true;
+
+    final orderType = (order['order_type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (orderType == 'table' || orderType.startsWith('table_')) return true;
+
+    final deliveryType = (order['delivery_type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (deliveryType == 'table' || deliveryType.startsWith('table_')) {
+      return true;
+    }
+
+    final tableId = order['table_id']?.toString().trim() ?? '';
+    return tableId.isNotEmpty;
   }
 
   Future<Map<String, Map<String, dynamic>>> _getLatestReturnRequestsByBuyer({
@@ -3075,11 +3156,19 @@ class OrderService {
           s == OrderStatusConstants.ecommerceOutForDelivery,
     )) {
       orderStatus = OrderStatusConstants.ecommerceShipped;
-    } else if (statuses.any((s) => s == OrderStatusConstants.ecommercePreparing || s == OrderStatusConstants.ecommerceReadyToShip)) {
+    } else if (statuses.any(
+      (s) =>
+          s == OrderStatusConstants.ecommercePreparing ||
+          s == OrderStatusConstants.ecommerceReadyToShip,
+    )) {
       orderStatus = OrderStatusConstants.ecommercePreparing;
-    } else if (statuses.any((s) => s == OrderStatusConstants.ecommerceConfirmed)) {
+    } else if (statuses.any(
+      (s) => s == OrderStatusConstants.ecommerceConfirmed,
+    )) {
       orderStatus = OrderStatusConstants.ecommerceConfirmed;
-    } else if (statuses.any((s) => s == OrderStatusConstants.ecommerceCancelled)) {
+    } else if (statuses.any(
+      (s) => s == OrderStatusConstants.ecommerceCancelled,
+    )) {
       orderStatus = OrderStatusConstants.ecommerceCancelled;
     }
 

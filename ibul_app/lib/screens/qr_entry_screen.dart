@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../utils/log_mask_helpers.dart';
 import '../core/app_ready.dart';
 import '../core/constants.dart';
 import '../core/qr_initial_params.dart';
@@ -96,7 +97,9 @@ class _QrEntryScreenState extends State<QrEntryScreen> {
     final tableNumber = _parseTable(tableRaw);
     final token = _first(params, ['token', 'qr_token', 'qr', 't']);
 
-    debugPrint('[QR-Timing] ${qrWatch.elapsedMilliseconds}ms — sellerId=$sellerId tableNumber=$tableNumber token=$token');
+    debugPrint(
+      '[QR-Timing] ${qrWatch.elapsedMilliseconds}ms — sellerId=$sellerId tableNumber=$tableNumber token=${maskSensitiveToken(token)}',
+    );
 
     if (sellerId.isEmpty) {
       _setError('Geçersiz QR kodu: mağaza bilgisi eksik.');

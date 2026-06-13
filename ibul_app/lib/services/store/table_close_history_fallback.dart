@@ -13,8 +13,10 @@ class TableCloseHistoryFallbackPlan {
 }
 
 TableCloseHistoryFallbackPlan planTableCloseHistoryFallback({
+  required int tableNumber,
   required List<Map<String, dynamic>> closedOrders,
   required List<Map<String, dynamic>> recentHistoryRows,
+  DateTime? closedAt,
 }) {
   final ordersToArchive = closedOrders
       .map((order) => Map<String, dynamic>.from(order))
@@ -36,6 +38,8 @@ TableCloseHistoryFallbackPlan planTableCloseHistoryFallback({
       .where((key) => key.isNotEmpty)
       .toSet();
 
+  final referenceClosedAt = (closedAt ?? DateTime.now()).toLocal();
+
   final duplicateExists = recentHistoryRows.any((row) {
     final originalOrderId = row['original_order_id']?.toString().trim() ?? '';
     if (originalOrderId.isNotEmpty && orderIds.contains(originalOrderId)) {
@@ -54,6 +58,20 @@ TableCloseHistoryFallbackPlan planTableCloseHistoryFallback({
       final archivedId = archivedOrder['id']?.toString().trim() ?? '';
       if (archivedId.isNotEmpty && orderIds.contains(archivedId)) {
         return true;
+      }
+    }
+
+    // Restore → re-close creates new table_order ids; RPC + ensure fallback
+    // must not both archive the same close within a short window.
+    if (tableNumber > 0) {
+      final rowTableNumber = int.tryParse(row['table_number']?.toString() ?? '');
+      if (rowTableNumber == tableNumber) {
+        final rowClosedAt = TableOrderHistoryUtils.closedAt(row);
+        if (rowClosedAt != null &&
+            referenceClosedAt.difference(rowClosedAt).abs() <
+                const Duration(minutes: 3)) {
+          return true;
+        }
       }
     }
     return false;

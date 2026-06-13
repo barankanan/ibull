@@ -4,7 +4,7 @@ import '../core/auth/user_identity.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../widgets/web_header.dart';
-import '../widgets/web_footer.dart';
+import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/address_edit_sheet.dart';
 
@@ -17,6 +17,27 @@ class AddressesPage extends StatefulWidget {
 
 class _AddressesPageState extends State<AddressesPage> {
   int _selectedTab = 0;
+
+  void _selectDeliveryAddress(AppState appState, Map<String, String> address) {
+    final detail = address['detail']?.trim() ?? '';
+    if (detail.isEmpty) return;
+    appState.setCurrentDeliveryAddress(detail);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Varsayılan teslimat adresi güncellendi'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  bool _isSelectedDeliveryAddress(
+    AppState appState,
+    Map<String, String> address,
+  ) {
+    final detail = address['detail']?.trim() ?? '';
+    return detail.isNotEmpty &&
+        detail == (appState.currentDeliveryAddress?.trim() ?? '');
+  }
 
   void _openEditScreen({Map<String, String>? address, int? index}) {
     showDialog(
@@ -113,47 +134,37 @@ class _AddressesPageState extends State<AddressesPage> {
         children: [
           WebHeader(onSearch: (q) {}),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
+            child: WebStickyFooterScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 40,
+                      horizontal: 24,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(
+                          width: 280,
+                          child: AccountSidebar(
+                            activePage: 'Adreslerim',
+                          ),
                         ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 40,
-                                horizontal: 24,
-                              ),
-                              child: Row(
+                        const SizedBox(width: 32),
+                        Expanded(
+                          child: Consumer<AppState>(
+                            builder: (context, appState, _) {
+                              return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const SizedBox(
-                                    width: 280,
-                                    child: AccountSidebar(
-                                      activePage: 'Adreslerim',
-                                    ),
-                                  ),
-                                  const SizedBox(width: 32),
-                                  Expanded(
-                                    child: Consumer<AppState>(
-                                      builder: (context, appState, _) {
-                                        return Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment
-                                                      .spaceBetween,
-                                              children: [
-                                                const Text(
-                                                  'Adreslerim',
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text(
+                                        'Adreslerim',
                                                   style: TextStyle(
                                                     fontSize: 24,
                                                     fontWeight: FontWeight.bold,
@@ -246,22 +257,16 @@ class _AddressesPageState extends State<AddressesPage> {
                                                 ],
                                               ),
                                             ),
-                                          ],
-                                        );
-                                      },
-                                    ),
-                                  ),
                                 ],
-                              ),
-                            ),
+                              );
+                            },
                           ),
                         ),
-                      ),
-                      const WebFooter(),
-                    ],
+                      ],
+                    ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],
@@ -369,11 +374,18 @@ class _AddressesPageState extends State<AddressesPage> {
       itemCount: list.length,
       itemBuilder: (context, index) {
         final item = list[index];
+        final isSelected =
+            _selectedTab == 0 && _isSelectedDeliveryAddress(appState, item);
         return Container(
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade200),
+            border: Border.all(
+              color: isSelected
+                  ? AppColors.primary.withValues(alpha: 0.45)
+                  : Colors.grey.shade200,
+              width: isSelected ? 1.5 : 1,
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.02),
@@ -408,6 +420,27 @@ class _AddressesPageState extends State<AddressesPage> {
                       fontSize: 16,
                     ),
                   ),
+                  if (isSelected) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'Varsayılan',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                   const Spacer(),
                   IconButton(
                     icon: const Icon(
@@ -437,6 +470,26 @@ class _AddressesPageState extends State<AddressesPage> {
                   maxLines: 3,
                 ),
               ),
+              if (_selectedTab == 0) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: isSelected
+                        ? null
+                        : () => _selectDeliveryAddress(appState, item),
+                    child: Text(
+                      isSelected ? 'Seçili adres' : 'Varsayılan yap',
+                      style: TextStyle(
+                        color: isSelected
+                            ? Colors.grey.shade500
+                            : AppColors.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         );
@@ -500,10 +553,17 @@ class _AddressesPageState extends State<AddressesPage> {
                   itemCount: list.length,
                   itemBuilder: (context, index) {
                     final item = list[index];
+                    final isSelected = _selectedTab == 0 &&
+                        _isSelectedDeliveryAddress(appState, item);
                     return Container(
                       margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade200),
+                        border: Border.all(
+                          color: isSelected
+                              ? AppColors.primary.withValues(alpha: 0.45)
+                              : Colors.grey.shade200,
+                          width: isSelected ? 1.5 : 1,
+                        ),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: ListTile(
@@ -516,12 +576,37 @@ class _AddressesPageState extends State<AddressesPage> {
                             size: 20,
                           ),
                         ),
-                        title: Text(
-                          item['title']!,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
+                        title: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                item['title']!,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                            if (isSelected)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: const Text(
+                                  'Varsayılan',
+                                  style: TextStyle(
+                                    color: AppColors.primary,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                         subtitle: Padding(
                           padding: const EdgeInsets.only(top: 4),
@@ -556,6 +641,10 @@ class _AddressesPageState extends State<AddressesPage> {
                           ],
                         ),
                         onTap: () {
+                          if (_selectedTab == 0) {
+                            _selectDeliveryAddress(appState, item);
+                            return;
+                          }
                           _openEditScreen(address: item, index: index);
                         },
                       ),
