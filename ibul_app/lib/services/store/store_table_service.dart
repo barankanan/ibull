@@ -1645,7 +1645,11 @@ class StoreTableService {
     String? waiterId,
     String? waiterName,
     String? sessionKey,
+    String? tableLabel,
+    String? areaName,
   }) async {
+    final normalizedLabel = tableLabel?.trim();
+    final normalizedArea = areaName?.trim();
     try {
       await _supabase
           .rpc(
@@ -1662,6 +1666,12 @@ class StoreTableService {
                 'p_waiter_name': waiterName,
               if (sessionKey != null && sessionKey.isNotEmpty)
                 'p_session_key': sessionKey,
+              if (normalizedLabel != null && normalizedLabel.isNotEmpty) ...{
+                'p_table_name': normalizedLabel,
+                'p_display_table_label': normalizedLabel,
+              },
+              if (normalizedArea != null && normalizedArea.isNotEmpty)
+                'p_table_area_name': normalizedArea,
             },
           )
           .timeout(tableOrderTimeout);
@@ -1686,6 +1696,8 @@ class StoreTableService {
         waiterId: waiterId,
         waiterName: waiterName,
         sessionKey: sessionKey,
+        tableLabel: tableLabel,
+        areaName: areaName,
       );
     } on TimeoutException {
       throw Exception('Masa kapatma zaman aşımına uğradı. Tekrar deneyin.');
@@ -1708,6 +1720,7 @@ class StoreTableService {
     String? waiterName,
     String? tableLabel,
     DateTime? closedAt,
+    String? areaName,
   }) async {
     if (tableNumber <= 0 || closedOrders.isEmpty) return false;
 
@@ -1769,6 +1782,7 @@ class StoreTableService {
     if (!fallbackPlan.shouldInsert) return false;
 
     final normalizedLabel = tableLabel?.trim();
+    final normalizedArea = areaName?.trim();
     final ordersToArchive = fallbackPlan.ordersToArchive;
     final singleOrder = ordersToArchive.length == 1
         ? ordersToArchive.first
@@ -1805,6 +1819,8 @@ class StoreTableService {
                 'table_display_name': normalizedLabel,
                 'table_name': normalizedLabel,
               },
+              if (normalizedArea != null && normalizedArea.isNotEmpty)
+                'table_area_name': normalizedArea,
               if (singleOrderId.isNotEmpty) 'original_order_id': singleOrderId,
               if (singleOrder?['items'] != null) 'items': singleOrder!['items'],
               if (singleOrder?['revision'] != null)
@@ -1858,6 +1874,8 @@ class StoreTableService {
     String? waiterId,
     String? waiterName,
     String? sessionKey,
+    String? tableLabel,
+    String? areaName,
   }) async {
     // ── 1. Fetch active orders — propagate on error (no silent empty fallback).
     List<Map<String, dynamic>> activeOrders;
@@ -1906,6 +1924,8 @@ class StoreTableService {
       }
     }
 
+    final normalizedLabel = tableLabel?.trim();
+    final normalizedArea = areaName?.trim();
     var historyArchived = false;
     try {
       await _runWithTableOrderHistorySchemaFallback(
@@ -1923,6 +1943,13 @@ class StoreTableService {
                   'waiter_id': waiterId,
                 if (waiterName != null && waiterName.isNotEmpty)
                   'waiter_name': waiterName,
+                if (normalizedLabel != null && normalizedLabel.isNotEmpty) ...{
+                  'display_table_label': normalizedLabel,
+                  'table_display_name': normalizedLabel,
+                  'table_name': normalizedLabel,
+                },
+                if (normalizedArea != null && normalizedArea.isNotEmpty)
+                  'table_area_name': normalizedArea,
                 'grand_total': grandTotalAll,
                 'archived_orders': activeOrders,
                 'status': 'closed',

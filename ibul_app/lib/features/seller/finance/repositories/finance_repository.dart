@@ -5,6 +5,7 @@ import '../../../../models/mixed_service_order.dart';
 import '../../../../services/store/table_order_history_utils.dart';
 import '../../../../utils/order_status_constants.dart';
 import '../helpers/today_income_builder.dart';
+import '../helpers/today_revenue_breakdown_builder.dart';
 import '../models/finance_models.dart';
 
 /// Tüm Finans modülü Supabase operasyonları.
@@ -90,6 +91,43 @@ class FinanceRepository {
         })
         .map((row) => Map<String, dynamic>.from(row))
         .toList(growable: false);
+  }
+
+  /// DB'den gelen kapalı masa geçmişine henüz yazılmamış optimistic satırları
+  /// ekler — dashboard `_mergeDashboardClosedHistoryWithOptimistic` ile aynı kural.
+  List<Map<String, dynamic>> _mergeFetchedHistoryWithOptimistic(
+    List<Map<String, dynamic>> fetchedRows, {
+    required DateTime from,
+    required DateTime to,
+  }) {
+    final merged = fetchedRows
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: true);
+    for (final row in _optimisticHistoryRowsInRange(from: from, to: to)) {
+      final optimisticMap = Map<dynamic, dynamic>.from(row);
+      final optimisticClosedAt = TableOrderHistoryUtils.closedAt(optimisticMap);
+      final optimisticRevenue = TableOrderHistoryUtils.revenue(optimisticMap);
+      final optimisticTable =
+          int.tryParse(optimisticMap['table_number']?.toString() ?? '') ?? 0;
+      final alreadyResolved = merged.any((existing) {
+        final rowMap = Map<dynamic, dynamic>.from(existing);
+        final rowClosedAt = TableOrderHistoryUtils.closedAt(rowMap);
+        final rowRevenue = TableOrderHistoryUtils.revenue(rowMap);
+        final rowTable =
+            int.tryParse(rowMap['table_number']?.toString() ?? '') ?? 0;
+        final sameTable = optimisticTable > 0 && rowTable == optimisticTable;
+        final sameRevenue = (rowRevenue - optimisticRevenue).abs() <= 0.01;
+        final nearCloseTime =
+            optimisticClosedAt != null &&
+            rowClosedAt != null &&
+            optimisticClosedAt.difference(rowClosedAt).inMinutes.abs() <= 10;
+        return sameTable && sameRevenue && nearCloseTime;
+      });
+      if (!alreadyResolved) {
+        merged.insert(0, Map<String, dynamic>.from(row));
+      }
+    }
+    return merged;
   }
 
   double _sumOptimisticHistoryRevenue({
@@ -313,6 +351,11 @@ class FinanceRepository {
         (sum, row) => sum + _toDouble(row['net_salary']),
       );
 
+      final salesMonthRevenue = await getSalesRevenue(
+        from: monthStart,
+        to: monthEnd,
+      );
+
       return FinanceOverview(
         totalCashBalance: totalCashBalance,
         totalBankBalance: totalBankBalance,
@@ -320,7 +363,7 @@ class FinanceRepository {
         pendingPayments: pendingPayments,
         totalDebt: totalDebt,
         monthSalaryLoad: monthSalaryLoad,
-        monthIncome: monthIncome,
+        monthIncome: monthIncome + salesMonthRevenue,
         monthExpense: monthExpense,
         overduePayments: overduePayments,
         upcomingPayments: upcomingPayments,
@@ -485,8 +528,13 @@ class FinanceRepository {
       );
       final rangeFrom = from ?? DateTime(2000);
       final rangeTo = to ?? DateTime(2100, 12, 31);
+      final mergedHistory = _mergeFetchedHistoryWithOptimistic(
+        data,
+        from: rangeFrom,
+        to: rangeTo,
+      );
       historyRevenue = sumClosedTableIncome(
-        historyRows: data,
+        historyRows: mergedHistory,
         from: rangeFrom,
         to: rangeTo,
       );
@@ -495,9 +543,9 @@ class FinanceRepository {
       /* kapalı masa geçmişi erişilemedi */
     }
 
-    final optimisticFrom = from ?? DateTime(2000);
-    final optimisticTo = to ?? DateTime(2100, 12, 31);
     if (historyRevenue <= 0) {
+      final optimisticFrom = from ?? DateTime(2000);
+      final optimisticTo = to ?? DateTime(2100, 12, 31);
       sum += _sumOptimisticHistoryRevenue(
         from: optimisticFrom,
         to: optimisticTo,
@@ -537,9 +585,13 @@ class FinanceRepository {
     } catch (_) {
       /* garson geçmişi okunamadı */
     }
-    if (historyRows.isEmpty) {
-      historyRows = _optimisticHistoryRowsInRange(from: from, to: to);
-    }
+    historyRows = historyRows.isEmpty
+        ? _optimisticHistoryRowsInRange(from: from, to: to)
+        : _mergeFetchedHistoryWithOptimistic(
+            historyRows,
+            from: from,
+            to: to,
+          );
 
     try {
       onlineRows = List<Map<String, dynamic>>.from(
@@ -577,6 +629,148 @@ class FinanceRepository {
       onlineRows: onlineRows,
       manualIncomeRows: manualIncomeRows,
     );
+  }
+
+  Future<TodayRevenueBreakdown> getTodayRevenueBreakdown() async {
+    final now = DateTime.now();
+    final from = DateTime(now.year, now.month, now.day);
+    final to = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    var historyRows = const <Map<String, dynamic>>[];
+    var onlineRows = const <Map<String, dynamic>>[];
+    var manualIncomeRows = const <Map<String, dynamic>>[];
+
+    try {
+      historyRows = await _fetchTableOrderHistoryRows(
+        selectWithArchivedAt:
+            'id, original_order_id, session_key, table_number, grand_total, '
+            'items, status, closed_at, archived_at, archived_orders, '
+            'display_table_label, table_display_name, table_name, table_area_name, '
+            'payment_method, payment_note',
+        selectWithoutArchivedAt:
+            'id, original_order_id, session_key, table_number, grand_total, '
+            'items, status, closed_at, archived_orders, '
+            'display_table_label, table_display_name, table_name, table_area_name, '
+            'payment_method, payment_note',
+        from: from,
+      );
+    } catch (_) {
+      /* garson geçmişi okunamadı */
+    }
+    historyRows = historyRows.isEmpty
+        ? _optimisticHistoryRowsInRange(from: from, to: to)
+        : _mergeFetchedHistoryWithOptimistic(
+            historyRows,
+            from: from,
+            to: to,
+          );
+
+    try {
+      onlineRows = List<Map<String, dynamic>>.from(
+        await _db
+            .from('order_items')
+            .select('order_id, total_price, status, created_at, product_name')
+            .eq('seller_id', _sellerId)
+            .gte('created_at', from.toUtc().toIso8601String())
+            .lte('created_at', to.toUtc().toIso8601String()),
+      );
+    } catch (_) {
+      /* online satış okunamadı */
+    }
+
+    try {
+      manualIncomeRows = List<Map<String, dynamic>>.from(
+        await _db
+            .from('finance_income_records')
+            .select(
+              'id, net_amount, source, description, income_type, income_date, '
+              'is_collected',
+            )
+            .eq('seller_id', _sellerId)
+            .gte('income_date', from.toIso8601String().split('T').first)
+            .lte('income_date', to.toIso8601String().split('T').first),
+      );
+    } catch (_) {
+      /* manuel gelir okunamadı */
+    }
+
+    var storeTableRows = const <Map<String, dynamic>>[];
+    try {
+      storeTableRows = List<Map<String, dynamic>>.from(
+        await _db
+            .from('store_tables')
+            .select('id, table_number, area_name, area_id, display_label')
+            .eq('seller_id', _sellerId)
+            .eq('is_active', true),
+      );
+    } catch (_) {
+      /* store_tables okunamadı — history alanı tek kaynak kalır */
+    }
+
+    return buildTodayRevenueBreakdown(
+      from: from,
+      to: to,
+      historyRows: historyRows,
+      onlineRows: onlineRows,
+      manualIncomeRows: manualIncomeRows,
+      storeTableRows: storeTableRows,
+    );
+  }
+
+  /// Günlük gelir + gider serisi — finans performans grafiği için.
+  Future<List<DailyFinanceTrendPoint>> getDailyFinanceTrend({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final sales = await getDailySalesSeries(from: from, to: to);
+    final expenseByDay = <DateTime, double>{};
+    DateTime dayKey(DateTime d) => DateTime(d.year, d.month, d.day);
+
+    try {
+      final data = await _db
+          .from('finance_expenses')
+          .select('expense_date, amount')
+          .eq('seller_id', _sellerId)
+          .gte('expense_date', from.toIso8601String().substring(0, 10))
+          .lte('expense_date', to.toIso8601String().substring(0, 10));
+      for (final raw in (data as List)) {
+        final row = raw as Map;
+        final expenseDate = DateTime.tryParse(
+          row['expense_date']?.toString() ?? '',
+        );
+        if (expenseDate == null) continue;
+        final key = dayKey(expenseDate);
+        expenseByDay[key] = (expenseByDay[key] ?? 0) + _toDouble(row['amount']);
+      }
+    } catch (_) {
+      /* gider okunamadı */
+    }
+
+    if (sales.isEmpty) {
+      var cursor = dayKey(from);
+      final lastDay = dayKey(to);
+      final points = <DailyFinanceTrendPoint>[];
+      while (!cursor.isAfter(lastDay)) {
+        points.add(
+          DailyFinanceTrendPoint(
+            date: cursor,
+            income: 0,
+            expense: expenseByDay[cursor] ?? 0,
+          ),
+        );
+        cursor = cursor.add(const Duration(days: 1));
+      }
+      return points;
+    }
+
+    return sales
+        .map(
+          (point) => DailyFinanceTrendPoint(
+            date: point.date,
+            income: point.revenue,
+            expense: expenseByDay[dayKey(point.date)] ?? 0,
+          ),
+        )
+        .toList(growable: false);
   }
 
   /// Gerçek satışların (online `order_items` + garson `table_orders`) ürün
@@ -628,7 +822,6 @@ class FinanceRepository {
     }
 
     // ── Garson satışları: table_order_history (KAPATILMIŞ masalar) ──
-    var historyRowsLoaded = false;
     try {
       final data = await _fetchTableOrderHistoryRows(
         selectWithArchivedAt:
@@ -641,8 +834,13 @@ class FinanceRepository {
       );
       final rangeFrom = from ?? DateTime(2000);
       final rangeTo = to ?? DateTime(2100, 12, 31);
-      for (final raw in data) {
-        final row = Map<dynamic, dynamic>.from(raw as Map);
+      final merged = _mergeFetchedHistoryWithOptimistic(
+        List<Map<String, dynamic>>.from(data),
+        from: rangeFrom,
+        to: rangeTo,
+      );
+      for (final raw in merged) {
+        final row = Map<dynamic, dynamic>.from(raw);
         final status = (row['status']?.toString() ?? '').toLowerCase();
         if (OrderStatusConstants.isCancelledStatus(status)) continue;
         if (!TableOrderHistoryUtils.isWithinRange(row, rangeFrom, rangeTo)) {
@@ -672,12 +870,11 @@ class FinanceRepository {
           p.garson = true;
         }
       }
-      historyRowsLoaded = garsonRevenue > 0 || garsonOrderCount > 0;
     } catch (_) {
       /* garson satış erişilemedi */
     }
 
-    if (!historyRowsLoaded) {
+    if (garsonRevenue <= 0 && garsonOrderCount == 0) {
       final optimisticRows = _optimisticHistoryRowsInRange(
         from: from ?? DateTime(2000),
         to: to ?? DateTime(2100, 12, 31),

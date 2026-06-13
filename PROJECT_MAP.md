@@ -329,7 +329,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` `AuthService`, `AdminPanelPage`, `SellerPanelPage`, `become_seller_page.dart`.
 - `Bu dosyayı kullanan dosyalar:` `lib/main_seller.dart`, named route `/seller-login`.
 - `Değişirse etkilenecek yerler:` seller desktop giriş, admin mode giriş, session backup/restore akışı.
-- `Risk notu:` yanlış role handling seller ve admin yetki ayrımını bozar. macOS sandbox’ta Keychain entitlement yoksa `AuthService.clearSellerSwitchBackup()` → `SecureLocalStore.delete()` patlayabilir; login catch bloğu ikinci kez aynı cleanup’ı çağırırsa gerçek auth hatası SnackBar’a ulaşmadan unhandled exception olur. `SecureLocalStore` Keychain hatasında SharedPreferences fallback kullanır; macOS entitlements’a `keychain-access-groups` eklenmelidir.
+- `Risk notu:` yanlış role handling seller ve admin yetki ayrımını bozar. macOS sandbox’ta Keychain entitlement yoksa `SecureLocalStore` Keychain hatasında SharedPreferences fallback kullanır (seller login/session backup akışı devam eder). **Debug:** `macos/Runner/DebugProfile.entitlements` içinde `keychain-access-groups` yok — imzasız local debug için; Keychain yerine SharedPreferences. **Release:** `Release.entitlements` içinde `keychain-access-groups` kalır — imzalı dağıtımda gerçek Keychain kullanımı için.
 - `Durum:` net
 
 ## `ibul_app/lib/screens/seller_panel_page.dart`
@@ -349,7 +349,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` `seller_panel_page.dart`, `features/seller/finance/screens/finance_shell.dart`
 - `Bu dosyayı kullanan dosyalar:` `seller_panel_page.dart`
 - `Değişirse etkilenecek yerler:` Finans provider oluşturma, restart sonrası doğru owner kimliğiyle finance reload.
-- `Risk notu:` `FinanceShell` anahtarı owner `sellerId` değişimini yansıtmazsa provider eski auth fallback UID ile yaşamaya devam eder ve finans verileri aç-kapa sonrası `₺0` görünebilir. Ayrıca owner bootstrap tamamlanmadan shell oluşturulursa cached optimistic history kullanılmadan 0-state render görülebilir.
+- `Risk notu:` `FinanceShell` anahtarı owner `sellerId` + `_financeRefreshToken` değişimini yansıtmalı; provider eski optimistic history ile yaşamaya devam ederse finans KPI'ları gecikir. Bugünkü Gelir artık `getSalesRevenue` (online + kapalı masa) ile dashboard cirosuyla hizalı; manuel `finance_income_records` Gelirler sekmesinde kalır.
 - `Durum:` net
 
 ## `ibul_app/lib/screens/seller_panel_orders_modules.dart`
@@ -641,6 +641,14 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
   - garson masa kapanışında duplicate archive kontrolü ve fallback insert planı üretir.
 - `ibul_app/lib/features/seller/finance/helpers/today_income_builder.dart`
   - finance repository için günlük gelir breakdown ve kapanmış masa ciro toplamı yardımcıları.
+- `ibul_app/lib/features/seller/finance/helpers/today_revenue_breakdown_builder.dart`
+  - Bugünkü gelir detayı: masa / alan / ödeme tipi kırılımı; `TableOrderHistoryUtils` + `order_items` + manuel gelir kaynaklarını birleştirir.
+- `ibul_app/lib/features/seller/finance/helpers/store_table_area_resolver.dart`
+  - Finance breakdown için alan adı çözümlemesi: önce `table_order_history.table_area_name`, boşsa `store_tables.area_name` (`table_id` / `table_number` eşleşmesi).
+- `ibul_app/lib/features/seller/finance/widgets/today_income_detail_sheet.dart`
+  - Bugünkü Gelir Detayı modal/sheet UI; alan badge, insight kartları ve slice bölümleri.
+- `ibul_app/supabase/migrations/20260615_table_order_history_finance_analytics.sql`
+  - `table_order_history` için `table_area_name`, masa etiket kolonları ve `close_table_with_history` RPC genişlemesi (payment/area/label persist).
 - `ibul_app/lib/utils/table_labels.dart`
   - masa etiketi üretimi.
 - `ibul_app/lib/widgets/skeleton_loading.dart`
@@ -775,7 +783,7 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 | restaurant-ops API | `server-action` varsayılan; HTTP route’lar `RESTAURANT_API_SECRET` guard |
 | search_telemetry Dart | Tam `delivery_address` insert kaldırıldı; overlay telemetry fetch kaldırıldı |
 | CI web build | `scripts/build_web_ci.sh` + GitHub Secrets dart-define |
-| Session backup | `SecureLocalStore` (seller switch JWT); macOS Keychain hatasında SharedPreferences fallback |
+| Session backup | `SecureLocalStore` (seller switch JWT); macOS debug’da SharedPreferences fallback, release’de Keychain (`Release.entitlements`) |
 | Hassas device cache | `addresses` / `savedCards` secure storage + legacy migrate |
 | QR token log | `kDebugMode` + `maskSensitiveToken` |
 | Print hub sweep | 300ms → 1000ms |
@@ -927,6 +935,11 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 - **Kök neden:** Ana sayfa `ProductCard` eye icon → `ProductQuickInfoSheet` akışında `_convertToProduct` yalnız temel alanları map'liyordu (`description`/`specifications`/`attributes` eksik). `getInitialHomeProducts` select'i de bu alanları bilinçli olarak dışlıyordu. Satıcı sayfası (`business_detail_page`) `Product.fromDBProduct` + `getMenuProductsBySellerId` zengin select ile aynı modal'da açıklama/özellikleri dolduruyordu.
 - `ibul_app/lib/services/supabase_service.dart`: `_homeProductSelectFields` / `_homeProductSelectFieldsSansStore` artık `description`, `specifications`, `attributes` içeriyor (quick view için).
 - `ibul_app/lib/screens/home_screen.dart`: `_convertToProduct` → `Product.fromDBProduct(dbProduct)`; satıcı sayfasıyla aynı normalize/model akışı.
+
+## 2026-06-13 (garson masa kapanış → finance bugünkü gelir)
+
+- **Kök neden:** Dashboard ciro `_combinedDashboardOrders` + `_dashboardClosedHistory` (optimistic dahil) kullanıyordu; Finance KPI "Bugünkü Gelir" yalnız `finance_income_records` manuel kayıtlarından hesaplanıyordu. `FinanceRepository.getSalesRevenue` optimistic geçmişi yalnız DB toplamı 0 ise ekliyordu — bugün daha önce kapanmış masa varsa yeni kapanış finance'a yansımıyordu.
+- **Fix:** `getSalesRevenue` / `getTodayIncomeBreakdown` / `getSalesBreakdown` → `_mergeFetchedHistoryWithOptimistic`. `finance_shell` Bugünkü Gelir = `getSalesRevenue(today)`. Fallback overview `monthIncome` += aylık satış cirosu. Finans modülü açılışında `_reloadRestaurantDashboardMetrics` tetiklenir.
 
 ## 2026-06-13 (seller dashboard Son Siparişler ↔ Orders tutarlılığı)
 
