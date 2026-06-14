@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../models/product_model.dart';
 import '../../core/constants.dart';
-import 'product_detail_content_helper.dart';
+import '../compare_page_helpers.dart';
 
 class ProductComparisonSection extends StatefulWidget {
   const ProductComparisonSection({super.key});
@@ -275,33 +275,13 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
             flex: 2,
             child: Column(
               children: [
-                // Product image placeholder
-                Container(
+                buildCompareProductHeaderImage(
+                  imagePath: compareProductImageUrl({
+                    'product': product,
+                    'image':
+                        product.images.isNotEmpty ? product.images.first : null,
+                  }),
                   height: 120,
-                  width: 100,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey[200]!),
-                    borderRadius: BorderRadius.circular(10),
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.05),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: product.images.isNotEmpty
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.asset(
-                            product.images.first,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, error, stackTrace) =>
-                                _buildPlaceholderIcon(product),
-                          ),
-                        )
-                      : _buildPlaceholderIcon(product),
                 ),
                 const SizedBox(height: 8),
                 // Product name
@@ -322,28 +302,6 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
         }),
       ],
     );
-  }
-
-  Widget _buildPlaceholderIcon(Product product) {
-    IconData icon;
-    final category = (product.category ?? '').toLowerCase();
-    final name = product.name.toLowerCase();
-
-    if (name.contains('iphone') ||
-        name.contains('galaxy') ||
-        name.contains('telefon')) {
-      icon = Icons.phone_iphone;
-    } else if (name.contains('macbook') || name.contains('laptop')) {
-      icon = Icons.laptop_mac;
-    } else if (name.contains('airpods') || name.contains('kulaklık')) {
-      icon = Icons.headphones;
-    } else if (category.contains('kişisel') || category.contains('bakım')) {
-      icon = Icons.spa;
-    } else {
-      icon = Icons.shopping_bag_outlined;
-    }
-
-    return Center(child: Icon(icon, size: 40, color: Colors.grey[400]));
   }
 
   Widget _buildSpecRowWidget(
@@ -423,33 +381,32 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
   }
 
   List<_SpecRow> _buildSpecRows(List<Product> products) {
-    final rows = <_SpecRow>[];
-
-    // Fiyat
-    rows.add(
+    final rows = <_SpecRow>[
       _SpecRow(label: 'Fiyat', values: products.map((p) => p.price).toList()),
-    );
-
-    // Değerlendirmeler
-    rows.add(
       _SpecRow(
         label: 'Değerlendirmeler',
         values: products.map((p) => '${p.rating}').toList(),
       ),
-    );
-
-    // Satıcı
-    rows.add(
       _SpecRow(
         label: 'Satıcı',
         values: products.map((p) => p.store ?? '-').toList(),
       ),
+    ];
+
+    rows.addAll(
+      buildDynamicProductSpecRows(products)
+          .map(
+            (row) => _SpecRow(label: row.label, values: row.values),
+          )
+          .where(
+            (row) => !{
+              'fiyat',
+              'değerlendirmeler',
+              'satıcı',
+            }.contains(compareNormalizeLabel(row.label)),
+          ),
     );
 
-    // Dynamic product specs (same source with web/mobile product specs section)
-    rows.addAll(_buildDynamicSpecRows(products));
-
-    // Fallback rows if no spec parsed
     if (rows.length <= 3) {
       rows.add(
         _SpecRow(label: 'Marka', values: products.map((p) => p.brand).toList()),
@@ -465,61 +422,6 @@ class _ProductComparisonSectionState extends State<ProductComparisonSection> {
     }
 
     return rows;
-  }
-
-  List<_SpecRow> _buildDynamicSpecRows(List<Product> products) {
-    final productSpecMaps = products.map((product) {
-      final rawSpecs = ProductDetailContentHelper.buildSpecs(product);
-      final map = <String, String>{};
-      for (final spec in rawSpecs) {
-        final key = (spec['key'] ?? '').trim();
-        final value = (spec['value'] ?? '').trim();
-        if (key.isEmpty || value.isEmpty) continue;
-        map[key] = value;
-      }
-      return map;
-    }).toList();
-
-    final normalizedToDisplay = <String, String>{};
-    final orderedKeys = <String>[];
-
-    for (final specMap in productSpecMaps) {
-      for (final key in specMap.keys) {
-        final normalized = key.toLowerCase();
-        if (!normalizedToDisplay.containsKey(normalized)) {
-          normalizedToDisplay[normalized] = key;
-          orderedKeys.add(normalized);
-        }
-      }
-    }
-
-    final baseRowKeys = {'fiyat', 'değerlendirmeler', 'satıcı'};
-    return orderedKeys
-        .where((normalized) => !baseRowKeys.contains(normalized))
-        .map((normalized) {
-          final label = normalizedToDisplay[normalized]!;
-          final values = productSpecMaps.map((specMap) {
-            final direct = specMap[label];
-            if (direct != null && direct.isNotEmpty) return direct;
-            return specMap.entries
-                    .firstWhere(
-                      (entry) => entry.key.toLowerCase() == normalized,
-                      orElse: () => const MapEntry('', '-'),
-                    )
-                    .value
-                    .trim()
-                    .isEmpty
-                ? '-'
-                : specMap.entries
-                      .firstWhere(
-                        (entry) => entry.key.toLowerCase() == normalized,
-                        orElse: () => const MapEntry('', '-'),
-                      )
-                      .value;
-          }).toList();
-          return _SpecRow(label: label, values: values);
-        })
-        .toList();
   }
 }
 

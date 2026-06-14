@@ -199,7 +199,7 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Bağlı olduğu dosyalar:` `AppState`, `ReviewState`, `DatabaseHelper`, `AdminService`, `ReviewRepository`, `StoreService`, `SupabaseService`, çok sayıda widget ve `business_detail_page.dart`, `map_page.dart`.
 - `Bu dosyayı kullanan dosyalar:` `HomeWrapper`, `MaterialApp.home`, kök `/` route.
 - `Değişirse etkilenecek yerler:` landing ürün akışı, banner cache, QR’dan home fallback, category/search navigasyonları.
-- `Risk notu:` Büyük ve çok sorumluluklu; performans ve init race sorunlarına açık. Web görünümü (`home_screen_sections.dart`) `WebStickyFooterScrollView` kullanır; kategori/boş ürün ekranı footer layout'u bu wrapper'a bağlıdır.
+- `Risk notu:` Büyük ve çok sorumluluklu; performans ve init race sorunlarına açık. Web görünümü (`home_screen_sections.dart`) `WebStickyFooterScrollView` kullanır; kategori/boş ürün ekranı footer layout'u bu wrapper'a bağlıdır. Web ana sayfa **Neden iBul?** bölümü `_buildWhyIbulSection()` ile action card olarak render edilir; kartlar gerçek route'lara bağlıdır (`MapPage`, `CategoriesPage`, `AIChatPage`/`CameraPage`).
 - `Durum:` kısmi
 
 ## `ibul_app/lib/screens/qr_entry_screen.dart`
@@ -316,11 +316,11 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 
 - `Dosya yolu:` `ibul_app/lib/screens/map_page.dart`
 - `Amaç:` harita üzerinden mağaza keşfi, yakınlık bildirimleri ve store detail açılışı.
-- `Bağlı olduğu dosyalar:` `AppState`, `StoreService`, `SupabaseService`, `PushNotificationService`, `BusinessDetailPage`, map/filter widget’ları.
+- `Bağlı olduğu dosyalar:` `AppState`, `StoreService`, `StoreFollowService`, `StoreFollowState`, `SupabaseService`, `PushNotificationService`, `BusinessDetailPage`, `StoreAchievementBadges`, map/filter widget’ları.
 - `Bu dosyayı kullanan dosyalar:` route `/map`, `home_screen.dart`, `web_header.dart`, `list_detail_page.dart`, `product_search_result_page.dart`, `visual_intelligence_result_page.dart`.
-- `Değişirse etkilenecek yerler:` store proximity, harita arama, business detail yönlendirmeleri.
-- `Risk notu:` canlı konum sync ve bildirim mantığı mevcut; yan etki alanı yalnız UI değil. Konum izni/konum okuma `LocationAccessService` üzerinden tekilleştirildi; IndexedStack + push edilen ikinci `MapPage` izin yarışı bu katmanda engellenir. Geri butonu: desktop geniş layout veya `product != null` ile push edilmiş yakın lokasyon akışında (`Navigator.canPop`) gösterilir; standalone harita sekmesinde mobilde gizli kalır.
-- `Durum:` kısmi
+- `Değişirse etkilenecek yerler:` store proximity, harita arama, business detail yönlendirmeleri, harita mağaza popup (rating/takipçi/rozet).
+- `Risk notu:` canlı konum sync ve bildirim mantığı mevcut; yan etki alanı yalnız UI değil. Konum izni/konum okuma `LocationAccessService` üzerinden tekilleştirildi; IndexedStack + push edilen ikinci `MapPage` izin yarışı bu katmanda engellenir. Geri butonu: desktop geniş layout veya `product != null` ile push edilmiş yakın lokasyon akışında (`Navigator.canPop`) gösterilir; standalone harita sekmesinde mobilde gizli kalır. Mağaza popup `_MapBusinessDetailSheet` üzerinden `getStoresForMap` + `get_store_follow_state` RPC ile gerçek `rating`/`follower_count` gösterir; demo `9.8B`/`8.2` sabitleri kaldırıldı.
+- `Durum:` net
 
 ## `ibul_app/lib/screens/seller_login_page.dart`
 
@@ -822,7 +822,65 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 
 # Update Log
 
-## 2026-06-13 (garson ilk açılış + geçmiş kart hizalama)
+## 2026-06-14 (printer ethernet/usb stable startup + add flow)
+
+- **Kök neden (Ethernet baskı yok):** Windows'ta canlı USB/CUPS taraması doluyken `_mergeCanonicalPrinterCatalog` erken dönüyor ve kayıtlı Ethernet (`tcp:HOST:PORT`) satırlarını kataloga eklemiyordu → rol çözümleme / `prepareQueuedPrintPayload` mutfak hedefini USB'ye düşürüyor veya host/port boş kalıyordu.
+- **Kök neden (startup restore):** Bridge kapalıyken `loadSetupSnapshot` kayıtlı yazıcıları hiç merge etmiyordu; UI ve rol restore boş kalıyordu.
+- **Kök neden (hub warm cache):** `DesktopPrintHub._warmPrinterConfigCache` yanlış kolon `seller_id` ile sorguluyordu (`printers.restaurant_id` olmalı) → startup config cache boş, Ethernet metadata enrich edilmiyordu.
+- **Kök neden (Ethernet UI kayboluyor):** Ana `desktop_printer_setup_page` yalnızca `showPrinterWizard` FAB açıyordu; kalıcı **Ethernet Yazıcı Ekle** CTA yalnızca adım adım sihirbazın tarama adımındaydı. Rol seçimi `_hasDetectedPrinters` yalnız `isLive` USB taramasına bakıyordu → yalnız Ethernet kayıtlı ortamda rol dropdown kilitli kalıyordu.
+- **Fix:** `desktop_print_orchestrator.dart` — Windows live-scan dalında Ethernet merge; bridge offline iken saved printer catalog restore; `isSelectableLivePrinter` TCP backend için host/port guard.
+- **Fix:** `desktop_print_hub.dart` — warm cache `restaurant_id` + Ethernet bridge payload alanları.
+- **Fix:** `desktop_printer_setup_page.dart` — kalıcı Ethernet ekleme butonu; TCP yazıcılar rol seçiminde selectable; test printer resolve OS-aware.
+- **Test:** `ethernet_role_mapping_test.dart` — Windows live USB + saved Ethernet merge regression.
+
+## 2026-06-14 (printer setup mode guard — TCP vs CUPS)
+
+- **Kök neden:** Ethernet kurulumunda `printer_wizard` CUPS kuyruk alanı gösteriyordu; `deviceCtrl` dolunca `printBridgeTest` kuyruk adıyla CUPS yazıcı çözümlüyordu → `targetHost` olsa bile `cups_queue_stuck` / `tcp_timeout` karışık hatalar.
+- **Fix:** `desktop_print_orchestrator.dart` — `targetHost` varken `_buildDirectTcpPrinterFromTarget` öncelikli; CUPS kuyruk çözümlemesi atlanır.
+- **Fix:** `printer_wizard.dart` — Ethernet modunda CUPS alanı gizlendi; test/save `upsertEthernetPrinter` + `skipSetupSnapshot` TCP fast-path; IP/port doğrulama.
+- **Fix:** `printer_error_messages.dart` — `PrinterSetupMode.ethernetTcp` ile CUPS hatalarına mode-aware kullanıcı mesajı.
+- **Test:** `desktop_print_orchestrator_test.dart` TCP-over-CUPS-name guard; `printer_error_messages_test.dart` mode guard copy.
+
+## 2026-06-14 (ethernet separate flow + generic profile resolution)
+
+- **Kök neden:** `printer_wizard` test payload'ı `paper_width_mm=80` gönderiyordu ama `printer_profile` / `raster_width_px` eksikti; bridge `_complete_receipt_request` varsayılan `pos58` ile 80mm'i reddediyordu → "POS-58 receipt profile invalid".
+- **Fix:** `printer_profile.dart` — `resolveForEthernetSetup` + `bridgeProfileFields`; 80mm → `generic_80mm_escpos`, 58mm → `pos58`.
+- **Fix:** `printer_wizard.dart` / `printer_ethernet_dialog.dart` — test/save payload'larına tam profil metadata.
+- **Fix:** `local_print_bridge/server.py` — `_complete_receipt_request` 80mm profil yolunu kabul eder; pos58 doğrulaması yalnızca 58mm için.
+- **Fix:** `desktop_printer_setup_page.dart` — **Ethernet Yazıcı Ekle** birincil (mor filled) buton; adım adım kurulum ikincil.
+- **Test:** `printer_error_messages_test.dart` profile resolution; `test_server.py` 80mm receipt accept.
+
+## 2026-06-14 (printer add two entry points — standard vs ethernet)
+
+- **Kök neden:** Tek `showPrinterWizard` girişi Ethernet’i standart akışa gömdü; test payload eksik profille bridge `pos58` varsayılanına düşüyordu.
+- **Fix:** `showAddPrinterFlow` — ilk ekran iki seçenek: Standart Yazıcı / Ethernet Yazıcı; edit’te `isEthernetConnection` → ethernet dialog.
+- **Fix:** `printer_wizard.dart` — step 1’den Ethernet bağlantı tipi kaldırıldı.
+- **Fix:** `printer_ethernet_dialog.dart` — Kod alanı; test/save aynı `resolveForEthernetSetup` + `bridgeProfileFields`; `setupMode: ethernetTcp` hatalar.
+- **Fix:** FAB ve edit çağrıları `showAddPrinterFlow` kullanır (`desktop_printer_setup_page`, `kitchen_print_management_page`).
+
+## 2026-06-14 (ethernet dialog — split network/print test, single error)
+
+- **Kök neden:** `printer_ethernet_dialog` bağlantı ve test fişi banner'larını aynı anda gösteriyordu; bağlantı testi receipt payload taşıyordu; test fişi `_connectionOk` guard'ı olmadan çalışıyordu; bridge `ethernet_test` modunda global `pos58` varsayılanına düşebiliyordu.
+- **Fix:** `printer_ethernet_dialog.dart` — `_buildTcpProbePayload` (TCP-only); print test öncesi bağlantı guard; tek aktif banner (print > connection); `resolveEthernetSetupTestError`.
+- **Fix:** `printer_error_messages.dart` — `EthernetSetupTestPhase` + TCP öncelikli tek hata çözümleyici.
+- **Fix:** `server.py` — `_complete_ethernet_test_request` (`ethernet_test`/`tcp_test` için POS-58 global fallback yok).
+- **Test:** `printer_error_messages_test.dart` — combined tcp+profile öncelik testleri.
+
+## 2026-06-14 (ethernet dialog — single status banner, no dual error)
+
+- **Kök neden (kalan):** İki ayrı state (`_connectionMessage` + `_printMessage`) birikebiliyordu; teknik detayda POS-58 metni TCP mesajının altında ikinci hata gibi görünüyordu; IP/port değişince `_connectionOk` stale kalabiliyordu.
+- **Fix:** `printer_ethernet_dialog.dart` — tek `_statusMessage` banner; IP/port/kağıt değişince bağlantı geçersiz; eşzamanlı test engeli.
+- **Fix:** `printer_error_messages.dart` — bağlantı fazında profil hatası → ağ mesajı; TCP+profil birleşik payload'da teknik detaydan profil gürültüsü temizlenir.
+
+## 2026-06-14 (ethernet guided network diagnostics)
+
+- **Kök neden:** Bridge TCP probe `local_ips` / `same_subnet` / `suggested_message` üretiyordu ama `printer_ethernet_dialog` yalnızca generic `tcp_unreachable` gösteriyordu; operatör farklı subnet’te neden bağlanamadığını anlayamıyordu.
+- **Fix:** `server.py` — `diagnostic_only` / `network_preflight` TCP’siz subnet ön kontrolü.
+- **Fix:** `local_print_service.dart` — `fetchEthernetNetworkPreflight`.
+- **Fix:** `printer_error_messages.dart` — `EthernetNetworkDiagnostics`, `resolveEthernetConnectionProbeResult`, rehber adımları.
+- **Fix:** `printer_ethernet_dialog.dart` — Ağ Tanılama kartı, Kolay Kurulum Yardımı, IP değişince preflight, Test Fişi yalnız `_connectionOk` iken aktif.
+- **Polish:** Port durumu etiketi (`Test edilmedi` / `Açık` / `Kapalı`); teknik detay açılır bölüm; rehber 5 adım (açık / kablo ayrı).
+
 
 - **Kök neden (1):** Bootstrap bitmeden `shouldShowGarsonInitialLoading` false dönüyordu (`initialLoading` henüz true olmadan); empty/error state erken render ediliyordu. Owner id hydrate olmadan `sellerId.isEmpty` → "Oturum bulunamadı" flash'i.
 - **Kök neden (2):** `TableHistoryScreen` `Align(topCenter)` + `ConstrainedBox(maxWidth:640)` + `compact:true` tam genişlik satır layout kullanıyordu → kartlar ortalanıyor, strip kart hissinden uzaklaşıyordu.
@@ -1097,6 +1155,13 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 - `ibul_app/lib/services/auth_service.dart`: `photoUrl` profil güncelleme, `uploadProfilePhotoBytes`, `updateUserEmail`, `updateUserPassword`.
 - `ibul_app/lib/core/app_state_profile.dart`: `photoUrl`, `updateUserEmail`, `uploadProfilePhoto`, `updateUserPassword` AppState API.
 
+## 2026-06-14 (map store popup real data)
+
+- `ibul_app/lib/screens/map_page.dart`: Mağaza popup `_MapBusinessDetailSheet` olarak ayrıldı; takipçi sayısı `StoreFollowService.getStoreFollowState` + `StoreFollowState.formattedFollowerCount`, puan `stores.rating`, açıklama `stores.description/slogan` üzerinden gelir. Sabit demo değerler (`9.8B Takipçi`, `8.2`) kaldırıldı.
+- `ibul_app/lib/services/store_service.dart`: `getStoresForMap` artık `rating`, `follower_count`, `description`, `slogan` kolonlarını da çeker.
+- `ibul_app/lib/models/store_follow_state.dart`: `parseFollowerCount`, `formatFollowerLabel`, `formatRatingLabel` yardımcıları eklendi.
+- `ibul_app/lib/widgets/store_achievement_badges.dart`: Rozet alanı için geleceğe hazır pasif placeholder; sahte kazanılmış turuncu rozet gösterilmez.
+
 ## 2026-06-13 (product detail nearby map back button)
 
 - `ibul_app/lib/screens/map_page.dart`: Ürün detayından `MapPage(product: …)` ile push edilen yakın lokasyon akışında mobil/tablet sol üst geri butonu gösterilir (`product != null && Navigator.canPop`); IndexedStack’teki standalone harita sekmesinde geri butonu görünmez. Desktop geniş layout (`>=1100px`) davranışı aynı kalır.
@@ -1123,6 +1188,54 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 - `ibul_app/lib/screens/search_results_page.dart`: Mobil grid `childAspectRatio` `0.65` → `0.70`, web grid `0.65` → `0.82`; kartlar `Align(topCenter)` ile hizalanıyor.
 - `ibul_app/lib/screens/business_detail_page.dart`: Store ürün grid oranları `0.60–0.72` → `0.66–0.76`; kart üst hizalı.
 - `ibul_app/lib/screens/product_search_result_page.dart`: Legacy arama grid oranı `0.48` → `0.68` (aşırı uzun hücre boşluğu giderildi).
+
+## 2026-06-14 (compare features — dynamic parity + category guard)
+
+- `ibul_app/lib/widgets/compare_page_helpers.dart`: Ortak dinamik özellik toplama (`collectProductCompareFieldMap`, `buildDynamicProductSpecRows`, `buildCompareFeatureSections`); `ProductDetailContentHelper.buildSpecs` + `specifications` JSON/map + `attributes` + gerçek ürün alanları; normalize edilmiş label birleştirme; ana kategori doğrulama (`compareProductsShareMainCategory`); header görseli `Product.images` → `imageFor(card)` → `thumbnailPublicUrl`.
+- `ibul_app/lib/screens/compare_features_page.dart`: Sabit kalıp satırlar kaldırıldı; ortak helper kullanılıyor; farklı ana kategoride blocked state.
+- `ibul_app/lib/screens/compare_products_page.dart`: Özellik karşılaştırmaya gitmeden önce ana kategori kontrolü + SnackBar uyarısı.
+- `ibul_app/lib/widgets/product_detail/product_comparison_section.dart`: Aynı dinamik helper; header görselleri gerçek URL/CDN ile (`OptimizedImage`).
+- `Product.category` = ana kategori (`main_category` fallback); görsel kaynağı: `images` (birincil), `thumbnailPublicUrl` (yedek).
+
+
+- `CompareFeaturesPanel`: özellik compare header + spec tablosu tek grid; solda 180px label kolonu header’da da var → orta divider header/tablo ile hizalı.
+- Ürün header sırası: ad → mağaza → fiyat → görsel (görsel en altta).
+- `CompareColumnDivider(compact: true)`: grid içi divider margin’siz, 2 üründe tam orta çizgi.
+- Genel Bilgiler üstünde ayrı `CompareProductColumnsHeader` kaldırıldı; tekrarlayan görsel bloğu yok.
+
+## 2026-06-14 (product compare — fullscreen grid layout)
+
+- Web compare yüzeyi artık dar kart/modal değil: `CompareWebShell` tam genişlik, `WebHeader` + `maxWidth:1200` kart kaldırıldı.
+- `CompareColumnLayout` / `CompareSpecTable`: 2–4 ürün için eşit kolonlar; 2 üründe ortada vurgulu dikey divider.
+- `CompareProductColumnsHeader`: üstte hizalı görsel + ad/mağaza/fiyat; altında Excel tarzı özellik tablosu.
+- Yorum/görsel compare: `ReviewRepository` + `Product.images`; N ürün kolon desteği; demo listeler yok.
+- Navigasyon: `openCompareRoute` (`rootNavigator`) ile tam sayfa compare rotası.
+
+## 2026-06-14 (ai discover — fullscreen + no demo responses)
+
+- `ibul_app/lib/screens/ai_discover_page.dart`: **Kendini Keşfet** web'de kart/modal görünümünden tam sayfa layout'a geçirildi (`WebHeader` + full-bleed panel, `maxWidth: 1400`); demo chat mesajları, sahte ürün önerileri ve `_sendMessage` mock yanıt üretimi kaldırıldı; AI kapalıyken dürüst info card (`Yapay Zeka Asistanı` / `Size nasıl yardımcı olabilirim?`); input disabled + sağ **Nasıl Çalışır?** paneli korundu.
+- `ibul_app/lib/services/ai_assistant_service.dart`: `isDiscoverChatLive` getter eklendi (`false` — gerçek backend bağlanınca açılacak); discover yüzeyi demo bypass için bunu kontrol eder.
+- `ibul_app/lib/screens/ai_chat_page.dart`: Kendini Keşfet navigasyonu `rootNavigator: true` ile tam sayfa route.
+
+## 2026-06-14 (product compare — real data + UI cleanup)
+
+- `ibul_app/lib/screens/compare_products_page.dart`: Favori ürün seçimi sonrası üç karşılaştırma rotası — özellik / yorum / görsel.
+- `ibul_app/lib/widgets/compare_page_helpers.dart`: Ortak web shell, ürün başlık satırı, `loadReviewsForProduct` (`ReviewRepository` + `ReviewState`), empty-state yardımcıları.
+- `ibul_app/lib/screens/compare_features_page.dart`: Yalnız gerçek `Product` alanları (marka, kategori, açıklama, specifications, attributes, features, ingredients, puan); demo kategori tablosu yok.
+- `ibul_app/lib/screens/compare_reviews_page.dart`: Hardcoded demo yorum listesi kaldırıldı; Supabase/local review özeti; boşsa “Bu ürün için henüz yorum yok.”
+- `ibul_app/lib/screens/compare_images_page.dart`: `product.images` + review `imageUrls`; demo görsel/yorum kartları kaldırıldı; boş galeri empty state.
+- `ibul_app/lib/widgets/product_detail/comparison_modal.dart`: Kategori bazlı sahte spec satırları (Ekran/RAM vb.) kaldırıldı; gerçek ürün alanları kullanılır.
+- Veri kaynakları: `Product.images`, `ReviewRepository.getProductReviewSummary`, `ReviewState.getProductReviewsFor`.
+
+## 2026-06-14 (home — Neden iBul action cards)
+
+- `ibul_app/lib/screens/home_screen.dart`: Web ana sayfadaki **Neden iBul?** bölümü statik bilgi kartlarından premium action card'lara dönüştürüldü (`_WhyIbulActionCard`: hover/focus/press, ok CTA, responsive 4→2 kolon).
+- Navigation eşlemesi (fake route yok):
+  - **Yakın Lokasyon** → `MapPage` (`web_header` ile aynı pattern)
+  - **Fiyat Karşılaştırma** → `CompareProductsPage` (beğendiğim ürünleri karşılaştır)
+  - **Yapay Zeka Asistanı** → web: `AIChatPage` dialog (FAB ile aynı); mobil fallback: `CameraPage`
+  - **Güvenilir Satıcılar** → `MapPage` (`StoreService.getStoresForMap` onaylı mağazalar; ayrı verified-list ekranı yok)
+- `ibul_app/lib/screens/account_page.dart`: Web **Hesabım > Hesap Özeti** içinde istatistik kartlarının altına mobildeki **Yapay Zekaya Danış** alanı eklendi (`_AccountAiConsultCard`, responsive, dialog ile `AIChatPage` açar).
 
 ## 2026-06-12 (order detail / account summary)
 

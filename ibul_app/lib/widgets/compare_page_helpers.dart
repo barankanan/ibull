@@ -1,10 +1,17 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 
+import '../core/app_image_cdn.dart';
 import '../core/constants.dart';
 import '../core/review_state.dart';
 import '../models/product_model.dart';
 import '../services/review_repository.dart';
+import 'product_detail/product_detail_content_helper.dart';
+
+const kCompareMainCategoryMismatchMessage =
+    'Farklı kategorilerdeki ürünler karşılaştırılamaz. Lütfen aynı kategoriden ürünler seçin.';
 
 Product? compareProductAt(List<Map<String, dynamic>> maps, int index) {
   if (index >= maps.length) return null;
@@ -53,12 +60,324 @@ List<String> reviewImageUrls(Map<String, dynamic> review) {
 String? compareProductImageUrl(Map<String, dynamic> productMap) {
   final product = productMap['product'] as Product?;
   if (product != null) {
+    final cdnUrl = product.imageFor(AppImageVariant.card);
+    if (cdnUrl.isNotEmpty) return cdnUrl;
     for (final url in product.images) {
-      if (url.trim().isNotEmpty) return url.trim();
+      final trimmed = url.trim();
+      if (trimmed.isNotEmpty) return trimmed;
     }
+    final thumb = product.thumbnailPublicUrl?.trim();
+    if (thumb != null && thumb.isNotEmpty) return thumb;
   }
   final fallback = productMap['image']?.toString().trim();
   return (fallback != null && fallback.isNotEmpty) ? fallback : null;
+}
+
+String compareNormalizeLabel(String label) => label.trim().toLowerCase();
+
+String? compareNormalizeValue(dynamic raw) {
+  if (raw == null) return null;
+  final text = raw.toString().trim();
+  if (text.isEmpty || text.toLowerCase() == 'null') return null;
+  return text;
+}
+
+String compareFormatSpecValue(dynamic raw) {
+  if (raw == null) return '-';
+  if (raw is List) {
+    final items = raw
+        .map((item) => compareNormalizeValue(item))
+        .whereType<String>()
+        .toList(growable: false);
+    return items.isEmpty ? '-' : items.join(', ');
+  }
+  if (raw is Map) {
+    final encoded = jsonEncode(raw);
+    return encoded == '{}' ? '-' : encoded;
+  }
+  return compareNormalizeValue(raw) ?? '-';
+}
+
+Map<String, String> parseProductSpecificationsMap(Product product) {
+  final raw = product.specifications?.trim() ?? '';
+  if (raw.isEmpty) return const {};
+
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map) {
+      final map = <String, String>{};
+      decoded.forEach((key, value) {
+        final label = compareNormalizeValue(key);
+        final formatted = compareFormatSpecValue(value);
+        if (label != null && formatted != '-') {
+          map[label] = formatted;
+        }
+      });
+      if (map.isNotEmpty) return map;
+    }
+  } catch (_) {}
+
+  final map = <String, String>{};
+  for (final line in raw.split('\n')) {
+    final parts = line.split(':');
+    if (parts.length < 2) continue;
+    final key = parts[0].trim();
+    final value = parts.sublist(1).join(':').trim();
+    if (key.isNotEmpty && value.isNotEmpty) {
+      map[key] = value;
+    }
+  }
+  return map;
+}
+
+Map<String, String> collectProductCompareFieldMap(Product product) {
+  final normalizedToLabel = <String, String>{};
+  final valuesByNormalized = <String, String>{};
+
+  void put(String label, dynamic raw) {
+    final displayLabel = label.trim();
+    final value = compareFormatSpecValue(raw);
+    if (displayLabel.isEmpty || value == '-') return;
+    final normalized = compareNormalizeLabel(displayLabel);
+    normalizedToLabel.putIfAbsent(normalized, () => displayLabel);
+    valuesByNormalized[normalized] = value;
+  }
+
+  for (final spec in ProductDetailContentHelper.buildSpecs(product)) {
+    put(spec['key'] ?? '', spec['value']);
+  }
+
+  for (final entry in parseProductSpecificationsMap(product).entries) {
+    put(entry.key, entry.value);
+  }
+
+  for (final item in product.attributes ?? const <String>[]) {
+    final text = item.trim();
+    if (text.isEmpty) continue;
+    final idx = text.indexOf(':');
+    if (idx > 0) {
+      put(text.substring(0, idx), text.substring(idx + 1));
+    }
+  }
+
+  final simpleAttributes = (product.attributes ?? const <String>[])
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty && !item.contains(':'))
+      .toList(growable: false);
+  if (simpleAttributes.isNotEmpty) {
+    put('Nitelikler', simpleAttributes.join(', '));
+  }
+
+  put('Marka', product.brand);
+  put('Kategori', product.category);
+  put('Alt Kategori', product.subCategory);
+  put('Mağaza', product.store);
+  put('Fiyat', product.price);
+  put('Açıklama', product.displayFullDescription);
+  put('Kısa Açıklama', product.shortDescription);
+  put('Öne Çıkanlar', product.displayFeatures.join(', '));
+  put('İçerik', product.displayIngredients.join(', '));
+  put('Etiketler', product.tags.join(', '));
+  put(
+    'Puan',
+    product.rating > 0 ? product.rating.toStringAsFixed(1) : null,
+  );
+  put(
+    'Yorum Sayısı',
+    product.reviewCount > 0 ? '${product.reviewCount} yorum' : null,
+  );
+  put('Hazırlanma', product.displayPreparationInfoText);
+
+  final additional = product.displayAdditionalInfoItems;
+  if (additional.isNotEmpty) {
+    put('Ek Bilgiler', additional.join(' • '));
+  }
+
+  final serviceInfo = product.displayServiceInfo;
+  if (serviceInfo.isNotEmpty) {
+    put('Servis Bilgisi', serviceInfo.join(' • '));
+  }
+
+  return valuesByNormalized.map(
+    (normalized, value) => MapEntry(
+      normalizedToLabel[normalized] ?? normalized,
+      value,
+    ),
+  );
+}
+
+List<CompareSpecRow> buildDynamicProductSpecRows(List<Product> products) {
+  final productSpecMaps = products
+      .map((product) => collectProductCompareFieldMap(product))
+      .toList();
+
+  final normalizedToDisplay = <String, String>{};
+  final orderedKeys = <String>[];
+
+  for (final specMap in productSpecMaps) {
+    for (final label in specMap.keys) {
+      final normalized = compareNormalizeLabel(label);
+      if (!normalizedToDisplay.containsKey(normalized)) {
+        normalizedToDisplay[normalized] = label;
+        orderedKeys.add(normalized);
+      }
+    }
+  }
+
+  return orderedKeys.map((normalized) {
+    final displayLabel = normalizedToDisplay[normalized]!;
+    final values = productSpecMaps.map((specMap) {
+      final direct = specMap[displayLabel];
+      if (direct != null && direct != '-') return direct;
+      for (final entry in specMap.entries) {
+        if (compareNormalizeLabel(entry.key) == normalized) {
+          return entry.value;
+        }
+      }
+      return '-';
+    }).toList(growable: false);
+    return CompareSpecRow(displayLabel, values);
+  }).toList(growable: false);
+}
+
+List<CompareSpecSection> buildCompareFeatureSections(List<Product> products) {
+  if (products.isEmpty) return const [];
+
+  final dynamicRows = buildDynamicProductSpecRows(products);
+  final reserved = {
+    'marka',
+    'kategori',
+    'alt kategori',
+    'mağaza',
+    'fiyat',
+    'satıcı',
+    'değerlendirmeler',
+    'puan',
+    'yorum sayısı',
+    'etiketler',
+  };
+
+  final generalRows = <CompareSpecRow>[
+    CompareSpecRow('Marka', products.map((p) => p.brand).toList()),
+    CompareSpecRow(
+      'Kategori',
+      products.map((p) => p.category ?? '-').toList(),
+    ),
+    CompareSpecRow(
+      'Alt Kategori',
+      products.map((p) => p.subCategory ?? '-').toList(),
+    ),
+    CompareSpecRow('Mağaza', products.map((p) => p.store ?? '-').toList()),
+    CompareSpecRow('Fiyat', products.map((p) => p.price).toList()),
+  ];
+
+  final specRows = dynamicRows
+      .where((row) => !reserved.contains(compareNormalizeLabel(row.label)))
+      .toList(growable: false);
+
+  final evalRows = <CompareSpecRow>[
+    CompareSpecRow(
+      'Puan',
+      products
+          .map(
+            (p) => p.rating > 0
+                ? '⭐ ${p.rating.toStringAsFixed(1)}'
+                : '-',
+          )
+          .toList(),
+    ),
+    CompareSpecRow(
+      'Yorum Sayısı',
+      products
+          .map(
+            (p) => p.reviewCount > 0 ? '${p.reviewCount} yorum' : '-',
+          )
+          .toList(),
+    ),
+    CompareSpecRow(
+      'Etiketler',
+      products
+          .map((p) => p.tags.isNotEmpty ? p.tags.join(', ') : '-')
+          .toList(),
+    ),
+  ];
+
+  return [
+    CompareSpecSection('GENEL BİLGİLER', generalRows),
+    if (specRows.isNotEmpty)
+      CompareSpecSection('ÜRÜN ÖZELLİKLERİ', specRows),
+    CompareSpecSection('DEĞERLENDİRME', evalRows),
+  ];
+}
+
+List<Product> compareProductsFromMaps(List<Map<String, dynamic>> maps) {
+  return [
+    for (var i = 0; i < maps.length; i++) compareProductAt(maps, i),
+  ].whereType<Product>().toList(growable: false);
+}
+
+bool compareProductsShareMainCategory(List<Product> products) {
+  if (products.length < 2) return true;
+  final categories = products
+      .map((product) => (product.category ?? '').trim().toLowerCase())
+      .where((category) => category.isNotEmpty)
+      .toSet();
+  if (categories.isEmpty) return true;
+  return categories.length == 1;
+}
+
+String? compareMainCategoryMismatchForProducts(List<Product> products) {
+  if (compareProductsShareMainCategory(products)) return null;
+  return kCompareMainCategoryMismatchMessage;
+}
+
+void showCompareCategoryMismatchSnackBar(BuildContext context) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text(kCompareMainCategoryMismatchMessage)),
+  );
+}
+
+Widget buildCompareCategoryBlockedState({String? message}) {
+  return Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Text(
+        message ?? kCompareMainCategoryMismatchMessage,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: Colors.red,
+        ),
+      ),
+    ),
+  );
+}
+
+Widget buildCompareProductHeaderImage({
+  required String? imagePath,
+  double height = 140,
+}) {
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(12),
+    child: Container(
+      height: height,
+      width: double.infinity,
+      color: Colors.grey.shade100,
+      child: imagePath != null
+          ? (imagePath.startsWith('http')
+              ? OptimizedImage(
+                  imageUrlOrPath: imagePath,
+                  fit: BoxFit.contain,
+                  width: double.infinity,
+                  height: height,
+                )
+              : Image.asset(imagePath, fit: BoxFit.contain))
+          : const Center(
+              child: Icon(Icons.image, size: 40, color: Colors.grey),
+            ),
+    ),
+  );
 }
 
 void openCompareRoute(BuildContext context, Widget page) {
@@ -326,26 +645,7 @@ class _CompareProductHeaderCard extends StatelessWidget {
           ],
         ],
         const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            height: 140,
-            width: double.infinity,
-            color: Colors.grey.shade100,
-            child: imagePath != null
-                ? (imagePath.startsWith('http')
-                    ? OptimizedImage(
-                        imageUrlOrPath: imagePath,
-                        fit: BoxFit.contain,
-                        width: double.infinity,
-                        height: 140,
-                      )
-                    : Image.asset(imagePath, fit: BoxFit.contain))
-                : const Center(
-                    child: Icon(Icons.image, size: 40, color: Colors.grey),
-                  ),
-          ),
-        ),
+        buildCompareProductHeaderImage(imagePath: imagePath),
       ],
     );
   }
@@ -437,26 +737,7 @@ class _CompareFeaturesHeaderCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            height: 140,
-            width: double.infinity,
-            color: Colors.grey.shade100,
-            child: imagePath != null
-                ? (imagePath.startsWith('http')
-                    ? OptimizedImage(
-                        imageUrlOrPath: imagePath,
-                        fit: BoxFit.contain,
-                        width: double.infinity,
-                        height: 140,
-                      )
-                    : Image.asset(imagePath, fit: BoxFit.contain))
-                : const Center(
-                    child: Icon(Icons.image, size: 40, color: Colors.grey),
-                  ),
-          ),
-        ),
+        buildCompareProductHeaderImage(imagePath: imagePath),
         if (product != null) ...[
           const SizedBox(height: 10),
           Text(
