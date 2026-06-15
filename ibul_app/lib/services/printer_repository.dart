@@ -278,13 +278,15 @@ class PrinterRepository implements PrinterRepositoryPort {
     required String printerId,
     required bool success,
     String? error,
+    String? statusOverride,
   }) async {
     await _client
         .from('printers')
         .update({
           'last_test_print_at': DateTime.now().toIso8601String(),
           'last_error': success ? null : error,
-          'test_print_status': success ? 'ok' : 'failed',
+          'test_print_status':
+              statusOverride ?? (success ? 'ok' : 'failed'),
           if (success) 'is_active': true,
         })
         .eq('id', printerId);

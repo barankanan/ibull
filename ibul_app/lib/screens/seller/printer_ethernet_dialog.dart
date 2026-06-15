@@ -22,6 +22,7 @@ import '../../models/printer_model.dart';
 import '../../models/printer_profile.dart';
 import '../../services/desktop_print_orchestrator.dart';
 import '../../services/local_print_service.dart';
+import '../../services/printer_error_messages.dart';
 import '../../services/printer_repository.dart';
 
 /// Opens the Ethernet printer dialog and returns the saved [PrinterModel]
@@ -97,16 +98,24 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   );
 
   int _paperWidth = PrinterModel.defaultPaperWidthMm;
+  String _selectedProfileId = PrinterProfile.pos80.id;
   bool _autoCut = true;
   EthernetPrinterRole _role = EthernetPrinterRole.adisyon;
 
   bool _connectionTesting = false;
-  String? _connectionMessage;
-  bool _connectionOk = false;
+  EthernetConnectionDiagnostic? _connectionDiagnostic;
+  Map<String, dynamic>? _networkPreflight;
 
   bool _printTesting = false;
-  String? _printMessage;
-  bool _printOk = false;
+  EthernetConnectionDiagnostic? _printDiagnostic;
+
+  bool _helpExpanded = false;
+  bool _technicalExpanded = false;
+  bool _migrationGuideExpanded = false;
+
+  bool _scanning = false;
+  EthernetScanResult? _scanResult;
+  String? _scanError;
 
   bool _saving = false;
   String? _formError;
@@ -114,17 +123,92 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   String? _portError;
 
   PrinterProfile get _selectedPrinterProfile =>
-      _paperWidth <= 58 ? PrinterProfile.pos58 : PrinterProfile.pos80;
+      PrinterProfile.resolveForEthernetSetup(
+        explicitProfileId: _selectedProfileId,
+        paperWidthMm: _paperWidth,
+      );
+
+  Map<String, dynamic> _ethernetProfileFields() =>
+      PrinterProfile.bridgeProfileFields(_selectedPrinterProfile);
+
+  void _applyProfileSelection(String profileId) {
+    final profile = PrinterProfile.byId(profileId);
+    if (profile == null) return;
+    setState(() {
+      _selectedProfileId = profile.id;
+      _paperWidth = profile.paperWidthMm;
+      _autoCut = profile.supportsCut;
+    });
+  }
+
+  bool get _connectionOk => _connectionDiagnostic?.ok == true;
+  bool get _printOk => _printDiagnostic?.ok == true;
+
+  String get _saveStatusLabel {
+    if (_connectionOk) return 'Hazır';
+    final host = _ipCtrl.text.trim();
+    if (host.isNotEmpty &&
+        _networkCompatibilityPlan.hasMismatch) {
+      return 'Ağ uyumsuzluğu — bağlantı doğrulanmadı';
+    }
+    return 'Bağlantı doğrulanmadı';
+  }
+
+  EthernetNetworkCompatibilityPlan get _networkCompatibilityPlan {
+    final host = _ipCtrl.text.trim();
+    final port = int.tryParse(_portCtrl.text.trim()) ??
+        PrinterModel.ethernetDefaultPort;
+    Map<String, dynamic>? payload = _networkPreflight == null
+        ? null
+        : Map<String, dynamic>.from(_networkPreflight!);
+    if (_connectionDiagnostic != null) {
+      payload = <String, dynamic>{
+        ...?payload,
+        'local_ips': _connectionDiagnostic!.localIps,
+        'same_subnet': _connectionDiagnostic!.sameSubnet,
+        if (_connectionDiagnostic!.hasNetworkMismatch)
+          'network_state': 'network_mismatch',
+        if (_connectionDiagnostic!.networkHint.isNotEmpty)
+          'mismatch_guidance': _connectionDiagnostic!.networkHint,
+      };
+    }
+    if (_scanResult != null) {
+      payload = <String, dynamic>{
+        ...?payload,
+        'local_ips': _scanResult!.localIps,
+        'scanned_subnets': _scanResult!.subnets,
+        if (_scanResult!.suggestedPrinterIp.isNotEmpty)
+          'suggested_printer_ip': _scanResult!.suggestedPrinterIp,
+        if (_scanResult!.suggestedTargetSubnet.isNotEmpty)
+          'suggested_target_subnet': _scanResult!.suggestedTargetSubnet,
+        if (_scanResult!.mismatchGuidance.isNotEmpty)
+          'mismatch_guidance': _scanResult!.mismatchGuidance,
+      };
+    }
+    return EthernetNetworkCompatibilityPlan.fromContext(
+      localIps: const <String>[],
+      printerHost: host,
+      port: port,
+      bridgePayload: payload,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
+    _ipCtrl.addListener(_onNetworkFieldsChanged);
+    _portCtrl.addListener(_onNetworkFieldsChanged);
     final existing = widget.existing;
     if (existing != null) {
       _nameCtrl.text = existing.name;
       _ipCtrl.text = existing.ethernetHost;
       _portCtrl.text = existing.ethernetPort.toString();
-      _paperWidth = existing.paperWidthMm == 58 ? 58 : 80;
+      _selectedProfileId =
+          existing.printerProfileId ??
+          (existing.paperWidthMm <= 58
+              ? PrinterProfile.pos58.id
+              : PrinterProfile.pos80.id);
+      _paperWidth = _selectedPrinterProfile.paperWidthMm;
       _autoCut = existing.supportsCut;
       if (existing.assignedRoles.contains(PrinterRole.receipt) &&
           existing.assignedRoles.contains(PrinterRole.kitchen)) {
@@ -137,8 +221,141 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     }
   }
 
+  void _onNetworkFieldsChanged() {
+    if (_connectionDiagnostic != null ||
+        _networkPreflight != null ||
+        _printDiagnostic != null) {
+      setState(() {
+        _connectionDiagnostic = null;
+        _networkPreflight = null;
+        _printDiagnostic = null;
+        _technicalExpanded = false;
+      });
+    }
+    _maybeRefreshNetworkPreflight();
+  }
+
+  void _applyDiscoveredDevice(EthernetDiscoveredDevice device) {
+    setState(() {
+      _ipCtrl.text = device.host;
+      _portCtrl.text = device.port.toString();
+      _connectionDiagnostic = null;
+      _printDiagnostic = null;
+      _networkPreflight = null;
+      _technicalExpanded = false;
+      _ipError = null;
+      _portError = null;
+      _formError = null;
+    });
+    _maybeRefreshNetworkPreflight();
+  }
+
+  Future<void> _runAutoScan() async {
+    if (_scanning) return;
+    setState(() {
+      _scanning = true;
+      _scanError = null;
+      _scanResult = null;
+    });
+    if (kIsWeb) {
+      setState(() {
+        _scanning = false;
+        _scanError =
+            'Web sürümü yerel ağa erişemez. Masaüstü uygulamasından tarayın.';
+      });
+      return;
+    }
+    final port = int.tryParse(_portCtrl.text.trim()) ??
+        PrinterModel.ethernetDefaultPort;
+    final hostHint = _ipCtrl.text.trim();
+    try {
+      final raw = await _localPrintService
+          .scanEthernetPrinters(port: port, printerHost: hostHint)
+          .timeout(const Duration(seconds: 45));
+      if (!mounted) return;
+      final result = parseEthernetScanResult(raw);
+      setState(() {
+        _scanResult = result;
+        if (!result.ok) {
+          _scanError = result.message.isNotEmpty
+              ? result.message
+              : 'Ağ taraması tamamlanamadı. IP adresini manuel girebilirsiniz.';
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      final diagnostic = resolveEthernetConnectionException(
+        error,
+        host: _ipCtrl.text.trim(),
+        port: int.tryParse(_portCtrl.text.trim()) ??
+            PrinterModel.ethernetDefaultPort,
+      );
+      setState(() {
+        _scanError = diagnostic.message.isNotEmpty
+            ? diagnostic.message
+            : 'Ağ taraması başarısız. IP adresini manuel girebilirsiniz.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _scanning = false);
+      }
+    }
+  }
+
+  Future<void> _runConnectionTestForDevice(
+    EthernetDiscoveredDevice device,
+  ) async {
+    _applyDiscoveredDevice(device);
+    await _runConnectionTest();
+  }
+
+  Future<void> _runPrintTestForDevice(EthernetDiscoveredDevice device) async {
+    _applyDiscoveredDevice(device);
+    if (!_connectionOk) {
+      await _runConnectionTest();
+      if (!mounted || !_connectionOk) return;
+    }
+    await _runPrintTest();
+  }
+
+  Future<void> _saveDiscoveredDevice(EthernetDiscoveredDevice device) async {
+    _applyDiscoveredDevice(device);
+    if (!_connectionOk ||
+        _connectionDiagnostic?.host != device.host ||
+        _connectionDiagnostic?.port != device.port) {
+      await _runConnectionTest();
+      if (!mounted) return;
+    }
+    await _save();
+  }
+
+  Future<void> _maybeRefreshNetworkPreflight() async {
+    if (kIsWeb) return;
+    final host = _ipCtrl.text.trim();
+    final rawPort = _portCtrl.text.trim();
+    if (host.isEmpty || !isValidEthernetIpv4(host)) {
+      if (_networkPreflight != null && mounted) {
+        setState(() => _networkPreflight = null);
+      }
+      return;
+    }
+    final port = int.tryParse(rawPort) ?? PrinterModel.ethernetDefaultPort;
+    try {
+      final preflight = await _localPrintService.fetchEthernetNetworkPreflight(
+        host: host,
+        port: port,
+      );
+      if (!mounted) return;
+      setState(() => _networkPreflight = preflight);
+    } catch (_) {
+      // Preflight is best-effort; ignore bridge offline here.
+    }
+  }
+
   @override
   void dispose() {
+    _ipCtrl.removeListener(_onNetworkFieldsChanged);
+    _portCtrl.removeListener(_onNetworkFieldsChanged);
     _nameCtrl.dispose();
     _ipCtrl.dispose();
     _portCtrl.dispose();
@@ -168,6 +385,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     if (host.isEmpty) {
       ipError = 'IP adresi boş olamaz.';
       debugPrint('[EthernetPrinter][validate_error] field=ip reason=empty');
+    } else if (!isValidEthernetIpv4(host)) {
+      ipError = 'Geçerli bir IPv4 adresi girin (ör. 192.168.1.100).';
+      debugPrint('[EthernetPrinter][validate_error] field=ip reason=invalid_format');
     }
     int port = PrinterModel.ethernetDefaultPort;
     if (rawPort.isNotEmpty) {
@@ -225,14 +445,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         'ip_address': form.host,
         'ipAddress': form.host,
         'port': form.port,
-        'paper_width_mm': _paperWidth,
-        'paperWidthMm': _paperWidth,
-        'chars_per_line': _selectedPrinterProfile.charsPerLine,
-        'raster_width_px': _selectedPrinterProfile.rasterWidthPx,
-        'auto_cut': _autoCut,
-        'autoCut': _autoCut,
-        'printer_profile': _selectedPrinterProfile.id,
-        'printer_profile_id': _selectedPrinterProfile.id,
+        ..._ethernetProfileFields(),
         'render_mode': 'image',
         'turkish_guarantee_mode': true,
         'source': 'ethernet_dialog_form',
@@ -257,12 +470,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       'printer_id': printerId,
       'printer_name': form.name,
       'displayName': form.name,
-      'paper_width_mm': _paperWidth,
-      'chars_per_line': _selectedPrinterProfile.charsPerLine,
-      'raster_width_px': _selectedPrinterProfile.rasterWidthPx,
-      'auto_cut': _autoCut,
-      'printer_profile': _selectedPrinterProfile.id,
-      'printer_profile_id': _selectedPrinterProfile.id,
+      ..._ethernetProfileFields(),
       'render_mode': 'image',
       'turkish_guarantee_mode': true,
       'document_type': 'test',
@@ -282,6 +490,13 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     });
   }
 
+  String? _validateSelectedProfile() {
+    if (PrinterProfile.byId(_selectedProfileId) == null) {
+      return 'Yazıcı profili seçilmedi.';
+    }
+    return null;
+  }
+
   // ── test actions ───────────────────────────────────────────────────────
 
   Future<void> _runConnectionTest() async {
@@ -289,25 +504,32 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     if (!form.isValid) {
       _applyValidation(form);
       setState(() {
-        _connectionOk = false;
-        _connectionMessage = null;
+        _connectionDiagnostic = null;
       });
       return;
     }
     final payload = _buildEthernetDispatchPayload(form);
     setState(() {
       _connectionTesting = true;
-      _connectionMessage = null;
-      _connectionOk = false;
+      _connectionDiagnostic = null;
+      _printDiagnostic = null;
       _formError = null;
       _ipError = null;
       _portError = null;
+      _technicalExpanded = false;
     });
     if (kIsWeb) {
       setState(() {
         _connectionTesting = false;
-        _connectionMessage =
-            'Web sürümü yerel ağa erişemez. Masaüstü uygulamasından test edin.';
+        _connectionDiagnostic = EthernetConnectionDiagnostic(
+          ok: false,
+          errorCode: 'bridge_unreachable',
+          title: 'Web sürümü desteklenmiyor',
+          message:
+              'Web sürümü yerel ağa erişemez. Masaüstü uygulamasından test edin.',
+          host: form.host,
+          port: form.port,
+        );
       });
       return;
     }
@@ -321,35 +543,61 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
           .probeTcpPrinter(host: host, port: port, printer: payload)
           .timeout(const Duration(seconds: 8));
       if (!mounted) return;
-      final ok = result?['ok'] == true;
-      final suggestedMessage =
-          result?['suggested_message']?.toString().trim() ?? '';
+      final diagnostic = resolveEthernetConnectionProbeResult(
+        result,
+        host: host,
+        port: port,
+      );
       setState(() {
-        _connectionOk = ok;
-        _connectionMessage = ok
-            ? (suggestedMessage.isNotEmpty
-                  ? suggestedMessage
-                  : 'Ethernet yazıcıya bağlantı başarılı.')
-            : (suggestedMessage.isNotEmpty
-                  ? suggestedMessage
-                  : 'Bağlantı başarısız: ${result?['error'] ?? 'Bilinmeyen hata'}');
+        _connectionDiagnostic = diagnostic;
+        if (!diagnostic.ok) {
+          _printDiagnostic = null;
+        }
       });
       debugPrint(
-        ok
+        diagnostic.ok
             ? '[EthernetPrinter][connection_test_success] host=$host port=$port'
-            : '[EthernetPrinter][connection_test_error] '
-                  'code=${result?['errorCode'] ?? 'unknown'}',
+            : '[EthernetPrinter][connection_test_error] code=${diagnostic.errorCode}',
       );
-    } catch (e) {
+    } on LocalPrintServiceException catch (error) {
       if (!mounted) return;
-      final rawMessage = e.toString();
-      final friendlyMessage =
-          rawMessage.contains('Not found') || rawMessage.contains('404')
-          ? 'Baglanti dogrulanamadi. Bridge bu surumde TCP probe endpointini desteklemiyor olabilir. Test fisi hattini kullanarak tekrar deneyin.'
-          : 'Baglanti basarisiz: $e';
+      final details = error.details is Map<String, dynamic>
+          ? Map<String, dynamic>.from(error.details! as Map<String, dynamic>)
+          : null;
+      final diagnostic = details == null
+          ? resolveEthernetConnectionException(error, host: host, port: port)
+          : resolveEthernetConnectionProbeResult(details, host: host, port: port);
       setState(() {
-        _connectionOk = false;
-        _connectionMessage = friendlyMessage;
+        _connectionDiagnostic = EthernetConnectionDiagnostic(
+          ok: diagnostic.ok,
+          errorCode: diagnostic.errorCode,
+          title: diagnostic.title,
+          message: diagnostic.message,
+          technicalDetail: error.toString(),
+          host: diagnostic.host,
+          port: diagnostic.port,
+          localIps: diagnostic.localIps,
+          sameSubnet: diagnostic.sameSubnet,
+          reachable: diagnostic.reachable,
+          portOpen: diagnostic.portOpen,
+          guidanceSteps: diagnostic.guidanceSteps,
+          networkHint: diagnostic.networkHint,
+        );
+        _printDiagnostic = null;
+      });
+      debugPrint(
+        '[EthernetPrinter][connection_test_error] code=${diagnostic.errorCode}',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final diagnostic = resolveEthernetConnectionException(
+        error,
+        host: host,
+        port: port,
+      );
+      setState(() {
+        _connectionDiagnostic = diagnostic;
+        _printDiagnostic = null;
       });
       debugPrint('[EthernetPrinter][connection_test_error] code=exception');
     } finally {
@@ -362,12 +610,26 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   }
 
   Future<void> _runPrintTest() async {
+    if (!_connectionOk) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(ethernetPrintBlockedWithoutConnectionMessage),
+        ),
+      );
+      return;
+    }
     final form = _validateForm();
     if (!form.isValid) {
       _applyValidation(form);
+      setState(() => _printDiagnostic = null);
+      return;
+    }
+    final profileError = _validateSelectedProfile();
+    if (profileError != null) {
       setState(() {
-        _printOk = false;
-        _printMessage = null;
+        _formError = profileError;
+        _printDiagnostic = null;
       });
       return;
     }
@@ -375,17 +637,24 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     final payload = _buildEthernetDispatchPayload(form);
     setState(() {
       _printTesting = true;
-      _printMessage = null;
-      _printOk = false;
+      _printDiagnostic = null;
       _formError = null;
       _ipError = null;
       _portError = null;
+      _technicalExpanded = false;
     });
     if (kIsWeb) {
       setState(() {
         _printTesting = false;
-        _printMessage =
-            'Web sürümü yerel ağa erişemez. Masaüstü uygulamasından test edin.';
+        _printDiagnostic = EthernetConnectionDiagnostic(
+          ok: false,
+          errorCode: 'bridge_unreachable',
+          title: 'Web sürümü desteklenmiyor',
+          message:
+              'Web sürümü yerel ağa erişemez. Masaüstü uygulamasından test edin.',
+          host: form.host,
+          port: form.port,
+        );
       });
       return;
     }
@@ -412,18 +681,60 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
           )
           .timeout(const Duration(seconds: 20));
       if (!mounted) return;
-      setState(() {
-        _printOk = result.ok;
-        _printMessage = result.ok
-            ? 'Test fişi gönderildi. Yazıcı çıktısını kontrol edin.'
-            : 'Test başarısız: ${result.message}';
-      });
-    } catch (e) {
+      if (result.ok) {
+        setState(() {
+          _printDiagnostic = EthernetConnectionDiagnostic(
+            ok: true,
+            errorCode: 'ready',
+            title: 'Test fişi gönderildi',
+            message: 'Test fişi gönderildi. Yazıcı çıktısını kontrol edin.',
+            host: host,
+            port: port,
+          );
+        });
+      } else {
+        final raw = result.raw;
+        final diagnostic = raw is Map<String, dynamic>
+            ? resolveEthernetConnectionProbeResult(raw, host: host, port: port)
+            : EthernetConnectionDiagnostic(
+                ok: false,
+                errorCode: 'unknown',
+                title: 'Test başarısız',
+                message: result.message,
+                technicalDetail: result.technicalMessage ?? result.message,
+                host: host,
+                port: port,
+                guidanceSteps: ethernetPrinterIpHelpSteps(),
+              );
+        setState(() {
+          _printDiagnostic = EthernetConnectionDiagnostic(
+            ok: false,
+            errorCode: diagnostic.errorCode,
+            title: diagnostic.title,
+            message: result.message.isNotEmpty ? result.message : diagnostic.message,
+            technicalDetail:
+                result.technicalMessage ??
+                diagnostic.technicalDetail ??
+                result.message,
+            host: host,
+            port: port,
+            localIps: diagnostic.localIps,
+            sameSubnet: diagnostic.sameSubnet,
+            reachable: diagnostic.reachable,
+            portOpen: diagnostic.portOpen,
+            guidanceSteps: diagnostic.guidanceSteps,
+            networkHint: diagnostic.networkHint,
+          );
+        });
+      }
+    } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _printOk = false;
-        _printMessage = 'Test başarısız: $e';
-      });
+      final diagnostic = resolveEthernetConnectionException(
+        error,
+        host: host,
+        port: port,
+      );
+      setState(() => _printDiagnostic = diagnostic);
     } finally {
       if (mounted) {
         setState(() {
@@ -462,14 +773,35 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         port: port,
         paperWidthMm: _paperWidth,
         supportsCut: _autoCut,
-        isActive: true,
+        isActive: _connectionOk,
         assignedRoles: _role.assignedRoles,
         printerProfileId: _selectedPrinterProfile.id,
       );
-      if (_printOk) {
+      if (_connectionOk && _printOk) {
         await repo.recordTestPrintResult(printerId: saved.id, success: true);
+      } else if (!_connectionOk) {
+        final mismatch = _networkCompatibilityPlan.hasMismatch;
+        await repo.recordTestPrintResult(
+          printerId: saved.id,
+          success: false,
+          statusOverride: 'pending',
+          error: mismatch
+              ? 'network_mismatch: ${_networkCompatibilityPlan.mismatchGuidance}'
+              : 'unverified: Bağlantı doğrulanmadı',
+        );
       }
       if (!mounted) return;
+      if (!_connectionOk) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _networkCompatibilityPlan.hasMismatch
+                  ? ethernetUnverifiedSaveWarning
+                  : ethernetUnverifiedSaveWarning,
+            ),
+          ),
+        );
+      }
       Navigator.of(context).pop(saved);
     } catch (e) {
       if (!mounted) return;
@@ -515,6 +847,31 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
             children: [
               _IntroBanner(),
               const SizedBox(height: 16),
+              _EthernetAutoScanPanel(
+                scanning: _scanning,
+                scanResult: _scanResult,
+                scanError: _scanError,
+                printerHost: _ipCtrl.text.trim(),
+                onScan: _runAutoScan,
+                onSelectDevice: _applyDiscoveredDevice,
+                onTestDevice: _runConnectionTestForDevice,
+                onPrintTestDevice: _runPrintTestForDevice,
+                onSaveDevice: _saveDiscoveredDevice,
+                connectionTesting: _connectionTesting,
+                printTesting: _printTesting,
+                saving: _saving,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'veya IP adresini manuel girin',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF9CA3AF),
+                ),
+              ),
+              const SizedBox(height: 12),
               _Field(
                 label: 'Yazıcı Adı',
                 fieldKey: const Key('ethernet_name_field'),
@@ -556,9 +913,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                 ],
               ),
               const SizedBox(height: 14),
-              _PaperWidthSelector(
-                value: _paperWidth,
-                onChanged: (v) => setState(() => _paperWidth = v),
+              _ProfileSelector(
+                selectedProfileId: _selectedProfileId,
+                onChanged: _applyProfileSelection,
               ),
               const SizedBox(height: 14),
               _Toggle(
@@ -573,6 +930,30 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                 value: _role,
                 onChanged: (v) => setState(() => _role = v),
               ),
+              const SizedBox(height: 14),
+              _EthernetHelpPanel(expanded: _helpExpanded, onToggle: () {
+                setState(() => _helpExpanded = !_helpExpanded);
+              }),
+              const SizedBox(height: 14),
+              _NetworkCompatibilityCard(
+                plan: _networkCompatibilityPlan,
+                connectionDiagnostic: _connectionDiagnostic,
+              ),
+              if (_networkCompatibilityPlan.hasMismatch &&
+                  _ipCtrl.text.trim().isNotEmpty) ...[
+                const SizedBox(height: 14),
+                _EthernetIpMigrationGuide(
+                  plan: _networkCompatibilityPlan,
+                  expanded: _migrationGuideExpanded,
+                  technicalExpanded: _technicalExpanded,
+                  onToggle: () => setState(
+                    () => _migrationGuideExpanded = !_migrationGuideExpanded,
+                  ),
+                  onToggleTechnical: () => setState(
+                    () => _technicalExpanded = !_technicalExpanded,
+                  ),
+                ),
+              ],
               if (_formError != null) ...[
                 const SizedBox(height: 12),
                 _ErrorBanner(message: _formError!),
@@ -604,7 +985,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton.icon(
-                      onPressed: _printTesting ? null : _runPrintTest,
+                      onPressed: _printTesting || !_connectionOk
+                          ? null
+                          : _runPrintTest,
                       icon: _printTesting
                           ? const SizedBox(
                               width: 14,
@@ -627,15 +1010,27 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                   ),
                 ],
               ),
-              if (_connectionMessage != null) ...[
+              if (_connectionDiagnostic != null) ...[
                 const SizedBox(height: 10),
-                _ResultBanner(ok: _connectionOk, message: _connectionMessage!),
+                _DiagnosticResultCard(
+                  diagnostic: _connectionDiagnostic!,
+                  technicalExpanded: _technicalExpanded,
+                  onToggleTechnical: () =>
+                      setState(() => _technicalExpanded = !_technicalExpanded),
+                ),
               ],
-              if (_printMessage != null) ...[
+              if (_connectionOk && _printDiagnostic != null) ...[
                 const SizedBox(height: 10),
-                _ResultBanner(ok: _printOk, message: _printMessage!),
+                _DiagnosticResultCard(
+                  diagnostic: _printDiagnostic!,
+                  technicalExpanded: _technicalExpanded,
+                  onToggleTechnical: () =>
+                      setState(() => _technicalExpanded = !_technicalExpanded),
+                ),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
+              _SaveStatusChip(label: _saveStatusLabel, ok: _connectionOk),
+              const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: _saving
@@ -686,9 +1081,9 @@ class _IntroBanner extends StatelessWidget {
           SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Ethernet yazıcının kendi self-test fişinde yazan IP adresi ve '
-              'sunucu portunu girin. Yazıcı üzerinde port genelde 9100\'dür. '
-              'Bu yazıcı CUPS/USB üzerinden değil, doğrudan TCP ile yazdırır.',
+              'Ethernet yazıcınızı "Otomatik Tara" ile bulun veya self-test '
+              'fişindeki IP adresini manuel girin. Yazıcı doğrudan TCP ile '
+              'yazdırır; CUPS/USB sürücüsü gerekmez.',
               style: TextStyle(
                 fontSize: 12,
                 color: Color(0xFF1E3A8A),
@@ -775,11 +1170,14 @@ class _Field extends StatelessWidget {
   }
 }
 
-class _PaperWidthSelector extends StatelessWidget {
-  const _PaperWidthSelector({required this.value, required this.onChanged});
+class _ProfileSelector extends StatelessWidget {
+  const _ProfileSelector({
+    required this.selectedProfileId,
+    required this.onChanged,
+  });
 
-  final int value;
-  final ValueChanged<int> onChanged;
+  final String selectedProfileId;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -787,7 +1185,7 @@ class _PaperWidthSelector extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Kağıt Genişliği',
+          'Yazıcı Profili',
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
@@ -795,40 +1193,76 @@ class _PaperWidthSelector extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        Row(
-          children: [80, 58].map((w) {
-            final isSelected = value == w;
-            return GestureDetector(
-              onTap: () => onChanged(w),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 130),
-                margin: const EdgeInsets.only(right: 10),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? const Color(0xFF8B5CF6)
-                      : const Color(0xFFF9FAFB),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: isSelected
-                        ? const Color(0xFF8B5CF6)
-                        : const Color(0xFFE5E7EB),
+        ...PrinterProfile.ethernetSetupProfiles.map((profile) {
+          final isSelected = selectedProfileId == profile.id;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: isSelected ? const Color(0xFFF5F3FF) : Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                key: Key('ethernet_profile_${profile.id}'),
+                onTap: () => onChanged(profile.id),
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
                   ),
-                ),
-                child: Text(
-                  '${w}mm',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: isSelected ? Colors.white : const Color(0xFF374151),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isSelected
+                          ? const Color(0xFF8B5CF6)
+                          : const Color(0xFFE5E7EB),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isSelected
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        size: 18,
+                        color: isSelected
+                            ? const Color(0xFF8B5CF6)
+                            : const Color(0xFF9CA3AF),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              profile.label,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: isSelected
+                                    ? const Color(0xFF4C1D95)
+                                    : const Color(0xFF374151),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              profile.description,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF6B7280),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            );
-          }).toList(),
-        ),
+            ),
+          );
+        }),
       ],
     );
   }
@@ -1061,17 +1495,803 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-class _ResultBanner extends StatelessWidget {
-  const _ResultBanner({required this.ok, required this.message});
+class _SaveStatusChip extends StatelessWidget {
+  const _SaveStatusChip({required this.label, required this.ok});
 
+  final String label;
   final bool ok;
-  final String message;
 
   @override
   Widget build(BuildContext context) {
-    final bg = ok ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2);
-    final border = ok ? const Color(0xFF10B981) : const Color(0xFFFECACA);
-    final fg = ok ? const Color(0xFF065F46) : const Color(0xFFDC2626);
+    final bg = ok ? const Color(0xFFF0FDF4) : const Color(0xFFFFF7ED);
+    final border = ok ? const Color(0xFF10B981) : const Color(0xFFFDBA74);
+    final fg = ok ? const Color(0xFF065F46) : const Color(0xFF9A3412);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            ok ? Icons.verified_outlined : Icons.info_outline,
+            size: 16,
+            color: fg,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Kayıt durumu: $label',
+              style: TextStyle(fontSize: 12, color: fg, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EthernetAutoScanPanel extends StatelessWidget {
+  const _EthernetAutoScanPanel({
+    required this.scanning,
+    required this.scanResult,
+    required this.scanError,
+    required this.printerHost,
+    required this.onScan,
+    required this.onSelectDevice,
+    required this.onTestDevice,
+    required this.onPrintTestDevice,
+    required this.onSaveDevice,
+    required this.connectionTesting,
+    required this.printTesting,
+    required this.saving,
+  });
+
+  final bool scanning;
+  final EthernetScanResult? scanResult;
+  final String? scanError;
+  final String printerHost;
+  final VoidCallback onScan;
+  final ValueChanged<EthernetDiscoveredDevice> onSelectDevice;
+  final Future<void> Function(EthernetDiscoveredDevice) onTestDevice;
+  final Future<void> Function(EthernetDiscoveredDevice) onPrintTestDevice;
+  final Future<void> Function(EthernetDiscoveredDevice) onSaveDevice;
+  final bool connectionTesting;
+  final bool printTesting;
+  final bool saving;
+
+  @override
+  Widget build(BuildContext context) {
+    final devices = scanResult?.devices ?? const <EthernetDiscoveredDevice>[];
+    final busy = scanning || connectionTesting || printTesting || saving;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.radar_rounded, size: 18, color: Color(0xFF8B5CF6)),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Ağ Yazıcı Keşfi',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF374151),
+                  ),
+                ),
+              ),
+              FilledButton.icon(
+                key: const Key('ethernet_auto_scan_button'),
+                onPressed: busy ? null : onScan,
+                icon: scanning
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.search_rounded, size: 16),
+                label: Text(scanning ? 'Taranıyor…' : 'Otomatik Tara'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF8B5CF6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (scanResult != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Bilgisayar IP: ${scanResult!.primaryLocalIp} · '
+              'Taranan ağ: ${scanResult!.primarySubnet}',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+            ),
+          ],
+          if (scanError != null) ...[
+            const SizedBox(height: 10),
+            _ScanMessageBanner(message: scanError!, isError: true),
+          ] else if (scanResult != null && scanResult!.ok) ...[
+            const SizedBox(height: 10),
+            _ScanMessageBanner(
+              message: devices.isEmpty
+                  ? ethernetScanNoDeviceMessage(
+                      scanResult: scanResult!,
+                      printerHost: printerHost,
+                    )
+                  : (scanResult!.message.isNotEmpty
+                      ? scanResult!.message
+                      : '${devices.length} cihaz bulundu.'),
+              isError: devices.isEmpty,
+            ),
+          ],
+          if (devices.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ...devices.map((device) {
+              return _DiscoveredDeviceRow(
+                device: device,
+                localIps: scanResult?.localIps ?? const <String>[],
+                busy: busy,
+                onSelect: () => onSelectDevice(device),
+                onTest: () => onTestDevice(device),
+                onPrintTest: () => onPrintTestDevice(device),
+                onSave: () => onSaveDevice(device),
+              );
+            }),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ScanMessageBanner extends StatelessWidget {
+  const _ScanMessageBanner({required this.message, required this.isError});
+
+  final String message;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: isError ? const Color(0xFFFFF7ED) : const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isError ? const Color(0xFFFDBA74) : const Color(0xFF10B981),
+        ),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(
+          fontSize: 11,
+          color: isError ? const Color(0xFF9A3412) : const Color(0xFF065F46),
+          height: 1.4,
+        ),
+      ),
+    );
+  }
+}
+
+class _DiscoveredDeviceRow extends StatelessWidget {
+  const _DiscoveredDeviceRow({
+    required this.device,
+    required this.localIps,
+    required this.busy,
+    required this.onSelect,
+    required this.onTest,
+    required this.onPrintTest,
+    required this.onSave,
+  });
+
+  final EthernetDiscoveredDevice device;
+  final List<String> localIps;
+  final bool busy;
+  final VoidCallback onSelect;
+  final VoidCallback onTest;
+  final VoidCallback onPrintTest;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final reachable = device.reachable && device.portOpen;
+    final statusColor = reachable
+        ? const Color(0xFF059669)
+        : const Color(0xFFDC2626);
+    final hint = device.sameSubnet == false
+        ? (device.networkHint.isNotEmpty
+            ? device.networkHint
+            : formatDifferentSubnetWarning(
+                localIps: localIps,
+                printerHost: device.host,
+              ))
+        : null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: device.sameSubnet == false
+              ? const Color(0xFFFDBA74)
+              : const Color(0xFFE5E7EB),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: busy ? null : onSelect,
+            child: Row(
+              children: [
+                Icon(
+                  Icons.print_outlined,
+                  size: 18,
+                  color: reachable
+                      ? const Color(0xFF8B5CF6)
+                      : const Color(0xFF9CA3AF),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        device.endpointLabel,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF111827),
+                        ),
+                      ),
+                      Text(
+                        device.reachabilityLabel,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: statusColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  key: Key('ethernet_select_${device.host}'),
+                  onPressed: busy ? null : onSelect,
+                  child: const Text('Forma Aktar'),
+                ),
+              ],
+            ),
+          ),
+          if (hint != null && hint.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              hint,
+              style: const TextStyle(
+                fontSize: 10,
+                color: Color(0xFF9A3412),
+                height: 1.35,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              OutlinedButton(
+                key: Key('ethernet_scan_test_${device.host}'),
+                onPressed: busy ? null : onTest,
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: const Color(0xFF8B5CF6),
+                  side: const BorderSide(color: Color(0xFF8B5CF6)),
+                ),
+                child: const Text('Test Et', style: TextStyle(fontSize: 11)),
+              ),
+              OutlinedButton(
+                key: Key('ethernet_scan_print_${device.host}'),
+                onPressed: busy ? null : onPrintTest,
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text(
+                  'Test Fişi Gönder',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ),
+              FilledButton(
+                key: Key('ethernet_scan_save_${device.host}'),
+                onPressed: busy ? null : onSave,
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: const Color(0xFF10B981),
+                ),
+                child: const Text('Kaydet', style: TextStyle(fontSize: 11)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EthernetHelpPanel extends StatelessWidget {
+  const _EthernetHelpPanel({
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.help_outline, size: 18, color: Color(0xFF2563EB)),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Yazıcı IP\'sini nasıl bulurum?',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1E3A8A),
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    expanded ? Icons.expand_less : Icons.expand_more,
+                    color: const Color(0xFF6B7280),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (expanded) ...[
+            const Divider(height: 1, color: Color(0xFFE5E7EB)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: ethernetPrinterIpHelpSteps().map((step) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('• ', style: TextStyle(fontSize: 12)),
+                        Expanded(
+                          child: Text(
+                            step,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF374151),
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NetworkCompatibilityCard extends StatelessWidget {
+  const _NetworkCompatibilityCard({
+    required this.plan,
+    this.connectionDiagnostic,
+  });
+
+  final EthernetNetworkCompatibilityPlan plan;
+  final EthernetConnectionDiagnostic? connectionDiagnostic;
+
+  @override
+  Widget build(BuildContext context) {
+    final portStatusLabel = _portStatusLabel(connectionDiagnostic);
+    final portStatusColor = _portStatusColor(connectionDiagnostic);
+    final mismatch = plan.hasMismatch;
+    final guidance = plan.mismatchGuidance;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: mismatch ? const Color(0xFFFFF7ED) : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: mismatch ? const Color(0xFFFDBA74) : const Color(0xFFCBD5E1),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Ağ Uyumluluk Durumu',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF334155),
+            ),
+          ),
+          const SizedBox(height: 10),
+          _DiagnosticRow(
+            label: 'Bilgisayar IP',
+            value: plan.primaryLocalIp,
+          ),
+          _DiagnosticRow(
+            label: 'Taranan ağ',
+            value: plan.primaryScannedSubnet.isEmpty
+                ? 'IP girilince hesaplanır'
+                : plan.primaryScannedSubnet,
+          ),
+          _DiagnosticRow(
+            label: 'Yazıcı IP',
+            value: plan.printerHost.isEmpty ? '—' : plan.printerHost,
+          ),
+          _DiagnosticRow(
+            label: 'Port',
+            value: plan.printerHost.isEmpty
+                ? '—'
+                : '${plan.port} ($portStatusLabel)',
+            valueColor: portStatusColor,
+          ),
+          _DiagnosticRow(
+            label: 'Aynı ağda mı?',
+            value: plan.sameSubnetLabel,
+            valueColor: mismatch
+                ? const Color(0xFFDC2626)
+                : const Color(0xFF059669),
+          ),
+          if (guidance.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              guidance,
+              style: const TextStyle(
+                fontSize: 11,
+                color: Color(0xFF9A3412),
+                height: 1.4,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _portStatusLabel(EthernetConnectionDiagnostic? diagnostic) {
+    if (diagnostic?.ok == true) return 'Açık';
+    if (diagnostic == null) return 'Test edilmedi';
+    final code = diagnostic.errorCode;
+    if (code == 'tcp_refused') return 'Kapalı';
+    if (code == 'tcp_timeout' ||
+        code == 'network_unreachable' ||
+        code == 'network_mismatch') {
+      return 'Yanıt yok';
+    }
+    return 'Test edilmedi';
+  }
+
+  Color _portStatusColor(EthernetConnectionDiagnostic? diagnostic) {
+    if (diagnostic?.ok == true) return const Color(0xFF059669);
+    if (diagnostic != null && diagnostic.ok == false) {
+      return const Color(0xFFDC2626);
+    }
+    return const Color(0xFF6B7280);
+  }
+}
+
+class _EthernetIpMigrationGuide extends StatelessWidget {
+  const _EthernetIpMigrationGuide({
+    required this.plan,
+    required this.expanded,
+    required this.technicalExpanded,
+    required this.onToggle,
+    required this.onToggleTechnical,
+  });
+
+  final EthernetNetworkCompatibilityPlan plan;
+  final bool expanded;
+  final bool technicalExpanded;
+  final VoidCallback onToggle;
+  final VoidCallback onToggleTechnical;
+
+  @override
+  Widget build(BuildContext context) {
+    final options = ethernetPrinterMigrationOptions(plan: plan);
+    final aliasCommands = ethernetTechnicalAliasCommands(
+      printerHost: plan.printerHost,
+    );
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFFDBA74)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.swap_horiz_rounded,
+                    size: 18,
+                    color: Color(0xFF9A3412),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Yazıcı IP\'sini İşletme Ağına Taşı',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF9A3412),
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    expanded ? Icons.expand_less : Icons.expand_more,
+                    color: const Color(0xFF9A3412),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (expanded) ...[
+            const Divider(height: 1, color: Color(0xFFFDBA74)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Bu yazıcıyı çalıştırmak için IP adresini '
+                    '${plan.suggestedTargetSubnet.replaceAll('.0/24', '.x')} '
+                    'ağına almalısınız.',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF7C2D12),
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _SuggestedSettingsTable(plan: plan),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Kurulum seçenekleri',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF374151),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...options.asMap().entries.map((entry) {
+                    final labels = <String>['A', 'B', 'C'];
+                    final label = entry.key < labels.length
+                        ? labels[entry.key]
+                        : '${entry.key + 1}';
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$label) ',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF374151),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              entry.value,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF374151),
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  if (aliasCommands.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    InkWell(
+                      onTap: onToggleTechnical,
+                      child: Row(
+                        children: [
+                          Icon(
+                            technicalExpanded
+                                ? Icons.expand_less
+                                : Icons.expand_more,
+                            size: 16,
+                            color: const Color(0xFF6B7280),
+                          ),
+                          const SizedBox(width: 4),
+                          const Text(
+                            'Gelişmiş / Teknik Servis',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF6B7280),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (technicalExpanded) ...[
+                      const SizedBox(height: 6),
+                      ...aliasCommands.map(
+                        (command) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: SelectableText(
+                            command,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                              color: Color(0xFF6B7280),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SuggestedSettingsTable extends StatelessWidget {
+  const _SuggestedSettingsTable({required this.plan});
+
+  final EthernetNetworkCompatibilityPlan plan;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <(String, String)>[
+      ('Önerilen Yazıcı IP', plan.suggestedPrinterIp),
+      ('Alt Ağ Maskesi', plan.subnetMask),
+      ('Ağ Geçidi', plan.suggestedGateway),
+      ('Port', '${plan.port}'),
+      ('Profil', 'POS-80'),
+    ];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Column(
+        children: rows
+            .map(
+              (row) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: _DiagnosticRow(label: row.$1, value: row.$2),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _DiagnosticRow extends StatelessWidget {
+  const _DiagnosticRow({
+    required this.label,
+    required this.value,
+    this.valueColor = const Color(0xFF111827),
+  });
+
+  final String label;
+  final String value;
+  final Color valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: valueColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DiagnosticResultCard extends StatelessWidget {
+  const _DiagnosticResultCard({
+    required this.diagnostic,
+    required this.technicalExpanded,
+    required this.onToggleTechnical,
+  });
+
+  final EthernetConnectionDiagnostic diagnostic;
+  final bool technicalExpanded;
+  final VoidCallback onToggleTechnical;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = diagnostic.ok ? const Color(0xFFF0FDF4) : const Color(0xFFFEF2F2);
+    final border = diagnostic.ok ? const Color(0xFF10B981) : const Color(0xFFFECACA);
+    final fg = diagnostic.ok ? const Color(0xFF065F46) : const Color(0xFF991B1B);
+    final technical = diagnostic.technicalDetail?.trim() ?? '';
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1079,23 +2299,93 @@ class _ResultBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: border),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            ok
-                ? Icons.check_circle_outline_rounded
-                : Icons.error_outline_rounded,
-            size: 16,
-            color: fg,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                diagnostic.ok
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.error_outline_rounded,
+                size: 16,
+                color: fg,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      diagnostic.title,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: fg,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      diagnostic.message,
+                      style: TextStyle(fontSize: 12, color: fg, height: 1.45),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message,
-              style: TextStyle(fontSize: 12, color: fg, height: 1.45),
+          if (technical.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: onToggleTechnical,
+              child: Row(
+                children: [
+                  Icon(
+                    technicalExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 16,
+                    color: fg,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Teknik detay',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: technical));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Teknik detay kopyalandı')),
+                      );
+                    },
+                    icon: const Icon(Icons.copy, size: 14),
+                    label: const Text('Kopyala', style: TextStyle(fontSize: 11)),
+                  ),
+                ],
+              ),
             ),
-          ),
+            if (technicalExpanded)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(top: 6),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.65),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: border.withValues(alpha: 0.5)),
+                ),
+                child: SelectableText(
+                  technical,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontFamily: 'monospace',
+                    color: Color(0xFF374151),
+                    height: 1.35,
+                  ),
+                ),
+              ),
+          ],
         ],
       ),
     );

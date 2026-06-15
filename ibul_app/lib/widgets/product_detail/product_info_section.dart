@@ -18,7 +18,6 @@ class ProductInfoSection extends StatelessWidget {
       (viewModel) => viewModel.reviewSummary,
     );
     final isWeb = MediaQuery.sizeOf(context).width > 900;
-    final customReviews = summary.reviews;
     final reviewCount = summary.reviewCount;
     final rating = summary.averageRating;
 
@@ -58,10 +57,8 @@ class ProductInfoSection extends StatelessWidget {
                     builder: (context) => AllReviewsPage(
                       productName: product.name,
                       brand: product.brand,
-                      rating: rating,
-                      reviewCount: reviewCount,
+                      storeName: product.store,
                       images: product.images,
-                      customReviews: customReviews,
                     ),
                   ),
                 );

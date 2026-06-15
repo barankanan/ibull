@@ -1451,7 +1451,7 @@ class _KitchenPrintManagementPageState
 
   Future<void> _showPrinterEditor({PrinterModel? printer}) async {
     if (!mounted) return;
-    final saved = await showPrinterWizard(
+    final saved = await showAddPrinterFlow(
       context,
       restaurantId: widget.restaurantId,
       existing: printer,

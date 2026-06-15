@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/constants.dart';
+import '../core/review_state.dart';
 import '../screens/photo_review_detail_page.dart';
+import '../services/review_repository.dart';
 import '../widgets/web_header.dart';
 import 'home_screen.dart';
 import 'search_results_page.dart';
@@ -10,19 +12,15 @@ import 'search_results_page.dart';
 class AllReviewsPage extends StatefulWidget {
   final String productName;
   final String brand;
-  final double rating;
-  final int reviewCount;
+  final String? storeName;
   final List<String> images;
-  final List<Map<String, dynamic>>? customReviews;
 
   const AllReviewsPage({
     super.key,
     required this.productName,
     required this.brand,
-    required this.rating,
-    required this.reviewCount,
+    required this.storeName,
     required this.images,
-    this.customReviews,
   });
 
   @override
@@ -33,18 +31,45 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
   String _searchQuery = '';
   String _sortBy = 'En Yeni';
   int? _filterStar;
-  late final List<_ReviewData> _allReviews;
+  bool _loading = true;
+  String? _loadError;
+  List<_ReviewData> _allReviews = const [];
 
   @override
   void initState() {
     super.initState();
-    _allReviews = (widget.customReviews ?? const [])
-        .map(_reviewFromMap)
-        .where(
-          (review) =>
-              review.comment.trim().isNotEmpty || review.photoUrls.isNotEmpty,
-        )
-        .toList();
+    _loadReviews();
+  }
+
+  Future<void> _loadReviews() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+
+    try {
+      final localReviews = ReviewState().getProductReviewsFor(
+        productName: widget.productName,
+        storeName: widget.storeName,
+      );
+      final summary = await ReviewRepository.instance.getProductReviewSummary(
+        productName: widget.productName,
+        storeName: widget.storeName,
+        localReviews: localReviews,
+      );
+      if (!mounted) return;
+      setState(() {
+        _allReviews = summary.reviews.map(_reviewFromMap).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Değerlendirmeler yüklenemedi.';
+        _allReviews = const [];
+        _loading = false;
+      });
+    }
   }
 
   List<_ReviewData> get _filteredReviews {
@@ -84,9 +109,11 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
   }
 
   double get _averageRating {
-    if (_allReviews.isEmpty) return widget.rating;
-    final total = _allReviews.fold<double>(0, (sum, item) => sum + item.stars);
-    return total / _allReviews.length;
+    if (_allReviews.isEmpty) return 0;
+    final rated = _allReviews.where((review) => review.stars > 0).toList();
+    if (rated.isEmpty) return 0;
+    final total = rated.fold<double>(0, (sum, item) => sum + item.stars);
+    return total / rated.length;
   }
 
   List<Map<String, dynamic>> get _galleryItems {
@@ -139,16 +166,23 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
               child: Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 1180),
-                  child: Row(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SizedBox(
-                        width: 360,
-                        child: _buildSummaryPanel(context, compact: false),
-                      ),
-                      const SizedBox(width: 24),
-                      Expanded(
-                        child: _buildReviewsPanel(context, compact: false),
+                      _buildWebBackButton(context),
+                      const SizedBox(height: 16),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 360,
+                            child: _buildSummaryPanel(context, compact: false),
+                          ),
+                          const SizedBox(width: 24),
+                          Expanded(
+                            child: _buildReviewsPanel(context, compact: false),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -159,6 +193,54 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildWebBackButton(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      elevation: 0,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: const BorderSide(color: Color(0xFFE9E4F2)),
+      ),
+      child: InkWell(
+        onTap: () => _goBack(context),
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.arrow_back_ios_new,
+            color: AppColors.primary,
+            size: 18,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _goBack(BuildContext context) {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    if (rootNavigator.canPop()) {
+      rootNavigator.pop();
+    }
   }
 
   Widget _buildMobileScaffold(BuildContext context) {
@@ -173,7 +255,7 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
             color: AppColors.primary,
             size: 18,
           ),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => _goBack(context),
         ),
         title: const Text(
           'Değerlendirmeler',
@@ -254,6 +336,8 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
                     const SizedBox(height: 6),
                     Text(
                       widget.productName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: compact ? 15 : 18,
                         fontWeight: FontWeight.w700,
@@ -261,7 +345,10 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Row(
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -273,6 +360,7 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               const Icon(
                                 Icons.star_rounded,
@@ -291,9 +379,12 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
                             ],
                           ),
                         ),
-                        const SizedBox(width: 10),
                         Text(
-                          '${_allReviews.length} kullanıcı değerlendirdi',
+                          _loading
+                              ? 'Yükleniyor...'
+                              : '${_allReviews.length} kullanıcı değerlendirme',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey.shade600,
@@ -491,8 +582,14 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
             ),
           ),
           const SizedBox(height: 20),
-          if (reviews.isEmpty)
+          if (_loading)
+            _buildLoadingState()
+          else if (_loadError != null)
+            _buildErrorState()
+          else if (_allReviews.isEmpty)
             _buildEmptyState()
+          else if (reviews.isEmpty)
+            _buildFilteredEmptyState()
           else
             ...reviews.map(
               (review) => Padding(
@@ -764,6 +861,33 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
     );
   }
 
+  Widget _buildLoadingState() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 48),
+      child: Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.error_outline, size: 48, color: Colors.grey.shade500),
+            const SizedBox(height: 12),
+            Text(
+              _loadError ?? 'Değerlendirmeler yüklenemedi.',
+              style: TextStyle(fontSize: 15, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 12),
+            TextButton(onPressed: _loadReviews, child: const Text('Tekrar dene')),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmptyState() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 48),
@@ -790,6 +914,18 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
               style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilteredEmptyState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      child: Center(
+        child: Text(
+          'Seçili filtreye uygun değerlendirme bulunamadı.',
+          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
         ),
       ),
     );
@@ -854,7 +990,7 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
     return _ReviewData(
       userName: review['userName']?.toString() ?? 'Kullanıcı',
       stars: ((review['rating'] as num?)?.toDouble() ?? 0)
-          .clamp(1, 5)
+          .clamp(0, 5)
           .toDouble(),
       comment: review['comment']?.toString() ?? '',
       createdAt: createdAt,

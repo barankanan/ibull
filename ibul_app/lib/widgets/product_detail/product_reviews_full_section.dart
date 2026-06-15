@@ -92,10 +92,8 @@ class ProductReviewsFullSection extends StatelessWidget {
                       builder: (_) => AllReviewsPage(
                         productName: product.name,
                         brand: product.brand,
-                        rating: rating,
-                        reviewCount: reviewCount,
+                        storeName: product.store,
                         images: List<String>.from(product.images),
-                        customReviews: customReviews,
                       ),
                     ),
                   );

@@ -207,6 +207,40 @@ class PrinterProfile {
     return null;
   }
 
+  /// Profiles offered in the Ethernet add-printer form.
+  static const List<PrinterProfile> ethernetSetupProfiles = [
+    pos80,
+    pos58,
+    generic80mmEscpos,
+  ];
+
+  /// Resolves the active profile for Ethernet setup/test/save payloads.
+  /// Explicit selection wins; otherwise derive from paper width without
+  /// forcing POS-58 for 80mm printers.
+  static PrinterProfile resolveForEthernetSetup({
+    String? explicitProfileId,
+    required int paperWidthMm,
+ }) {
+    final explicit = byId(explicitProfileId);
+    if (explicit != null) return explicit;
+    return paperWidthMm <= 58 ? pos58 : pos80;
+  }
+
+  /// Bridge payload fields derived from a [PrinterProfile].
+  static Map<String, dynamic> bridgeProfileFields(PrinterProfile profile) {
+    return <String, dynamic>{
+      'printer_profile': profile.id,
+      'printer_profile_id': profile.id,
+      'paper_width_mm': profile.paperWidthMm,
+      'paperWidthMm': profile.paperWidthMm,
+      'raster_width_px': profile.rasterWidthPx,
+      'rasterWidthPx': profile.rasterWidthPx,
+      'chars_per_line': profile.charsPerLine,
+      'auto_cut': profile.supportsCut,
+      'autoCut': profile.supportsCut,
+    };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Backward-compat fallback
   // ─────────────────────────────────────────────────────────────────────────

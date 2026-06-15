@@ -56,6 +56,8 @@ void main() {
     expect(find.text('Değer giriniz'), findsOneWidget);
     expect(find.text('Örn: 192.168.1.100'), findsOneWidget);
     expect(find.text('NETUM ZJ-8360 Ethernet'), findsOneWidget);
+    expect(find.byKey(const Key('ethernet_auto_scan_button')), findsOneWidget);
+    expect(find.text('Otomatik Tara'), findsOneWidget);
   });
 
   testWidgets('empty IP validation appears once', (tester) async {
@@ -100,19 +102,114 @@ void main() {
     expect(printerPayload?['displayName'], 'Ethernet Yazıcı 192.168.1.100');
     expect(printerPayload?['source'], 'ethernet_dialog_form');
     expect(printerPayload?['printer_id'], 'tcp:192.168.1.100:9100');
-    expect(find.text('Mock ethernet baglanti basarili'), findsOneWidget);
+    expect(find.text('Bağlantı başarılı'), findsOneWidget);
+    expect(find.text('Kayıt durumu: Hazır'), findsOneWidget);
   });
 
-  testWidgets('print test dispatches explicit ethernet tcp payload', (
-    tester,
-  ) async {
+  testWidgets('connection timeout shows friendly diagnostic card', (tester) async {
     final orchestrator = _RecordingEthernetOrchestrator();
-    await pumpDialog(tester, orchestrator: orchestrator);
+    final localService = _FakeEthernetLocalPrintService(
+      probeResult: <String, dynamic>{
+        'ok': false,
+        'errorCode': 'tcp_timeout',
+        'error': '192.168.1.100:9100 zaman aşımı',
+        'local_ips': <String>['192.168.1.34'],
+        'same_subnet': true,
+        'reachable': false,
+        'port_open': false,
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
 
     await tester.enterText(
       find.byKey(const Key('ethernet_ip_field')),
       '192.168.1.100',
     );
+    await tester.ensureVisible(find.text('Bağlantıyı Test Et'));
+    await tester.tap(find.text('Bağlantıyı Test Et'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Yazıcıya ulaşılamadı'), findsOneWidget);
+    expect(find.textContaining('192.168.1.100:9100'), findsOneWidget);
+    expect(find.text('Kayıt durumu: Bağlantı doğrulanmadı'), findsOneWidget);
+    expect(find.textContaining('LocalPrintServiceException'), findsNothing);
+  });
+
+  testWidgets('failed connection keeps print disabled and skips bridge print', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService(
+      probeResult: <String, dynamic>{
+        'ok': false,
+        'errorCode': 'tcp_timeout',
+        'error': '192.168.1.100:9100 zaman aşımı',
+        'local_ips': <String>['192.168.10.158'],
+        'same_subnet': false,
+        'reachable': false,
+        'port_open': false,
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.100',
+    );
+    await tester.ensureVisible(find.text('Bağlantıyı Test Et'));
+    await tester.tap(find.text('Bağlantıyı Test Et'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Yazıcıya ulaşılamadı'), findsOneWidget);
+    final printButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Test Fişi Gönder'),
+    );
+    expect(printButton.onPressed, isNull);
+    expect(orchestrator.callCount, 0);
+    expect(find.textContaining('POS-58 adisyon profili'), findsNothing);
+    expect(find.textContaining('receipt_profile_invalid'), findsNothing);
+  });
+
+  testWidgets('print test requires successful connection test first', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService();
+    await pumpDialog(
+      tester,
+      orchestrator: orchestrator,
+      localService: localService,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.100',
+    );
+    final printButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Test Fişi Gönder'),
+    );
+    expect(printButton.onPressed, isNull);
+  });
+
+  Future<void> runSuccessfulConnectionTest(WidgetTester tester) async {
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.100',
+    );
+    await tester.ensureVisible(find.text('Bağlantıyı Test Et'));
+    await tester.tap(find.text('Bağlantıyı Test Et'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('print test dispatches explicit ethernet tcp payload', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService();
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await runSuccessfulConnectionTest(tester);
+
     await tester.ensureVisible(find.text('Test Fişi Gönder'));
     await tester.tap(find.text('Test Fişi Gönder'));
     await tester.pumpAndSettle();
@@ -137,15 +234,379 @@ void main() {
     expect(orchestrator.lastExtraBody?['printer_role'], 'adisyon');
     expect(orchestrator.lastExtraBody?['source'], 'ethernet_dialog_form');
   });
+  testWidgets('print test keeps pos80 profile metadata (not pos58)', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService();
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await runSuccessfulConnectionTest(tester);
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.50',
+    );
+    await tester.ensureVisible(find.text('Bağlantıyı Test Et'));
+    await tester.tap(find.text('Bağlantıyı Test Et'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Test Fişi Gönder'));
+    await tester.tap(find.text('Test Fişi Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(orchestrator.lastExtraBody?['printer_profile'], 'pos80');
+    expect(orchestrator.lastExtraBody?['paper_width_mm'], 80);
+    expect(orchestrator.lastExtraBody?['raster_width_px'], 576);
+    expect(orchestrator.lastExtraBody?['printer_profile'], isNot('pos58'));
+    expect(orchestrator.lastExtraBody?['chars_per_line'], 48);
+  });
+
+  testWidgets('pos58 selection sends pos58 metadata on print test', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService();
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.ensureVisible(find.byKey(const Key('ethernet_profile_pos58')));
+    await tester.tap(find.byKey(const Key('ethernet_profile_pos58')));
+    await tester.pumpAndSettle();
+    await runSuccessfulConnectionTest(tester);
+    await tester.ensureVisible(find.text('Test Fişi Gönder'));
+    await tester.tap(find.text('Test Fişi Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(orchestrator.lastExtraBody?['printer_profile'], 'pos58');
+    expect(orchestrator.lastExtraBody?['paper_width_mm'], 58);
+    expect(orchestrator.lastExtraBody?['raster_width_px'], 384);
+    expect(orchestrator.lastExtraBody?['chars_per_line'], 32);
+  });
+
+  testWidgets('generic profile selection updates dispatch payload', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService();
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.ensureVisible(
+      find.byKey(const Key('ethernet_profile_generic_80mm_escpos')),
+    );
+    await tester.tap(find.byKey(const Key('ethernet_profile_generic_80mm_escpos')));
+    await tester.pumpAndSettle();
+    await runSuccessfulConnectionTest(tester);
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '10.0.0.20',
+    );
+    await tester.ensureVisible(find.text('Bağlantıyı Test Et'));
+    await tester.tap(find.text('Bağlantıyı Test Et'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Test Fişi Gönder'));
+    await tester.tap(find.text('Test Fişi Gönder'));
+    await tester.pumpAndSettle();
+
+    expect(orchestrator.lastExtraBody?['printer_profile'], 'generic_80mm_escpos');
+    expect(orchestrator.lastExtraBody?['paper_width_mm'], 80);
+    expect(orchestrator.lastExtraBody?['raster_width_px'], 576);
+  });
+
+  testWidgets('failed connection shows only network diagnostic card', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService(
+      probeResult: <String, dynamic>{
+        'ok': false,
+        'errorCode': 'tcp_timeout',
+        'error': '192.168.1.100:9100 zaman aşımı',
+        'local_ips': <String>['192.168.10.158'],
+        'same_subnet': false,
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.100',
+    );
+    await tester.ensureVisible(find.text('Bağlantıyı Test Et'));
+    await tester.tap(find.text('Bağlantıyı Test Et'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Yazıcıya ulaşılamadı'), findsOneWidget);
+    expect(find.text('Test fişi gönderildi'), findsNothing);
+    expect(find.textContaining('POS-58 adisyon profili'), findsNothing);
+  });
+
+  testWidgets('auto scan lists discovered printers and fills form on select', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService(
+      scanResult: <String, dynamic>{
+        'ok': true,
+        'local_ips': <String>['192.168.10.158'],
+        'subnets': <String>['192.168.10.0/24'],
+        'port': 9100,
+        'devices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'host': '192.168.10.100',
+            'port': 9100,
+            'reachable': true,
+            'port_open': true,
+            'same_subnet': true,
+          },
+        ],
+        'suggested_message': '1 yazıcı bulundu.',
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.ensureVisible(find.byKey(const Key('ethernet_auto_scan_button')));
+    await tester.tap(find.byKey(const Key('ethernet_auto_scan_button')));
+    await tester.pumpAndSettle();
+
+    expect(localService.scanCallCount, 1);
+    expect(find.text('192.168.10.100:9100'), findsOneWidget);
+    expect(find.text('Ulaşılabilir'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ethernet_select_192.168.10.100')));
+    await tester.pumpAndSettle();
+
+    final ipField = tester.widget<TextField>(
+      find.byKey(const Key('ethernet_ip_field')),
+    );
+    final portField = tester.widget<TextField>(
+      find.byKey(const Key('ethernet_port_field')),
+    );
+    expect(ipField.controller?.text, '192.168.10.100');
+    expect(portField.controller?.text, '9100');
+  });
+
+  testWidgets('different subnet warning is shown for manual IP entry', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService(
+      preflightResult: <String, dynamic>{
+        'ok': true,
+        'local_ips': <String>['192.168.10.158'],
+        'same_subnet': false,
+        'network_state': 'network_mismatch',
+        'suggested_printer_ip': '192.168.10.100',
+        'suggested_target_subnet': '192.168.10.0/24',
+        'suggested_message':
+            'Bilgisayarınız 192.168.10.x ağında, yazıcı 192.168.1.x ağında. '
+            'Bu cihazlar aynı ağda değil. Yazıcı IP\'sini işletme ağına alın.',
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.100',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ağ Uyumluluk Durumu'), findsOneWidget);
+    expect(
+      find.textContaining('Bilgisayarınız 192.168.10.x ağında'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('işletme ağına alın'), findsOneWidget);
+    expect(find.text('Yazıcı IP\'sini İşletme Ağına Taşı'), findsOneWidget);
+    expect(find.textContaining('sudo ifconfig'), findsNothing);
+
+    await tester.ensureVisible(
+      find.text('Yazıcı IP\'sini İşletme Ağına Taşı'),
+    );
+    await tester.tap(find.text('Yazıcı IP\'sini İşletme Ağına Taşı'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('192.168.10.100'), findsWidgets);
+  });
+
+  testWidgets('auto scan empty result explains different subnet manual IP', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService(
+      scanResult: <String, dynamic>{
+        'ok': true,
+        'local_ips': <String>['192.168.10.158'],
+        'subnets': <String>['192.168.10.0/24'],
+        'devices': <Map<String, dynamic>>[],
+        'no_device_reason': 'printer_on_different_subnet',
+        'suggested_printer_ip': '192.168.10.100',
+        'suggested_target_subnet': '192.168.10.0/24',
+        'suggested_message':
+            'Aynı ağda port 9100 açık cihaz bulunamadı. '
+            'Self-test fişindeki IP farklı ağdaysa otomatik tarama bulamaz.',
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.100',
+    );
+    await tester.tap(find.byKey(const Key('ethernet_auto_scan_button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Self-test fişindeki IP farklı ağdaysa'),
+      findsOneWidget,
+    );
+    expect(find.text('192.168.1.100:9100'), findsNothing);
+  });
+
+  testWidgets('technical alias commands stay in advanced section only', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService(
+      preflightResult: <String, dynamic>{
+        'ok': true,
+        'local_ips': <String>['192.168.10.158'],
+        'same_subnet': false,
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.100',
+    );
+    await tester.pumpAndSettle();
+
+    final migrationTitle = find.text('Yazıcı IP\'sini İşletme Ağına Taşı');
+    await tester.ensureVisible(migrationTitle);
+    await tester.tap(migrationTitle);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('sudo ifconfig'), findsNothing);
+
+    final technicalTitle = find.text('Gelişmiş / Teknik Servis');
+    await tester.ensureVisible(technicalTitle);
+    await tester.tap(technicalTitle);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('sudo ifconfig en0 alias'), findsOneWidget);
+  });
+
+  testWidgets('network mismatch keeps save enabled with warning status', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService(
+      probeResult: <String, dynamic>{
+        'ok': false,
+        'errorCode': 'network_mismatch',
+        'local_ips': <String>['192.168.10.158'],
+        'same_subnet': false,
+        'reachable': false,
+        'port_open': false,
+      },
+      preflightResult: <String, dynamic>{
+        'ok': true,
+        'local_ips': <String>['192.168.10.158'],
+        'same_subnet': false,
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.enterText(
+      find.byKey(const Key('ethernet_ip_field')),
+      '192.168.1.100',
+    );
+    await tester.ensureVisible(find.text('Bağlantıyı Test Et'));
+    await tester.tap(find.text('Bağlantıyı Test Et'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Ağ uyumsuzluğu — bağlantı doğrulanmadı'),
+      findsOneWidget,
+    );
+    final saveButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Kaydet'),
+    );
+    expect(saveButton.onPressed, isNotNull);
+  });
+
+  testWidgets('scan failure shows friendly message without exception text', (
+    tester,
+  ) async {
+    final orchestrator = _RecordingEthernetOrchestrator();
+    final localService = _FakeEthernetLocalPrintService(
+      scanResult: <String, dynamic>{
+        'ok': false,
+        'errorCode': 'no_local_network',
+        'error': 'Bilgisayarın yerel ağ IP adresi algılanamadı.',
+      },
+    );
+    await pumpDialog(tester, orchestrator: orchestrator, localService: localService);
+
+    await tester.tap(find.byKey(const Key('ethernet_auto_scan_button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Bilgisayarın yerel ağ IP adresi algılanamadı.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Exception'), findsNothing);
+  });
+
 }
 
 class _FakeEthernetLocalPrintService extends LocalPrintService {
-  _FakeEthernetLocalPrintService() : super(baseUri: Uri.parse('http://127.0.0.1:3001'));
+  _FakeEthernetLocalPrintService({
+    this.probeResult,
+    this.scanResult,
+    this.preflightResult,
+  }) : super(baseUri: Uri.parse('http://127.0.0.1:3001'));
+
+  final Map<String, dynamic>? probeResult;
+  final Map<String, dynamic>? scanResult;
+  final Map<String, dynamic>? preflightResult;
 
   int probeCallCount = 0;
+  int scanCallCount = 0;
   String? lastProbeHost;
   int? lastProbePort;
   Map<String, dynamic>? lastProbePrinter;
+  int? lastScanPort;
+
+  @override
+  Future<Map<String, dynamic>?> fetchEthernetNetworkPreflight({
+    required String host,
+    required int port,
+    Duration? timeout,
+  }) async {
+    return preflightResult ??
+        <String, dynamic>{
+          'ok': true,
+          'local_ips': <String>['192.168.1.34'],
+          'same_subnet': true,
+          'suggested_message': '',
+        };
+  }
+
+  @override
+  Future<Map<String, dynamic>?> scanEthernetPrinters({
+    int port = 9100,
+    String? printerHost,
+    Duration? timeout,
+  }) async {
+    scanCallCount++;
+    lastScanPort = port;
+    return scanResult ??
+        <String, dynamic>{
+          'ok': true,
+          'local_ips': <String>['192.168.1.34'],
+          'subnets': <String>['192.168.1.0/24'],
+          'port': port,
+          'devices': <Map<String, dynamic>>[],
+          'suggested_message': 'Aynı ağda port 9100 açık cihaz bulunamadı.',
+        };
+  }
 
   @override
   Future<Map<String, dynamic>?> probeTcpPrinter({
@@ -158,10 +619,15 @@ class _FakeEthernetLocalPrintService extends LocalPrintService {
     lastProbeHost = host;
     lastProbePort = port;
     lastProbePrinter = printer;
-    return <String, dynamic>{
-      'ok': true,
-      'suggested_message': 'Mock ethernet baglanti basarili',
-    };
+    return probeResult ??
+        <String, dynamic>{
+          'ok': true,
+          'suggested_message': 'Mock ethernet baglanti basarili',
+          'local_ips': <String>['192.168.1.34'],
+          'same_subnet': true,
+          'reachable': true,
+          'port_open': true,
+        };
   }
 }
 

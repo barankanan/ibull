@@ -11,10 +11,40 @@ import '../../services/local_print_service.dart';
 import '../../services/printer_event_log_service.dart';
 import '../../widgets/bridge_error_dialog.dart';
 import '../../services/printer_repository.dart';
+import 'printer_ethernet_dialog.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PrinterWizard — 5-step stepper for adding / editing a printer
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Entry point for adding a printer: chooser → standard wizard or Ethernet flow.
+/// Editing routes Ethernet printers to [showAddEthernetPrinterDialog].
+Future<PrinterModel?> showAddPrinterFlow(
+  BuildContext context, {
+  required String restaurantId,
+  PrinterModel? existing,
+}) {
+  if (existing != null) {
+    if (existing.isEthernetConnection) {
+      return showAddEthernetPrinterDialog(
+        context,
+        restaurantId: restaurantId,
+        existing: existing,
+      );
+    }
+    return showPrinterWizard(
+      context,
+      restaurantId: restaurantId,
+      existing: existing,
+    );
+  }
+  return Navigator.of(context).push<PrinterModel>(
+    MaterialPageRoute<PrinterModel>(
+      fullscreenDialog: true,
+      builder: (_) => _AddPrinterEntryScreen(restaurantId: restaurantId),
+    ),
+  );
+}
 
 /// Opens the [PrinterWizard] as a full-screen dialog.
 ///
@@ -2507,6 +2537,242 @@ class _ErrorBanner extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AddPrinterEntryScreen extends StatelessWidget {
+  const _AddPrinterEntryScreen({required this.restaurantId});
+
+  final String restaurantId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9FAFB),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0.5,
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: const Text(
+          'Yazıcı Ekle',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Kurulum tipini seçin',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF111827),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Ethernet yazıcılar IP/port ile doğrudan bağlanır. USB, CUPS veya '
+              'Local Bridge yazıcıları için standart akışı kullanın.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B7280),
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 28),
+            _AddPrinterChoiceCard(
+              key: const Key('add_printer_ethernet_card'),
+              icon: Icons.lan_rounded,
+              color: const Color(0xFF8B5CF6),
+              title: 'Ethernet Yazıcı',
+              subtitle:
+                  'IP ile ağ yazıcısı ekle. IP, port, profil ve rol ataması.',
+              primary: true,
+              onTap: () async {
+                final saved = await showAddEthernetPrinterDialog(
+                  context,
+                  restaurantId: restaurantId,
+                );
+                if (context.mounted) {
+                  Navigator.of(context).pop(saved);
+                }
+              },
+            ),
+            const SizedBox(height: 14),
+            _AddPrinterChoiceCard(
+              key: const Key('add_printer_standard_card'),
+              icon: Icons.print_rounded,
+              color: const Color(0xFF2563EB),
+              title: 'Standart Yazıcı',
+              subtitle:
+                  'USB, CUPS veya sistem yazıcısı. Mevcut adım adım kurulum.',
+              primary: false,
+              onTap: () async {
+                final saved = await showPrinterWizard(
+                  context,
+                  restaurantId: restaurantId,
+                );
+                if (context.mounted) {
+                  Navigator.of(context).pop(saved);
+                }
+              },
+            ),
+            if (kIsWeb) ...[
+              const SizedBox(height: 16),
+              const _AddPrinterWebNotice(),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AddPrinterWebNotice extends StatelessWidget {
+  const _AddPrinterWebNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFFED7AA)),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 18, color: Color(0xFFEA580C)),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Web sürümünde yerel yazıcı erişimi sınırlıdır. Ethernet test '
+              'baskısı için masaüstü uygulamasını kullanın; seçenekler burada '
+              'görünür kalır.',
+              style: TextStyle(
+                fontSize: 12,
+                color: Color(0xFF9A3412),
+                height: 1.45,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AddPrinterChoiceCard extends StatelessWidget {
+  const _AddPrinterChoiceCard({
+    super.key,
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.primary = false,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool primary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: primary ? color : Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: primary ? color : const Color(0xFFE5E7EB),
+              width: primary ? 0 : 1,
+            ),
+            boxShadow: primary
+                ? [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.25),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : const [
+                    BoxShadow(
+                      color: Color(0x05000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: primary
+                      ? Colors.white.withValues(alpha: 0.2)
+                      : color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  icon,
+                  color: primary ? Colors.white : color,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: primary
+                            ? Colors.white
+                            : const Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: primary
+                            ? Colors.white.withValues(alpha: 0.9)
+                            : const Color(0xFF6B7280),
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.arrow_forward_rounded,
+                color: primary ? Colors.white : const Color(0xFF9CA3AF),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

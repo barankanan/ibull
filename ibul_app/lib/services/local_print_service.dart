@@ -30,16 +30,24 @@ class LocalPrintServiceException implements Exception {
     this.message, {
     this.statusCode,
     this.details,
+    this.errorCode,
   });
 
   final String message;
   final int? statusCode;
   final Object? details;
 
+  /// Stable classifier for UI diagnostics: ``tcp_timeout``, ``tcp_refused``,
+  /// ``invalid_ip``, ``network_unreachable``, ``bridge_unreachable``, etc.
+  final String? errorCode;
+
   @override
   String toString() {
     final buffer = StringBuffer('LocalPrintServiceException(')
       ..write('message: $message');
+    if (errorCode != null && errorCode!.trim().isNotEmpty) {
+      buffer.write(', errorCode: $errorCode');
+    }
     if (statusCode != null) {
       buffer.write(', statusCode: $statusCode');
     }
@@ -375,6 +383,72 @@ class LocalPrintService {
       printer: printer,
       timeout: timeout,
     );
+  }
+
+  /// Lightweight subnet / local-IP preflight without opening a TCP socket.
+  Future<Map<String, dynamic>?> fetchEthernetNetworkPreflight({
+    required String host,
+    required int port,
+    Duration? timeout,
+  }) async {
+    final effectiveTimeout = timeout ?? const Duration(seconds: 4);
+    final body = <String, dynamic>{
+      'target_host': host,
+      'target_port': port,
+      'host': host,
+      'port': port,
+      'diagnostic_only': true,
+      'network_preflight': true,
+    };
+    try {
+      return await _send(
+        section: 'Ethernet',
+        branch: 'tcp_preflight',
+        method: 'POST',
+        path: '/printer/tcp/probe',
+        body: body,
+        timeout: effectiveTimeout,
+        requireOk: false,
+      );
+    } on LocalPrintServiceException catch (error) {
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// Scan active /24 subnets for ESC/POS printers on [port] (default 9100).
+  Future<Map<String, dynamic>?> scanEthernetPrinters({
+    int port = 9100,
+    String? printerHost,
+    Duration? timeout,
+  }) async {
+    final effectiveTimeout = timeout ?? const Duration(seconds: 45);
+    final body = <String, dynamic>{
+      'port': port,
+      if (printerHost != null && printerHost.trim().isNotEmpty)
+        'printer_host': printerHost.trim(),
+    };
+    try {
+      return await _send(
+        section: 'Ethernet',
+        branch: 'tcp_scan',
+        method: 'POST',
+        path: '/printer/tcp/scan',
+        body: body,
+        timeout: effectiveTimeout,
+        requireOk: false,
+      );
+    } on LocalPrintServiceException catch (error) {
+      if (error.statusCode == 404) {
+        return <String, dynamic>{
+          'ok': false,
+          'errorCode': 'scan_unavailable',
+          'error':
+              'Yerel yazdırma köprüsü güncel değil. Otomatik tarama kullanılamıyor; IP\'yi manuel girin.',
+        };
+      }
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>?> _probeTcpPrinterWithFallback({
@@ -1105,6 +1179,7 @@ class LocalPrintService {
       throw LocalPrintServiceException(
         'Yazici servisi zaman asimina ugradi.',
         details: timeoutDetails,
+        errorCode: timeoutDetails['errorCode']?.toString() ?? 'bridge_unreachable',
       );
     } on http.ClientException catch (error, stackTrace) {
       _log(
@@ -1118,6 +1193,7 @@ class LocalPrintService {
       throw LocalPrintServiceException(
         'Yazici servisine baglanilamadi.',
         details: error,
+        errorCode: 'bridge_unreachable',
       );
     } catch (error, stackTrace) {
       _log(
@@ -1131,6 +1207,7 @@ class LocalPrintService {
       throw LocalPrintServiceException(
         'Yazici servisine istek gonderilemedi.',
         details: error,
+        errorCode: 'unknown',
       );
     }
 
@@ -1164,6 +1241,7 @@ class LocalPrintService {
         message,
         statusCode: response.statusCode,
         details: jsonBody,
+        errorCode: _extractBridgeErrorCode(jsonBody, statusCode: response.statusCode),
       );
     }
     if (requireOk && responseOk != true) {
@@ -1183,6 +1261,7 @@ class LocalPrintService {
         message,
         statusCode: response.statusCode,
         details: jsonBody,
+        errorCode: _extractBridgeErrorCode(jsonBody, statusCode: response.statusCode),
       );
     }
     return jsonBody;
@@ -1362,6 +1441,19 @@ class LocalPrintService {
     } on FormatException {
       return null;
     }
+    return null;
+  }
+
+  String? _extractBridgeErrorCode(
+    Map<String, dynamic>? jsonBody, {
+    int? statusCode,
+  }) {
+    final fromBody =
+        jsonBody?['errorCode']?.toString() ?? jsonBody?['error_code']?.toString();
+    if (fromBody != null && fromBody.trim().isNotEmpty) {
+      return fromBody.trim();
+    }
+    if (statusCode == 404) return 'bridge_unreachable';
     return null;
   }
 

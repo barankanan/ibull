@@ -252,6 +252,26 @@ Monorepo hissi var, ancak resmi workspace orkestrasyonu net görünmüyor. Kök 
 - `Risk notu:` UI-only değişiklikler davranışı etkilememeli; `_selectedTab`, `_searchQuery`, `_filteredReviews` ve `_openProduct` akışı korunmalı. Filtre butonu dekoratif (onTap yok).
 - `Durum:` net
 
+## `ibul_app/lib/screens/all_reviews_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/all_reviews_page.dart`
+- `Amaç:` Ürün detayından açılan tam sayfa **ürün değerlendirmeleri** ekranı; web’de sol özet kartı (puan, yıldız dağılımı, fotoğraflı yorumlar) + sağ yorum listesi (arama, yıldız filtresi, sıralama).
+- `Bağlı olduğu dosyalar:` `core/review_state.dart`, `services/review_repository.dart`, `screens/photo_review_detail_page.dart`, `widgets/web_header.dart`, `widgets/optimized_image.dart`
+- `Bu dosyayı kullanan dosyalar:` `widgets/product_detail/product_info_section.dart`, `product_info_section_web.dart`, `product_info_section_mobile.dart`, `product_reviews_section.dart`, `product_reviews_full_section.dart`
+- `Değişirse etkilenecek yerler:` ürün detayı değerlendirme navigasyonu, özet/liste veri tutarlılığı, yıldız filtresi sayaçları, fotoğraflı yorum viewer.
+- `Risk notu:` Tek kaynak `ReviewRepository.getProductReviewSummary` + `ReviewState.getProductReviewsFor` (productName + storeName); snapshot `customReviews`/`product.reviewCount` kullanılmamalı. Yükleme bitmeden empty state gösterilmemeli.
+- `Durum:` net
+
+## `ibul_app/lib/screens/photo_review_detail_page.dart`
+
+- `Dosya yolu:` `ibul_app/lib/screens/photo_review_detail_page.dart`
+- `Amaç:` Değerlendirme fotoğrafı tam ekran viewer; geri butonu, viewport içi `InteractiveViewer`, alt bilgi kartı.
+- `Bağlı olduğu dosyalar:` `widgets/optimized_image.dart`, `core/constants.dart`
+- `Bu dosyayı kullanan dosyalar:` `screens/all_reviews_page.dart`
+- `Değişirse etkilenecek yerler:` fotoğraflı yorum galerisi navigasyonu, görsel boyutlandırma, yorum metni kartı.
+- `Risk notu:` Yorum metni tam genişlik mor bar olmamalı; görsel `maxWidth`/`maxHeight` ile sınırlı kalmalı.
+- `Durum:` net
+
 ## `ibul_app/lib/screens/account_page.dart`
 
 - `Dosya yolu:` `ibul_app/lib/screens/account_page.dart`
@@ -822,6 +842,14 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 
 # Update Log
 
+## 2026-06-15 (ethernet test receipt — connection guard + POS80 receipt validator)
+
+- **Kök neden (çift hata):** Bağlantı testi başarısızken `printer_ethernet_dialog` "Yine de Gönder" ile `printBridgeTest` çağırıyordu; bridge `_complete_receipt_request` içindeki ters mantık (`paper != 58 OR raster != 384 OR "80" in profile`) POS-80 payload'ını da reddediyordu → ekranda hem ağ hatası hem "POS-58 adisyon profili geçersiz" birlikte görünüyordu.
+- **Fix:** `printer_ethernet_dialog.dart` — Test Fişi Gönder yalnızca `_connectionOk` iken aktif; bağlantı yokken bridge print çağrısı yok; print diagnostic yalnızca bağlantı başarılıyken gösterilir; profil seçimi `bridgeProfileFields` ile test/save payload'ına taşınır.
+- **Fix:** `server.py` — `_validate_receipt_profile_metadata`: POS-80 / generic 80mm receipt metadata kabul; POS-58 doğrulaması yalnızca 58mm profilde; TCP ethernet'de profil boşsa anlamlı hata.
+- **Fix:** `printer_error_messages.dart` — `ethernetPrintBlockedWithoutConnectionMessage`.
+- **Test:** `ethernet_printer_dialog_test.dart` — başarısız bağlantıda print bridge çağrısı yok, POS58 profil hatası yok, POS80/POS58/generic metadata; `test_server.py` — POS80/generic receipt accept + tutarsız boyut reject.
+
 ## 2026-06-14 (printer ethernet/usb stable startup + add flow)
 
 - **Kök neden (Ethernet baskı yok):** Windows'ta canlı USB/CUPS taraması doluyken `_mergeCanonicalPrinterCatalog` erken dönüyor ve kayıtlı Ethernet (`tcp:HOST:PORT`) satırlarını kataloga eklemiyordu → rol çözümleme / `prepareQueuedPrintPayload` mutfak hedefini USB'ye düşürüyor veya host/port boş kalıyordu.
@@ -850,6 +878,24 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 - **Fix:** `desktop_printer_setup_page.dart` — **Ethernet Yazıcı Ekle** birincil (mor filled) buton; adım adım kurulum ikincil.
 - **Test:** `printer_error_messages_test.dart` profile resolution; `test_server.py` 80mm receipt accept.
 
+## 2026-06-15 (ethernet ağ uyumsuzluğu — kalıcı kurulum UX)
+
+- **Kök neden:** Yazıcı fabrika IP’si (`192.168.1.100`) ile işletme LAN’ı (`192.168.10.x`) farklıydı. Otomatik tarama yalnızca bilgisayarın `/24` subnet’ini taradığı için yazıcı bulunmuyordu; geçici `ifconfig alias` kaldırılınca kurulum “bozulmuş” gibi görünüyordu.
+- **Fix:** `network_scan.py` — `suggest_ethernet_network_settings`, `scan_no_device_reason`, `format_subnet_mismatch_guidance`.
+- **Fix:** `server.py` — probe/scan yanıtlarına `suggested_printer_ip`, `suggested_target_subnet`, `mismatch_guidance`, `no_device_reason`, `discovered_printers`; farklı subnet’te `errorCode=network_mismatch`.
+- **Fix:** `printer_error_messages.dart` — `EthernetNetworkCompatibilityPlan`, IP taşıma rehberi metinleri, `ethernetScanNoDeviceMessage`, teknik alias komutları (yalnız gelişmiş bölüm).
+- **Fix:** `printer_ethernet_dialog.dart` — **Ağ Uyumluluk Durumu** kartı; **Yazıcı IP’sini İşletme Ağına Taşı** sihirbazı (router DHCP / üretici araç / teknik servis); kayıt `is_active=false` + `test_print_status=pending` bağlantı doğrulanmadan.
+- **Fix:** `local_print_service.dart` — taramada opsiyonel `printer_host` ipucu.
+- **Test:** `ethernet_printer_dialog_test.dart`, `printer_error_messages_test.dart`, `local_print_bridge/tests/test_network_scan.py`, `local_print_bridge/tests/test_server.py`.
+
+## 2026-06-15 (ethernet add-printer entry regression restore)
+
+- **Kök neden:** Refactor sırasında `showAddPrinterFlow` ve `_AddPrinterEntryScreen` `printer_wizard.dart` içinden kaldırıldı; `desktop_printer_setup_page` ve `kitchen_print_management_page` doğrudan `showPrinterWizard` çağırdığı için **Yazıcı Ekle** akışında Ethernet seçeneği kayboldu.
+- **Fix:** `showAddPrinterFlow` geri eklendi — iki kartlı giriş: **Standart Yazıcı** / **Ethernet Yazıcı**; web’de seçenekler gizlenmez, bilgi notu gösterilir.
+- **Fix:** `printer_ethernet_dialog.dart` — açık profil seçici (POS-80 varsayılan, POS-58, Generic 80mm); `resolveForEthernetSetup` + `bridgeProfileFields` ile test/save payload’ları; `connectionType=network`, `backend=tcp` ayrı kalır.
+- **Fix:** `printer_profile.dart` — `ethernetSetupProfiles`, `resolveForEthernetSetup`, `bridgeProfileFields`.
+- **Test:** `add_printer_flow_test.dart` — Ethernet kartı görünür ve dialog açılır; `ethernet_printer_dialog_test.dart` — POS-80 profili pos58’e düşmez.
+
 ## 2026-06-14 (printer add two entry points — standard vs ethernet)
 
 - **Kök neden:** Tek `showPrinterWizard` girişi Ethernet’i standart akışa gömdü; test payload eksik profille bridge `pos58` varsayılanına düşüyordu.
@@ -871,6 +917,15 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
 - **Kök neden (kalan):** İki ayrı state (`_connectionMessage` + `_printMessage`) birikebiliyordu; teknik detayda POS-58 metni TCP mesajının altında ikinci hata gibi görünüyordu; IP/port değişince `_connectionOk` stale kalabiliyordu.
 - **Fix:** `printer_ethernet_dialog.dart` — tek `_statusMessage` banner; IP/port/kağıt değişince bağlantı geçersiz; eşzamanlı test engeli.
 - **Fix:** `printer_error_messages.dart` — bağlantı fazında profil hatası → ağ mesajı; TCP+profil birleşik payload'da teknik detaydan profil gürültüsü temizlenir.
+
+## 2026-06-15 (ethernet TCP setup diagnostics — operator-facing)
+
+- **Kök neden:** Bridge `/printer/tcp/probe` `local_ips` / `same_subnet` / `errorCode` üretiyordu; `printer_ethernet_dialog` ham `LocalPrintServiceException` ve generic timeout metni gösteriyordu. Gerçek cihazda TCP timeout doğru hedefe (`192.168.1.100:9100`) gidiyordu ama operatör neden yanıt alamadığını göremiyordu.
+- **Fix:** `server.py` — `invalid_ip` doğrulama; `diagnostic_only` / `network_preflight` ile TCP’siz subnet ön kontrolü.
+- **Fix:** `local_print_service.dart` — `LocalPrintServiceException.errorCode`; `fetchEthernetNetworkPreflight`.
+- **Fix:** `printer_error_messages.dart` — `EthernetConnectionDiagnostic`, `resolveEthernetConnectionProbeResult`, TCP error code haritası (`tcp_timeout`, `tcp_refused`, `invalid_ip`, `network_unreachable`, `bridge_unreachable`).
+- **Fix:** `printer_ethernet_dialog.dart` — Ağ Teşhisi kartı, IP yardım paneli, kullanıcı dostu hata kartı + teknik detay expand/kopyala; bağlantı testi zorunlu; başarısız bağlantıda test fişi onayı; kayıt durumu `Hazır` / `Bağlantı doğrulanmadı`.
+- **Test:** `printer_error_messages_test.dart`, `ethernet_printer_dialog_test.dart`, `local_print_bridge/tests/test_server.py`.
 
 ## 2026-06-14 (ethernet guided network diagnostics)
 
@@ -1236,6 +1291,12 @@ Gerçek OpenAI/Anthropic/Gemini çağrısı **yok**. `AiAssistantService` ve `Vi
   - **Yapay Zeka Asistanı** → web: `AIChatPage` dialog (FAB ile aynı); mobil fallback: `CameraPage`
   - **Güvenilir Satıcılar** → `MapPage` (`StoreService.getStoresForMap` onaylı mağazalar; ayrı verified-list ekranı yok)
 - `ibul_app/lib/screens/account_page.dart`: Web **Hesabım > Hesap Özeti** içinde istatistik kartlarının altına mobildeki **Yapay Zekaya Danış** alanı eklendi (`_AccountAiConsultCard`, responsive, dialog ile `AIChatPage` açar).
+
+## 2026-06-14 (ürün değerlendirmeleri — web tutarlılık + viewer)
+
+- `ibul_app/lib/screens/all_reviews_page.dart`: Snapshot `customReviews`/`product.reviewCount` kaldırıldı; sayfa açılışında `ReviewRepository.getProductReviewSummary` + `ReviewState.getProductReviewsFor` ile tek kaynaktan yüklenir. Loading/error/empty/filtered-empty ayrı state’ler. Sol özet kartında overflow düzeltmesi (`Wrap`, `maxLines`, `ellipsis`). Yıldız dağılımı ve filtre sayaçları aynı `_allReviews` listesinden. Web layout: `WebHeader` altında sol üst geri butonu (`_buildWebBackButton` → `_goBack` / `Navigator.pop`).
+- `ibul_app/lib/screens/photo_review_detail_page.dart`: Tam ekran koyu viewer; net geri butonu; `InteractiveViewer` + viewport sınırlı görsel; yorum metni beyaz kart içinde (`maxWidth`), mor tam genişlik bar kaldırıldı.
+- Giriş noktaları (`product_info_section*.dart`, `product_reviews_section.dart`, `product_reviews_full_section.dart`): `AllReviewsPage` artık yalnız `productName`, `brand`, `storeName`, `images` alır.
 
 ## 2026-06-12 (order detail / account summary)
 

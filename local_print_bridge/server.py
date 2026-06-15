@@ -33,7 +33,14 @@ from .document import DocumentPayloadError, EscPosDocumentRenderer
 from .kitchen import KitchenRenderer
 from .log_store import PrintLogStore
 from .models import KitchenPayload, PayloadError, ReceiptPayload
-from .network_transport import NetworkTcpTransport
+from .network_scan import (
+    format_subnet_mismatch_guidance,
+    ipv4_same_subnet,
+    scan_local_network_printers,
+    scan_no_device_reason,
+    suggest_ethernet_network_settings,
+)
+from .network_transport import DEFAULT_TCP_PORT, NetworkTcpTransport
 from .printers import (
     PrinterRecord,
     annotate_duplicate_physical_printers,
@@ -108,34 +115,35 @@ def _local_ipv4_addresses() -> list[str]:
 
 
 def _same_subnet_hint(host: str, local_ips: list[str]) -> tuple[bool | None, str]:
-    host_text = host.strip()
-    if not host_text:
-        return None, ""
-    try:
-        target_ip = ipaddress.ip_address(host_text)
-    except ValueError:
-        return None, ""
-    if target_ip.version != 4:
-        return None, ""
-    for local_ip_text in local_ips:
-        try:
-            local_ip = ipaddress.ip_address(local_ip_text)
-        except ValueError:
-            continue
-        if local_ip.version != 4:
-            continue
-        if str(local_ip).split(".")[:3] == str(target_ip).split(".")[:3]:
-            return True, ""
-    if not local_ips:
-        return None, ""
-    local_prefix = ".".join(local_ips[0].split(".")[:3])
-    target_prefix = ".".join(str(target_ip).split(".")[:3])
-    return (
-        False,
-        "Yazıcı ile bilgisayar aynı ağda görünmüyor. "
-        f"Yazıcının IP adresi {host_text}, bilgisayar ağı {local_prefix}.x. "
-        f"Yazıcı IP'sini {target_prefix}.x yerine {local_prefix}.x ağına uygun olacak şekilde ayarlayın.",
+    same_subnet = ipv4_same_subnet(host, local_ips)
+    if same_subnet is False:
+        return False, format_subnet_mismatch_guidance(host, local_ips)
+    return same_subnet, ""
+
+
+def _ethernet_network_fields(
+    local_ips: list[str],
+    *,
+    printer_host: str = "",
+    port: int = DEFAULT_TCP_PORT,
+) -> dict[str, object]:
+    settings = suggest_ethernet_network_settings(
+        local_ips,
+        printer_host=printer_host,
+        default_port=port,
     )
+    return {
+        "local_ips": settings["local_ips"],
+        "scanned_subnets": settings["scanned_subnets"],
+        "suggested_target_subnet": settings["suggested_target_subnet"],
+        "suggested_printer_ip": settings["suggested_printer_ip"],
+        "suggested_gateway": settings["suggested_gateway"],
+        "subnet_mask": settings["subnet_mask"],
+        "suggested_port": settings["suggested_port"],
+        "suggested_profile": settings["suggested_profile"],
+        "network_state": settings["network_state"],
+        "mismatch_guidance": settings["mismatch_guidance"],
+    }
 
 
 def _git_commit_short() -> str:
@@ -319,6 +327,87 @@ def _request_printer_profile(body: dict[str, object] | None) -> str:
         if value:
             return value
     return ""
+
+
+_POS58_RECEIPT_PROFILE_IDS = frozenset(
+    {"pos58", "standard_58mm", "usb_pos58", "kitchen_58mm"}
+)
+_POS80_RECEIPT_PROFILE_IDS = frozenset(
+    {"pos80", "generic_80mm_escpos", "network_escpos", "receipt_80mm", "standard_80mm"}
+)
+
+
+def _request_test_mode(body: dict[str, object] | None) -> str:
+    raw_body = body or {}
+    return str(raw_body.get("test_mode") or raw_body.get("mode") or "").strip().lower()
+
+
+def _is_tcp_ethernet_request(body: dict[str, object] | None) -> bool:
+    raw_body = body or {}
+    backend = (
+        _request_printer_backend_value(raw_body) or str(raw_body.get("backend") or "")
+    ).strip().lower()
+    test_mode = _request_test_mode(raw_body)
+    return backend in {"tcp", "network-tcp", "ethernet"} or test_mode in {
+        "ethernet_test",
+        "tcp_test",
+        "ethernet",
+    }
+
+
+def _validate_receipt_profile_metadata(request: dict[str, object]) -> None:
+    """Ensure receipt profile dimensions match the selected profile."""
+    effective_paper = _request_paper_width_mm(request)
+    effective_raster = _request_raster_width_px(request)
+    profile_name = _request_printer_profile(request).strip().lower()
+    is_tcp_ethernet = _is_tcp_ethernet_request(request)
+
+    if not profile_name:
+        if is_tcp_ethernet:
+            raise PayloadError(
+                "Yazıcı profili seçilmedi. Kurulum ekranından POS-80, POS-58 veya "
+                "Generic 80mm profil seçin."
+            )
+        return
+
+    explicit_pos80 = (
+        profile_name in _POS80_RECEIPT_PROFILE_IDS
+        or ("80" in profile_name and profile_name not in _POS58_RECEIPT_PROFILE_IDS)
+    )
+    explicit_pos58 = (
+        profile_name in _POS58_RECEIPT_PROFILE_IDS
+        or ("58" in profile_name and "80" not in profile_name)
+    )
+
+    if explicit_pos80:
+        if effective_paper != 80 or effective_raster != 576:
+            raise PayloadError(
+                f"Seçilen profil {profile_name or 'POS-80'}, ancak payload "
+                f"paper_width_mm={effective_paper}, raster_width_px={effective_raster} "
+                "geldi. Profil metadata tutarsız."
+            )
+        return
+
+    if explicit_pos58 or effective_paper == 58:
+        if effective_paper != 58 or effective_raster != 384:
+            raise PayloadError(
+                f"Seçilen profil POS-58, ancak payload paper_width_mm={effective_paper}, "
+                f"raster_width_px={effective_raster} geldi. Profil metadata tutarsız."
+            )
+        return
+
+    if effective_paper == 80:
+        if effective_raster != 576:
+            raise PayloadError(
+                f"Seçilen profil {profile_name or 'POS-80'}, ancak payload "
+                f"raster_width_px={effective_raster} geldi. Profil metadata tutarsız."
+            )
+        return
+
+    if is_tcp_ethernet:
+        raise PayloadError(
+            f"Seçilen profil '{profile_name}' tanınmadı. Profil metadata tutarsız."
+        )
 
 
 def _request_raster_mode(body: dict[str, object] | None) -> str:
@@ -1662,6 +1751,9 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         if request_path == "/printer/tcp/probe":
             self._handle_tcp_probe()
             return
+        if request_path == "/printer/tcp/scan":
+            self._handle_tcp_scan()
+            return
         if request_path == "/setup/install":
             self._handle_setup_install()
             return
@@ -2328,6 +2420,71 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             port = 9100
 
+        diagnostic_only = raw_body.get("diagnostic_only") is True or raw_body.get(
+            "network_preflight"
+        ) is True
+        local_ips = _local_ipv4_addresses()
+        host_text = (host or "").strip()
+
+        try:
+            ipaddress.ip_address(host_text)
+            invalid_ip = host_text == "" or (
+                ipaddress.ip_address(host_text).version != 4
+                if host_text
+                else True
+            )
+        except ValueError:
+            invalid_ip = True
+
+        if invalid_ip:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "status": "invalid_ip",
+                    "errorCode": "invalid_ip",
+                    "error": f"'{host_text or '-'}' geçerli bir IPv4 adresi değil.",
+                    "target_host": host_text,
+                    "target_port": port,
+                    "reachable": False,
+                    "port_open": False,
+                    "local_ips": local_ips,
+                    "same_subnet": None,
+                    "suggested_message": "Geçerli bir IPv4 adresi girin (ör. 192.168.1.100).",
+                },
+            )
+            return
+
+        same_subnet, suggested_message = _same_subnet_hint(host_text, local_ips)
+        network_fields = _ethernet_network_fields(
+            local_ips,
+            printer_host=host_text,
+            port=port,
+        )
+
+        if diagnostic_only:
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "status": "preflight",
+                    "diagnostic_only": True,
+                    "target_host": host_text,
+                    "target_port": port,
+                    "reachable": None,
+                    "port_open": None,
+                    "same_subnet": same_subnet,
+                    "suggested_message": suggested_message
+                    or (
+                        "Aynı ağ gibi görünüyor."
+                        if same_subnet is True
+                        else ""
+                    ),
+                    **network_fields,
+                },
+            )
+            return
+
         LOGGER.info(
             "[EthernetPrinter][connection_test_start] host=%s port=%d",
             host or "-",
@@ -2345,8 +2502,12 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "error_code": str(getattr(exc, "code", "") or "tcp_io_error"),
                 "reason": str(exc),
             }
-        local_ips = _local_ipv4_addresses()
         same_subnet, suggested_message = _same_subnet_hint(host or "", local_ips)
+        network_fields = _ethernet_network_fields(
+            local_ips,
+            printer_host=host or "",
+            port=port,
+        )
         if result.get("ok") is True:
             LOGGER.info(
                 "[EthernetPrinter][connection_test_success] host=%s port=%d",
@@ -2372,6 +2533,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     "local_ips": local_ips,
                     "same_subnet": same_subnet,
                     "suggested_message": suggested_message or "Bağlantı başarılı.",
+                    **network_fields,
                     "printer": selected_printer
                     or {
                         "id": f"tcp:{host}:{port}",
@@ -2389,6 +2551,8 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             return
 
         error_code = str(result.get("error_code") or "tcp_unreachable").strip() or "tcp_unreachable"
+        if same_subnet is False:
+            error_code = "network_mismatch"
         error_message = str(
             result.get("reason")
             or result.get("error")
@@ -2422,6 +2586,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "local_ips": local_ips,
                 "same_subnet": same_subnet,
                 "suggested_message": suggested_message,
+                **network_fields,
                 "printer": selected_printer
                 or {
                     "id": f"tcp:{host}:{port}",
@@ -2448,6 +2613,109 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             target_host=target_host,
             target_port=target_port,
             selected_printer=selected_printer,
+        )
+
+    def _handle_tcp_scan(self) -> None:
+        raw_body = self._maybe_read_json_body() or {}
+        if not isinstance(raw_body, dict):
+            raw_body = {}
+        try:
+            port = int(raw_body.get("port") or DEFAULT_TCP_PORT)
+        except (TypeError, ValueError):
+            port = DEFAULT_TCP_PORT
+        if port < 1 or port > 65535:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "errorCode": "tcp_port_invalid",
+                    "error": "Port 1-65535 arasında olmalı.",
+                },
+            )
+            return
+
+        printer_host_hint = str(
+            raw_body.get("printer_host")
+            or raw_body.get("target_host")
+            or raw_body.get("host")
+            or ""
+        ).strip()
+        local_ips = _local_ipv4_addresses()
+        started = time.monotonic()
+        result = scan_local_network_printers(local_ips, port=port)
+        duration_ms = int((time.monotonic() - started) * 1000)
+        network_fields = _ethernet_network_fields(
+            local_ips,
+            printer_host=printer_host_hint,
+            port=port,
+        )
+        if not result.get("ok"):
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    **result,
+                    "scan_duration_ms": duration_ms,
+                    **network_fields,
+                },
+            )
+            return
+
+        devices: list[dict[str, object]] = []
+        for item in result.get("devices") or []:
+            if not isinstance(item, dict):
+                continue
+            host = str(item.get("host") or "").strip()
+            if not host:
+                continue
+            same_subnet, suggested_message = _same_subnet_hint(host, local_ips)
+            devices.append(
+                {
+                    "host": host,
+                    "port": int(item.get("port") or port),
+                    "reachable": bool(item.get("reachable")),
+                    "port_open": bool(item.get("port_open")),
+                    "same_subnet": same_subnet,
+                    "suggested_message": suggested_message,
+                    "subnet": item.get("subnet"),
+                }
+            )
+
+        no_device_reason = scan_no_device_reason(
+            devices=devices,
+            printer_host=printer_host_hint,
+            local_ips=local_ips,
+        )
+        mismatch_guidance = str(network_fields.get("mismatch_guidance") or "")
+        if devices:
+            scan_message = f"{len(devices)} yazıcı bulundu."
+        elif no_device_reason == "printer_on_different_subnet":
+            scan_message = (
+                "Aynı ağda port 9100 açık cihaz bulunamadı. "
+                "Self-test fişindeki IP farklı ağdaysa otomatik tarama bulamaz."
+            )
+        else:
+            scan_message = (
+                "Aynı ağda port 9100 açık cihaz bulunamadı. "
+                "Self-test fişindeki IP farklı ağdaysa otomatik tarama bulamaz."
+            )
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "status": "scan_complete",
+                "local_ips": local_ips,
+                "subnets": result.get("subnets") or [],
+                "scanned_subnets": result.get("subnets") or [],
+                "port": port,
+                "devices": devices,
+                "discovered_printers": devices,
+                "scan_duration_ms": duration_ms,
+                "no_device_reason": no_device_reason,
+                "suggested_message": scan_message,
+                "mismatch_guidance": mismatch_guidance,
+                **network_fields,
+            },
         )
 
     def _handle_print_turkish_encoding_calibration(self) -> None:
@@ -3445,13 +3713,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             request.setdefault("codepage", self.settings.receipt_codepage or 13)
             request.setdefault("printer_code_page", request.get("codepage"))
 
-        effective_paper = _request_paper_width_mm(request)
-        effective_raster = _request_raster_width_px(request)
-        profile_name = _request_printer_profile(request).strip().lower()
-        if effective_paper != 58 or effective_raster != 384 or "80" in profile_name:
-            raise PayloadError(
-                "POS-58 adisyon profili gecersiz. paper_width_mm=58, raster_width_px=384 ve printer_profile=pos58 olmalidir."
-            )
+        _validate_receipt_profile_metadata(request)
         return request
 
     def _render_receipt_document(

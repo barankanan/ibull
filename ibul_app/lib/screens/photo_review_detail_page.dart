@@ -39,68 +39,42 @@ class _PhotoReviewDetailPageState extends State<PhotoReviewDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final screenSize = MediaQuery.sizeOf(context);
+    final maxContentWidth = screenSize.width > 900 ? 720.0 : screenSize.width;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F6FD),
+      backgroundColor: const Color(0xFF111018),
       body: SafeArea(
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               child: Row(
                 children: [
-                  InkWell(
-                    onTap: () => Navigator.pop(context),
+                  Material(
+                    color: Colors.white.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(24),
-                    child: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(21),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.05),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: AppColors.primary,
-                        size: 18,
+                    child: InkWell(
+                      onTap: () => Navigator.pop(context),
+                      borderRadius: BorderRadius.circular(24),
+                      child: const SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: Icon(
+                          Icons.arrow_back_ios_new,
+                          color: Colors.white,
+                          size: 18,
+                        ),
                       ),
                     ),
                   ),
                   const Spacer(),
-                  const Text(
-                    'Ürün Görsel',
-                    style: TextStyle(
-                      color: AppColors.primary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 7,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: AppColors.primary.withValues(alpha: 0.12),
-                      ),
-                    ),
-                    child: Text(
-                      '${_currentIndex + 1}/${widget.galleryItems.length}',
-                      style: const TextStyle(
-                        color: AppColors.primary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  Text(
+                    '${_currentIndex + 1}/${widget.galleryItems.length}',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -111,60 +85,64 @@ class _PhotoReviewDetailPageState extends State<PhotoReviewDetailPage> {
                 controller: _pageController,
                 itemCount: widget.galleryItems.length,
                 onPageChanged: (index) {
-                  setState(() {
-                    _currentIndex = index;
-                  });
+                  setState(() => _currentIndex = index);
                 },
                 itemBuilder: (context, index) {
                   final galleryItem = widget.galleryItems[index];
-                  return _GalleryPage(item: galleryItem);
-                },
-              ),
-            ),
-            Container(
-              height: 82,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                border: Border(top: BorderSide(color: Color(0xFFE8E2F3))),
-              ),
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: widget.galleryItems.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 10),
-                itemBuilder: (context, index) {
-                  final previewItem = widget.galleryItems[index];
-                  final isSelected = index == _currentIndex;
-                  return GestureDetector(
-                    onTap: () {
-                      _pageController.animateToPage(
-                        index,
-                        duration: const Duration(milliseconds: 260),
-                        curve: Curves.easeOutCubic,
-                      );
-                    },
-                    child: Container(
-                      width: 58,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: isSelected
-                              ? AppColors.primary
-                              : Colors.grey.shade300,
-                          width: isSelected ? 2 : 1,
-                        ),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(13),
-                        child: _ReviewImage(
-                          imageUrl: previewItem['imageUrl']?.toString() ?? '',
-                        ),
-                      ),
-                    ),
+                  return _GalleryImagePane(
+                    item: galleryItem,
+                    maxWidth: maxContentWidth,
+                    maxHeight: screenSize.height * 0.62,
                   );
                 },
               ),
             ),
+            if (widget.galleryItems.isNotEmpty)
+              _ReviewInfoCard(
+                item: widget.galleryItems[_currentIndex],
+                maxWidth: maxContentWidth,
+              ),
+            if (widget.galleryItems.length > 1)
+              SizedBox(
+                height: 72,
+                child: ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: widget.galleryItems.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final previewItem = widget.galleryItems[index];
+                    final isSelected = index == _currentIndex;
+                    return GestureDetector(
+                      onTap: () {
+                        _pageController.animateToPage(
+                          index,
+                          duration: const Duration(milliseconds: 260),
+                          curve: Curves.easeOutCubic,
+                        );
+                      },
+                      child: Container(
+                        width: 52,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isSelected
+                                ? AppColors.primary
+                                : Colors.white24,
+                            width: isSelected ? 2 : 1,
+                          ),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(11),
+                          child: _ReviewImage(
+                            imageUrl: previewItem['imageUrl']?.toString() ?? '',
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
           ],
         ),
       ),
@@ -172,123 +150,157 @@ class _PhotoReviewDetailPageState extends State<PhotoReviewDetailPage> {
   }
 }
 
-class _GalleryPage extends StatelessWidget {
+class _GalleryImagePane extends StatelessWidget {
   final Map<String, dynamic> item;
+  final double maxWidth;
+  final double maxHeight;
 
-  const _GalleryPage({required this.item});
+  const _GalleryImagePane({
+    required this.item,
+    required this.maxWidth,
+    required this.maxHeight,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: InteractiveViewer(
+          minScale: 0.8,
+          maxScale: 3,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: maxWidth,
+              maxHeight: maxHeight,
+            ),
+            child: _ReviewImage(
+              imageUrl: item['imageUrl']?.toString() ?? '',
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewInfoCard extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final double maxWidth;
+
+  const _ReviewInfoCard({required this.item, required this.maxWidth});
 
   @override
   Widget build(BuildContext context) {
     final rating = (item['rating'] as num?)?.toDouble() ?? 0;
     final userName = item['userName']?.toString() ?? 'Kullanıcı';
-    final comment = item['comment']?.toString() ?? '';
+    final comment = item['comment']?.toString().trim() ?? '';
     final date = item['date']?.toString() ?? '';
+    final productName = item['productName']?.toString() ?? '';
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
+    if (comment.isEmpty && userName == 'Kullanıcı' && date.isEmpty) {
+      return const SizedBox(height: 8);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: Container(
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(color: const Color(0xFFE8E2F3)),
             ),
-            child: AspectRatio(
-              aspectRatio: 0.9,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(18),
-                child: _ReviewImage(
-                  imageUrl: item['imageUrl']?.toString() ?? '',
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            item['productName']?.toString() ?? 'Ürün',
-            style: const TextStyle(
-              fontSize: 13,
-              color: Colors.black54,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 22,
-                backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-                child: Text(
-                  userName.isNotEmpty ? userName[0].toUpperCase() : 'K',
-                  style: const TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w700,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (productName.isNotEmpty)
+                  Text(
+                    productName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                if (productName.isNotEmpty) const SizedBox(height: 8),
+                Row(
                   children: [
-                    Text(
-                      userName,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: AppColors.primary.withValues(alpha: 0.12),
+                      child: Text(
+                        userName.isNotEmpty ? userName[0].toUpperCase() : 'K',
+                        style: const TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      date,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade500,
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            userName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (date.isNotEmpty)
+                            Text(
+                              date,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
+                    if (rating > 0)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: List.generate(5, (index) {
+                          return Icon(
+                            index < rating.round()
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            size: 16,
+                            color: const Color(0xFFF4C542),
+                          );
+                        }),
+                      ),
                   ],
                 ),
-              ),
-              Row(
-                children: List.generate(5, (index) {
-                  return Icon(
-                    index < rating.round()
-                        ? Icons.star_rounded
-                        : Icons.star_outline_rounded,
-                    size: 20,
-                    color: AppColors.primary,
-                  );
-                }),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF7A2FF3), Color(0xFF5E17EB)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              comment,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                height: 1.6,
-              ),
+                if (comment.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    comment,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      height: 1.5,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -310,8 +322,8 @@ class _ReviewImage extends StatelessWidget {
       );
     }
     if (imageUrl.startsWith('http')) {
-      return OptimizedImage(imageUrlOrPath: 
-        imageUrl,
+      return OptimizedImage(
+        imageUrlOrPath: imageUrl,
         fit: fit,
         errorBuilder: (_, _, _) => _fallback(),
       );
@@ -328,9 +340,9 @@ class _ReviewImage extends StatelessWidget {
 
   Widget _fallback() {
     return Container(
-      color: Colors.grey.shade100,
+      color: const Color(0xFF1E1A28),
       alignment: Alignment.center,
-      child: Icon(Icons.image_outlined, color: Colors.grey.shade400, size: 36),
+      child: Icon(Icons.image_outlined, color: Colors.grey.shade500, size: 36),
     );
   }
 }

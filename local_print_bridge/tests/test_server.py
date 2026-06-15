@@ -439,7 +439,56 @@ class PrintBridgeServerTests(unittest.TestCase):
         self.assertEqual(body.get("target_port"), 9100)
         self.assertEqual(body.get("local_ips"), ["192.168.10.158"])
         self.assertEqual(body.get("same_subnet"), False)
-        self.assertIn("aynı ağda görünmüyor", body.get("suggested_message", ""))
+        self.assertEqual(body.get("errorCode"), "network_mismatch")
+        suggested = body.get("suggested_message", "")
+        self.assertIn("192.168.10.x", suggested)
+        self.assertIn("192.168.1.x", suggested)
+        self.assertIn("aynı ağda değil", suggested)
+        self.assertTrue(
+            "Yazıcı IP" in suggested or "işletme ağına alın" in suggested,
+            msg=f"expected actionable printer-network guidance, got: {suggested!r}",
+        )
+
+    def test_tcp_probe_invalid_ip_returns_error_code(self) -> None:
+        headers = {"Content-Type": "application/json"}
+        payload = json.dumps({"target_host": "not-an-ip", "target_port": 9100})
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("POST", "/printer/tcp/probe", body=payload, headers=headers)
+        response = connection.getresponse()
+        body = json.loads(response.read())
+        connection.close()
+
+        self.assertEqual(response.status, 400)
+        self.assertFalse(body["ok"])
+        self.assertEqual(body.get("errorCode"), "invalid_ip")
+
+    def test_tcp_probe_diagnostic_only_skips_socket(self) -> None:
+        headers = {"Content-Type": "application/json"}
+        payload = json.dumps(
+            {
+                "target_host": "192.168.1.100",
+                "target_port": 9100,
+                "diagnostic_only": True,
+            }
+        )
+        with mock.patch(
+            "local_print_bridge.server._local_ipv4_addresses",
+            return_value=["192.168.1.34"],
+        ), mock.patch(
+            "local_print_bridge.server.NetworkTcpTransport.health",
+        ) as health_mock:
+            connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            connection.request("POST", "/printer/tcp/probe", body=payload, headers=headers)
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+
+        health_mock.assert_not_called()
+        self.assertEqual(response.status, 200)
+        self.assertTrue(body["ok"])
+        self.assertTrue(body.get("diagnostic_only"))
+        self.assertEqual(body.get("local_ips"), ["192.168.1.34"])
+        self.assertEqual(body.get("same_subnet"), True)
 
     def test_resolve_render_mode_maps_escpos_short_to_text(self) -> None:
         handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
@@ -498,18 +547,58 @@ class PrintBridgeServerTests(unittest.TestCase):
         self.assertEqual(completed["render_mode"], "image")
         self.assertEqual(completed["raster_mode"], "esc_star")
 
-    def test_complete_receipt_request_rejects_80mm_profile(self) -> None:
+    def test_complete_receipt_request_accepts_pos80_profile(self) -> None:
         handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
         handler.settings = self.settings
-        with self.assertRaises(Exception):
+        completed = handler._complete_receipt_request(
+            {
+                "paper_width_mm": 80,
+                "raster_width_px": 576,
+                "chars_per_line": 48,
+                "printer_profile": "pos80",
+                "backend": "tcp",
+                "test_mode": "ethernet_test",
+            },
+            selected_printer=None,
+        )
+        self.assertEqual(completed["printer_profile"], "pos80")
+        self.assertEqual(completed["paper_width_mm"], 80)
+        self.assertEqual(completed["raster_width_px"], 576)
+
+    def test_complete_receipt_request_rejects_inconsistent_pos80_dimensions(self) -> None:
+        handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
+        handler.settings = self.settings
+        with self.assertRaises(Exception) as ctx:
             handler._complete_receipt_request(
                 {
-                    "paper_width_mm": 80,
-                    "raster_width_px": 576,
-                    "printer_profile": "generic_80mm_escpos",
+                    "paper_width_mm": 58,
+                    "raster_width_px": 384,
+                    "printer_profile": "pos80",
+                    "backend": "tcp",
+                    "test_mode": "ethernet_test",
                 },
                 selected_printer=None,
             )
+        self.assertIn("pos80", str(ctx.exception).lower())
+        self.assertIn("paper_width_mm=58", str(ctx.exception))
+
+    def test_complete_receipt_request_accepts_generic_80mm_profile(self) -> None:
+        handler = PrintBridgeHandler.__new__(PrintBridgeHandler)
+        handler.settings = self.settings
+        completed = handler._complete_receipt_request(
+            {
+                "paper_width_mm": 80,
+                "raster_width_px": 576,
+                "chars_per_line": 48,
+                "printer_profile": "generic_80mm_escpos",
+                "backend": "tcp",
+                "test_mode": "ethernet_test",
+            },
+            selected_printer=None,
+        )
+        self.assertEqual(completed["printer_profile"], "generic_80mm_escpos")
+        self.assertEqual(completed["paper_width_mm"], 80)
+        self.assertEqual(completed["raster_width_px"], 576)
 
     def test_ethernet_kitchen_test_uses_real_kitchen_renderer_path(self) -> None:
         headers = {

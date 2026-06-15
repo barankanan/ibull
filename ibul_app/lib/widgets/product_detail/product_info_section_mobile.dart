@@ -21,7 +21,6 @@ class ProductInfoSectionMobile extends StatelessWidget {
     final summary = context.select<ProductDetailViewModel, ReviewSummary>(
       (model) => model.reviewSummary,
     );
-    final customReviews = summary.reviews;
     final reviewCount = summary.reviewCount;
     final rating = summary.averageRating;
 
@@ -59,14 +58,12 @@ class ProductInfoSectionMobile extends StatelessWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => AllReviewsPage(
-                        productName: product.name,
-                        brand: product.brand,
-                        rating: rating,
-                        reviewCount: reviewCount,
-                        images: product.images,
-                        customReviews: customReviews,
-                      ),
+                    builder: (context) => AllReviewsPage(
+                      productName: product.name,
+                      brand: product.brand,
+                      storeName: product.store,
+                      images: product.images,
+                    ),
                     ),
                   );
                 },

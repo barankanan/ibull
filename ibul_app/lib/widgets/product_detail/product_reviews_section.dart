@@ -16,7 +16,6 @@ class ProductReviewsSection extends StatelessWidget {
     final summary = context.select<ProductDetailViewModel, ReviewSummary>(
       (viewModel) => viewModel.reviewSummary,
     );
-    final dynamicReviews = summary.reviews;
     final reviewCount = summary.reviewCount;
     final rating = summary.averageRating;
     final hasReviews = reviewCount > 0;
@@ -149,10 +148,8 @@ class ProductReviewsSection extends StatelessWidget {
                     builder: (context) => AllReviewsPage(
                       productName: product.name,
                       brand: product.brand,
-                      rating: rating,
-                      reviewCount: reviewCount,
+                      storeName: product.store,
                       images: List<String>.from(product.images),
-                      customReviews: dynamicReviews,
                     ),
                   ),
                 );

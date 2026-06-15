@@ -582,6 +582,7 @@ class _FakeKitchenPrinterRepository extends PrinterRepository {
     required String printerId,
     required bool success,
     String? error,
+    String? statusOverride,
     String? transport,
     String? jobId,
     int? bytesSent,

@@ -1463,7 +1463,7 @@ class _PrintersTabState extends State<_PrintersTab> {
           backgroundColor: const Color(0xFFF9FAFB),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: () async {
-              final saved = await showPrinterWizard(
+              final saved = await showAddPrinterFlow(
                 context,
                 restaurantId: widget.restaurantId,
               );
@@ -2509,7 +2509,7 @@ class _PrinterCardState extends State<_PrinterCard> {
   }
 
   Future<void> _handleEdit() async {
-    final saved = await showPrinterWizard(
+    final saved = await showAddPrinterFlow(
       context,
       restaurantId: widget.restaurantId,
       existing: widget.printer,
