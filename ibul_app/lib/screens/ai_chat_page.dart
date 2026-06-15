@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
 import '../services/ai_assistant_service.dart';
+import '../widgets/web_header.dart';
+import '../widgets/account_sidebar.dart';
 import 'ai_discover_page.dart';
 import 'compare_products_page.dart';
 
 class AIChatPage extends StatefulWidget {
-  const AIChatPage({super.key});
+  final bool showAccountSidebar;
+
+  const AIChatPage({super.key, this.showAccountSidebar = false});
 
   @override
   State<AIChatPage> createState() => _AIChatPageState();
@@ -75,346 +79,355 @@ class _AIChatPageState extends State<AIChatPage> {
   }
 
   Widget _buildWebView(BuildContext context) {
+    final chatPanel = _buildWebChatPanel(context);
+
     return Scaffold(
-      backgroundColor: Colors
-          .transparent, // Background will be handled by dialog overlay or parent
-      body: Center(
-        child: Container(
-          width: 800,
-          height: 600,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.1),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
-              ),
-            ],
+      backgroundColor: const Color(0xFFF9FAFB),
+      body: Column(
+        children: [
+          WebHeader(onSearch: (_) {}, activeMenu: 'account'),
+          Expanded(
+            child: widget.showAccountSidebar
+                ? Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1200),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const SizedBox(
+                              width: 280,
+                              child: AccountSidebar(
+                                activePage: 'Yapay Zekaya Danış',
+                              ),
+                            ),
+                            const SizedBox(width: 32),
+                            Expanded(child: chatPanel),
+                          ],
+                        ),
+                      ),
+                    ),
+                  )
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1200),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: double.infinity,
+                          child: chatPanel,
+                        ),
+                      ),
+                    ),
+                  ),
           ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              // Web Header
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 20,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border(
-                    bottom: BorderSide(color: Colors.grey.shade100),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebChatPanel(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+            ),
+            child: Row(
+              children: [
+                if (!widget.showAccountSidebar)
+                  IconButton(
+                    onPressed: () => Navigator.maybePop(context),
+                    icon: const Icon(Icons.arrow_back, color: Colors.black87),
+                    tooltip: 'Geri',
+                  ),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.psychology,
+                    color: AppColors.primary,
+                    size: 28,
                   ),
                 ),
-                child: Row(
+                const SizedBox(width: 16),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.psychology,
-                        color: AppColors.primary,
-                        size: 28,
+                    const Text(
+                      'Yapay Zeka Asistanı',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
                       ),
                     ),
-                    const SizedBox(width: 16),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Yapay Zeka Asistanı',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
-                          ),
-                        ),
-                        Text(
-                          'Size nasıl yardımcı olabilirim?',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close, color: Colors.grey),
-                      splashRadius: 24,
-                    ),
-                  ],
-                ),
-              ),
-
-              // Content
-              Expanded(
-                child: Row(
-                  children: [
-                    // Left Side: Chat Area
-                    Expanded(
-                      flex: 3,
-                      child: Container(
-                        color: Colors.grey.shade50,
-                        padding: const EdgeInsets.all(24),
-                        child: _messages.isEmpty
-                            ? Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.chat_bubble_outline,
-                                    size: 64,
-                                    color: Colors.grey.shade300,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'Sohbet başlatmak için bir soru sorun\nveya sağdaki seçeneklerden birini seçin.',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey.shade500,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : ListView.builder(
-                                controller: _scrollController,
-                                itemCount:
-                                    _messages.length + (_isTyping ? 1 : 0),
-                                itemBuilder: (context, index) {
-                                  if (index == _messages.length) {
-                                    return Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: Container(
-                                        margin: const EdgeInsets.symmetric(
-                                          vertical: 8,
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 12,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius: BorderRadius.circular(
-                                            16,
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withValues(alpha: 0.05,),
-                                              blurRadius: 4,
-                                            ),
-                                          ],
-                                        ),
-                                        child: const SizedBox(
-                                          width: 40,
-                                          child: LinearProgressIndicator(
-                                            minHeight: 2,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  }
-
-                                  final message = _messages[index];
-                                  final isUser = message['isUser'] as bool;
-                                  return Align(
-                                    alignment: isUser
-                                        ? Alignment.centerRight
-                                        : Alignment.centerLeft,
-                                    child: Container(
-                                      margin: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 12,
-                                      ),
-                                      constraints: const BoxConstraints(
-                                        maxWidth: 400,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: isUser
-                                            ? AppColors.primary
-                                            : Colors.white,
-                                        borderRadius: BorderRadius.only(
-                                          topLeft: const Radius.circular(16),
-                                          topRight: const Radius.circular(16),
-                                          bottomLeft: Radius.circular(
-                                            isUser ? 16 : 4,
-                                          ),
-                                          bottomRight: Radius.circular(
-                                            isUser ? 4 : 16,
-                                          ),
-                                        ),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.black.withValues(alpha: 0.05,),
-                                            blurRadius: 4,
-                                          ),
-                                        ],
-                                      ),
-                                      child: Text(
-                                        message['text'] as String,
-                                        style: TextStyle(
-                                          color: isUser
-                                              ? Colors.white
-                                              : Colors.black87,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
-                    ),
-
-                    // Right Side: Quick Actions
-                    Container(
-                      width: 300,
-                      decoration: BoxDecoration(
-                        border: Border(
-                          left: BorderSide(color: Colors.grey.shade100),
-                        ),
-                      ),
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Hızlı İşlemler',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey.shade800,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildWebActionButton(
-                            'Kendini Keşfet',
-                            Icons.explore,
-                            () {
-                              Navigator.push(
-                                context,
-                                PageRouteBuilder(
-                                  opaque: false,
-                                  pageBuilder: (context, _, _) =>
-                                      const AIDiscoverPage(),
-                                  transitionsBuilder:
-                                      (
-                                        context,
-                                        animation,
-                                        secondaryAnimation,
-                                        child,
-                                      ) {
-                                        return FadeTransition(
-                                          opacity: animation,
-                                          child: child,
-                                        );
-                                      },
-                                ),
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          _buildWebActionButton(
-                            'Ürün Karşılaştır',
-                            Icons.compare_arrows,
-                            () {
-                              Navigator.push(
-                                context,
-                                PageRouteBuilder(
-                                  opaque: false,
-                                  pageBuilder: (context, _, _) =>
-                                      const CompareProductsPage(),
-                                  transitionsBuilder:
-                                      (
-                                        context,
-                                        animation,
-                                        secondaryAnimation,
-                                        child,
-                                      ) {
-                                        return FadeTransition(
-                                          opacity: animation,
-                                          child: child,
-                                        );
-                                      },
-                                ),
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          _buildWebActionButton(
-                            'İndirim Takibi',
-                            Icons.notifications_active,
-                            () {},
-                          ),
-                          const SizedBox(height: 12),
-                          _buildWebActionButton(
-                            'Uygulama SSS',
-                            Icons.help_outline,
-                            () {},
-                          ),
-                        ],
+                    Text(
+                      'Size nasıl yardımcı olabilirim?',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade500,
                       ),
                     ),
                   ],
                 ),
-              ),
-
-              // Bottom Input Area
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border(top: BorderSide(color: Colors.grey.shade100)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: TextField(
-                          controller: _searchController,
-                          onSubmitted: (_) => _sendMessage(),
-                          decoration: const InputDecoration(
-                            hintText: 'Yapay zekaya bir soru sorun...',
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(vertical: 16),
-                            icon: Icon(Icons.search, color: Colors.grey),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Container(
-                      decoration: const BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      child: IconButton(
-                        onPressed: _sendMessage,
-                        icon: const Icon(Icons.send, color: Colors.white),
-                        tooltip: 'Gönder',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    color: Colors.grey.shade50,
+                    padding: const EdgeInsets.all(24),
+                    alignment: Alignment.topLeft,
+                    child: _messages.isEmpty
+                        ? Align(
+                            alignment: Alignment.topLeft,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.chat_bubble_outline,
+                                  size: 48,
+                                  color: Colors.grey.shade300,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Sohbet başlatmak için bir soru sorun\nveya sağdaki seçeneklerden birini seçin.',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey.shade500,
+                                    height: 1.45,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: _scrollController,
+                            itemCount: _messages.length + (_isTyping ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              if (index == _messages.length) {
+                                return Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Container(
+                                    margin: const EdgeInsets.symmetric(
+                                      vertical: 8,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(16),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.05,
+                                          ),
+                                          blurRadius: 4,
+                                        ),
+                                      ],
+                                    ),
+                                    child: const SizedBox(
+                                      width: 40,
+                                      child: LinearProgressIndicator(
+                                        minHeight: 2,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              final message = _messages[index];
+                              final isUser = message['isUser'] as bool;
+                              return Align(
+                                alignment: isUser
+                                    ? Alignment.centerRight
+                                    : Alignment.centerLeft,
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(
+                                    vertical: 8,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 400,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isUser
+                                        ? AppColors.primary
+                                        : Colors.white,
+                                    borderRadius: BorderRadius.only(
+                                      topLeft: const Radius.circular(16),
+                                      topRight: const Radius.circular(16),
+                                      bottomLeft: Radius.circular(
+                                        isUser ? 16 : 4,
+                                      ),
+                                      bottomRight: Radius.circular(
+                                        isUser ? 4 : 16,
+                                      ),
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.05,
+                                        ),
+                                        blurRadius: 4,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Text(
+                                    message['text'] as String,
+                                    style: TextStyle(
+                                      color: isUser
+                                          ? Colors.white
+                                          : Colors.black87,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ),
+                Container(
+                  width: 300,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      left: BorderSide(color: Colors.grey.shade100),
+                    ),
+                  ),
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Hızlı İşlemler',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildWebActionButton(
+                        'Kendini Keşfet',
+                        Icons.explore,
+                        () {
+                          Navigator.of(context, rootNavigator: true).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const AIDiscoverPage(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      _buildWebActionButton(
+                        'Ürün Karşılaştır',
+                        Icons.compare_arrows,
+                        () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                              builder: (_) => const CompareProductsPage(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      _buildWebActionButton(
+                        'İndirim Takibi',
+                        Icons.notifications_active,
+                        () {},
+                      ),
+                      const SizedBox(height: 12),
+                      _buildWebActionButton(
+                        'Uygulama SSS',
+                        Icons.help_outline,
+                        () {},
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Colors.grey.shade100)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: TextField(
+                      controller: _searchController,
+                      onSubmitted: (_) => _sendMessage(),
+                      decoration: const InputDecoration(
+                        hintText: 'Yapay zekaya bir soru sorun...',
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(vertical: 16),
+                        icon: Icon(Icons.search, color: Colors.grey),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Container(
+                  decoration: const BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    onPressed: _sendMessage,
+                    icon: const Icon(Icons.send, color: Colors.white),
+                    tooltip: 'Gönder',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -554,11 +567,10 @@ class _AIChatPageState extends State<AIChatPage> {
                               _buildActionButton(
                                 'Kendini keşfet',
                                 onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          const AIDiscoverPage(),
+                                  Navigator.of(context, rootNavigator: true)
+                                      .push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => const AIDiscoverPage(),
                                     ),
                                   );
                                 },

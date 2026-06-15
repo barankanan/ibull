@@ -3,6 +3,10 @@ import '../core/config/app_feature_flags.dart';
 class AiAssistantService {
   const AiAssistantService._();
 
+  /// Kendini Keşfet ve benzeri akışlarda gerçek AI backend bağlı mı.
+  /// Demo/mock yanıt üretilmemesi gereken yüzeyler bunu kontrol eder.
+  static bool get isDiscoverChatLive => false;
+
   static String buildResponse(String text) {
     if (!AppFeatureFlags.enableDemoAiAssistant) {
       return 'Yapay zeka asistanı şu anda yapılandırılmadı. Lütfen daha sonra tekrar deneyin.';

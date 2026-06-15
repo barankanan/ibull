@@ -1488,7 +1488,10 @@ class _AccountPageState extends State<AccountPage> {
                 onTap: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const AIChatPage()),
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          const AIChatPage(showAccountSidebar: true),
+                    ),
                   );
                 },
               ),

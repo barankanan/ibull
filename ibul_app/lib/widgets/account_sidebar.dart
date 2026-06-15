@@ -11,6 +11,7 @@ import '../screens/settings_page.dart';
 import '../screens/account_page.dart';
 import '../screens/followed_stores_page.dart';
 import '../screens/addresses_page.dart';
+import '../screens/ai_chat_page.dart';
 import '../core/app_state.dart';
 import '../core/auth/user_identity.dart';
 
@@ -73,165 +74,229 @@ class AccountSidebar extends StatelessWidget {
     final email = UserIdentity.resolveEmail(currentUser: user);
     final initials = UserIdentity.initialsOf(user);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          // Profile Summary
-          Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                CircleAvatar(
-                  radius: 40,
-                  backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-                  child: Text(
-                    initials,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final menuColumn = Column(
+          mainAxisSize: MainAxisSize.min,
+          children: _buildMenuItems(context),
+        );
+
+        final profileHeader = Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  CircleAvatar(
+                    radius: 40,
+                    backgroundColor: AppColors.primary.withValues(alpha: 0.1),
+                    child: Text(
+                      initials,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  displayName,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1F2937),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                if (email.isNotEmpty)
+                  const SizedBox(height: 16),
                   Text(
-                    email,
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+                    displayName,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1F2937),
+                    ),
                   ),
+                  const SizedBox(height: 4),
+                  if (email.isNotEmpty)
+                    Text(
+                      email,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+          ],
+        );
+
+        if (!constraints.hasBoundedHeight) {
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
               ],
             ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                profileHeader,
+                menuColumn,
+              ],
+            ),
+          );
+        }
+
+        return Container(
+          height: constraints.maxHeight,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-          const Divider(height: 1),
-          // Navigation Items
-          _buildWebMenuItem(
-            context,
-            Icons.dashboard_outlined,
-            'Hesap Özeti',
-            isActive: activePage == 'Hesap Özeti',
-            onTap: () {
-              if (activePage != 'Hesap Özeti') {
-                _pushReplacementPage(context, const AccountPage());
-              }
-            },
+          child: Column(
+            children: [
+              profileHeader,
+              Expanded(
+                child: SingleChildScrollView(
+                  child: menuColumn,
+                ),
+              ),
+            ],
           ),
-          _buildWebMenuItem(
-            context,
-            Icons.shopping_bag_outlined,
-            'Siparişlerim',
-            isActive: activePage == 'Siparişlerim',
-            onTap: () {
-              if (activePage != 'Siparişlerim') {
-                _pushReplacementPage(context, const OrdersPage());
-              }
-            },
-          ),
-          _buildWebMenuItem(
-            context,
-            Icons.favorite_border,
-            'Favorilerim',
-            isActive: activePage == 'Favorilerim',
-            onTap: () {
-              // Navigation logic here
-              if (activePage != 'Favorilerim') {
-                _pushReplacementPage(context, const FavoritesPage());
-              }
-            },
-          ),
-          _buildWebMenuItem(
-            context,
-            Icons.local_offer_outlined,
-            'Kuponlarım',
-            isActive: activePage == 'Kuponlarım',
-            onTap: () {
-              if (activePage != 'Kuponlarım') {
-                _pushReplacementPage(context, const CouponsPage());
-              }
-            },
-          ),
-          _buildWebMenuItem(
-            context,
-            Icons.store_outlined,
-            'Takip Ettiklerim',
-            isActive: activePage == 'Takip Ettiklerim',
-            onTap: () {
-              if (activePage != 'Takip Ettiklerim') {
-                _pushReplacementPage(context, const FollowedStoresPage());
-              }
-            },
-          ),
-          _buildWebMenuItem(
-            context,
-            Icons.location_on_outlined,
-            'Adreslerim',
-            isActive: activePage == 'Adreslerim',
-            onTap: () {
-              if (activePage != 'Adreslerim') {
-                _pushReplacementPage(context, const AddressesPage());
-              }
-            },
-          ),
-          _buildWebMenuItem(
-            context,
-            Icons.credit_card_outlined,
-            'Kayıtlı Kartlarım',
-            isActive: activePage == 'Kayıtlı Kartlarım',
-          ),
-          _buildWebMenuItem(
-            context,
-            Icons.reviews_outlined,
-            'Değerlendirmelerim',
-            isActive: activePage == 'Değerlendirmelerim',
-            onTap: () {
-              if (activePage != 'Değerlendirmelerim') {
-                _pushReplacementPage(context, const ReviewsPage());
-              }
-            },
-          ),
-          _buildWebMenuItem(
-            context,
-            Icons.settings_outlined,
-            'Ayarlar',
-            isActive: activePage == 'Ayarlar',
-            onTap: () {
-              if (activePage != 'Ayarlar') {
-                _pushReplacementPage(context, const SettingsPage());
-              }
-            },
-          ),
-          const Divider(height: 1),
-          _buildWebMenuItem(
-            context,
-            Icons.logout,
-            'Çıkış Yap',
-            isDestructive: true,
-            isActive: false,
-            onTap: () => _logout(context),
-          ),
-        ],
-      ),
+        );
+      },
     );
+  }
+
+  List<Widget> _buildMenuItems(BuildContext context) {
+    return [
+      _buildWebMenuItem(
+        context,
+        Icons.dashboard_outlined,
+        'Hesap Özeti',
+        isActive: activePage == 'Hesap Özeti',
+        onTap: () {
+          if (activePage != 'Hesap Özeti') {
+            _pushReplacementPage(context, const AccountPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.lightbulb_outline,
+        'Yapay Zekaya Danış',
+        isActive: activePage == 'Yapay Zekaya Danış',
+        onTap: () {
+          if (activePage != 'Yapay Zekaya Danış') {
+            _pushReplacementPage(
+              context,
+              const AIChatPage(showAccountSidebar: true),
+            );
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.shopping_bag_outlined,
+        'Siparişlerim',
+        isActive: activePage == 'Siparişlerim',
+        onTap: () {
+          if (activePage != 'Siparişlerim') {
+            _pushReplacementPage(context, const OrdersPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.favorite_border,
+        'Favorilerim',
+        isActive: activePage == 'Favorilerim',
+        onTap: () {
+          if (activePage != 'Favorilerim') {
+            _pushReplacementPage(context, const FavoritesPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.local_offer_outlined,
+        'Kuponlarım',
+        isActive: activePage == 'Kuponlarım',
+        onTap: () {
+          if (activePage != 'Kuponlarım') {
+            _pushReplacementPage(context, const CouponsPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.store_outlined,
+        'Takip Ettiklerim',
+        isActive: activePage == 'Takip Ettiklerim',
+        onTap: () {
+          if (activePage != 'Takip Ettiklerim') {
+            _pushReplacementPage(context, const FollowedStoresPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.location_on_outlined,
+        'Adreslerim',
+        isActive: activePage == 'Adreslerim',
+        onTap: () {
+          if (activePage != 'Adreslerim') {
+            _pushReplacementPage(context, const AddressesPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.credit_card_outlined,
+        'Kayıtlı Kartlarım',
+        isActive: activePage == 'Kayıtlı Kartlarım',
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.reviews_outlined,
+        'Değerlendirmelerim',
+        isActive: activePage == 'Değerlendirmelerim',
+        onTap: () {
+          if (activePage != 'Değerlendirmelerim') {
+            _pushReplacementPage(context, const ReviewsPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.settings_outlined,
+        'Ayarlar',
+        isActive: activePage == 'Ayarlar',
+        onTap: () {
+          if (activePage != 'Ayarlar') {
+            _pushReplacementPage(context, const SettingsPage());
+          }
+        },
+      ),
+      const Divider(height: 1),
+      _buildWebMenuItem(
+        context,
+        Icons.logout,
+        'Çıkış Yap',
+        isDestructive: true,
+        isActive: false,
+        onTap: () => _logout(context),
+      ),
+    ];
   }
 
   Widget _buildWebMenuItem(
