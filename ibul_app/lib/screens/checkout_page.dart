@@ -9,6 +9,10 @@ import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../widgets/address_edit_sheet.dart';
 import '../services/order_service.dart';
+import '../features/saved_payment_cards/helpers/checkout_payment_integration.dart';
+import '../features/saved_payment_cards/models/saved_payment_card_models.dart';
+import '../features/saved_payment_cards/services/saved_payment_cards_service.dart';
+import '../features/saved_payment_cards/widgets/checkout_save_card_checkbox.dart';
 import 'login_page.dart';
 import 'order_confirmation_page.dart';
 
@@ -55,8 +59,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
   ];
 
   int _selectedAddressIndex = 0;
-  int _selectedCardIndex = 0;
   bool _isPlacingOrder = false;
+
+  final _cardsService = SavedPaymentCardsService.instance;
+  List<SavedPaymentCard> _savedCards = [];
+  String? _selectedSavedCardId;
+  bool _useNewCard = true;
+  bool _saveCardForFuture = false;
+  bool _loadingSavedCards = true;
 
   @override
   void initState() {
@@ -68,6 +78,55 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _cardNumberController.addListener(_onCardInfoChanged);
     _expiryDateController.addListener(_onCardInfoChanged);
     _cardHolderNameController.addListener(_onCardInfoChanged);
+    _loadSavedCards();
+  }
+
+  Future<void> _loadSavedCards() async {
+    try {
+      final cards = await _cardsService.getMyCards();
+      if (!mounted) return;
+      setState(() {
+        _savedCards = cards;
+        _loadingSavedCards = false;
+        if (cards.isNotEmpty) {
+          _useNewCard = false;
+          _selectedSavedCardId = cards.first.id;
+        } else {
+          _useNewCard = true;
+          _selectedSavedCardId = null;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingSavedCards = false);
+    }
+  }
+
+  RawCardInput? _currentNewCardInput() {
+    return CheckoutPaymentIntegration.rawInputFromControllers(
+      cardNumber: _cardNumberController.text,
+      expiry: _expiryDateController.text,
+      cvv: _cvcController.text,
+      holderName: _cardHolderNameController.text,
+      alias: _cardNameController.text,
+    );
+  }
+
+  bool _hasValidPaymentMethod() {
+    return CheckoutPaymentIntegration.hasValidPayment(
+      savedCards: _savedCards,
+      selectedSavedCardId: _selectedSavedCardId,
+      useNewCard: _useNewCard,
+      newCardInput: _currentNewCardInput(),
+    );
+  }
+
+  SavedPaymentCard? _selectedSavedCard() {
+    if (_useNewCard || _selectedSavedCardId == null) return null;
+    for (final card in _savedCards) {
+      if (card.id == _selectedSavedCardId) return card;
+    }
+    return null;
   }
 
   void _onCardInfoChanged() {
@@ -82,66 +141,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _cardHolderNameController.dispose();
     _cardNameController.dispose();
     super.dispose();
-  }
-
-  Future<void> _addNewCard({int? editIndex}) async {
-    final appState = Provider.of<AppState>(context, listen: false);
-    final existingCard =
-        (editIndex != null && editIndex < appState.savedCards.length)
-        ? appState.savedCards[editIndex]
-        : null;
-    final rawCardNumber = _cardNumberController.text.trim();
-    final resolvedMaskedNumber = rawCardNumber.isEmpty
-        ? (existingCard?['number'] ?? '')
-        : (rawCardNumber.contains('*')
-              ? rawCardNumber
-              : '**** ${rawCardNumber.length >= 4 ? rawCardNumber.substring(rawCardNumber.length - 4) : rawCardNumber}');
-
-    if (resolvedMaskedNumber.isEmpty ||
-        _expiryDateController.text.isEmpty ||
-        _cardHolderNameController.text.isEmpty ||
-        _cardNameController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Lütfen tüm kart bilgilerini doldurunuz.'),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Kart başarıyla eklendi!'),
-        backgroundColor: Colors.green,
-        duration: Duration(seconds: 2),
-      ),
-    );
-
-    final cardData = <String, String>{
-      'name': _cardNameController.text,
-      'number': resolvedMaskedNumber,
-      'type': existingCard?['type'] ?? 'Visa',
-      'holder': _cardHolderNameController.text,
-      'expiry': _expiryDateController.text,
-    };
-
-    if (editIndex != null) {
-      await appState.updateSavedCard(editIndex, cardData);
-      if (!mounted) return;
-      setState(() => _selectedCardIndex = editIndex);
-    } else {
-      await appState.addSavedCard(cardData);
-      if (!mounted) return;
-      setState(() => _selectedCardIndex = 0);
-    }
-
-    _cardNumberController.clear();
-    _expiryDateController.clear();
-    _cvcController.clear();
-    _cardHolderNameController.clear();
-    _cardNameController.clear();
   }
 
   void _showEditAddressSheet(Map<String, String> address, int index) {
@@ -177,73 +176,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
             });
           });
         },
-      ),
-    );
-  }
-
-  void _showEditPaymentSheet(Map<String, String> card, int index) {
-    _cardNumberController.text = card['number'] ?? '';
-    _expiryDateController.text = card['expiry'] ?? '';
-    _cvcController.clear();
-    _cardHolderNameController.text = card['holder'] ?? '';
-    _cardNameController.text = card['name'] ?? '';
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
-        ),
-        child: SingleChildScrollView(
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Kartı Düzenle',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(sheetContext),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                _buildPaymentForm(),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      await _addNewCard(editIndex: index);
-                      if (!mounted || !sheetContext.mounted) return;
-                      Navigator.pop(sheetContext);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text('Kartı Güncelle'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -312,7 +244,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     debugPrint('Checkout CTA tapped');
     final appState = Provider.of<AppState>(context, listen: false);
     final hasAddresses = appState.deliveryAddresses.isNotEmpty;
-    final hasCards = appState.savedCards.isNotEmpty;
+    final hasPayment = _hasValidPaymentMethod();
     final userId = appState.currentUser?['uid']?.toString();
     final isGuestUser = UserIdentity.isGuest(appState.currentUser);
 
@@ -346,13 +278,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
 
     if (!hasAddresses ||
-        !hasCards ||
+        !hasPayment ||
         !_acceptTerms ||
         userId == null ||
         userId.isEmpty) {
       final missingItems = <String>[
         if (!hasAddresses) 'teslimat adresi',
-        if (!hasCards) 'kayıtlı kart',
+        if (!hasPayment) 'ödeme kartı',
         if (!_acceptTerms) 'sözleşme onayı',
         if (userId == null || userId.isEmpty) 'oturum bilgisi',
       ];
@@ -371,13 +303,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final selectedAddress = Map<String, dynamic>.from(
       appState.deliveryAddresses[safeIndex],
     );
-    final safeCardIndex =
-        (_selectedCardIndex >= 0 &&
-            _selectedCardIndex < appState.savedCards.length)
-        ? _selectedCardIndex
-        : 0;
-    final selectedCard = Map<String, dynamic>.from(
-      appState.savedCards[safeCardIndex],
+    final selectedCard = CheckoutPaymentIntegration.resolvePaymentCardPayload(
+      savedCards: _savedCards,
+      selectedSavedCardId: _selectedSavedCardId,
+      useNewCard: _useNewCard,
+      newCardInput: _currentNewCardInput(),
     );
     await appState.ensureCartProductIdsResolved();
     if (!mounted) return;
@@ -458,6 +388,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
             : _selectedStandardDate.toIso8601String(),
       );
 
+      if (_useNewCard && _saveCardForFuture) {
+        final rawInput = _currentNewCardInput();
+        if (rawInput != null) {
+          try {
+            await _cardsService.saveCardAfterCheckout(
+              rawCard: rawInput,
+              makeDefault: _savedCards.isEmpty,
+            );
+          } on CardTokenizationUnavailable catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(e.message)),
+              );
+            }
+          } catch (_) {
+            // Order already succeeded; card save failure is non-blocking.
+          }
+        }
+      }
+
       appState.clearCart();
 
       if (!mounted) return;
@@ -519,6 +469,28 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   ],
                 ),
                 const SizedBox(height: 20),
+                if (_savedCards.isNotEmpty) ...[
+                  const Text(
+                    'Kayıtlı kartlarım',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._savedCards.map(
+                    (card) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _buildSavedCardItem(
+                        card,
+                        index: _savedCards.indexOf(card),
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  const Text(
+                    'Yeni kart ile öde',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _buildPaymentForm(),
                 const SizedBox(height: 24),
                 SizedBox(
@@ -526,7 +498,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   height: 50,
                   child: ElevatedButton.icon(
                     onPressed: () async {
-                      await _addNewCard();
+                      if (_useNewCard) {
+                        if (_currentNewCardInput() == null) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Lütfen kart bilgilerini doldurun.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                      }
                       if (!mounted || !sheetContext.mounted) return;
                       Navigator.pop(sheetContext);
                     },
@@ -538,9 +521,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       ),
                       elevation: 0,
                     ),
-                    icon: const Icon(Icons.add),
+                    icon: const Icon(Icons.check),
                     label: const Text(
-                      'Kart Ekle',
+                      'Ödeme yöntemini seç',
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -633,6 +616,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
+        const SizedBox(height: 12),
+        CheckoutSaveCardCheckbox(
+          value: _saveCardForFuture,
+          onChanged: (value) => setState(() => _saveCardForFuture = value ?? false),
+        ),
       ],
     );
   }
@@ -714,12 +702,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
               ? _selectedAddressIndex
               : 0]
         : null;
-    final hasCards = appState.savedCards.isNotEmpty;
-    final currentCard = hasCards
-        ? appState.savedCards[(_selectedCardIndex < appState.savedCards.length)
-              ? _selectedCardIndex
-              : 0]
-        : null;
+    final selectedSaved = _selectedSavedCard();
+    final hasCards = _savedCards.isNotEmpty;
+    final currentCard = selectedSaved;
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -953,7 +938,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Column(
                         children: [
-                          if (hasCards && currentCard != null)
+                          if (hasCards && currentCard != null && !_useNewCard)
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
@@ -968,7 +953,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          currentCard['name'] ?? 'Kartım',
+                                          currentCard.displayAlias,
                                           style: const TextStyle(
                                             fontSize: 13,
                                             fontWeight: FontWeight.w600,
@@ -977,8 +962,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                         Row(
                                           children: [
                                             Text(
-                                              currentCard['number'] ??
-                                                  '**** ****',
+                                              currentCard.maskedNumber,
                                               style: const TextStyle(
                                                 fontSize: 11,
                                                 color: Colors.grey,
@@ -1010,12 +994,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                     ),
                                   ),
                                   TextButton(
-                                    onPressed: () => _showEditPaymentSheet(
-                                      currentCard,
-                                      _selectedCardIndex,
-                                    ),
+                                    onPressed: _showAddPaymentSheet,
                                     child: const Text(
-                                      'Düzenle',
+                                      'Değiştir',
                                       style: TextStyle(fontSize: 11),
                                     ),
                                   ),
@@ -2026,8 +2007,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Widget _buildWebPaymentSection() {
-    final appState = Provider.of<AppState>(context);
-
     return Container(
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
@@ -2180,7 +2159,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  if (appState.savedCards.isEmpty)
+                  if (_loadingSavedCards)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: LinearProgressIndicator(),
+                    )
+                  else if (_savedCards.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Text(
@@ -2192,13 +2176,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       ),
                     )
                   else
-                    ...appState.savedCards.asMap().entries.map(
+                    ..._savedCards.asMap().entries.map(
                       (entry) => Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: _buildSavedCardItem(
-                          entry.value['name'] ?? '',
-                          entry.value['number'] ?? '',
-                          entry.value['type'] ?? '',
+                          entry.value,
                           index: entry.key,
                         ),
                       ),
@@ -2323,28 +2305,24 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton.icon(
-                        onPressed: _addNewCard,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 0,
-                        ),
-                        icon: const Icon(Icons.add),
-                        label: const Text(
-                          'Kart Ekle',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
+                    const SizedBox(height: 16),
+                    CheckoutSaveCardCheckbox(
+                      value: _saveCardForFuture,
+                      onChanged: (value) =>
+                          setState(() => _saveCardForFuture = value ?? false),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        onPressed: () => setState(() {
+                          _useNewCard = true;
+                          _selectedSavedCardId = null;
+                        }),
+                        child: const Text('Yeni kart ile öde'),
                       ),
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 20),
                     savedCards,
                   ] else ...[
                     // Wallet content placeholder
@@ -2463,86 +2441,97 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Widget _buildSavedCardItem(
-    String bankName,
-    String number,
-    String type, {
+    SavedPaymentCard card, {
     required int index,
   }) {
+    final isSelected =
+        !_useNewCard && _selectedSavedCardId == card.id;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         border: Border.all(
-          color: _selectedCardIndex == index
-              ? AppColors.primary
-              : Colors.grey.shade300,
+          color: isSelected ? AppColors.primary : Colors.grey.shade300,
         ),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: RadioGroup<int>(
-        groupValue: _selectedCardIndex,
+      child: RadioGroup<String?>(
+        groupValue: _useNewCard ? null : _selectedSavedCardId,
         onChanged: (value) {
           if (value == null) return;
-          setState(() => _selectedCardIndex = value);
+          setState(() {
+            _selectedSavedCardId = value;
+            _useNewCard = false;
+          });
         },
-        child: Row(
-          children: [
-            Radio<int>(
-              value: index,
-              activeColor: AppColors.primary,
-            ),
+        child: InkWell(
+          onTap: () => setState(() {
+            _selectedSavedCardId = card.id;
+            _useNewCard = false;
+          }),
+          child: Row(
+            children: [
+              Radio<String?>(
+                value: card.id,
+                activeColor: AppColors.primary,
+              ),
             const SizedBox(width: 8),
             Icon(Icons.credit_card, color: Colors.grey.shade700, size: 20),
             const SizedBox(width: 12),
             Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  bankName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        card.displayAlias,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                      if (card.isDefault) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Text(
+                            'Varsayılan',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ),
-                Text(
-                  number,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-              ],
+                  Text(
+                    card.maskedNumber,
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.edit_outlined, color: AppColors.primary),
-            onPressed: () {
-              final appState = Provider.of<AppState>(context, listen: false);
-              _showEditPaymentSheet(appState.savedCards[index], index);
-            },
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            iconSize: 20,
-          ),
-          const SizedBox(width: 12),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: Colors.red),
-            onPressed: () async {
-              final appState = Provider.of<AppState>(context, listen: false);
-              await appState.removeSavedCard(index);
-              if (!mounted) return;
-              if (_selectedCardIndex >= appState.savedCards.length) {
-                setState(
-                  () => _selectedCardIndex = appState.savedCards.isEmpty
-                      ? 0
-                      : appState.savedCards.length - 1,
-                );
-              }
-            },
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            iconSize: 20,
+            Text(
+              card.brandLabel,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
       ),
+    ),
     );
   }
 
