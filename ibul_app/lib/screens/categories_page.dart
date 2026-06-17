@@ -2,12 +2,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/mobile_category_catalog.dart';
+import '../core/category_image_resolver.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
 import '../models/db_product.dart';
 import '../services/database_helper.dart';
 import 'search_results_page.dart';
 import 'market_list_page.dart';
+import '../features/products/models/product_filter_models.dart';
 import 'category_products_page.dart';
 import '../widgets/custom_header.dart'; // CustomHeader eklendi
 
@@ -89,23 +91,31 @@ class _CategoriesPageState extends State<CategoriesPage> {
     }
   }
 
-  Widget _buildSubCategoryImage(MobileCategoryNode category) {
+  Widget _buildSubCategoryImage(
+    MobileCategoryNode category, {
+    required String mainCategoryName,
+  }) {
     final fallback = Icon(
       iconDataForCategoryName(category.iconName),
       color: Colors.grey[600],
       size: 30,
     );
+    final assetPath = CategoryImageResolver.resolveSubCategoryAsset(
+      mainCategoryName: mainCategoryName,
+      subCategoryName: category.name,
+      explicitFallback: category.fallbackAssetPath,
+    );
 
     if (category.imageUrl != null && category.imageUrl!.isNotEmpty) {
-      return OptimizedImage(imageUrlOrPath: 
-        category.imageUrl!,
+      return OptimizedImage(
+        imageUrlOrPath: category.imageUrl!,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) =>
-            _buildAssetFallback(category.fallbackAssetPath, fallback),
+            _buildAssetFallback(assetPath, fallback),
       );
     }
 
-    return _buildAssetFallback(category.fallbackAssetPath, fallback);
+    return _buildAssetFallback(assetPath, fallback);
   }
 
   Widget _buildCategoryBarImage(MobileCategoryNode category) {
@@ -114,17 +124,21 @@ class _CategoriesPageState extends State<CategoriesPage> {
       color: Colors.white,
       size: 26,
     );
+    final assetPath = CategoryImageResolver.resolveMainCategoryAsset(
+      mainCategoryName: category.name,
+      explicitFallback: category.fallbackAssetPath,
+    );
 
     if (category.imageUrl != null && category.imageUrl!.isNotEmpty) {
-      return OptimizedImage(imageUrlOrPath: 
-        category.imageUrl!,
+      return OptimizedImage(
+        imageUrlOrPath: category.imageUrl!,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) =>
-            _buildAssetFallback(category.fallbackAssetPath, fallback),
+            _buildAssetFallback(assetPath, fallback),
       );
     }
 
-    return _buildAssetFallback(category.fallbackAssetPath, fallback);
+    return _buildAssetFallback(assetPath, fallback);
   }
 
   Widget _buildAssetFallback(String? assetPath, Widget fallback) {
@@ -186,7 +200,33 @@ class _CategoriesPageState extends State<CategoriesPage> {
       description: dbProduct.description,
       specifications: dbProduct.specifications,
       oldPrice: dbProduct.oldPrice,
+      variantOptions: dbProduct.variantOptions,
+      attributes: _parseAttributes(dbProduct.attributes),
     );
+  }
+
+  List<String>? _parseAttributes(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final trimmed = raw.trim();
+    if (trimmed.startsWith('[')) {
+      try {
+        final decoded = json.decode(trimmed);
+        if (decoded is List) {
+          return decoded.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList();
+        }
+      } catch (_) {}
+    }
+    return trimmed.split('|').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+  }
+
+  Map<String, ProductFilterMeta> _buildProductMeta(Iterable<DBProduct> items) {
+    final meta = <String, ProductFilterMeta>{};
+    for (final item in items) {
+      final id = item.id?.trim();
+      if (id == null || id.isEmpty) continue;
+      meta[id] = ProductFilterMeta(stock: item.stock);
+    }
+    return meta;
   }
   
   // Mappings for specific icons or dummy images could be added here
@@ -382,6 +422,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   Widget _buildSubCategoryTile({
     required MobileCategoryNode subCategory,
+    required String mainCategoryName,
     required VoidCallback onTap,
   }) {
     return Material(
@@ -410,7 +451,10 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   padding: const EdgeInsets.all(7),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(_subImageRadius),
-                    child: _buildSubCategoryImage(subCategory),
+                    child: _buildSubCategoryImage(
+                      subCategory,
+                      mainCategoryName: mainCategoryName,
+                    ),
                   ),
                 ),
               ),
@@ -485,6 +529,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   final subCategory = items[i];
                   return _buildSubCategoryTile(
                     subCategory: subCategory,
+                    mainCategoryName: category.name,
                     onTap: () =>
                         _showCategoryProducts(category.name, subCategory.name),
                   );
@@ -520,6 +565,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       final products = page.items
           .map((dbProduct) => _convertToProduct(dbProduct))
           .toList(growable: false);
+      final productMeta = _buildProductMeta(page.items);
 
       Navigator.push(
         context,
@@ -528,6 +574,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
             category: category,
             subCategory: subCategory,
             products: products,
+            productMeta: productMeta,
           ),
         ),
       );

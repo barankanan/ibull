@@ -2,9 +2,14 @@ import 'package:flutter/gestures.dart'; // Scroll behavior için eklendi
 import 'package:flutter/material.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import '../core/constants.dart';
-import '../models/category_attribute_filter_group.dart';
+import '../features/products/helpers/product_filter_engine.dart';
+import '../features/products/helpers/product_quick_filter_chip_groups.dart';
+import '../features/products/models/product_filter_models.dart';
+import '../features/products/widgets/product_filter_bottom_sheet.dart';
+import '../features/products/widgets/product_quick_filter_bottom_sheet.dart';
+import '../features/products/widgets/product_filter_sidebar.dart';
+import '../features/products/widgets/product_sort_bottom_sheet.dart';
 import '../models/product_model.dart';
-import '../services/category_attribute_service.dart';
 import '../widgets/product_card.dart';
 import '../widgets/staggered_reveal.dart';
 import '../widgets/custom_header.dart';
@@ -16,12 +21,14 @@ class CategoryProductsPage extends StatefulWidget {
   final String category;
   final String subCategory;
   final List<Product> products;
+  final Map<String, ProductFilterMeta>? productMeta;
 
   const CategoryProductsPage({
     super.key,
     required this.category,
     required this.subCategory,
     required this.products,
+    this.productMeta,
   });
 
   @override
@@ -32,15 +39,12 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final ScrollController _todayProductsScrollController = ScrollController();
-  final CategoryAttributeService _categoryAttributeService =
-      CategoryAttributeService.instance;
+  List<Product> _baseProducts = [];
   List<Product> _filteredProducts = [];
   String _searchQuery = '';
-  bool _isLoadingAttributeFilters = false;
-  List<CategoryAttributeFilterGroup> _attributeFilterGroups =
-      const <CategoryAttributeFilterGroup>[];
-  final Map<String, Set<String>> _selectedAttributeFilters =
-      <String, Set<String>>{};
+  bool _isLoadingFilters = false;
+  List<ProductFilterGroup> _filterGroups = const <ProductFilterGroup>[];
+  ProductFilterState _filterState = const ProductFilterState();
 
   // Yemek kategorileri - 12 adet
   final List<Map<String, dynamic>> _foodCategories = [
@@ -104,15 +108,16 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       }
     });
 
-    // Eğer yemek kategorisi ise ve ürün yoksa, örnek yemekler oluştur
-    _filteredProducts = _getDisplayProducts();
+    _baseProducts = _getDisplayProducts();
+    _filteredProducts = List<Product>.from(_baseProducts);
+    _filterGroups = ProductFilterEngine.buildFilterGroups(
+      products: _baseProducts,
+      mainCategory: widget.category,
+      subCategory: widget.subCategory,
+    );
     if (widget.subCategory != 'Yemek') {
-      _loadAttributeFilters();
-      _applyAllFilters();
+      _loadFilterGroups();
     }
-
-    debugPrint('DEBUG: Toplam ürün sayısı: ${widget.products.length}');
-    debugPrint('DEBUG: Filtrelenmiş ürün sayısı: ${_filteredProducts.length}');
   }
 
   List<Product> _getDisplayProducts() {
@@ -214,97 +219,164 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
     super.dispose();
   }
 
-  Future<void> _loadAttributeFilters() async {
+  Future<void> _loadFilterGroups() async {
     if (!mounted || widget.subCategory == 'Yemek') return;
 
-    setState(() {
-      _isLoadingAttributeFilters = true;
-    });
+    setState(() => _isLoadingFilters = true);
 
     try {
-      final groups = await _categoryAttributeService
-          .buildFilterGroupsForProducts(
-            mainCategory: widget.category,
-            subCategory: widget.subCategory,
-            products: _getDisplayProducts(),
-          );
+      final dbGroups = await ProductFilterEngine.loadDbAttributeGroups(
+        mainCategory: widget.category,
+        subCategory: widget.subCategory,
+        products: _baseProducts,
+      );
       if (!mounted) return;
+      final groups = ProductFilterEngine.buildFilterGroups(
+        products: _baseProducts,
+        mainCategory: widget.category,
+        subCategory: widget.subCategory,
+        dbAttributeGroups: dbGroups,
+      );
       setState(() {
-        _attributeFilterGroups = groups;
+        _filterGroups = groups;
       });
+      _refreshProducts();
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _attributeFilterGroups = const <CategoryAttributeFilterGroup>[];
+        _filterGroups = ProductFilterEngine.buildFilterGroups(
+          products: _baseProducts,
+          mainCategory: widget.category,
+          subCategory: widget.subCategory,
+        );
       });
+      _refreshProducts();
     } finally {
       if (mounted) {
-        setState(() {
-          _isLoadingAttributeFilters = false;
-        });
+        setState(() => _isLoadingFilters = false);
       }
     }
   }
 
-  void _applyAllFilters() {
+  void _refreshProducts() {
     if (widget.subCategory == 'Yemek') return;
-    final baseProducts = _getDisplayProducts();
-    final filtered = baseProducts.where((product) {
-      if (_searchQuery.isNotEmpty) {
-        final query = _searchQuery.toLowerCase();
-        final searchMatch =
-            product.name.toLowerCase().contains(query) ||
-            product.brand.toLowerCase().contains(query);
-        if (!searchMatch) return false;
-      }
-
-      if (_selectedAttributeFilters.isEmpty) {
-        return true;
-      }
-
-      final specs = CategoryAttributeService.decodeProductSpecifications(
-        product.specifications,
+    setState(() {
+      _filteredProducts = ProductFilterEngine.resolveProducts(
+        products: _baseProducts,
+        state: _filterState,
+        metaByProductId: widget.productMeta,
+        searchQuery: _searchQuery,
       );
-      for (final entry in _selectedAttributeFilters.entries) {
-        if (entry.value.isEmpty) continue;
-        final currentValue = (specs[entry.key] ?? '').trim();
-        if (!entry.value.contains(currentValue)) {
-          return false;
-        }
-      }
-      return true;
-    }).toList();
-
-    setState(() {
-      _filteredProducts = filtered;
     });
   }
 
-  void _toggleAttributeFilter(
-    String attributeName,
-    String value,
-    bool selected,
-  ) {
-    final current = _selectedAttributeFilters.putIfAbsent(
-      attributeName,
-      () => <String>{},
+  void _updateFilterState(ProductFilterState next) {
+    setState(() => _filterState = next);
+    _refreshProducts();
+  }
+
+  void _clearFilters() {
+    _updateFilterState(
+      ProductFilterState.cleared(sortOption: _filterState.sortOption),
     );
-    if (selected) {
-      current.add(value);
-    } else {
-      current.remove(value);
-      if (current.isEmpty) {
-        _selectedAttributeFilters.remove(attributeName);
-      }
-    }
-    _applyAllFilters();
   }
 
-  void _clearAttributeFilters() {
-    setState(() {
-      _selectedAttributeFilters.clear();
-    });
-    _applyAllFilters();
+  Future<void> _openSortSheet() async {
+    await ProductSortBottomSheet.show(
+      context: context,
+      initialSort: _filterState.sortOption,
+      onApply: (sortOption) {
+        _updateFilterState(_filterState.copyWith(sortOption: sortOption));
+      },
+    );
+  }
+
+  Future<void> _openQuickFilterSheet(ProductFilterGroup group) async {
+    if (!mounted) return;
+    await ProductQuickFilterBottomSheet.show(
+      context: context,
+      group: group,
+      currentState: _filterState,
+      baseProducts: _baseProducts,
+      productMeta: widget.productMeta,
+      searchQuery: _searchQuery,
+      onApply: _updateFilterState,
+    );
+  }
+
+  List<ProductFilterGroup> _quickChipGroups() {
+    return ProductQuickFilterChipGroups.resolve(_filterGroups);
+  }
+
+  /// Hızlı chip'ler ekrana basılmadan hemen önce tekilleştirilir.
+  List<ProductFilterGroup> _finalQuickChipGroupsForRender() {
+    final candidates = _quickChipGroups();
+    final deduped = <String, ProductFilterGroup>{};
+
+    for (final group in candidates) {
+      deduped.putIfAbsent(
+        ProductQuickFilterChipGroups.quickFilterCanonicalKey(group),
+        () => group,
+      );
+    }
+
+    return ProductQuickFilterChipGroups.dedupeForRender(
+      deduped.values.toList(growable: false),
+    );
+  }
+
+  bool _isQuickChipActive(ProductFilterGroup group) {
+    switch (group.type) {
+      case ProductFilterGroupType.brand:
+        return _filterState.selectedBrands.isNotEmpty;
+      case ProductFilterGroupType.priceRange:
+        return _filterState.priceMin != null || _filterState.priceMax != null;
+      case ProductFilterGroupType.discount:
+        return _filterState.onlyDiscounted;
+      case ProductFilterGroupType.stock:
+        return _filterState.onlyInStock;
+      case ProductFilterGroupType.dynamicAttribute:
+        return (_filterState.selectedDynamicAttributes[group.title]?.isNotEmpty ??
+            false);
+      default:
+        return false;
+    }
+  }
+
+  String _quickChipLabel(ProductFilterGroup group) {
+    final baseLabel = ProductQuickFilterChipGroups.quickChipDisplayLabel(group);
+    switch (group.type) {
+      case ProductFilterGroupType.dynamicAttribute:
+        final count =
+            _filterState.selectedDynamicAttributes[group.title]?.length ?? 0;
+        return count > 0 ? '$baseLabel ($count)' : baseLabel;
+      case ProductFilterGroupType.brand:
+        final count = _filterState.selectedBrands.length;
+        return count > 0 ? '$baseLabel ($count)' : baseLabel;
+      case ProductFilterGroupType.priceRange:
+        return 'Fiyat';
+      case ProductFilterGroupType.discount:
+        return 'İndirim';
+      default:
+        return baseLabel;
+    }
+  }
+
+  Future<void> _openFilterSheet() async {
+    if (!mounted) return;
+
+    await ProductFilterBottomSheet.show(
+      context: context,
+      groups: _filterGroups,
+      initialState: _filterState,
+      previewCount: (draft) => ProductFilterEngine.resolveProducts(
+        products: _baseProducts,
+        state: draft,
+        metaByProductId: widget.productMeta,
+        searchQuery: _searchQuery,
+      ).length,
+      onApply: _updateFilterState,
+    );
   }
 
   void _onSearch(String query) {
@@ -325,6 +397,10 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       return;
     }
     _applyAllFilters();
+  }
+
+  void _applyAllFilters() {
+    _refreshProducts();
   }
 
   @override
@@ -940,18 +1016,22 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                 // Sıralama
                 Expanded(
                   child: InkWell(
-                    onTap: () {
-                      // Sıralama işlemi
-                    },
+                    onTap: _openSortSheet,
                     child: Row(
                       children: [
                         const Icon(Icons.sort, size: 20),
                         const SizedBox(width: 8),
-                        const Text(
-                          'Sıralama',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
+                        Expanded(
+                          child: Text(
+                            _filterState.sortOption == ProductSortOption.recommended
+                                ? 'Sıralama'
+                                : _filterState.sortOption.label,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w500,
+                              fontSize: 14,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -963,13 +1043,11 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                 // Filtrele
                 Expanded(
                   child: InkWell(
-                    onTap: () {
-                      _openAttributeFiltersSheet();
-                    },
+                    onTap: _openFilterSheet,
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        if (_selectedAttributeFilters.isNotEmpty) ...[
+                        if (_filterState.activeFilterCount > 0) ...[
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
@@ -980,12 +1058,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
-                              _selectedAttributeFilters.values
-                                  .fold<int>(
-                                    0,
-                                    (sum, item) => sum + item.length,
-                                  )
-                                  .toString(),
+                              _filterState.activeFilterCount.toString(),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 11,
@@ -1235,59 +1308,79 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
               builder: (context, constraints) {
                 final isWeb = constraints.maxWidth > 1100;
 
-                Widget grid = GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  cacheExtent: 900,
-                  gridDelegate: isWeb
-                      ? const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 6,
-                          childAspectRatio: 0.75,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                        )
-                      : const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 230,
-                          childAspectRatio: 0.75,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                        ),
-                  itemCount: _filteredProducts.length,
-                  itemBuilder: (context, index) {
-                    final product = _filteredProducts[index];
-                    return GestureDetector(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                ProductDetailPage(product: product),
+                Widget content;
+                if (_filteredProducts.isEmpty) {
+                  content = _buildEmptyFilterState();
+                } else {
+                  content = GridView.builder(
+                    padding: const EdgeInsets.all(16),
+                    cacheExtent: 900,
+                    gridDelegate: isWeb
+                        ? const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 6,
+                            childAspectRatio: 0.75,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                          )
+                        : const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 230,
+                            childAspectRatio: 0.75,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
                           ),
-                        );
-                      },
-                      child: _wrapCategoryProductReveal(
-                        scope: 'product-grid',
-                        index: index,
-                        product: product,
-                        child: ProductCard(
+                    itemCount: _filteredProducts.length,
+                    itemBuilder: (context, index) {
+                      final product = _filteredProducts[index];
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ProductDetailPage(product: product),
+                            ),
+                          );
+                        },
+                        child: _wrapCategoryProductReveal(
+                          scope: 'product-grid',
+                          index: index,
                           product: product,
-                          compact: false,
-                          tight: true,
+                          child: ProductCard(
+                            product: product,
+                            compact: false,
+                            tight: true,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                );
+                      );
+                    },
+                  );
+                }
 
                 if (isWeb) {
                   return Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 1400),
-                      child: grid,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            height: constraints.maxHeight,
+                            child: ProductFilterSidebar(
+                              groups: _filterGroups,
+                              state: _filterState,
+                              onChanged: _updateFilterState,
+                              onClear: _clearFilters,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(child: content),
+                        ],
+                      ),
                     ),
                   );
                 }
 
-                return grid;
+                return content;
               },
             ),
           ),
@@ -1297,7 +1390,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
   }
 
   List<Widget> _buildQuickFilterChips() {
-    if (_isLoadingAttributeFilters) {
+    if (_isLoadingFilters) {
       return const [
         Center(
           child: Padding(
@@ -1312,20 +1405,18 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       ];
     }
 
-    if (_attributeFilterGroups.isEmpty) {
-      return [_buildQuickFilterChip('Filtre bulunamadı', isActive: false)];
+    final chipGroups = _finalQuickChipGroupsForRender();
+    if (chipGroups.isEmpty) {
+      return const [SizedBox.shrink()];
     }
 
     final items = <Widget>[];
-    for (final group in _attributeFilterGroups.take(4)) {
-      final selectedCount =
-          _selectedAttributeFilters[group.attributeName]?.length ?? 0;
+    for (final group in chipGroups) {
       items.add(
         _buildQuickFilterChip(
-          selectedCount > 0
-              ? '${group.attributeName} ($selectedCount)'
-              : group.attributeName,
-          isActive: selectedCount > 0,
+          group: group,
+          label: _quickChipLabel(group),
+          isActive: _isQuickChipActive(group),
         ),
       );
       items.add(const SizedBox(width: 8));
@@ -1336,102 +1427,55 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
     return items;
   }
 
-  Future<void> _openAttributeFiltersSheet() async {
-    if (_attributeFilterGroups.isEmpty || !mounted) return;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, modalSetState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Ozellik Filtreleri',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              _clearAttributeFilters();
-                              modalSetState(() {});
-                            },
-                            child: const Text('Temizle'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      ..._attributeFilterGroups.map((group) {
-                        final selected =
-                            _selectedAttributeFilters[group.attributeName] ??
-                            <String>{};
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 18),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                group.attributeName,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: group.values.map((value) {
-                                  final isSelected = selected.contains(value);
-                                  return FilterChip(
-                                    label: Text(value),
-                                    selected: isSelected,
-                                    onSelected: (next) {
-                                      modalSetState(() {
-                                        _toggleAttributeFilter(
-                                          group.attributeName,
-                                          value,
-                                          next,
-                                        );
-                                      });
-                                    },
-                                  );
-                                }).toList(),
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
+  Widget _buildEmptyFilterState() {
+    final hasFilters = _filterState.hasActiveFilters || _searchQuery.isNotEmpty;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search_off, size: 56, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            Text(
+              hasFilters
+                  ? 'Bu filtrelerle ürün bulunamadı'
+                  : 'Bu kategoride ürün bulunamadı',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              hasFilters
+                  ? 'Filtreleri temizleyerek tekrar deneyebilirsin.'
+                  : 'Başka bir alt kategori seçmeyi deneyebilirsin.',
+              style: TextStyle(color: Colors.grey.shade600),
+              textAlign: TextAlign.center,
+            ),
+            if (hasFilters) ...[
+              const SizedBox(height: 20),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
                 ),
+                onPressed: _clearFilters,
+                child: const Text('Filtreleri Temizle'),
               ),
-            );
-          },
-        );
-      },
+            ],
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildQuickFilterChip(String label, {bool isActive = false}) {
+  Widget _buildQuickFilterChip({
+    required ProductFilterGroup group,
+    required String label,
+    bool isActive = false,
+  }) {
     return InkWell(
-      onTap: _attributeFilterGroups.isEmpty ? null : _openAttributeFiltersSheet,
+      onTap: () => _openQuickFilterSheet(group),
       borderRadius: BorderRadius.circular(20),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
