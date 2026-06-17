@@ -7,6 +7,8 @@ import '../core/app_state.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
+import '../features/orders/screens/order_history_page.dart';
+import '../features/orders/widgets/order_history_web_cta.dart';
 import '../services/order_service.dart';
 import 'order_detail_page.dart';
 
@@ -211,6 +213,18 @@ class _OrdersPageState extends State<OrdersPage> {
                                             fontWeight: FontWeight.bold,
                                             color: Color(0xFF1F2937),
                                           ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        OrderHistoryWebCta(
+                                          onTap: () {
+                                            Navigator.push(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    const OrderHistoryPage(),
+                                              ),
+                                            );
+                                          },
                                         ),
                                         const SizedBox(height: 24),
                                         Row(

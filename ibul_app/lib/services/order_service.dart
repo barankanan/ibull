@@ -730,7 +730,7 @@ class OrderService {
     final List<dynamic> items = await _supabase
         .from('order_items')
         .select(
-          'id, order_id, product_name, store_name, product_image_url, quantity, total_price, unit_price, status, product_code, tracking_number, cargo_company, shipment_step, seller_id',
+          'id, order_id, product_id, product_name, store_name, product_image_url, quantity, total_price, unit_price, status, product_code, tracking_number, cargo_company, shipment_step, seller_id',
         )
         .inFilter('order_id', orderIds)
         .order('created_at', ascending: false);

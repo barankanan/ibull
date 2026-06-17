@@ -413,6 +413,24 @@ class SupabaseService {
     }
   }
 
+  Future<DBProduct?> getFirstProductByName(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return null;
+    try {
+      final response = await _supabase
+          .from('products')
+          .select(_productSelectFields)
+          .eq('name', trimmed)
+          .limit(1)
+          .maybeSingle();
+      if (response == null) return null;
+      return _mapToDBProduct(response);
+    } catch (e) {
+      debugPrint('Error getting product by name: $e');
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> getProductExtrasByNameBrand({
     required String name,
     required String brand,
