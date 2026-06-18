@@ -26,6 +26,13 @@ const List<AdminPanelMenuDefinition> ibulAdminMenuDefinitions = [
     moduleKey: AdminModules.storeManagement,
   ),
   AdminPanelMenuDefinition(
+    icon: Icons.verified_user_outlined,
+    title: 'Marka Onay Başvuruları',
+    groupLabel: 'Ticaret Operasyonları',
+    groupIcon: Icons.store_mall_directory_outlined,
+    moduleKey: AdminModules.storeManagement,
+  ),
+  AdminPanelMenuDefinition(
     icon: Icons.inventory_2_outlined,
     title: 'Ürün Onay',
     groupLabel: 'Ticaret Operasyonları',

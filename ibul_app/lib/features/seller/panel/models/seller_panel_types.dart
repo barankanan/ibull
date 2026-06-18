@@ -9,6 +9,7 @@ enum SellerModule {
   team,
   campaigns,
   finance,
+  achievements,
   reviews,
   support,
 }

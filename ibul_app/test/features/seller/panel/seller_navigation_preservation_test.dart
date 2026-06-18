@@ -491,6 +491,7 @@ void main() {
         SellerModule.team,
         SellerModule.campaigns,
         SellerModule.finance,
+        SellerModule.achievements,
         SellerModule.reviews,
         SellerModule.support,
       ]) {
@@ -533,6 +534,7 @@ void main() {
         SellerModule.team,
         SellerModule.campaigns,
         SellerModule.finance,
+        SellerModule.achievements,
         SellerModule.reviews,
         SellerModule.support,
       ]) {

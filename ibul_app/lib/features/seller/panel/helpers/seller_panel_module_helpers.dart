@@ -277,6 +277,7 @@ String resolveSellerPanelRenderTarget({
     case SellerModule.team:
     case SellerModule.campaigns:
     case SellerModule.finance:
+    case SellerModule.achievements:
     case SellerModule.reviews:
     case SellerModule.support:
       return selectedModule.name;
@@ -877,6 +878,7 @@ List<SellerModule> visibleSellerModules(
     SellerModule.team,
     SellerModule.campaigns,
     SellerModule.finance,
+    SellerModule.achievements,
     SellerModule.reviews,
     SellerModule.support,
   ];
@@ -904,6 +906,8 @@ String sellerModuleLabel(SellerModule module) {
       return 'Reklam';
     case SellerModule.finance:
       return 'Finans';
+    case SellerModule.achievements:
+      return 'Başarılarım';
     case SellerModule.reviews:
       return 'Yorumlar, Değerlendirmeler, Şikayetler';
     case SellerModule.support:
@@ -944,6 +948,8 @@ IconData sellerModuleIcon(SellerModule module) {
       return Icons.ads_click_outlined;
     case SellerModule.finance:
       return Icons.account_balance_wallet_outlined;
+    case SellerModule.achievements:
+      return Icons.emoji_events_outlined;
     case SellerModule.reviews:
       return Icons.rate_review_outlined;
     case SellerModule.support:

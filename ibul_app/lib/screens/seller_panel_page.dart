@@ -97,6 +97,8 @@ import '../features/seller/panel/widgets/seller_panel_detail_widgets.dart';
 import '../features/seller/panel/widgets/seller_panel_shell.dart';
 import '../ads/presentation/pages/seller_ads_manager_content.dart';
 import '../features/seller/finance/screens/finance_shell.dart';
+import '../features/seller/achievements/models/seller_badge_models.dart';
+import '../features/seller/achievements/screens/seller_achievements_page.dart';
 import 'seller/product_management/bulk_product_price_stock_update_button.dart';
 import 'seller/product_management/bulk_product_upload_button.dart';
 import 'seller/product_management/product_quick_edit_button.dart';
@@ -2171,6 +2173,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return 'campaigns';
       case SellerModule.finance:
         return 'finance';
+      case SellerModule.achievements:
+        return 'achievements';
       case SellerModule.reviews:
         return 'reviews';
       case SellerModule.support:
@@ -2200,6 +2204,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return 'sidebar_campaigns_tap';
       case SellerModule.finance:
         return 'sidebar_finance_tap';
+      case SellerModule.achievements:
+        return 'sidebar_achievements_tap';
       case SellerModule.reviews:
         return 'sidebar_reviews_tap';
       case SellerModule.support:
@@ -2229,6 +2235,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return SellerModule.campaigns;
       case 'finance':
         return SellerModule.finance;
+      case 'achievements':
+        return SellerModule.achievements;
       case 'reviews':
         return SellerModule.reviews;
       case 'support':
@@ -2863,6 +2871,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           _reloadRestaurantDashboardMetrics(
             source: '_ensureModuleDataLoaded_finance',
           ),
+        );
+        break;
+      case SellerModule.achievements:
+        _logSellerPanel(
+          'Tab',
+          'module=${module.name} fetch=badge_metrics refetch=false',
         );
         break;
       case SellerModule.reviews:
@@ -8627,6 +8641,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return _buildMobileCampaignsModule();
       case SellerModule.finance:
         return _buildMobileFinanceModule();
+      case SellerModule.achievements:
+        return _buildAchievementsModule();
       case SellerModule.reviews:
         return _buildMobileReviewsModule();
       case SellerModule.support:
@@ -16178,6 +16194,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return _buildCampaignsModule();
       case SellerModule.finance:
         return _buildFinanceModule();
+      case SellerModule.achievements:
+        return _buildAchievementsModule();
       case SellerModule.reviews:
         return _buildReviewsModule();
       case SellerModule.support:
@@ -32382,6 +32400,75 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget _buildSupportModule() => _buildSupportModuleImpl();
+
+  Widget _buildAchievementsModule() {
+    return SellerAchievementsPage(
+      metrics: _buildSellerBadgeMetrics(),
+      onNavigateToStoreProfile: _navigateToStoreProfileFromAchievements,
+      onRetryMetrics: _loadStoreProfile,
+    );
+  }
+
+  void _navigateToStoreProfileFromAchievements(SellerStoreProfileFocus focus) {
+    _setActiveSellerModule(
+      SellerModule.store,
+      source: 'achievements_checklist',
+      userInitiated: true,
+    );
+    final message = switch (focus) {
+      SellerStoreProfileFocus.logo => 'Logo alanını mağaza profilinde düzenleyebilirsin.',
+      SellerStoreProfileFocus.description =>
+        'Mağaza açıklamasını profil bilgileri bölümünde tamamlayabilirsin.',
+      SellerStoreProfileFocus.category =>
+        'Kategori seçimini mağaza profilinde yapabilirsin.',
+      SellerStoreProfileFocus.contact =>
+        'İletişim bilgilerini mağaza profilinde tamamlayabilirsin.',
+      SellerStoreProfileFocus.region =>
+        'Adres ve bölge bilgilerini mağaza profilinde düzenleyebilirsin.',
+      SellerStoreProfileFocus.cover =>
+        'Kapak görselini mağaza profilinde yükleyebilirsin.',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  SellerBadgeStoreMetrics _buildSellerBadgeMetrics() {
+    final sellerId = _resolveSellerIdForPanel().trim();
+    final completedOrders = _sellerOrders
+        .where((order) => (order['status']?.toString() ?? '') == 'delivered')
+        .length;
+    final hasLogo = (_storeLogoUrl?.trim().isNotEmpty ?? false);
+    final hasDescription = _storeDescController.text.trim().isNotEmpty;
+    final hasCategory = _storeCategory.trim().isNotEmpty;
+    final hasContactInfo =
+        _phoneController.text.trim().isNotEmpty ||
+        _emailController.text.trim().isNotEmpty;
+    final hasRegionInfo =
+        _selectedCity.trim().isNotEmpty || _selectedDistrict.trim().isNotEmpty;
+    final hasCoverImage = (_storeCoverUrl?.trim().isNotEmpty ?? false);
+
+    return SellerBadgeStoreMetrics(
+      sellerId: sellerId,
+      productCount: _products.length,
+      completedOrderCount: completedOrders,
+      averageRating: _storeRating,
+      profileComplete:
+          hasLogo && hasDescription && hasCategory && hasContactInfo,
+      hasLogo: hasLogo,
+      hasDescription: hasDescription,
+      hasCategory: hasCategory,
+      hasContactInfo: hasContactInfo,
+      hasRegionInfo: hasRegionInfo,
+      hasCoverImage: hasCoverImage,
+      metricsLoadFailed:
+          _storeProfileLoadError != null && !_hasLoadedStoreProfile,
+    );
+  }
+
+  String _resolveSellerIdForPanel() {
+    return _authService.currentUser?.id.trim() ?? '';
+  }
 
   List<SupportTicket> _filterSupportTickets(List<SupportTicket> tickets) {
     final query = _debouncedSupportQuery;
