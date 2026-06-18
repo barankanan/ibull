@@ -47,6 +47,7 @@ import 'search_results_page.dart';
 import 'product_detail_page.dart';
 import 'business_detail_page.dart';
 import 'ai_chat_page.dart';
+import 'compare_products_page.dart';
 import '../widgets/dynamic_brand_section.dart';
 part 'home_screen_sections.dart';
 
@@ -85,6 +86,7 @@ class _HomeScreenState extends State<HomeScreen>
   final ScrollController _subCategoryScrollController = ScrollController();
   final ScrollController _flashProductsScrollController = ScrollController();
   final ScrollController _todayProductsScrollController = ScrollController();
+  final ScrollController _recentProductsScrollController = ScrollController();
 
   final AdminService _adminService = AdminService();
   final StoreService _storeService = StoreService();
@@ -233,6 +235,7 @@ class _HomeScreenState extends State<HomeScreen>
     _popularProductsScrollController.dispose();
     _flashProductsScrollController.dispose();
     _todayProductsScrollController.dispose();
+    _recentProductsScrollController.dispose();
     _selectedIndexNotifier.dispose();
     _hasSpunWheelNotifier.dispose();
     super.dispose();
@@ -2461,37 +2464,70 @@ class _HomeScreenState extends State<HomeScreen>
     return Container(width: 1, height: 28, color: Colors.grey[200]);
   }
 
+  void _navigateToMapFromHome() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const MapPage()),
+    );
+  }
+
+  void _navigateToCompareFromHome() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const CompareProductsPage()),
+    );
+  }
+
+  void _openAiAssistantFromHome() {
+    showAppDialog<void>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (context) => const AIChatPage(),
+    );
+  }
+
+  void _navigateToVerifiedSellersFromHome() {
+    // TODO: Connect to a dedicated verified sellers page when available.
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const MapPage()),
+    );
+  }
+
   Widget _buildWhyIbulSection() {
-    final items = [
-      {
-        'icon': Icons.location_on_outlined,
-        'color': const Color(0xFF4CAF50),
-        'title': 'Yakın Lokasyon',
-        'desc': 'En yakın mağazaları haritada bul, hızlı teslimat al.',
-      },
-      {
-        'icon': Icons.compare_arrows,
-        'color': const Color(0xFF2196F3),
-        'title': 'Fiyat Karşılaştırma',
-        'desc':
-            'Aynı ürünü farklı satıcılarda karşılaştır, en uygun fiyatı yakala.',
-      },
-      {
-        'icon': Icons.auto_awesome,
-        'color': AppColors.primary,
-        'title': 'Yapay Zeka Asistanı',
-        'desc': 'Fotoğraf çek, aradığın ürünü anında bul.',
-      },
-      {
-        'icon': Icons.verified,
-        'color': const Color(0xFFFF9800),
-        'title': 'Güvenilir Satıcılar',
-        'desc': 'Onaylı mağazalar ve gerçek kullanıcı yorumları.',
-      },
+    final items = <_WhyIbulItem>[
+      _WhyIbulItem(
+        icon: Icons.location_on_outlined,
+        color: const Color(0xFF4CAF50),
+        title: 'Yakın Lokasyon',
+        desc: 'En yakın mağazaları haritada bul, hızlı teslimat al.',
+        onTap: _navigateToMapFromHome,
+      ),
+      _WhyIbulItem(
+        icon: Icons.compare_arrows,
+        color: const Color(0xFF2196F3),
+        title: 'Fiyat Karşılaştırma',
+        desc: 'Aynı ürünü farklı satıcılarda karşılaştır, en uygun fiyatı yakala.',
+        onTap: _navigateToCompareFromHome,
+      ),
+      _WhyIbulItem(
+        icon: Icons.auto_awesome,
+        color: AppColors.primary,
+        title: 'Yapay Zeka Asistanı',
+        desc: 'Fotoğraf çek, aradığın ürünü anında bul.',
+        onTap: _openAiAssistantFromHome,
+      ),
+      _WhyIbulItem(
+        icon: Icons.verified,
+        color: const Color(0xFFFF9800),
+        title: 'Güvenilir Satıcılar',
+        desc: 'Onaylı mağazalar ve gerçek kullanıcı yorumları.',
+        onTap: _navigateToVerifiedSellersFromHome,
+      ),
     ];
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -2510,78 +2546,156 @@ class _HomeScreenState extends State<HomeScreen>
           const Text(
             'Neden iBul?',
             style: TextStyle(
-              fontSize: 24,
+              fontSize: 20,
               fontWeight: FontWeight.bold,
               color: Color(0xFF333333),
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             'Alışverişin en akıllı yolu',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 13, color: Colors.grey[500]),
           ),
-          const SizedBox(height: 28),
-          Row(
-            children: items.map((item) {
-              return Expanded(
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: (item['color'] as Color).withValues(alpha: 0.1),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: (item['color'] as Color).withValues(alpha: 0.1),
-                          shape: BoxShape.circle,
+          const SizedBox(height: 16),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final useRow = constraints.maxWidth >= 860;
+              final cardWidgets = items
+                  .map(
+                    (item) => useRow
+                        ? Expanded(child: _WhyIbulActionCard(item: item))
+                        : SizedBox(
+                            width: useRow
+                                ? null
+                                : (constraints.maxWidth - 12) / 2,
+                            child: _WhyIbulActionCard(item: item),
+                          ),
+                  )
+                  .toList();
+
+              if (useRow) {
+                return Row(
+                  children: cardWidgets
+                      .map(
+                        (card) => Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: card,
                         ),
-                        child: Icon(
-                          item['icon'] as IconData,
-                          color: item['color'] as Color,
-                          size: 28,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        item['title'] as String,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF333333),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        item['desc'] as String,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[500],
-                          height: 1.4,
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
+                      )
+                      .toList(),
+                );
+              }
+
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: cardWidgets,
               );
-            }).toList(),
+            },
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildWebRecentlyViewedSection({
+    required List<DBProduct> recentProducts,
+  }) {
+    if (!_isLoadingProducts && recentProducts.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Daha önce gezdiklerin',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey[800],
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (_isLoadingProducts)
+          _buildHorizontalProductSkeletons(
+            height: 312,
+            itemWidth: 198,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+          )
+        else
+          SizedBox(
+            height: 312,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context).copyWith(
+                    dragDevices: {
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                    },
+                  ),
+                  child: ListView.separated(
+                    controller: _recentProductsScrollController,
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    itemCount: recentProducts.length,
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 20),
+                    itemBuilder: (context, index) {
+                      final dbProduct = recentProducts[index];
+                      return SizedBox(
+                        width: 198,
+                        child: _wrapProductReveal(
+                          scope: 'home-web-recently-viewed',
+                          index: index,
+                          token: _productRevealTokenFromDb(dbProduct),
+                          child: ProductCard(
+                            product: _convertToProduct(dbProduct),
+                            margin: EdgeInsets.zero,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                if (recentProducts.length > 4) ...[
+                  Positioned(
+                    left: -6,
+                    top: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: _buildCarouselArrowButton(
+                        icon: Icons.arrow_back_ios_new,
+                        color: AppColors.primary,
+                        onTap: () => _scrollCarousel(
+                          _recentProductsScrollController,
+                          -300,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: -6,
+                    top: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: _buildCarouselArrowButton(
+                        icon: Icons.arrow_forward_ios,
+                        color: AppColors.primary,
+                        onTap: () => _scrollCarousel(
+                          _recentProductsScrollController,
+                          300,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+      ],
     );
   }
 
@@ -3261,6 +3375,132 @@ class _DealOfTheDaySliderState extends State<DealOfTheDaySlider> {
           ),
         );
       },
+    );
+  }
+}
+
+class _WhyIbulItem {
+  const _WhyIbulItem({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.desc,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String desc;
+  final VoidCallback onTap;
+}
+
+class _WhyIbulActionCard extends StatefulWidget {
+  const _WhyIbulActionCard({required this.item});
+
+  final _WhyIbulItem item;
+
+  @override
+  State<_WhyIbulActionCard> createState() => _WhyIbulActionCardState();
+}
+
+class _WhyIbulActionCardState extends State<_WhyIbulActionCard> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: Semantics(
+        button: true,
+        label: item.title,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: item.onTap,
+            borderRadius: BorderRadius.circular(12),
+            splashColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+            focusColor: Colors.transparent,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              transform: Matrix4.translationValues(0, _hovered ? -2 : 0, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _hovered
+                      ? AppColors.primary.withValues(alpha: 0.2)
+                      : const Color(0xFFE8E8EE),
+                  width: _hovered ? 1.25 : 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(
+                      alpha: _hovered ? 0.08 : 0.04,
+                    ),
+                    blurRadius: _hovered ? 12 : 6,
+                    offset: Offset(0, _hovered ? 4 : 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: item.color.withValues(
+                        alpha: _hovered ? 0.14 : 0.1,
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: AnimatedScale(
+                      scale: _hovered ? 1.05 : 1,
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOut,
+                      child: Icon(item.icon, color: item.color, size: 22),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    item.title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF333333),
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item.desc,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: Colors.grey[600],
+                      height: 1.35,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

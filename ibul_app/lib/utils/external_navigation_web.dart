@@ -14,7 +14,7 @@ class ExternalNavigation {
     return true;
   }
 
-  static bool openUrl(String url) {
+  static Future<bool> openUrl(String url) async {
     final normalized = url.trim();
     if (normalized.isEmpty) return false;
     html.window.open(normalized, '_blank');

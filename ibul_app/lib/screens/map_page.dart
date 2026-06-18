@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
@@ -16,10 +17,16 @@ import '../models/product_model.dart';
 import '../services/location_access_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/store_service.dart';
+import '../services/store/store_mapping_helpers.dart';
 import '../services/supabase_service.dart';
+import '../utils/external_navigation.dart';
 import '../widgets/map_filter_bottom_sheet.dart';
 import '../utils/text_normalizer.dart';
 import 'business_detail_page.dart';
+import '../models/store_follow_state.dart';
+import '../features/seller/achievements/helpers/seller_badge_public_display.dart';
+import '../features/seller/achievements/models/seller_badge_models.dart';
+import '../features/seller/achievements/widgets/seller_badge_map_popup_row.dart';
 import 'ai_chat_page.dart';
 
 class MapPage extends StatefulWidget {
@@ -75,6 +82,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   Timer? _searchDebounce;
   int _searchRequestVersion = 0;
   bool _isCenteringOnUserLocation = false;
+  bool _isOpeningStoreDirections = false;
   bool _didOpenInitialTargetBusiness = false;
   static const double _nearStoreThresholdKm = 0.1; // 100 metre
   static const double _locationSyncDistanceMeters = 25;
@@ -840,6 +848,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   Future<void> _loadStoresFromSupabase() async {
     try {
       final list = await _storeService.getStoresForMap();
+      if (list.isEmpty) {
+        debugPrint(
+          '[MapPage] getStoresForMap returned 0 stores '
+          '(check Supabase logs above for query errors)',
+        );
+      }
 
       if (!mounted) return;
 
@@ -862,6 +876,22 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           }
         }
 
+        final phone = s['phone']?.toString().trim() ?? '';
+        final email = s['email']?.toString().trim() ?? '';
+        final hasContactInfo = phone.isNotEmpty || email.isNotEmpty;
+        final city = s['city']?.toString().trim() ?? '';
+        final district = s['district']?.toString().trim() ?? '';
+        final description = resolveMapStoreBio(s);
+        final addressLine = formatMapStoreAddress(
+          address: s['address']?.toString(),
+          district: district,
+          city: city,
+        );
+        final logoUrl = s['logo_url']?.toString();
+        final hasDescription = description.isNotEmpty;
+        final hasCategory = (s['category']?.toString().trim().isNotEmpty ?? false);
+        final hasLogo = logoUrl != null && logoUrl.isNotEmpty;
+
         newBusinesses.add({
           'id': s['seller_id'],
           'seller_id': s['seller_id'],
@@ -870,10 +900,20 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           'distance_km': null,
           'location': LatLng(lat.toDouble(), lng.toDouble()),
           'category': category,
-          'description': s['address'] ?? '',
+          'description': description,
+          'address': addressLine,
+          'address_line': addressLine,
           'fromSupabase': true,
-          'logo_url': s['logo_url'] as String?,
+          'logo_url': logoUrl,
           'gallery_images': gallery,
+          'follower_count': (s['follower_count'] as num?)?.toInt() ?? 0,
+          'rating': (s['rating'] as num?)?.toDouble() ?? 0.0,
+          'created_at': s['created_at']?.toString(),
+          'city': city,
+          'district': district,
+          'has_contact_info': hasContactInfo,
+          'profile_complete': hasLogo && hasDescription && hasCategory && hasContactInfo,
+          'is_brand_verified': s['is_brand_verified'] == true,
         });
       }
 
@@ -923,8 +963,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           _openInitialTargetBusiness(index);
         }
       }
-    } catch (e) {
-      debugPrint('Harita mağazaları yüklenirken hata: $e');
+    } catch (e, stackTrace) {
+      debugPrint('[MapPage] getStoresForMap failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
     }
   }
 
@@ -1222,6 +1263,215 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     return [];
   }
 
+  void _showMapNavigationErrorSnackBar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Harita açılamadı. Lütfen konum izninizi veya bağlantınızı kontrol edin.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openStoreDirections(Map<String, dynamic> business) async {
+    if (_isOpeningStoreDirections) return;
+
+    final location = business['location'] as LatLng?;
+    if (location == null) {
+      _showMapNavigationErrorSnackBar();
+      return;
+    }
+
+    setState(() {
+      _isOpeningStoreDirections = true;
+    });
+
+    try {
+      final lat = location.latitude;
+      final lng = location.longitude;
+      final hasOrigin = _userLocation != null;
+      final candidateUrls = <String>[];
+
+      final prefersAppleMaps = !kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.iOS ||
+              defaultTargetPlatform == TargetPlatform.macOS);
+      if (prefersAppleMaps) {
+        candidateUrls.add(
+          buildAppleMapsNavigationUrl(
+            latitude: lat,
+            longitude: lng,
+            directions: hasOrigin,
+          ),
+        );
+      }
+
+      candidateUrls.add(
+        buildGoogleMapsNavigationUrl(
+          latitude: lat,
+          longitude: lng,
+          originLatitude: _userLocation?.latitude,
+          originLongitude: _userLocation?.longitude,
+        ),
+      );
+
+      var opened = false;
+      for (final url in candidateUrls) {
+        if (await ExternalNavigation.openUrl(url)) {
+          opened = true;
+          break;
+        }
+      }
+
+      if (!mounted) return;
+
+      if (!opened) {
+        _showMapNavigationErrorSnackBar();
+        return;
+      }
+
+      if (!hasOrigin) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Konum izni verilirse rota oluşturulabilir.',
+            ),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isOpeningStoreDirections = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildMapPopupHeader({
+    required Map<String, dynamic> business,
+    required String? logoUrl,
+    required String followerLabel,
+    required double rating,
+    required List<SellerBadgeProgress> popupBadges,
+    required VoidCallback onClose,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 55,
+          height: 55,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: Colors.grey.shade200,
+              width: 1.5,
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: (logoUrl != null && logoUrl.isNotEmpty)
+              ? OptimizedImage(
+                  imageUrlOrPath: logoUrl,
+                  width: 55,
+                  height: 55,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) =>
+                      _buildStoreLogoPlaceholder(business),
+                )
+              : StoreLogoHelper.hasLogo(business['name'])
+              ? Image.asset(
+                  StoreLogoHelper.getStoreLogo(business['name'])!,
+                  width: 55,
+                  height: 55,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) =>
+                      _buildStoreLogoPlaceholder(business),
+                )
+              : _buildStoreLogoPlaceholder(business),
+        ),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Flexible(
+                    child: Text(
+                      business['name'],
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  if (rating > 0) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        rating.toStringAsFixed(1),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  followerLabel,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Spacer(),
+        MapStorePopupHeaderTrailing(
+          badgeKey: ValueKey<String>(
+            business['id']?.toString() ??
+                business['seller_id']?.toString() ??
+                business['name']?.toString() ??
+                'store',
+          ),
+          badges: popupBadges,
+          onClose: onClose,
+        ),
+      ],
+    );
+  }
+
   Widget _buildStoreLogoPlaceholder(Map<String, dynamic> business) {
     return Container(
       color: Colors.grey[300],
@@ -1248,6 +1498,19 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             .toList() ??
         <String>[];
     final logoUrl = business['logo_url'] as String?;
+    final metrics = SellerBadgePublicDisplay.metricsFromBusinessMap(business);
+    final followerLabel = StoreFollowState(
+      followerCount: metrics.followerCount,
+    ).formattedFollowerCount;
+    final rating = metrics.averageRating;
+    final popupBadges = SellerBadgePublicDisplay.mapPopupBadges(metrics);
+    final description = business['description']?.toString().trim() ?? '';
+    final addressLine =
+        business['address_line']?.toString().trim() ??
+        business['address']?.toString().trim() ??
+        '';
+    final bioText =
+        description.isNotEmpty ? description : mapStoreBioFallback;
 
     return Container(
       constraints: BoxConstraints(
@@ -1273,142 +1536,76 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-          // Close button
-          Align(
-            alignment: Alignment.topRight,
-            child: IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close, color: AppColors.primary, size: 24),
-              padding: const EdgeInsets.all(8),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 4, 0),
+            child: _buildMapPopupHeader(
+              business: business,
+              logoUrl: logoUrl,
+              followerLabel: followerLabel,
+              rating: rating,
+              popupBadges: popupBadges,
+              onClose: () => Navigator.pop(context),
             ),
           ),
           // Content
           Flexible(
             fit: FlexFit.loose,
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header with logo and info
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Logo
-                      Container(
-                        width: 55,
-                        height: 55,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.grey.shade200,
-                            width: 1.5,
-                          ),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: (logoUrl != null && logoUrl.isNotEmpty)
-                            ? OptimizedImage(imageUrlOrPath: 
-                                logoUrl,
-                                width: 55,
-                                height: 55,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) =>
-                                    _buildStoreLogoPlaceholder(business),
-                              )
-                            : StoreLogoHelper.hasLogo(business['name'])
-                            ? Image.asset(
-                                StoreLogoHelper.getStoreLogo(business['name'])!,
-                                width: 55,
-                                height: 55,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) =>
-                                    _buildStoreLogoPlaceholder(business),
-                              )
-                            : _buildStoreLogoPlaceholder(business),
-                      ),
-                      const SizedBox(width: 12),
-                      // Name and rating
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    business['name'],
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.black87,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 3,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[100],
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: const Text(
-                                    '8.2',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.black87,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            // Followers button
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: const Text(
-                                '9.8B Takipçi',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Rozet
-                      const Icon(
-                        Icons.military_tech,
-                        color: Colors.orange,
-                        size: 26,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  // Address or Description
                   Text(
-                    business['description'] ?? 'Teknolojinin Adresi',
-                    style: const TextStyle(
+                    bioText,
+                    style: TextStyle(
                       fontSize: 13,
-                      color: Colors.black54,
-                      fontWeight: FontWeight.w500,
+                      color: description.isNotEmpty
+                          ? Colors.black87
+                          : Colors.black54,
+                      fontWeight: description.isNotEmpty
+                          ? FontWeight.w500
+                          : FontWeight.w400,
+                      height: 1.35,
                     ),
                   ),
-                  const SizedBox(height: 40),
+                  if (addressLine.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.location_on_outlined,
+                            size: 15,
+                            color: Colors.grey.shade600,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              addressLine,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Colors.grey.shade700,
+                                height: 1.25,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
                   if (galleryUrls.isNotEmpty)
                     Row(
                       children: galleryUrls
@@ -1571,17 +1768,38 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.map_outlined,
-                    color: Colors.white,
-                    size: 24,
+                Tooltip(
+                  message: 'Rota oluştur',
+                  child: Semantics(
+                    label: 'Rota oluştur',
+                    button: true,
+                    child: Material(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: _isOpeningStoreDirections
+                            ? null
+                            : () => unawaited(_openStoreDirections(business)),
+                        child: SizedBox(
+                          width: 50,
+                          height: 50,
+                          child: _isOpeningStoreDirections
+                              ? const Padding(
+                                  padding: EdgeInsets.all(14),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.map_outlined,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],

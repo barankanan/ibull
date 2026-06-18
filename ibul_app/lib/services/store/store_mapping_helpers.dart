@@ -46,6 +46,114 @@ bool isOptionalProductColumnError(String message) {
   return false;
 }
 
+const String mapStoreSelectBase =
+    'seller_id, business_name, store_lat, store_lng, category, address, city, '
+    'district, logo_url, gallery_images, banners, follower_count, rating, '
+    'created_at, phone, email';
+
+const String mapStoreDescriptionColumn = 'description';
+
+const String mapStoreBrandVerifiedColumn = 'is_brand_verified';
+
+String mapStoreSelect({
+  required bool includeBrandVerified,
+  bool includeDescription = true,
+}) {
+  final parts = <String>[
+    ...mapStoreSelectBase.split(',').map((part) => part.trim()),
+    if (includeDescription) mapStoreDescriptionColumn,
+    if (includeBrandVerified) mapStoreBrandVerifiedColumn,
+  ];
+  return parts.join(', ');
+}
+
+/// Harita popup ana metni — adres alanına düşmez.
+String resolveMapStoreBio(Map<String, dynamic> store) {
+  final description = store[mapStoreDescriptionColumn]?.toString().trim() ?? '';
+  if (description.isNotEmpty) return description;
+
+  final slogan = store['slogan']?.toString().trim() ?? '';
+  if (slogan.isNotEmpty) return slogan;
+
+  return '';
+}
+
+const String mapStoreBioFallback =
+    'Bu mağaza yakındaki işletmeler arasında listeleniyor.';
+
+/// Popup altındaki küçük adres satırı.
+String formatMapStoreAddress({
+  String? address,
+  String? district,
+  String? city,
+}) {
+  final parts = <String>[
+    address?.trim() ?? '',
+    district?.trim() ?? '',
+    city?.trim() ?? '',
+  ].where((part) => part.isNotEmpty).toList(growable: false);
+
+  if (parts.isEmpty) return '';
+  if (parts.length == 1) return parts.first;
+
+  final street = parts.first;
+  final region = parts.sublist(1).join(', ');
+  if (street.isEmpty) return region;
+  if (region.isEmpty) return street;
+  return '$street, $region';
+}
+
+String buildGoogleMapsNavigationUrl({
+  required double latitude,
+  required double longitude,
+  double? originLatitude,
+  double? originLongitude,
+}) {
+  final destination = '$latitude,$longitude';
+  if (originLatitude != null && originLongitude != null) {
+    return 'https://www.google.com/maps/dir/?api=1'
+        '&origin=$originLatitude,$originLongitude'
+        '&destination=$destination&travelmode=driving';
+  }
+  return 'https://www.google.com/maps/search/?api=1&query=$destination';
+}
+
+String buildAppleMapsNavigationUrl({
+  required double latitude,
+  required double longitude,
+  bool directions = false,
+}) {
+  final coords = '$latitude,$longitude';
+  if (directions) {
+    return 'http://maps.apple.com/?daddr=$coords';
+  }
+  return 'http://maps.apple.com/?q=$coords';
+}
+
+bool isMissingDbColumnError(Object error, String column) {
+  final message = error.toString().toLowerCase();
+  final normalizedColumn = column.toLowerCase();
+  if (!message.contains(normalizedColumn)) return false;
+  return message.contains('does not exist') ||
+      message.contains('could not find') ||
+      message.contains('unknown column') ||
+      (message.contains('column') && message.contains('not exist'));
+}
+
+List<Map<String, dynamic>> normalizeMapStoreRows(
+  List<Map<String, dynamic>> rows, {
+  required bool brandVerifiedAvailable,
+}) {
+  if (brandVerifiedAvailable) return rows;
+  return rows
+      .map((row) {
+        final copy = Map<String, dynamic>.from(row);
+        copy[mapStoreBrandVerifiedColumn] = false;
+        return copy;
+      })
+      .toList(growable: false);
+}
+
 Set<String> stripUnsupportedProductColumns(
   Map<String, dynamic> data,
   String message,

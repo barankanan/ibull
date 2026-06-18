@@ -435,19 +435,73 @@ class StoreService {
 
   /// Haritada gösterilecek onaylı mağazaları döndürür (store_lat, store_lng dolu olanlar). logo_url ve gallery_images dahil.
   Future<List<Map<String, dynamic>>> getStoresForMap() async {
-    try {
-      final list = await _supabase
-          .from('stores')
-          .select(
-            'seller_id, business_name, store_lat, store_lng, category, address, city, logo_url, gallery_images, banners',
-          )
-          .not('store_lat', 'is', null)
-          .not('store_lng', 'is', null);
-      return List<Map<String, dynamic>>.from(list as List);
-    } catch (e) {
-      debugPrint('getStoresForMap error: $e');
-      return [];
+    const attempts = <({bool includeBrandVerified, bool includeDescription})>[
+      (includeBrandVerified: true, includeDescription: true),
+      (includeBrandVerified: false, includeDescription: true),
+      (includeBrandVerified: true, includeDescription: false),
+      (includeBrandVerified: false, includeDescription: false),
+    ];
+
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (final attempt in attempts) {
+      try {
+        return await _fetchStoresForMap(
+          includeBrandVerified: attempt.includeBrandVerified,
+          includeDescription: attempt.includeDescription,
+        );
+      } catch (e, stackTrace) {
+        lastError = e;
+        lastStackTrace = stackTrace;
+
+        if (isMissingDbColumnError(e, mapStoreBrandVerifiedColumn) &&
+            attempt.includeBrandVerified) {
+          debugPrint(
+            '[MapPage] getStoresForMap: $mapStoreBrandVerifiedColumn column '
+            'missing, retrying without brand verification field',
+          );
+          continue;
+        }
+
+        if (isMissingDbColumnError(e, mapStoreDescriptionColumn) &&
+            attempt.includeDescription) {
+          debugPrint(
+            '[MapPage] getStoresForMap: $mapStoreDescriptionColumn column '
+            'missing, retrying without store description field',
+          );
+          continue;
+        }
+
+        break;
+      }
     }
+
+    debugPrint('[MapPage] getStoresForMap failed: $lastError');
+    if (lastStackTrace != null) {
+      debugPrintStack(stackTrace: lastStackTrace);
+    }
+    return [];
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchStoresForMap({
+    required bool includeBrandVerified,
+    required bool includeDescription,
+  }) async {
+    final list = await _supabase
+        .from('stores')
+        .select(
+          mapStoreSelect(
+            includeBrandVerified: includeBrandVerified,
+            includeDescription: includeDescription,
+          ),
+        )
+        .not('store_lat', 'is', null)
+        .not('store_lng', 'is', null);
+    return normalizeMapStoreRows(
+      List<Map<String, dynamic>>.from(list as List),
+      brandVerifiedAvailable: includeBrandVerified,
+    );
   }
 
   /// Ana sayfa hızlı teslimat mesafe hesabı için kullanılan hafif fetch.

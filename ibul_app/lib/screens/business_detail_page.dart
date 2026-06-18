@@ -34,6 +34,8 @@ import '../services/campaign_service.dart';
 import '../core/qr_initial_params.dart';
 import '../services/waiter_order_request_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../features/seller/achievements/helpers/seller_badge_public_display.dart';
+import '../features/seller/achievements/widgets/seller_badge_widgets.dart';
 import 'chat_page.dart';
 import 'list_detail_page.dart';
 import '../utils/table_labels.dart';
@@ -2905,19 +2907,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
               ),
             ),
             const SizedBox(height: 20),
-            Row(
-              children: _getSellerBadges(widget.business['name'] ?? 'Mağaza')
-                  .map(
-                    (widget) => Padding(
-                      padding: const EdgeInsets.only(right: 40),
-                      child: Transform.scale(
-                        scale: 1.2,
-                        child: widget,
-                      ), // Web için biraz büyüt
-                    ),
-                  )
-                  .toList(),
-            ),
+            _buildProfileBadgeSection(expanded: true),
             const SizedBox(height: 40),
 
             // 2. Satıcı Videoları (Web)
@@ -3358,12 +3348,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                   ),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: _getSellerBadges(
-                    widget.business['name'] ?? 'Mağaza',
-                  ),
-                ),
+                _buildProfileBadgeSection(),
               ],
             ),
           ),
@@ -3795,150 +3780,33 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     );
   }
 
-  // Modern Badge Widget (Gelişmiş Rozetler için)
-  Widget _buildModernBadge({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required List<Color> gradient,
-  }) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.15),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, color: color, size: 20),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 9,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey[800],
-          ),
-          textAlign: TextAlign.center,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
+  Widget _buildProfileBadgeSection({bool expanded = false}) {
+    final metrics = SellerBadgePublicDisplay.metricsFromBusinessMap(
+      widget.business,
+    ).copyWith(followerCount: _followState.followerCount);
+    final badges = SellerBadgePublicDisplay.profileBadges(metrics);
+    if (badges.isEmpty) {
+      return Text(
+        'Henüz kazanılmış rozet yok.',
+        style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+      );
+    }
+
+    return Wrap(
+      spacing: expanded ? 28 : 12,
+      runSpacing: 12,
+      alignment: expanded ? WrapAlignment.start : WrapAlignment.spaceAround,
+      children: badges
+          .map(
+            (badge) => SellerBadgeIcon(
+              progress: badge,
+              size: expanded ? 48 : 42,
+              showLabel: true,
+              compact: !expanded,
+            ),
+          )
+          .toList(growable: false),
     );
-  }
-
-  // Satıcıya özel rozetleri getir
-  List<Widget> _getSellerBadges(String businessName) {
-    final badges = <Map<String, dynamic>>[];
-
-    // Teknosa için özel rozetler
-    if (businessName.toLowerCase().contains('teknosa')) {
-      badges.addAll([
-        {
-          'icon': Icons.verified_user,
-          'label': 'Güvenilir',
-          'color': Colors.blue,
-        },
-        {'icon': Icons.bolt, 'label': 'Hızlı Teslimat', 'color': Colors.orange},
-        {
-          'icon': Icons.workspace_premium,
-          'label': 'Premium',
-          'color': Colors.amber,
-        },
-        {
-          'icon': Icons.local_shipping,
-          'label': 'Ücretsiz Kargo',
-          'color': Colors.green,
-        },
-      ]);
-    }
-    // Arçelik için özel rozetler
-    else if (businessName.toLowerCase().contains('arçelik') ||
-        businessName.toLowerCase().contains('arcelik')) {
-      badges.addAll([
-        {'icon': Icons.star, 'label': 'Yüksek Puan', 'color': Colors.amber},
-        {
-          'icon': Icons.verified,
-          'label': 'Onaylı Satıcı',
-          'color': Colors.blue,
-        },
-        {
-          'icon': Icons.support_agent,
-          'label': 'Destek 7/24',
-          'color': Colors.purple,
-        },
-        {
-          'icon': Icons.thumb_up,
-          'label': 'Tavsiye Edilen',
-          'color': Colors.green,
-        },
-      ]);
-    }
-    // Beko için özel rozetler
-    else if (businessName.toLowerCase().contains('beko')) {
-      badges.addAll([
-        {'icon': Icons.eco, 'label': 'Çevre Dostu', 'color': Colors.green},
-        {'icon': Icons.shield, 'label': 'Garantili', 'color': Colors.blue},
-        {
-          'icon': Icons.local_shipping,
-          'label': 'Hızlı Kargo',
-          'color': Colors.orange,
-        },
-        {
-          'icon': Icons.chat_bubble,
-          'label': 'Hızlı Yanıt',
-          'color': Colors.purple,
-        },
-      ]);
-    }
-    // Vestel için özel rozetler
-    else if (businessName.toLowerCase().contains('vestel')) {
-      badges.addAll([
-        {'icon': Icons.inventory, 'label': 'Bol Stok', 'color': Colors.blue},
-        {'icon': Icons.discount, 'label': 'İndirimli', 'color': Colors.red},
-        {
-          'icon': Icons.rocket_launch,
-          'label': 'Aynı Gün Kargo',
-          'color': Colors.orange,
-        },
-        {
-          'icon': Icons.verified_user,
-          'label': 'Güvenli',
-          'color': Colors.green,
-        },
-      ]);
-    }
-    // Diğer satıcılar için varsayılan rozetler
-    else {
-      badges.addAll([
-        {'icon': Icons.verified, 'label': 'Güvenilir', 'color': Colors.blue},
-        {
-          'icon': Icons.rocket_launch,
-          'label': 'Hızlı Kargo',
-          'color': Colors.orange,
-        },
-        {'icon': Icons.star, 'label': 'Yüksek Puan', 'color': Colors.amber},
-        {
-          'icon': Icons.local_shipping,
-          'label': 'Ücretsiz Kargo',
-          'color': Colors.green,
-        },
-      ]);
-    }
-
-    return badges
-        .map(
-          (badge) => _buildModernBadge(
-            icon: badge['icon'] as IconData,
-            label: badge['label'] as String,
-            color: badge['color'] as Color,
-            gradient: [], // Kullanılmıyor artık
-          ),
-        )
-        .toList();
   }
 
   // Satıcı Özeti Verileri (Tek kaynak)

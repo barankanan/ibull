@@ -282,7 +282,7 @@ class _PrinterSystemSetupWizardState extends State<PrinterSystemSetupWizard> {
   }
 
   Future<void> _downloadWindowsInstaller() async {
-    final opened = ExternalNavigation.openUrl(_windowsInstallerUrl);
+    final opened = await ExternalNavigation.openUrl(_windowsInstallerUrl);
     if (!opened) {
       await Clipboard.setData(ClipboardData(text: _windowsInstallerUrl));
       if (!mounted) return;

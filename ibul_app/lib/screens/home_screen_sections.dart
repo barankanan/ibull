@@ -388,6 +388,7 @@ extension _HomeScreenSections on _HomeScreenState {
     final opportunityProducts = isHomePage
         ? _getOpportunityProducts(limit: 10)
         : <DBProduct>[];
+    final recentProducts = isHomePage ? _recentHomeProducts() : <DBProduct>[];
     final bannerImages = _resolvedBannerImages(preferMobile: false);
 
     if (isHomePage) {
@@ -1334,10 +1335,17 @@ extension _HomeScreenSections on _HomeScreenState {
                     ],
                   ),
                 ),
-                const SizedBox(height: 40),
+                const SizedBox(height: 28),
 
                 // Neden iBul? Bölümü
                 _buildWhyIbulSection(),
+
+                if (isHomePage) ...[
+                  const SizedBox(height: 28),
+                  _buildWebRecentlyViewedSection(
+                    recentProducts: recentProducts,
+                  ),
+                ],
 
                 // Sistem Düzeni kartları: Neden iBul'un altında alt alta
                 if (_hairCareLayoutsForHome.isNotEmpty) ...[
