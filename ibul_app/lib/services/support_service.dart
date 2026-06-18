@@ -1,8 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-enum TicketStatus { open, inProgress, closed, resolved }
+enum TicketStatus { open, inProgress, closed, resolved, reviewing, answered, waitingUser, rejected }
 
-enum TicketPriority { low, medium, high }
+enum TicketPriority { low, medium, high, normal }
 
 class SupportTicket {
   final String id;
@@ -39,14 +39,8 @@ class SupportTicket {
       category: map['category'] ?? 'Genel',
       subject: map['subject'] ?? '',
       description: map['description'] ?? '',
-      status: TicketStatus.values.firstWhere(
-        (e) => e.name == (map['status'] ?? 'open'),
-        orElse: () => TicketStatus.open,
-      ),
-      priority: TicketPriority.values.firstWhere(
-        (e) => e.name == (map['priority'] ?? 'medium'),
-        orElse: () => TicketPriority.medium,
-      ),
+      status: _parseTicketStatus(map['status']),
+      priority: _parseTicketPriority(map['priority']),
       createdAt: map['created_at'] != null
           ? DateTime.parse(map['created_at'])
           : DateTime.now(),
@@ -64,12 +58,69 @@ class SupportTicket {
       'category': category,
       'subject': subject,
       'description': description,
-      'status': status.name,
-      'priority': priority.name,
+      'status': _ticketStatusToDb(status),
+      'priority': _ticketPriorityToDb(priority),
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
       'assigned_to': assignedTo,
     };
+  }
+}
+
+TicketStatus _parseTicketStatus(dynamic raw) {
+  final value = raw?.toString() ?? 'open';
+  switch (value) {
+    case 'in_progress':
+    case 'reviewing':
+      return TicketStatus.reviewing;
+    case 'answered':
+      return TicketStatus.answered;
+    case 'waiting_user':
+      return TicketStatus.waitingUser;
+    case 'closed':
+      return TicketStatus.closed;
+    case 'resolved':
+      return TicketStatus.resolved;
+    case 'rejected':
+      return TicketStatus.rejected;
+    default:
+      return TicketStatus.open;
+  }
+}
+
+TicketPriority _parseTicketPriority(dynamic raw) {
+  final value = raw?.toString() ?? 'normal';
+  switch (value) {
+    case 'low':
+      return TicketPriority.low;
+    case 'high':
+      return TicketPriority.high;
+    case 'medium':
+    case 'normal':
+    default:
+      return TicketPriority.normal;
+  }
+}
+
+String _ticketStatusToDb(TicketStatus status) {
+  switch (status) {
+    case TicketStatus.inProgress:
+    case TicketStatus.reviewing:
+      return 'reviewing';
+    case TicketStatus.waitingUser:
+      return 'waiting_user';
+    default:
+      return status.name;
+  }
+}
+
+String _ticketPriorityToDb(TicketPriority priority) {
+  switch (priority) {
+    case TicketPriority.medium:
+    case TicketPriority.normal:
+      return 'normal';
+    default:
+      return priority.name;
   }
 }
 
@@ -110,8 +161,8 @@ class SupportService {
         'category': category,
         'subject': subject,
         'description': description,
-        'status': TicketStatus.open.name,
-        'priority': priority.name,
+        'status': _ticketStatusToDb(TicketStatus.open),
+        'priority': _ticketPriorityToDb(priority),
         'created_at': DateTime.now().toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
       });
@@ -188,7 +239,7 @@ class SupportService {
       await _supabase
           .from(_tableName)
           .update({
-            'status': status.name,
+            'status': _ticketStatusToDb(status),
             'updated_at': DateTime.now().toIso8601String(),
           })
           .eq('id', ticketId);

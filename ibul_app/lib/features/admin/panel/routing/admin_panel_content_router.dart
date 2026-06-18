@@ -13,6 +13,7 @@ import '../../../../screens/admin/permission_system_page.dart';
 import '../../../../screens/admin/product_approval/product_approval_page.dart';
 import '../../../../screens/admin/store_management_page.dart';
 import '../../../../screens/admin/support_complaints_page.dart';
+import '../../../../screens/admin/support_tickets_admin_page.dart';
 import '../widgets/admin_panel_state_widgets.dart';
 
 Widget buildAdminPanelContent({
@@ -42,7 +43,7 @@ Widget buildAdminPanelContent({
     case 'Reklam':
       return const AdminAdsManagerContent(embedded: true);
     case 'Destek & Şikayet':
-      return const AdminSupportComplaintsPage();
+      return const SupportTicketsAdminPage();
     case 'İHIZ':
       return const IhizAdminPage();
     case 'Yetki Sistemi':

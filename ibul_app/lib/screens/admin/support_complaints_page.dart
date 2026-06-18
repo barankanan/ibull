@@ -1508,6 +1508,7 @@ class _AdminSupportComplaintsPageState
       case TicketPriority.high:
         return const Color(0xFFEF4444);
       case TicketPriority.medium:
+      case TicketPriority.normal:
         return const Color(0xFF6C63FF);
       case TicketPriority.low:
         return const Color(0xFF10B981);
@@ -1523,11 +1524,18 @@ class _AdminSupportComplaintsPageState
       case TicketStatus.open:
         return 'Acik';
       case TicketStatus.inProgress:
+      case TicketStatus.reviewing:
         return 'Islemde';
+      case TicketStatus.answered:
+        return 'Cevaplandi';
+      case TicketStatus.waitingUser:
+        return 'Ek bilgi';
       case TicketStatus.closed:
         return 'Kapali';
       case TicketStatus.resolved:
         return 'Cozuldu';
+      case TicketStatus.rejected:
+        return 'Reddedildi';
     }
   }
 
@@ -1536,6 +1544,7 @@ class _AdminSupportComplaintsPageState
       case TicketPriority.low:
         return 'Dusuk';
       case TicketPriority.medium:
+      case TicketPriority.normal:
         return 'Orta';
       case TicketPriority.high:
         return 'Yuksek';
