@@ -101,12 +101,6 @@ class _OrdersPageState extends State<OrdersPage> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    _loadOrders();
-  }
-
-  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final appState = Provider.of<AppState>(context);
@@ -197,9 +191,7 @@ class _OrdersPageState extends State<OrdersPage> {
                       children: [
                         const SizedBox(
                           width: 280,
-                          child: AccountSidebar(
-                            activePage: 'Siparişlerim',
-                          ),
+                          child: AccountSidebar(activePage: 'Siparişlerim'),
                         ),
                         const SizedBox(width: 32),
                         Expanded(
@@ -208,153 +200,135 @@ class _OrdersPageState extends State<OrdersPage> {
                             children: [
                               const Text(
                                 'Siparişlerim',
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF1F2937),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              OrderHistoryWebCta(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => const OrderHistoryPage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 24),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Container(
+                                      height: 48,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        border: Border.all(
+                                          color: Colors.grey.shade200,
+                                        ),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: TextField(
+                                        decoration: InputDecoration(
+                                          hintText: 'Siparişlerimde ara...',
+                                          hintStyle: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey.shade400,
+                                          ),
+                                          prefixIcon: const Icon(
+                                            Icons.search,
+                                            color: Colors.grey,
+                                          ),
+                                          border: InputBorder.none,
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                vertical: 14,
+                                              ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Container(
+                                    height: 48,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      border: Border.all(
+                                        color: Colors.grey.shade200,
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.tune,
+                                          color: AppColors.primary,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        const Text(
+                                          'Filtrele',
                                           style: TextStyle(
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.bold,
-                                            color: Color(0xFF1F2937),
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
                                           ),
                                         ),
-                                        const SizedBox(height: 16),
-                                        OrderHistoryWebCta(
-                                          onTap: () {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    const OrderHistoryPage(),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                        const SizedBox(height: 24),
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: Container(
-                                                height: 48,
-                                                decoration: BoxDecoration(
-                                                  color: Colors.white,
-                                                  border: Border.all(
-                                                    color: Colors.grey.shade200,
-                                                  ),
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                                child: TextField(
-                                                  decoration: InputDecoration(
-                                                    hintText:
-                                                        'Siparişlerimde ara...',
-                                                    hintStyle: TextStyle(
-                                                      fontSize: 14,
-                                                      color:
-                                                          Colors.grey.shade400,
-                                                    ),
-                                                    prefixIcon: const Icon(
-                                                      Icons.search,
-                                                      color: Colors.grey,
-                                                    ),
-                                                    border: InputBorder.none,
-                                                    contentPadding:
-                                                        const EdgeInsets.symmetric(
-                                                          vertical: 14,
-                                                        ),
-                                                  ),
-                                                ),
-                                              ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 24),
+                              SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: _tabs.map((tab) {
+                                    final isSelected = _selectedTab == tab;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(right: 12),
+                                      child: InkWell(
+                                        onTap: () =>
+                                            setState(() => _selectedTab = tab),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 20,
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: isSelected
+                                                ? AppColors.primary
+                                                : Colors.white,
+                                            borderRadius: BorderRadius.circular(
+                                              20,
                                             ),
-                                            const SizedBox(width: 16),
-                                            Container(
-                                              height: 48,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                border: Border.all(
-                                                  color: Colors.grey.shade200,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              child: Row(
-                                                children: [
-                                                  Icon(
-                                                    Icons.tune,
-                                                    color: AppColors.primary,
-                                                    size: 20,
-                                                  ),
-                                                  const SizedBox(width: 8),
-                                                  const Text(
-                                                    'Filtrele',
-                                                    style: TextStyle(
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.w500,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
+                                            border: Border.all(
+                                              color: isSelected
+                                                  ? AppColors.primary
+                                                  : Colors.grey.shade200,
                                             ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 24),
-                                        SingleChildScrollView(
-                                          scrollDirection: Axis.horizontal,
-                                          child: Row(
-                                            children: _tabs.map((tab) {
-                                              final isSelected =
-                                                  _selectedTab == tab;
-                                              return Padding(
-                                                padding: const EdgeInsets.only(
-                                                  right: 12,
-                                                ),
-                                                child: InkWell(
-                                                  onTap: () => setState(
-                                                    () => _selectedTab = tab,
-                                                  ),
-                                                  child: Container(
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 20,
-                                                          vertical: 10,
-                                                        ),
-                                                    decoration: BoxDecoration(
-                                                      color: isSelected
-                                                          ? AppColors.primary
-                                                          : Colors.white,
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            20,
-                                                          ),
-                                                      border: Border.all(
-                                                        color: isSelected
-                                                            ? AppColors.primary
-                                                            : Colors
-                                                                  .grey
-                                                                  .shade200,
-                                                      ),
-                                                    ),
-                                                    child: Text(
-                                                      tab,
-                                                      style: TextStyle(
-                                                        fontSize: 14,
-                                                        fontWeight:
-                                                            FontWeight.w500,
-                                                        color: isSelected
-                                                            ? Colors.white
-                                                            : Colors
-                                                                  .grey
-                                                                  .shade700,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              );
-                                            }).toList(),
+                                          ),
+                                          child: Text(
+                                            tab,
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                              color: isSelected
+                                                  ? Colors.white
+                                                  : Colors.grey.shade700,
+                                            ),
                                           ),
                                         ),
-                                        const SizedBox(height: 24),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ),
+                              const SizedBox(height: 24),
                               ..._buildOrdersList(isWeb: true),
                             ],
                           ),
@@ -812,8 +786,8 @@ class _OrdersPageState extends State<OrdersPage> {
                     child: productImage != null
                         ? ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: OptimizedImage(imageUrlOrPath: 
-                              productImage,
+                            child: OptimizedImage(
+                              imageUrlOrPath: productImage,
                               fit: BoxFit.cover,
                             ),
                           )

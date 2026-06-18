@@ -117,6 +117,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<DBProduct>? _cachedOpportunityProducts;
   String? _scheduledAboveFoldPrecacheKey;
   bool _tableQrHandled = false;
+
   /// Set to true the moment QR intent is confirmed so that concurrent home-init
   /// callbacks (deferred loads, cache writes, setState chains) cannot visually
   /// override or interfere with the QR navigation that follows.
@@ -209,10 +210,12 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
-    debugPrint('[HomeScreen] initState — mounting fresh HomeScreen. '
-        'QrInitialParams.everConsumed=${QrInitialParams.everConsumed} '
-        'isQrPath=${QrInitialParams.isQrPath} '
-        'wasResetAfterQrExit=${QrInitialParams.wasResetAfterQrExit}');
+    debugPrint(
+      '[HomeScreen] initState — mounting fresh HomeScreen. '
+      'QrInitialParams.everConsumed=${QrInitialParams.everConsumed} '
+      'isQrPath=${QrInitialParams.isQrPath} '
+      'wasResetAfterQrExit=${QrInitialParams.wasResetAfterQrExit}',
+    );
     _selectedIndexNotifier = ValueNotifier(widget.initialIndex);
     _hasSpunWheelNotifier = ValueNotifier(false);
     _spinController = AnimationController(
@@ -236,6 +239,7 @@ class _HomeScreenState extends State<HomeScreen>
     _flashProductsScrollController.dispose();
     _todayProductsScrollController.dispose();
     _recentProductsScrollController.dispose();
+    _subCategoryScrollController.dispose();
     _selectedIndexNotifier.dispose();
     _hasSpunWheelNotifier.dispose();
     super.dispose();
@@ -658,7 +662,9 @@ class _HomeScreenState extends State<HomeScreen>
       // Fallback path — capture live Uri.base in case the startup capture
       // was skipped (non-web, test environment, etc.).
       final uri = Uri.base;
-      debugPrint('[QR] startup params empty — falling back to live Uri.base = $uri');
+      debugPrint(
+        '[QR] startup params empty — falling back to live Uri.base = $uri',
+      );
       debugPrint('[QR] uri.queryParameters = ${uri.queryParameters}');
       debugPrint('[QR] uri.fragment        = ${uri.fragment}');
       params.addAll(uri.queryParameters);
@@ -666,11 +672,15 @@ class _HomeScreenState extends State<HomeScreen>
       final queryIndex = fragment.indexOf('?');
       if (queryIndex >= 0 && queryIndex + 1 < fragment.length) {
         try {
-          params.addAll(Uri.splitQueryString(fragment.substring(queryIndex + 1)));
+          params.addAll(
+            Uri.splitQueryString(fragment.substring(queryIndex + 1)),
+          );
         } catch (_) {}
       }
     } else {
-      debugPrint('[QR] Using startup-captured params (Uri.base immune to routing changes).');
+      debugPrint(
+        '[QR] Using startup-captured params (Uri.base immune to routing changes).',
+      );
     }
     debugPrint('[QR] merged params = $params');
 
@@ -724,10 +734,7 @@ class _HomeScreenState extends State<HomeScreen>
       debugPrint('[QR] ERROR: $msg');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(msg),
-            duration: Duration(seconds: 6),
-          ),
+          const SnackBar(content: Text(msg), duration: Duration(seconds: 6)),
         );
       }
       return;
@@ -761,7 +768,9 @@ class _HomeScreenState extends State<HomeScreen>
       debugPrint('[QR] getBusinessSummaryBySellerId result = $business');
       if (business == null) {
         debugPrint('[QR] Seller not found by ID — trying by business name...');
-        business = await _storeService.getBusinessSummaryByBusinessName(sellerId);
+        business = await _storeService.getBusinessSummaryByBusinessName(
+          sellerId,
+        );
         debugPrint('[QR] getBusinessSummaryByBusinessName result = $business');
       }
       if (!mounted || business == null) {
@@ -769,10 +778,7 @@ class _HomeScreenState extends State<HomeScreen>
         debugPrint('[QR] ERROR: $msg');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(msg),
-              duration: const Duration(seconds: 8),
-            ),
+            SnackBar(content: Text(msg), duration: const Duration(seconds: 8)),
           );
         }
         return;
@@ -874,7 +880,8 @@ class _HomeScreenState extends State<HomeScreen>
       debugPrint('Ürün yükleme hatası: $e');
       if (mounted) {
         setState(() {
-          _errorMessage = 'Ürünler yüklenirken bir hata oluştu: $e';
+          _errorMessage =
+              'Ürünler yüklenirken bir hata oluştu. Lütfen tekrar deneyin.';
         });
       }
     } finally {
@@ -894,7 +901,9 @@ class _HomeScreenState extends State<HomeScreen>
       Future<void>.delayed(const Duration(milliseconds: 180), () async {
         if (!mounted || loadGeneration != _homeLoadGeneration) return;
         if (_hasHandledQrIntent) {
-          debugPrint('HOME INIT BLOCKED: deferred section load skipped (QR active).');
+          debugPrint(
+            'HOME INIT BLOCKED: deferred section load skipped (QR active).',
+          );
           return;
         }
         if (!_deferredHomeSectionsEnabled) {
@@ -909,7 +918,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _loadImmediateHomeContent() async {
     if (_hasHandledQrIntent) {
-      debugPrint('HOME INIT BLOCKED: immediate home content skipped (QR active).');
+      debugPrint(
+        'HOME INIT BLOCKED: immediate home content skipped (QR active).',
+      );
       return;
     }
     try {
@@ -927,7 +938,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _loadDeferredHomeContent() async {
     if (_hasHandledQrIntent) {
-      debugPrint('HOME INIT BLOCKED: deferred home content skipped (QR active).');
+      debugPrint(
+        'HOME INIT BLOCKED: deferred home content skipped (QR active).',
+      );
       return;
     }
     try {
@@ -964,7 +977,9 @@ class _HomeScreenState extends State<HomeScreen>
         return;
       }
       if (_hasHandledQrIntent) {
-        debugPrint('HOME INIT BLOCKED: cached products setState skipped (QR active).');
+        debugPrint(
+          'HOME INIT BLOCKED: cached products setState skipped (QR active).',
+        );
         return;
       }
 
@@ -1004,7 +1019,9 @@ class _HomeScreenState extends State<HomeScreen>
         return;
       }
       if (_hasHandledQrIntent) {
-        debugPrint('HOME INIT BLOCKED: cached hero content setState skipped (QR active).');
+        debugPrint(
+          'HOME INIT BLOCKED: cached hero content setState skipped (QR active).',
+        );
         return;
       }
 
@@ -2099,7 +2116,6 @@ class _HomeScreenState extends State<HomeScreen>
     return product;
   }
 
-
   Widget _buildTechSection() {
     return _LocalBrandSection(
       title: 'Teknoloji Dünyası',
@@ -2507,7 +2523,8 @@ class _HomeScreenState extends State<HomeScreen>
         icon: Icons.compare_arrows,
         color: const Color(0xFF2196F3),
         title: 'Fiyat Karşılaştırma',
-        desc: 'Aynı ürünü farklı satıcılarda karşılaştır, en uygun fiyatı yakala.',
+        desc:
+            'Aynı ürünü farklı satıcılarda karşılaştır, en uygun fiyatı yakala.',
         onTap: _navigateToCompareFromHome,
       ),
       _WhyIbulItem(
@@ -2586,11 +2603,7 @@ class _HomeScreenState extends State<HomeScreen>
                 );
               }
 
-              return Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: cardWidgets,
-              );
+              return Wrap(spacing: 12, runSpacing: 12, children: cardWidgets);
             },
           ),
         ],
@@ -3028,8 +3041,9 @@ class _CouponSliderState extends State<CouponSlider> {
                             Container(
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
-                                color: (coupon['color'][0] as Color)
-                                    .withValues(alpha: 0.1),
+                                color: (coupon['color'][0] as Color).withValues(
+                                  alpha: 0.1,
+                                ),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Icon(
