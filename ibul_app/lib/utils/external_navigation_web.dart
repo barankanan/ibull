@@ -2,6 +2,8 @@
 
 import 'dart:html' as html;
 
+import 'external_navigation_allowlist.dart';
+
 class ExternalNavigation {
   static bool openIhizSite() {
     final host = html.window.location.host;
@@ -17,6 +19,9 @@ class ExternalNavigation {
   static Future<bool> openUrl(String url) async {
     final normalized = url.trim();
     if (normalized.isEmpty) return false;
+    if (!isAllowedExternalNavigationUrl(normalized)) {
+      return false;
+    }
     html.window.open(normalized, '_blank');
     return true;
   }

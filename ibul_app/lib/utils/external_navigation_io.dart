@@ -1,5 +1,9 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
+import 'external_navigation_allowlist.dart';
+
 class ExternalNavigation {
   static bool openIhizSite() {
     return false;
@@ -8,6 +12,11 @@ class ExternalNavigation {
   static Future<bool> openUrl(String url) async {
     final normalized = url.trim();
     if (normalized.isEmpty) return false;
+
+    final allowGeo = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+    if (!isAllowedExternalNavigationUrl(normalized, allowGeoScheme: allowGeo)) {
+      return false;
+    }
 
     try {
       if (Platform.isMacOS) {
@@ -21,7 +30,12 @@ class ExternalNavigation {
         return result.exitCode == 0;
       }
       if (Platform.isWindows) {
-        final result = await Process.run('cmd', ['/c', 'start', '', normalized]);
+        final result = await Process.run('cmd', [
+          '/c',
+          'start',
+          '',
+          normalized,
+        ]);
         return result.exitCode == 0;
       }
       if (Platform.isLinux) {
@@ -29,10 +43,13 @@ class ExternalNavigation {
         return result.exitCode == 0;
       }
       if (Platform.isAndroid) {
-        final result = await Process.run(
-          'am',
-          ['start', '-a', 'android.intent.action.VIEW', '-d', normalized],
-        );
+        final result = await Process.run('am', [
+          'start',
+          '-a',
+          'android.intent.action.VIEW',
+          '-d',
+          normalized,
+        ]);
         return result.exitCode == 0;
       }
     } catch (_) {
