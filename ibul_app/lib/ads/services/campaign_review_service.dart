@@ -1,3 +1,4 @@
+import '../helpers/ad_reviewer_helper.dart';
 import '../enums/ad_enums.dart';
 import '../models/campaign_review.dart';
 import '../repositories/ads_repository.dart';
@@ -19,8 +20,9 @@ class CampaignReviewService {
   Future<CampaignReview> approveCampaign({
     required String campaignId,
     required String sellerId,
-    required String reviewerId,
+    String? reviewerId,
     String? note,
+    String adminSource = 'admin-panel',
   }) async {
     await _repository.setCampaignStatus(campaignId, CampaignStatus.approved);
     return _repository.submitCampaignReview(
@@ -28,9 +30,14 @@ class CampaignReviewService {
         id: 'review-${DateTime.now().microsecondsSinceEpoch}',
         campaignId: campaignId,
         sellerId: sellerId,
-        reviewerId: reviewerId,
+        reviewerId: AdReviewerHelper.isValidUuid(reviewerId)
+            ? reviewerId
+            : AdReviewerHelper.resolveReviewerId(),
         status: CampaignReviewStatus.approved,
-        note: note ?? 'Approved by admin review.',
+        note: note ?? 'Admin tarafından onaylandı.',
+        metadata: AdReviewerHelper.isValidUuid(reviewerId)
+            ? const {}
+            : AdReviewerHelper.adminSourceMetadata(source: adminSource),
         createdAt: DateTime.now(),
         reviewedAt: DateTime.now(),
       ),
@@ -40,9 +47,10 @@ class CampaignReviewService {
   Future<CampaignReview> rejectCampaign({
     required String campaignId,
     required String sellerId,
-    required String reviewerId,
+    String? reviewerId,
     required List<String> reasons,
     String? note,
+    String adminSource = 'admin-panel',
   }) async {
     await _repository.setCampaignStatus(
       campaignId,
@@ -54,10 +62,15 @@ class CampaignReviewService {
         id: 'review-${DateTime.now().microsecondsSinceEpoch}',
         campaignId: campaignId,
         sellerId: sellerId,
-        reviewerId: reviewerId,
+        reviewerId: AdReviewerHelper.isValidUuid(reviewerId)
+            ? reviewerId
+            : AdReviewerHelper.resolveReviewerId(),
         status: CampaignReviewStatus.rejected,
-        note: note ?? 'Rejected by admin review.',
+        note: note ?? 'Admin tarafından reddedildi.',
         reasons: reasons,
+        metadata: AdReviewerHelper.isValidUuid(reviewerId)
+            ? const {}
+            : AdReviewerHelper.adminSourceMetadata(source: adminSource),
         createdAt: DateTime.now(),
         reviewedAt: DateTime.now(),
       ),
@@ -67,9 +80,10 @@ class CampaignReviewService {
   Future<CampaignReview> requestChanges({
     required String campaignId,
     required String sellerId,
-    required String reviewerId,
+    String? reviewerId,
     required List<String> reasons,
     String? note,
+    String adminSource = 'admin-panel',
   }) async {
     await _repository.setCampaignStatus(
       campaignId,
@@ -81,10 +95,15 @@ class CampaignReviewService {
         id: 'review-${DateTime.now().microsecondsSinceEpoch}',
         campaignId: campaignId,
         sellerId: sellerId,
-        reviewerId: reviewerId,
+        reviewerId: AdReviewerHelper.isValidUuid(reviewerId)
+            ? reviewerId
+            : AdReviewerHelper.resolveReviewerId(),
         status: CampaignReviewStatus.changesRequested,
-        note: note ?? 'Changes requested by admin.',
+        note: note ?? 'Admin değişiklik istedi.',
         reasons: reasons,
+        metadata: AdReviewerHelper.isValidUuid(reviewerId)
+            ? const {}
+            : AdReviewerHelper.adminSourceMetadata(source: adminSource),
         createdAt: DateTime.now(),
         reviewedAt: DateTime.now(),
       ),

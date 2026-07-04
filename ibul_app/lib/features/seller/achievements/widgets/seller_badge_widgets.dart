@@ -281,6 +281,7 @@ class SellerBadgeTaskCard extends StatelessWidget {
     this.onNavigateToStoreProfile,
     this.onRetry,
     this.onReplayGlow,
+    this.compact = false,
   });
 
   final SellerBadgeProgress progress;
@@ -290,9 +291,151 @@ class SellerBadgeTaskCard extends StatelessWidget {
   final void Function(SellerStoreProfileFocus focus)? onNavigateToStoreProfile;
   final VoidCallback? onRetry;
   final VoidCallback? onReplayGlow;
+  final bool compact;
+
+  void _openDetail(BuildContext context) {
+    if (onShowDetail != null) {
+      onShowDetail!();
+      return;
+    }
+    showSellerBadgeDetailSheet(
+      context: context,
+      progress: progress,
+      onNavigateToStoreProfile: onNavigateToStoreProfile,
+      onRetry: onRetry,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (compact) {
+      return _buildCompact(context);
+    }
+    return _buildFull(context);
+  }
+
+  Widget _buildCompact(BuildContext context) {
+    final statusLabel = sellerBadgeStatusLabel(progress.status);
+    final style = SellerBadgeLevelStyle.forLevel(progress.definition.level);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x06000000),
+            blurRadius: 6,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SellerBadgeIcon(
+                progress: progress,
+                size: 36,
+                animateGlow: animateGlow,
+                glowReplayToken: glowReplayToken,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      progress.definition.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      progress.definition.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _metaChip(statusLabel, _statusColor(progress.status)),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: style.background,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      style.label,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: style.color,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 5,
+              value: _progressValue(progress),
+              backgroundColor: const Color(0xFFF1F5F9),
+              color: AppColors.primary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  sellerBadgeProgressLabel(progress),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                ),
+              ),
+              TextButton(
+                onPressed: () => _openDetail(context),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('Detay'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFull(BuildContext context) {
     final style = SellerBadgeLevelStyle.forLevel(progress.definition.level);
     final statusLabel = sellerBadgeStatusLabel(progress.status);
     final missingItems = progress.incompleteChecklistItems;
@@ -456,13 +599,7 @@ class SellerBadgeTaskCard extends StatelessWidget {
                 ),
               const Spacer(),
               OutlinedButton(
-                onPressed: onShowDetail ??
-                    () => showSellerBadgeDetailSheet(
-                          context: context,
-                          progress: progress,
-                          onNavigateToStoreProfile: onNavigateToStoreProfile,
-                          onRetry: onRetry,
-                        ),
+                onPressed: () => _openDetail(context),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.primary,
                   backgroundColor: AppColors.primary.withValues(alpha: 0.04),
@@ -531,6 +668,106 @@ class SellerBadgeTaskCard extends StatelessWidget {
           fontSize: 10,
           fontWeight: FontWeight.w700,
           color: color,
+        ),
+      ),
+    );
+  }
+}
+
+class SellerEarnedBadgeGridTile extends StatelessWidget {
+  const SellerEarnedBadgeGridTile({
+    super.key,
+    required this.progress,
+    required this.featured,
+    required this.onTap,
+  });
+
+  final SellerBadgeProgress progress;
+  final bool featured;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Row(
+            children: [
+              SellerBadgeIcon(progress: progress, size: 32),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      progress.definition.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      sellerBadgeCategoryLabel(progress.definition.category),
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFECFDF3),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'Kazanıldı',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF059669),
+                      ),
+                    ),
+                  ),
+                  if (featured) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'Vitrinde',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

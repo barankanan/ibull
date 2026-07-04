@@ -160,7 +160,11 @@ class OrderHistoryService {
 
     for (final check in scoped) {
       if (check.canAddToCart && check.product != null) {
-        appState.addToCart(check.product!);
+        final error = await appState.addToCart(check.product!);
+        if (error != null) {
+          blocked.add(check);
+          continue;
+        }
         if (check.outcome == ReorderItemOutcome.priceChanged) {
           priceChanged.add(check);
         }

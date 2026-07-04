@@ -3,7 +3,7 @@ class SavedPaymentCard {
     required this.id,
     required this.userId,
     required this.provider,
-    required this.providerCardToken,
+    this.providerCardToken,
     this.cardHolderName,
     this.cardAlias,
     this.cardBrand,
@@ -19,7 +19,9 @@ class SavedPaymentCard {
   final String id;
   final String userId;
   final String provider;
-  final String providerCardToken;
+
+  /// Present only in server-side/charge flows — omitted from list responses.
+  final String? providerCardToken;
   final String? cardHolderName;
   final String? cardAlias;
   final String? cardBrand;
@@ -54,7 +56,9 @@ class SavedPaymentCard {
       id: json['id']?.toString() ?? '',
       userId: json['user_id']?.toString() ?? '',
       provider: json['provider']?.toString() ?? '',
-      providerCardToken: json['provider_card_token']?.toString() ?? '',
+      providerCardToken: json.containsKey('provider_card_token')
+          ? json['provider_card_token']?.toString()
+          : null,
       cardHolderName: json['card_holder_name']?.toString(),
       cardAlias: json['card_alias']?.toString(),
       cardBrand: json['card_brand']?.toString(),
@@ -123,8 +127,7 @@ class RawCardInput {
   final String holderName;
   final String? alias;
 
-  String get digitsOnly =>
-      cardNumber.replaceAll(RegExp(r'[^0-9]'), '');
+  String get digitsOnly => cardNumber.replaceAll(RegExp(r'[^0-9]'), '');
 
   String get last4 {
     final digits = digitsOnly;

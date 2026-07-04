@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../helpers/ad_display_labels.dart';
+
 class StatusChip extends StatelessWidget {
   const StatusChip({
     required this.label,
@@ -19,26 +21,20 @@ class StatusChip extends StatelessWidget {
     Color bg;
     Color fg;
     IconData icon;
-    String label;
     switch (normalized) {
       case 'active':
-      case 'approved': // CampaignStatus.approved.dbValue
+      case 'approved':
       case 'succeeded':
         bg = const Color(0xFFDCFCE7);
         fg = const Color(0xFF15803D);
         icon = Icons.check_circle_outline;
-        label = normalized == 'approved' ? 'Onaylandi' : 'Aktif';
         break;
-      case 'pending': // CampaignStatus.pendingReview.dbValue
+      case 'pending':
       case 'pending_review':
       case 'scheduled':
         bg = const Color(0xFFFFF7ED);
         fg = const Color(0xFFEA580C);
         icon = Icons.hourglass_top_rounded;
-        label = switch (normalized) {
-          'scheduled' => 'Planlandi',
-          _ => 'Bekleniliyor',
-        };
         break;
       case 'paused':
       case 'stopped':
@@ -46,25 +42,22 @@ class StatusChip extends StatelessWidget {
         bg = const Color(0xFFF1F5F9);
         fg = const Color(0xFF475569);
         icon = Icons.pause_circle_outline;
-        label = switch (normalized) {
-          'stopped' => 'Durduruldu',
-          'draft' => 'Taslak',
-          _ => 'Duraklatildi',
-        };
         break;
-      case 'rejected': // CampaignStatus.rejected.dbValue
+      case 'rejected':
       case 'failed':
+      case 'changes_requested':
         bg = const Color(0xFFFEE2E2);
         fg = const Color(0xFFB91C1C);
         icon = Icons.cancel_outlined;
-        label = 'Reddedildi';
         break;
       default:
         bg = const Color(0xFFDBEAFE);
         fg = const Color(0xFF1D4ED8);
         icon = Icons.info_outline_rounded;
-        label = rawStatus;
     }
+    final label = normalized == 'changes_requested'
+        ? AdDisplayLabels.reviewStatusLabel(normalized)
+        : AdDisplayLabels.campaignStatusLabel(normalized);
     return StatusChip(
       key: key,
       label: label,

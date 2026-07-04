@@ -6,7 +6,10 @@ class PrintJobRepository {
   PrintJobRepository({SupabaseClient? client})
     : _client = client ?? Supabase.instance.client;
 
+  static const int maxManualRetries = PrintJobModel.maxManualRetries;
+
   final SupabaseClient _client;
+  final Set<String> _retryingJobIds = <String>{};
 
   bool _matchesStatus(PrintJobModel job, String status) {
     final normalizedFilter = status.trim().toLowerCase();
@@ -63,22 +66,39 @@ class PrintJobRepository {
     ).map(PrintJobModel.fromMap).toList(growable: false);
   }
 
-  Future<void> retryJob(String printJobId) async {
-    final current = await _client
-        .from('print_jobs')
-        .select('retry_count')
-        .eq('id', printJobId)
-        .maybeSingle();
-    final nextRetry = ((current?['retry_count'] as num?)?.toInt() ?? 0) + 1;
+  Future<bool> retryJob(String printJobId) async {
+    if (_retryingJobIds.contains(printJobId)) {
+      return false;
+    }
+    _retryingJobIds.add(printJobId);
+    try {
+      final current = await _client
+          .from('print_jobs')
+          .select('retry_count, status')
+          .eq('id', printJobId)
+          .maybeSingle();
+      final status = current?['status']?.toString().trim().toLowerCase() ?? '';
+      if (status != 'failed') {
+        return false;
+      }
+      final retryCount = (current?['retry_count'] as num?)?.toInt() ?? 0;
+      if (retryCount >= maxManualRetries) {
+        return false;
+      }
 
-    await _client
-        .from('print_jobs')
-        .update({
-          'status': 'pending',
-          'retry_count': nextRetry,
-          'last_error': null,
-          'printed_at': null,
-        })
-        .eq('id', printJobId);
+      await _client
+          .from('print_jobs')
+          .update({
+            'status': 'pending',
+            'retry_count': retryCount + 1,
+            'last_error': null,
+            'printed_at': null,
+          })
+          .eq('id', printJobId)
+          .eq('status', 'failed');
+      return true;
+    } finally {
+      _retryingJobIds.remove(printJobId);
+    }
   }
 }

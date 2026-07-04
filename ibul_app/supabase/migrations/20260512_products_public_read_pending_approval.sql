@@ -1,3 +1,7 @@
+-- DANGER: Legacy/dev-only. Do not run in production.
+-- Allows anonymous reads of pending_approval products.
+-- Use ibul_app/SUPABASE_PUBLIC_PRODUCT_VISIBILITY_FIX.sql instead.
+
 -- Allow anonymous shoppers to read listings that are live or awaiting moderation.
 -- App lists both in SupabaseService.publicCatalogProductStatuses.
 

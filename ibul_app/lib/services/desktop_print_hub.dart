@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/desktop_printer_setup_models.dart';
+import '../models/print_job_model.dart';
 import '../models/printer_model.dart';
 import 'bridge_manager.dart';
 import 'desktop_print_orchestrator.dart';
@@ -17,6 +18,8 @@ import 'kitchen_product_mapping_cache_store.dart';
 import 'local_print_service.dart';
 import 'printer_event_log_service.dart';
 import 'printer_repository.dart';
+import 'restaurant_printer_dispatch_resolver.dart';
+import 'bridge_print_dispatch_verification.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status types
@@ -169,6 +172,11 @@ class DesktopPrintHub extends ChangeNotifier {
   /// In-memory dedup set: prevents re-dispatching the same job if the channel
   /// resubscribes and replays an event.
   final Set<String> _dispatchedJobIds = {};
+
+  /// Prevents concurrent manual retries for the same job.
+  final Set<String> _retryingJobIds = {};
+
+  static const int _maxManualRetries = PrintJobModel.maxManualRetries;
 
   /// In-memory cache for printer encoding configs (printerId → config map).
   /// Avoids a DB round-trip per job when the same printer is used repeatedly.
@@ -542,24 +550,57 @@ class DesktopPrintHub extends ChangeNotifier {
   /// pipeline.  The job is optimistically removed from [failedJobs]; it will
   /// be re-added if it fails again.
   Future<void> retryJob(String jobId) async {
-    debugPrint('[PrintHub] retryJob jobId=$jobId');
-    _dispatchedJobIds.remove(jobId);
-    try {
-      await Supabase.instance.client
-          .from('print_jobs')
-          .update({'status': 'pending', 'last_error': null})
-          .eq('id', jobId)
-          .eq('status', 'failed');
-    } catch (e) {
-      debugPrint('[PrintHub] retryJob reset error: $e');
+    if (_retryingJobIds.contains(jobId)) {
+      debugPrint('[PrintHub] retryJob skipped — already retrying jobId=$jobId');
       return;
     }
-    final job = await _fetchJob(jobId);
-    if (job == null) return;
-    _failedJobs.removeWhere((j) => j.jobId == jobId);
-    notifyListeners();
-    _persistFailedJobs().ignore();
-    _dispatchJobAsync(job);
+    if (_dispatchedJobIds.contains(jobId)) {
+      debugPrint('[PrintHub] retryJob skipped — job in flight jobId=$jobId');
+      return;
+    }
+    debugPrint('[PrintHub] retryJob jobId=$jobId');
+    _retryingJobIds.add(jobId);
+    try {
+      final current = await Supabase.instance.client
+          .from('print_jobs')
+          .select('retry_count, status')
+          .eq('id', jobId)
+          .maybeSingle();
+      final status = current?['status']?.toString().trim().toLowerCase() ?? '';
+      if (status != 'failed') {
+        debugPrint('[PrintHub] retryJob skipped — status=$status jobId=$jobId');
+        return;
+      }
+      final retryCount = (current?['retry_count'] as num?)?.toInt() ?? 0;
+      if (retryCount >= _maxManualRetries) {
+        debugPrint(
+          '[PrintHub] retryJob skipped — max retries reached '
+          'jobId=$jobId retryCount=$retryCount',
+        );
+        return;
+      }
+      _dispatchedJobIds.remove(jobId);
+      await Supabase.instance.client
+          .from('print_jobs')
+          .update({
+            'status': 'pending',
+            'last_error': null,
+            'printed_at': null,
+            'retry_count': retryCount + 1,
+          })
+          .eq('id', jobId)
+          .eq('status', 'failed');
+      final job = await _fetchJob(jobId);
+      if (job == null) return;
+      _failedJobs.removeWhere((j) => j.jobId == jobId);
+      notifyListeners();
+      _persistFailedJobs().ignore();
+      _dispatchJobAsync(job);
+    } catch (e) {
+      debugPrint('[PrintHub] retryJob reset error: $e');
+    } finally {
+      _retryingJobIds.remove(jobId);
+    }
   }
 
   /// Clear all locally-stored failed jobs.  Does not affect the DB.
@@ -1119,7 +1160,8 @@ class DesktopPrintHub extends ChangeNotifier {
       final port = _readText(
         preparedPayload.payload['selected_printer_port'] ?? payload['port'],
       );
-      final err = 'Mutfak fişi yazdırılamadı: yazıcı çözümlenemedi.';
+      final err = preparedPayload.userMessage ??
+          RestaurantPrinterDispatchResolution.missingRolePrinterMessage;
       _eventLogService
           .append(
             restaurantId: _restaurantId!,
@@ -1155,7 +1197,11 @@ class DesktopPrintHub extends ChangeNotifier {
             },
           )
           .ignore();
-      await _markFailed(jobId, err);
+        await _markFailed(
+          jobId,
+          err,
+          retryCount: _readRetryCount(fullJob),
+        );
       _failedCount++;
       final resolvedPrinterName =
           payload['printer_name']?.toString() ?? 'Yerel Yazici';
@@ -1241,7 +1287,11 @@ class DesktopPrintHub extends ChangeNotifier {
     final description = 'Masa $tableNo - $area - $resolvedPrinterName';
 
     if (payload.isEmpty) {
-      await _markFailed(jobId, 'Bo\u015f payload');
+      await _markFailed(
+        jobId,
+        'Bo\u015f payload',
+        retryCount: _readRetryCount(fullJob),
+      );
       _failedCount++;
       _setLastJob(description: description, error: 'Bo\u015f payload');
       _addFailedJob(jobId, description, 'Bo\u015f payload');
@@ -1351,6 +1401,7 @@ class DesktopPrintHub extends ChangeNotifier {
 
     Object? finalError;
     Map<String, dynamic>? bridgeResult;
+    Map<String, dynamic>? lastDispatchSnapshot;
     try {
       final bodiesToPrint = isKitchenJob && resolvedRole != 'adisyon'
           ? kitchenPrintBodies
@@ -1476,10 +1527,29 @@ class DesktopPrintHub extends ChangeNotifier {
                   restaurantId: _restaurantId!,
                 );
             bridgeResult = physicalResult.raw;
-            if (!physicalResult.ok) {
-              finalError =
-                  physicalResult.technicalMessage ?? physicalResult.message;
-              throw Exception(physicalResult.message);
+            final hubVerification = BridgePrintDispatchVerification.verify(
+              response: bridgeResult,
+              printer: preparedPayload.printer,
+              dispatchUsedFallback: bridgeResult?['used_fallback'] == true,
+            );
+            lastDispatchSnapshot = _buildHubObservabilitySnapshot(
+              verification: hubVerification,
+              jobId: jobId,
+              jobRecord: fullJob,
+              payload: payload,
+              resolvedRole: resolvedRole,
+              area: area,
+              printer: preparedPayload.printer,
+              bridgeResult: bridgeResult,
+              attempts: attempt,
+            );
+            if (!physicalResult.ok ||
+                !physicalResult.countsAsJobCompleted ||
+                !hubVerification.countsAsJobCompleted) {
+              finalError = physicalResult.message.isNotEmpty
+                  ? physicalResult.message
+                  : hubVerification.message;
+              throw Exception(finalError);
             }
             finalError = null;
             break;
@@ -1512,6 +1582,7 @@ class DesktopPrintHub extends ChangeNotifier {
           completedAt: completedAt,
           bridgeResult: bridgeResult,
           payload: payload,
+          dispatchSnapshot: lastDispatchSnapshot,
         ).ignore();
         _eventLogService
             .append(
@@ -1529,9 +1600,12 @@ class DesktopPrintHub extends ChangeNotifier {
               backend: resolvedPrinterBackend != '-'
                   ? resolvedPrinterBackend
                   : null,
-              details: <String, dynamic>{
-                'bridgeResult': bridgeResult ?? const <String, dynamic>{},
-              },
+              details: _eventDetailsWithSnapshot(
+                <String, dynamic>{
+                  'bridgeResult': bridgeResult ?? const <String, dynamic>{},
+                },
+                lastDispatchSnapshot,
+              ),
             )
             .ignore();
         if (resolvedRole != 'adisyon') {
@@ -1619,7 +1693,15 @@ class DesktopPrintHub extends ChangeNotifier {
         );
       } else {
         final err = _normalizedPrintFailure(finalError);
-        await _markFailed(jobId, err);
+        final failedAt = DateTime.now();
+          await _markFailed(
+          jobId,
+          err,
+          retryCount: _readRetryCount(fullJob),
+          payload: payload,
+          dispatchSnapshot: lastDispatchSnapshot,
+          failedAt: failedAt,
+        );
         final selectedHost = _readText(
           payload['selected_printer_host'] ??
               payload['host'] ??
@@ -1646,32 +1728,35 @@ class DesktopPrintHub extends ChangeNotifier {
               backend: resolvedPrinterBackend != '-'
                   ? resolvedPrinterBackend
                   : null,
-              details: <String, dynamic>{
-                'error': err,
-                'print_job_id': jobId,
-                'station_id': _readText(
-                  jobRecordForStamp['station_id'] ?? payload['station_id'],
-                ),
-                'station_name': _readText(
-                  payload['station_name'] ??
-                      payload['kitchen_ticket_header'] ??
-                      area,
-                ),
-                'requested_printer_id': _readText(
-                  jobRecord['printer_id'] ?? payload['printer_id'],
-                ),
-                'selected_printer_id': _readText(
-                  payload['selected_printer_id'] ?? resolvedPrinterId,
-                ),
-                'selected_printer_name': _readText(
-                  payload['selected_printer_name'] ?? resolvedPrinterName,
-                ),
-                'backend': _readText(
-                  payload['selected_printer_backend'] ?? resolvedPrinterBackend,
-                ),
-                'host': selectedHost,
-                'port': selectedPort,
-              },
+              details: _eventDetailsWithSnapshot(
+                <String, dynamic>{
+                  'error': err,
+                  'print_job_id': jobId,
+                  'station_id': _readText(
+                    jobRecordForStamp['station_id'] ?? payload['station_id'],
+                  ),
+                  'station_name': _readText(
+                    payload['station_name'] ??
+                        payload['kitchen_ticket_header'] ??
+                        area,
+                  ),
+                  'requested_printer_id': _readText(
+                    jobRecord['printer_id'] ?? payload['printer_id'],
+                  ),
+                  'selected_printer_id': _readText(
+                    payload['selected_printer_id'] ?? resolvedPrinterId,
+                  ),
+                  'selected_printer_name': _readText(
+                    payload['selected_printer_name'] ?? resolvedPrinterName,
+                  ),
+                  'backend': _readText(
+                    payload['selected_printer_backend'] ?? resolvedPrinterBackend,
+                  ),
+                  'host': selectedHost,
+                  'port': selectedPort,
+                },
+                lastDispatchSnapshot,
+              ),
             )
             .ignore();
         if (resolvedRole != 'adisyon') {
@@ -1737,7 +1822,11 @@ class DesktopPrintHub extends ChangeNotifier {
       }
     } catch (e, st) {
       final err = e.toString();
-      await _markFailed(jobId, err);
+        await _markFailed(
+          jobId,
+          err,
+          retryCount: _readRetryCount(fullJob),
+        );
       _eventLogService
           .append(
             restaurantId: _restaurantId!,
@@ -2127,8 +2216,14 @@ class DesktopPrintHub extends ChangeNotifier {
     required DateTime completedAt,
     Map<String, dynamic>? bridgeResult,
     Map<String, dynamic>? payload,
+    Map<String, dynamic>? dispatchSnapshot,
   }) async {
     try {
+      final mergedPayload = _payloadWithDispatchSnapshot(
+        payload,
+        dispatchSnapshot,
+        completedAt: completedAt,
+      );
       await Supabase.instance.client
           .from('print_jobs')
           .update({
@@ -2136,9 +2231,11 @@ class DesktopPrintHub extends ChangeNotifier {
             'last_error': null,
             'printed_at': completedAt.toIso8601String(),
             'completed_at': completedAt.toIso8601String(),
-            if (payload?['printer_record_id'] != null)
-              'printer_id': payload!['printer_record_id'],
-            ...?payload == null ? null : <String, dynamic>{'payload': payload},
+            if (mergedPayload?['printer_record_id'] != null)
+              'printer_id': mergedPayload!['printer_record_id'],
+            ...?mergedPayload == null
+                ? null
+                : <String, dynamic>{'payload': mergedPayload},
             'printer_write_started_at':
                 bridgeResult?['printer_write_started_at'],
             'printer_write_completed_at':
@@ -2150,15 +2247,123 @@ class DesktopPrintHub extends ChangeNotifier {
     }
   }
 
-  Future<void> _markFailed(String jobId, String error) async {
+  Future<void> _markFailed(
+    String jobId,
+    String error, {
+    int retryCount = 0,
+    Map<String, dynamic>? payload,
+    Map<String, dynamic>? dispatchSnapshot,
+    DateTime? failedAt,
+  }) async {
     try {
+      final mergedPayload = _payloadWithDispatchSnapshot(
+        payload,
+        dispatchSnapshot,
+        failedAt: failedAt ?? DateTime.now(),
+      );
       await Supabase.instance.client
           .from('print_jobs')
-          .update({'status': 'failed', 'last_error': error})
+          .update({
+            'status': 'failed',
+            'last_error': error,
+            'retry_count': retryCount + 1,
+            ...?mergedPayload == null ? null : <String, dynamic>{'payload': mergedPayload},
+          })
           .eq('id', jobId);
     } catch (e) {
       debugPrint('[PrintHub] markFailed error: $e');
     }
+  }
+
+  Map<String, dynamic>? _payloadWithDispatchSnapshot(
+    Map<String, dynamic>? payload,
+    Map<String, dynamic>? dispatchSnapshot, {
+    DateTime? completedAt,
+    DateTime? failedAt,
+  }) {
+    if (payload == null && dispatchSnapshot == null) {
+      return payload;
+    }
+    final merged = Map<String, dynamic>.from(payload ?? const <String, dynamic>{});
+    if (dispatchSnapshot != null && dispatchSnapshot.isNotEmpty) {
+      merged['dispatch_verification'] = dispatchSnapshot;
+      merged['dispatch_verification_status'] =
+          dispatchSnapshot['verification_status']?.toString() ??
+          dispatchSnapshot['status']?.toString() ??
+          '';
+      if (completedAt != null) {
+        merged['dispatch_completed_at'] = completedAt.toIso8601String();
+      }
+      if (failedAt != null) {
+        merged['dispatch_failed_at'] = failedAt.toIso8601String();
+      }
+    }
+    return merged;
+  }
+
+  Map<String, dynamic> _buildHubObservabilitySnapshot({
+    required BridgePrintDispatchVerification verification,
+    required String jobId,
+    required Map<String, dynamic> jobRecord,
+    required Map<String, dynamic> payload,
+    required String resolvedRole,
+    required String area,
+    UnifiedPrinterModel? printer,
+    Map<String, dynamic>? bridgeResult,
+    int? attempts,
+  }) {
+    final host = _readText(
+      payload['selected_printer_host'] ??
+          payload['host'] ??
+          payload['ip_address'] ??
+          payload['ipAddress'],
+    );
+    final port = _readText(
+      payload['selected_printer_port'] ?? payload['port'],
+    );
+    return BridgePrintDispatchVerification.buildJobObservabilitySnapshot(
+      verification: verification,
+      jobId: jobId,
+      orderId: jobRecord['order_id']?.toString(),
+      tableId: payload['table_id']?.toString() ?? payload['table_no']?.toString(),
+      role: resolvedRole,
+      stationId: jobRecord['station_id']?.toString() ?? payload['station_id']?.toString(),
+      stationName: area,
+      documentType: payload['document_type']?.toString(),
+      printerId: payload['printer_record_id']?.toString() ??
+          payload['selected_printer_id']?.toString() ??
+          jobRecord['printer_id']?.toString(),
+      printerName: payload['selected_printer_name']?.toString() ??
+          payload['printer_name']?.toString() ??
+          printer?.displayName,
+      deviceId: payload['printer_device_identifier']?.toString(),
+      ip: host,
+      port: port,
+      queueName: payload['printer_queue']?.toString() ?? printer?.queueName,
+      printerProfileId: payload['printer_profile_id']?.toString(),
+      bridgeEndpoint: _readText(bridgeResult?['endpoint']),
+      attempts: attempts,
+      retryCount: _readRetryCount(jobRecord),
+      createdAt: DateTime.tryParse(jobRecord['created_at']?.toString() ?? ''),
+      printedAt: DateTime.tryParse(jobRecord['printed_at']?.toString() ?? ''),
+    );
+  }
+
+  Map<String, dynamic> _eventDetailsWithSnapshot(
+    Map<String, dynamic> base,
+    Map<String, dynamic>? snapshot,
+  ) {
+    if (snapshot == null || snapshot.isEmpty) {
+      return base;
+    }
+    return <String, dynamic>{
+      ...base,
+      'dispatch_verification': snapshot,
+    };
+  }
+
+  int _readRetryCount(Map<String, dynamic> jobRecord) {
+    return (jobRecord['retry_count'] as num?)?.toInt() ?? 0;
   }
 
   String _normalizedPrintFailure(Object? error) {

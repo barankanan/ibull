@@ -16,11 +16,14 @@ class CategoryAttributeFormProvider extends ChangeNotifier {
   List<CategoryAttributeDefinition> _definitions =
       const <CategoryAttributeDefinition>[];
   Map<String, String> _valuesByAttributeId = <String, String>{};
+  List<Map<String, String>> _customAttributeRows = <Map<String, String>>[];
 
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   List<CategoryAttributeDefinition> get definitions => _definitions;
   Map<String, String> get valuesByAttributeId => _valuesByAttributeId;
+  List<Map<String, String>> get customAttributeRows =>
+      List<Map<String, String>>.unmodifiable(_customAttributeRows);
   bool get hasDefinitions => _definitions.isNotEmpty;
 
   Future<void> loadForCategory({
@@ -57,10 +60,12 @@ class CategoryAttributeFormProvider extends ChangeNotifier {
       );
       _definitions = loadedDefinitions;
       _valuesByAttributeId = <String, String>{};
+      _customAttributeRows = <Map<String, String>>[];
       _applyInitialValues(initialValues);
     } catch (error) {
       _definitions = const <CategoryAttributeDefinition>[];
       _valuesByAttributeId = <String, String>{};
+      _customAttributeRows = <Map<String, String>>[];
       _errorMessage = error.toString();
     } finally {
       _isLoading = false;
@@ -74,6 +79,7 @@ class CategoryAttributeFormProvider extends ChangeNotifier {
     _subCategory = null;
     _definitions = const <CategoryAttributeDefinition>[];
     _valuesByAttributeId = <String, String>{};
+    _customAttributeRows = <Map<String, String>>[];
     _isLoading = false;
     notifyListeners();
   }
@@ -90,6 +96,31 @@ class CategoryAttributeFormProvider extends ChangeNotifier {
     }
   }
 
+  void addCustomAttributeRow() {
+    _customAttributeRows.add(<String, String>{
+      'id': DateTime.now().microsecondsSinceEpoch.toString(),
+      'key': '',
+      'value': '',
+    });
+    notifyListeners();
+  }
+
+  void removeCustomAttributeRow(int index) {
+    if (index < 0 || index >= _customAttributeRows.length) return;
+    _customAttributeRows.removeAt(index);
+    notifyListeners();
+  }
+
+  void setCustomAttributeKey(int index, String key) {
+    if (index < 0 || index >= _customAttributeRows.length) return;
+    _customAttributeRows[index]['key'] = key;
+  }
+
+  void setCustomAttributeValue(int index, String value) {
+    if (index < 0 || index >= _customAttributeRows.length) return;
+    _customAttributeRows[index]['value'] = value;
+  }
+
   Map<String, String> valuesByName() {
     final values = <String, String>{};
     for (final definition in _definitions) {
@@ -97,6 +128,7 @@ class CategoryAttributeFormProvider extends ChangeNotifier {
       if (value.isEmpty) continue;
       values[definition.name] = value;
     }
+    _mergeCustomRowsInto(values);
     return values;
   }
 
@@ -107,22 +139,69 @@ class CategoryAttributeFormProvider extends ChangeNotifier {
       if (value.isEmpty) continue;
       lines.add('${definition.name}: $value');
     }
+
+    final usedKeys = _definitions
+        .map((definition) => definition.name.trim().toLowerCase())
+        .toSet();
+    for (final row in _customAttributeRows) {
+      final key = (row['key'] ?? '').trim();
+      final value = (row['value'] ?? '').trim();
+      if (key.isEmpty || value.isEmpty) continue;
+      if (usedKeys.contains(key.toLowerCase())) continue;
+      lines.add('$key: $value');
+    }
     return lines;
   }
 
+  static bool isPlaceholderValue(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized.isEmpty ||
+        normalized == 'null' ||
+        normalized == 'none' ||
+        normalized == 'n/a' ||
+        normalized == '-';
+  }
+
   void _applyInitialValues(Map<String, String> initialValues) {
-    if (_definitions.isEmpty || initialValues.isEmpty) return;
-    final normalized = <String, String>{};
-    initialValues.forEach((key, value) {
-      final cleanKey = key.trim().toLowerCase();
-      final cleanValue = value.trim();
-      if (cleanKey.isEmpty || cleanValue.isEmpty) return;
-      normalized[cleanKey] = cleanValue;
-    });
+    if (_definitions.isEmpty) return;
+
+    _valuesByAttributeId = <String, String>{};
+    _customAttributeRows = <Map<String, String>>[];
+    if (initialValues.isEmpty) return;
+
+    final definitionNames = <String, CategoryAttributeDefinition>{};
     for (final definition in _definitions) {
-      final match = normalized[definition.name.trim().toLowerCase()];
-      if (match == null || match.isEmpty) continue;
-      _valuesByAttributeId[definition.id] = match;
+      definitionNames[definition.name.trim().toLowerCase()] = definition;
+    }
+
+    for (final entry in initialValues.entries) {
+      final key = entry.key.trim();
+      final value = entry.value.trim();
+      if (key.isEmpty || value.isEmpty || isPlaceholderValue(value)) continue;
+
+      final definition = definitionNames[key.toLowerCase()];
+      if (definition != null) {
+        _valuesByAttributeId[definition.id] = value;
+        continue;
+      }
+      _customAttributeRows.add(<String, String>{
+        'id': '${key}_${value.hashCode}',
+        'key': key,
+        'value': value,
+      });
+    }
+  }
+
+  void _mergeCustomRowsInto(Map<String, String> values) {
+    final usedKeys = _definitions
+        .map((definition) => definition.name.trim().toLowerCase())
+        .toSet();
+    for (final row in _customAttributeRows) {
+      final key = (row['key'] ?? '').trim();
+      final value = (row['value'] ?? '').trim();
+      if (key.isEmpty || value.isEmpty) continue;
+      if (usedKeys.contains(key.toLowerCase())) continue;
+      values.putIfAbsent(key, () => value);
     }
   }
 }

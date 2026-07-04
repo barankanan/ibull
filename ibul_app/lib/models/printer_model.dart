@@ -254,6 +254,12 @@ class PrinterModel {
     this.lastError,
     this.testPrintStatus,
     this.printerProfileId,
+    this.receiptLengthPreset = 'normal',
+    this.receiptBottomFeedLines,
+    this.receiptCutFeedLines,
+    this.receiptMinTrailingBlankLines,
+    this.receiptBottomPaddingPx,
+    this.receiptMinReceiptHeightPx,
   });
 
   static const String localConnectionType = 'local';
@@ -311,6 +317,15 @@ class PrinterModel {
 
   /// ID referencing a [PrinterProfile]. Null for legacy records.
   final String? printerProfileId;
+
+  /// Fiş uzunluğu preset: short | normal | long | custom
+  final String receiptLengthPreset;
+
+  final int? receiptBottomFeedLines;
+  final int? receiptCutFeedLines;
+  final int? receiptMinTrailingBlankLines;
+  final int? receiptBottomPaddingPx;
+  final int? receiptMinReceiptHeightPx;
 
   String get _normalizedConnectionType => connectionType.trim().toLowerCase();
 
@@ -618,6 +633,18 @@ class PrinterModel {
       lastError: map['last_error']?.toString(),
       testPrintStatus: map['test_print_status']?.toString(),
       printerProfileId: map['printer_profile_id']?.toString(),
+      receiptLengthPreset:
+          map['receipt_length_preset']?.toString().trim().isNotEmpty == true
+          ? map['receipt_length_preset'].toString().trim()
+          : 'normal',
+      receiptBottomFeedLines: (map['receipt_bottom_feed_lines'] as num?)?.toInt(),
+      receiptCutFeedLines: (map['receipt_cut_feed_lines'] as num?)?.toInt(),
+      receiptMinTrailingBlankLines:
+          (map['receipt_min_trailing_blank_lines'] as num?)?.toInt(),
+      receiptBottomPaddingPx:
+          (map['receipt_bottom_padding_px'] as num?)?.toInt(),
+      receiptMinReceiptHeightPx:
+          (map['receipt_min_receipt_height_px'] as num?)?.toInt(),
     );
   }
 
@@ -642,6 +669,12 @@ class PrinterModel {
       'last_error': lastError,
       'test_print_status': testPrintStatus,
       'printer_profile_id': printerProfileId,
+      'receipt_length_preset': receiptLengthPreset,
+      'receipt_bottom_feed_lines': receiptBottomFeedLines,
+      'receipt_cut_feed_lines': receiptCutFeedLines,
+      'receipt_min_trailing_blank_lines': receiptMinTrailingBlankLines,
+      'receipt_bottom_padding_px': receiptBottomPaddingPx,
+      'receipt_min_receipt_height_px': receiptMinReceiptHeightPx,
     };
   }
 
@@ -744,6 +777,12 @@ class PrinterModel {
     String? lastError,
     String? testPrintStatus,
     String? printerProfileId,
+    String? receiptLengthPreset,
+    int? receiptBottomFeedLines,
+    int? receiptCutFeedLines,
+    int? receiptMinTrailingBlankLines,
+    int? receiptBottomPaddingPx,
+    int? receiptMinReceiptHeightPx,
   }) {
     return PrinterModel(
       id: id ?? this.id,
@@ -765,6 +804,16 @@ class PrinterModel {
       lastError: lastError ?? this.lastError,
       testPrintStatus: testPrintStatus ?? this.testPrintStatus,
       printerProfileId: printerProfileId ?? this.printerProfileId,
+      receiptLengthPreset: receiptLengthPreset ?? this.receiptLengthPreset,
+      receiptBottomFeedLines:
+          receiptBottomFeedLines ?? this.receiptBottomFeedLines,
+      receiptCutFeedLines: receiptCutFeedLines ?? this.receiptCutFeedLines,
+      receiptMinTrailingBlankLines: receiptMinTrailingBlankLines ??
+          this.receiptMinTrailingBlankLines,
+      receiptBottomPaddingPx:
+          receiptBottomPaddingPx ?? this.receiptBottomPaddingPx,
+      receiptMinReceiptHeightPx:
+          receiptMinReceiptHeightPx ?? this.receiptMinReceiptHeightPx,
     );
   }
 }

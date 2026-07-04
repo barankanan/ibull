@@ -8,6 +8,8 @@ import 'garson_history_detail_sheet.dart';
 
 enum GarsonHistoryPeriod { today, week, month, custom }
 
+enum GarsonClosedTableCardLayout { strip, grid }
+
 extension GarsonHistoryPeriodLabel on GarsonHistoryPeriod {
   String get label {
     switch (this) {
@@ -366,6 +368,7 @@ class GarsonClosedTableCard extends StatelessWidget {
     super.key,
     this.width,
     this.compact = false,
+    this.layout = GarsonClosedTableCardLayout.strip,
     required this.record,
     required this.dateFmt,
     required this.formatMoney,
@@ -380,6 +383,9 @@ class GarsonClosedTableCard extends StatelessWidget {
 
   /// Horizontal low-height layout for the history list screen.
   final bool compact;
+
+  /// [strip] = compact card for horizontal preview; [grid] = full card for grid.
+  final GarsonClosedTableCardLayout layout;
   final TableOrderHistoryRecord record;
   final DateFormat dateFmt;
   final String Function(double) formatMoney;
@@ -409,109 +415,135 @@ class GarsonClosedTableCard extends StatelessWidget {
       );
     }
 
+    final isGrid = layout == GarsonClosedTableCardLayout.grid;
     final card = Material(
-      color: const Color(0xFFF8FAFC),
-      borderRadius: BorderRadius.circular(10),
+      color: isGrid ? Colors.white : const Color(0xFFF8FAFC),
+      elevation: isGrid ? 0 : 0,
+      shadowColor: const Color(0x1A0F172A),
+      borderRadius: BorderRadius.circular(isGrid ? 12 : 10),
       child: InkWell(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(isGrid ? 12 : 10),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.all(10),
+          constraints: BoxConstraints(minHeight: isGrid ? 168 : 0),
+          padding: EdgeInsets.all(isGrid ? 12 : 10),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            borderRadius: BorderRadius.circular(isGrid ? 12 : 10),
+            border: Border.all(
+              color: isGrid
+                  ? const Color(0xFFE2E8F0)
+                  : const Color(0xFFE2E8F0),
+            ),
+            boxShadow: isGrid
+                ? const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x0D0F172A),
+                      blurRadius: 10,
+                      offset: Offset(0, 3),
+                    ),
+                  ]
+                : null,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-                Row(
-                  children: [
-                    if (onDelete != null)
-                      _MiniAction(
-                        icon: Icons.delete_outline_rounded,
-                        tooltip: 'Sil',
-                        onTap: onDelete!,
-                        dense: true,
-                        color: const Color(0xFFDC2626),
-                      ),
-                    if (onDelete != null) const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        tableTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF111827),
-                        ),
-                      ),
-                    ),
-                    _StatusBadge(label: statusLabel),
-                  ],
-                ),
-                if (area.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
                     child: Text(
-                      area,
+                      tableTitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                Text(
-                  summary,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF475569),
-                    height: 1.25,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '${dateFmt.format(openedAt)} → ${dateFmt.format(closedAt)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 9, color: Colors.grey.shade500),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        formatMoney(record.grandTotal),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF111827),
-                        ),
+                      style: TextStyle(
+                        fontSize: isGrid ? 13 : 12,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF111827),
                       ),
                     ),
-                    if (onPrintAdisyon != null)
-                      _MiniAction(
-                        icon: Icons.receipt_long_outlined,
-                        tooltip: 'Adisyon',
-                        onTap: onPrintAdisyon!,
-                      ),
-                    if (onPrintKitchen != null)
-                      _MiniAction(
-                        icon: Icons.print_outlined,
-                        tooltip: 'Mutfak',
-                        onTap: onPrintKitchen!,
-                      ),
+                  ),
+                  const SizedBox(width: 6),
+                  _StatusBadge(label: statusLabel),
+                  if (onDelete != null) ...[
+                    const SizedBox(width: 2),
+                    _MiniAction(
+                      icon: Icons.delete_outline_rounded,
+                      tooltip: 'Sil',
+                      onTap: onDelete!,
+                      dense: true,
+                      color: const Color(0xFFDC2626),
+                    ),
                   ],
+                ],
+              ),
+              if (area.isNotEmpty)
+                Padding(
+                  padding: EdgeInsets.only(top: isGrid ? 4 : 2),
+                  child: Text(
+                    area,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: isGrid ? 11 : 10,
+                      color: const Color(0xFF64748B),
+                    ),
+                  ),
                 ),
-              ],
-            ),
+              SizedBox(height: isGrid ? 8 : 4),
+              Text(
+                summary,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isGrid ? 11 : 10,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF475569),
+                  height: 1.3,
+                ),
+              ),
+              SizedBox(height: isGrid ? 8 : 6),
+              Text(
+                '${dateFmt.format(openedAt)} → ${dateFmt.format(closedAt)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isGrid ? 10 : 9,
+                  color: const Color(0xFF94A3B8),
+                ),
+              ),
+              SizedBox(height: isGrid ? 8 : 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      formatMoney(record.grandTotal),
+                      style: TextStyle(
+                        fontSize: isGrid ? 14 : 13,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF111827),
+                      ),
+                    ),
+                  ),
+                  if (onPrintAdisyon != null)
+                    _MiniAction(
+                      icon: Icons.receipt_long_outlined,
+                      tooltip: 'Adisyon',
+                      onTap: onPrintAdisyon!,
+                    ),
+                  if (onPrintKitchen != null)
+                    _MiniAction(
+                      icon: Icons.print_outlined,
+                      tooltip: 'Mutfak',
+                      onTap: onPrintKitchen!,
+                    ),
+                ],
+              ),
+            ],
           ),
         ),
-      );
+      ),
+    );
     if (width != null) {
       return SizedBox(width: width, child: card);
     }

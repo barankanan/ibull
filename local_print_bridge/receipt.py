@@ -145,6 +145,50 @@ def _cut(mode: str) -> bytes:
     return GS + b"V" + (b"\x00" if mode == "full" else b"\x01")
 
 
+def append_trailing_feed_and_cut(
+    chunks: list[bytes],
+    *,
+    cut_mode: str,
+    bottom_feed_lines: int,
+    cut_feed_lines: int,
+) -> None:
+    if bottom_feed_lines > 0:
+        chunks.append(_feed(bottom_feed_lines))
+    if cut_mode == "none":
+        return
+    if cut_feed_lines > 0:
+        chunks.append(_feed(cut_feed_lines))
+    chunks.append(_cut(cut_mode))
+
+
+def append_text_tail_blank_lines(
+    chunks: list[bytes],
+    *,
+    min_trailing_blank_lines: int,
+) -> None:
+    """Explicit newline tail so short tickets still advance paper before ESC/POS feed."""
+    count = max(0, min_trailing_blank_lines)
+    if count > 0:
+        chunks.append(b"\n" * count)
+
+
+def finalize_text_ticket_bytes(
+    chunks: list[bytes],
+    settings: BridgeSettings,
+) -> None:
+    trailing = max(
+        settings.bottom_feed_lines,
+        getattr(settings, "min_trailing_blank_lines", 0),
+    )
+    append_text_tail_blank_lines(chunks, min_trailing_blank_lines=trailing)
+    append_trailing_feed_and_cut(
+        chunks,
+        cut_mode=settings.cut_mode,
+        bottom_feed_lines=settings.bottom_feed_lines,
+        cut_feed_lines=settings.cut_feed_lines,
+    )
+
+
 def _set_codepage(table: int) -> bytes:
     return ESC + b"t" + bytes([table & 0xFF])
 
@@ -280,7 +324,7 @@ class ReceiptRenderer:
             chunks.extend(self._lines(payload.footer_note))
             chunks.append(_set_alignment("left"))
 
-        chunks.extend([_feed(3), _cut(self.settings.cut_mode)])
+        finalize_text_ticket_bytes(chunks, self.settings)
         return b"".join(chunks)
 
     def _render_item(self, item: ReceiptItem, currency: str) -> list[bytes]:
@@ -454,7 +498,7 @@ def render_turkish_encoding_calibration_ticket(
     for line in sample_lines:
         chunks.extend(renderer._wrapped_lines(line, section_settings))
     chunks.extend(renderer._lines("-" * renderer.width, section_settings))
-    chunks.extend([_feed(3), _cut(section_settings.cut_mode)])
+    finalize_text_ticket_bytes(chunks, section_settings)
     return b"".join(chunks), unique_unsupported
 
 
@@ -560,7 +604,7 @@ def render_turkish_encoding_combined_calibration_ticket(
                 chunks.append(encoded + b"\n")
         chunks.append(b"\n")
 
-    chunks.extend([_feed(4), _cut(base_settings.cut_mode)])
+    finalize_text_ticket_bytes(chunks, base_settings)
     return b"".join(chunks), list(dict.fromkeys(unsupported_chars))
 
 
@@ -624,7 +668,7 @@ class TurkishCodepageDiagnosticRenderer:
         for line in sample_lines:
             chunks.extend(self._wrapped_lines(line, settings))
         chunks.extend(self._lines("-" * self.width, settings))
-        chunks.extend([_feed(3), _cut(settings.cut_mode)])
+        finalize_text_ticket_bytes(chunks, settings)
         return chunks
 
     def _lines(self, text: str, settings: BridgeSettings) -> list[bytes]:

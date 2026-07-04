@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
 
+import 'product_image_format_helper.dart';
 import 'pick_image_file_models.dart';
 
 /// Mobil/masaüstü: file_picker (macOS sandbox için bayt olarak okunur).
@@ -15,7 +16,8 @@ Future<List<PickedImageFile>> pickImageFiles({
       defaultTargetPlatform == TargetPlatform.windows ||
       defaultTargetPlatform == TargetPlatform.linux;
   final result = await FilePicker.platform.pickFiles(
-    type: FileType.image,
+    type: FileType.custom,
+    allowedExtensions: ProductImageFormatHelper.pickerExtensions,
     allowMultiple: allowMultiple,
     withData: loadBytes,
   );

@@ -44,6 +44,14 @@ class _RegisterPageState extends State<RegisterPage> {
           fullName,
           phone: _phoneController.text.trim(),
         );
+
+        final userId = _authService.currentUser?.id ?? '';
+        if (userId.isNotEmpty) {
+          await _authService.markCustomerLoginSuccess(
+            userId: userId,
+            role: 'user',
+          );
+        }
         
         if (!mounted) return;
         

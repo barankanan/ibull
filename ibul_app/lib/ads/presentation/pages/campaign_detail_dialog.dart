@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../helpers/ad_display_labels.dart';
 import '../../helpers/ad_metrics_helper.dart';
+import '../../helpers/ad_reviewer_helper.dart';
+import '../../helpers/home_feature_ad_helper.dart';
 import '../../models/ad_campaign.dart';
 import '../../models/ad_health_score.dart';
 import '../../models/ad_insight.dart';
@@ -81,8 +84,8 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
     await _reviewService.approveCampaign(
       campaignId: widget.campaign.id,
       sellerId: widget.campaign.sellerId,
-      reviewerId: 'admin-panel',
-      note: 'Admin panel onayi',
+      reviewerId: AdReviewerHelper.resolveReviewerId(),
+      note: 'Admin panel onayı',
     );
     widget.onChanged?.call();
     if (!mounted) return;
@@ -93,9 +96,9 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
     await _reviewService.rejectCampaign(
       campaignId: widget.campaign.id,
       sellerId: widget.campaign.sellerId,
-      reviewerId: 'admin-panel',
-      reasons: const ['Kreatif veya hedefleme yeniden duzenlenmeli'],
-      note: 'Manual admin rejection',
+      reviewerId: AdReviewerHelper.resolveReviewerId(),
+      reasons: const ['Kreatif veya hedefleme yeniden düzenlenmeli'],
+      note: 'Admin panel reddi',
     );
     widget.onChanged?.call();
     if (!mounted) return;
@@ -113,9 +116,9 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
     await _reviewService.requestChanges(
       campaignId: widget.campaign.id,
       sellerId: widget.campaign.sellerId,
-      reviewerId: 'admin-panel',
+      reviewerId: AdReviewerHelper.resolveReviewerId(),
       reasons: const ['Yeniden inceleme talebi'],
-      note: 'Tekrar incelemeye alindi',
+      note: 'Tekrar incelemeye alındı',
     );
     widget.onChanged?.call();
     if (!mounted) return;
@@ -214,7 +217,9 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
                       children: [
                         StatusChip.fromStatus(widget.campaign.status.dbValue),
                         StatusChip(
-                          label: widget.campaign.type.dbValue,
+                          label: AdDisplayLabels.campaignTypeLabel(
+                            widget.campaign.type.dbValue,
+                          ),
                           backgroundColor: const Color(0xFFE0F2FE),
                           foregroundColor: const Color(0xFF0369A1),
                           icon: Icons.ads_click_outlined,
@@ -311,8 +316,14 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 14),
-          _detailRow('Hedef', widget.campaign.objective.dbValue),
-          _detailRow('Reklam turu', widget.campaign.type.dbValue),
+          _detailRow(
+            'Hedef',
+            AdDisplayLabels.campaignGoalLabel(widget.campaign.objective.dbValue),
+          ),
+          _detailRow(
+            'Reklam türü',
+            AdDisplayLabels.campaignTypeLabel(widget.campaign.type.dbValue),
+          ),
           _detailRow(
             'Butce',
             '${widget.campaign.dailyBudget.toStringAsFixed(0)} / ${widget.campaign.totalBudget.toStringAsFixed(0)} ${widget.campaign.currency}',
@@ -363,6 +374,10 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
             'Yayin plani',
             widget.campaign.metadata['time_plan']?.toString() ?? '-',
           ),
+          if (widget.isAdmin) ...[
+            const SizedBox(height: 8),
+            _buildSellerNoteSection(),
+          ],
           _detailRow(
             'A/B test',
             widget.campaign.abTestEnabled
@@ -399,6 +414,43 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
     );
   }
 
+  Widget _buildSellerNoteSection() {
+    final note = HomeFeatureAdHelper.sellerCampaignNote(widget.campaign);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Satıcı Notu',
+            style: TextStyle(
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            note ?? 'Satıcı notu eklenmemiş.',
+            style: TextStyle(
+              color: note == null
+                  ? const Color(0xFF94A3B8)
+                  : const Color(0xFF0F172A),
+              fontWeight: note == null ? FontWeight.w500 : FontWeight.w600,
+              height: 1.45,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPreviewCard() {
     final asset = widget.campaign.assets.firstOrNull;
     return AdsPreviewCard(
@@ -408,7 +460,7 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
       subtitle: asset?.subtitle?.isNotEmpty == true
           ? asset?.subtitle ?? (widget.campaign.description ?? '-')
           : (widget.campaign.description ?? 'Reklam kreatifi onizlemesi'),
-      badge: widget.campaign.type.dbValue,
+      badge: AdDisplayLabels.campaignTypeLabel(widget.campaign.type.dbValue),
       imageUrl: asset?.mediaUrl,
       footer: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -505,7 +557,10 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
               return ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: StatusChip.fromStatus(review.status.dbValue),
-                title: Text(review.note ?? review.status.dbValue),
+                title: Text(
+                  review.note ??
+                      AdDisplayLabels.reviewStatusLabel(review.status.dbValue),
+                ),
                 subtitle: Text(review.reasons.join(', ')),
                 trailing: Text(review.createdAt.toString().split('.').first),
               );

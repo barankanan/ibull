@@ -4,6 +4,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../helpers/card_brand_detector.dart';
 import '../models/saved_payment_card_models.dart';
 
+/// Safe columns for client-side card listing — never includes [provider_card_token].
+const String kSavedPaymentCardListSelectColumns =
+    'id,user_id,provider,card_holder_name,card_alias,card_brand,card_last4,'
+    'exp_month,exp_year,is_default,is_active,created_at,updated_at';
+
 class SavedPaymentCardsService {
   SavedPaymentCardsService._();
   static final SavedPaymentCardsService instance = SavedPaymentCardsService._();
@@ -12,9 +17,9 @@ class SavedPaymentCardsService {
   static const String _table = 'saved_payment_cards';
 
   Exception _schemaException() => Exception(
-        "Kayıtlı kart sistemi Supabase'te hazır değil. "
-        'SUPABASE_SAVED_PAYMENT_CARDS.sql dosyasını çalıştırın.',
-      );
+    "Kayıtlı kart sistemi Supabase'te hazır değil. "
+    'SUPABASE_SAVED_PAYMENT_CARDS.sql dosyasını çalıştırın.',
+  );
 
   bool _isSchemaError(Object error) {
     final message = error.toString();
@@ -56,7 +61,7 @@ class SavedPaymentCardsService {
     try {
       final rows = await _supabase
           .from(_table)
-          .select()
+          .select(kSavedPaymentCardListSelectColumns)
           .eq('user_id', userId)
           .eq('is_active', true)
           .isFilter('deleted_at', null)
@@ -64,9 +69,11 @@ class SavedPaymentCardsService {
           .order('created_at', ascending: false);
 
       return (rows as List)
-          .map((row) => SavedPaymentCard.fromJson(
-                Map<String, dynamic>.from(row as Map),
-              ))
+          .map(
+            (row) => SavedPaymentCard.fromJson(
+              Map<String, dynamic>.from(row as Map),
+            ),
+          )
           .toList(growable: false);
     } catch (error) {
       throw _friendlyException(error);
@@ -80,6 +87,7 @@ class SavedPaymentCardsService {
     return existing.any(
       (card) =>
           card.provider == token.provider &&
+          (card.providerCardToken?.isNotEmpty ?? false) &&
           card.providerCardToken == token.providerCardToken,
     );
   }
@@ -97,7 +105,7 @@ class SavedPaymentCardsService {
     }
 
     final existing = await getMyCards();
-    if (isDuplicateCard(existing, token)) {
+    if (await _providerTokenAlreadySaved(userId: userId, token: token)) {
       throw Exception('Bu kart zaten kayıtlı.');
     }
 
@@ -136,7 +144,7 @@ class SavedPaymentCardsService {
               isDefault: shouldDefault,
             ),
           )
-          .select()
+          .select(kSavedPaymentCardListSelectColumns)
           .single();
 
       return SavedPaymentCard.fromJson(
@@ -154,7 +162,10 @@ class SavedPaymentCardsService {
     final token = await tokenizeCard(rawCard);
     if (token == null) return null;
     try {
-      return await addSavedCardFromProviderToken(token, makeDefault: makeDefault);
+      return await addSavedCardFromProviderToken(
+        token,
+        makeDefault: makeDefault,
+      );
     } on CardTokenizationUnavailable {
       rethrow;
     }
@@ -195,11 +206,7 @@ class SavedPaymentCardsService {
       final now = DateTime.now().toUtc().toIso8601String();
       await _supabase
           .from(_table)
-          .update({
-            'is_active': false,
-            'is_default': false,
-            'deleted_at': now,
-          })
+          .update({'is_active': false, 'is_default': false, 'deleted_at': now})
           .eq('id', cardId)
           .eq('user_id', userId);
 
@@ -209,6 +216,26 @@ class SavedPaymentCardsService {
           await setDefaultCard(remaining.first.id);
         }
       }
+    } catch (error) {
+      throw _friendlyException(error);
+    }
+  }
+
+  Future<bool> _providerTokenAlreadySaved({
+    required String userId,
+    required CardTokenizationResult token,
+  }) async {
+    try {
+      final row = await _supabase
+          .from(_table)
+          .select('id')
+          .eq('user_id', userId)
+          .eq('is_active', true)
+          .isFilter('deleted_at', null)
+          .eq('provider', token.provider)
+          .eq('provider_card_token', token.providerCardToken)
+          .maybeSingle();
+      return row != null;
     } catch (error) {
       throw _friendlyException(error);
     }

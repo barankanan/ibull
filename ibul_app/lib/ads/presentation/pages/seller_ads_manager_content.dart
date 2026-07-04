@@ -18,6 +18,7 @@ import '../../services/campaign_service.dart';
 import '../../../services/store_service.dart';
 import 'campaign_detail_dialog.dart';
 import 'campaign_wizard_page.dart';
+import 'home_feature_ad_form_page.dart';
 import '../widgets/seller_campaign_table.dart';
 import '../widgets/budget_progress_bar.dart';
 import '../widgets/campaign_action_menu.dart';
@@ -975,6 +976,8 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
           if (pendingApprovalCount > 0) const SizedBox(height: 16),
           if (_auxiliaryWarning != null) _buildAuxiliaryWarningCard(),
           if (_auxiliaryWarning != null) const SizedBox(height: 16),
+          _buildHomeFeaturePromoCard(),
+          const SizedBox(height: 16),
           if (_campaigns.isEmpty)
             _buildPerformanceEmptyState()
           else if (!hasPerformanceSignals)
@@ -1180,6 +1183,11 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
                 ),
               ),
               OutlinedButton.icon(
+                onPressed: _isOpeningCreateWizard ? null : _openHomeFeatureForm,
+                icon: const Icon(Icons.home_work_outlined),
+                label: const Text('Ana Sayfada One Cikar'),
+              ),
+              OutlinedButton.icon(
                 onPressed: () => _loadCampaigns(refresh: true),
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Yenile'),
@@ -1358,6 +1366,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
                   'store_boost',
                   'collection_boost',
                   'geo_push',
+                  'home_feature',
                 ]),
                 width: dropdownWidth,
                 items: [
@@ -1366,6 +1375,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
                   'store_boost',
                   'collection_boost',
                   'geo_push',
+                  'home_feature',
                 ],
                 onChanged: (value) {
                   setState(() => _typeFilter = value ?? 'Tum');
@@ -2061,6 +2071,91 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
     );
   }
 
+  Widget _buildHomeFeaturePromoCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF5F3FF), Color(0xFFEDE9FE)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFDDD6FE)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final content = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF7C3AED).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.home_work_outlined,
+                      color: Color(0xFF7C3AED),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Ana Sayfada One Cikar',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Magazanizi ana sayfa kategori kartlarinda banner ve secili urunlerle one cikarin.',
+                style: TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 13,
+                  height: 1.55,
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed:
+                    _isOpeningCreateWizard ? null : _openHomeFeatureForm,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF7C3AED),
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.campaign_outlined),
+                label: Text(
+                  _isOpeningCreateWizard
+                      ? 'Aciliyor...'
+                      : 'Ana Sayfa Reklami Olustur',
+                ),
+              ),
+            ],
+          );
+
+          if (constraints.maxWidth >= 760) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [Expanded(child: content)],
+            );
+          }
+
+          return content;
+        },
+      ),
+    );
+  }
+
   Widget _buildPerformanceEmptyState() {
     return Container(
       padding: const EdgeInsets.all(24),
@@ -2125,6 +2220,12 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
                           ? 'Aciliyor...'
                           : 'Hemen reklam ver',
                     ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed:
+                        _isOpeningCreateWizard ? null : _openHomeFeatureForm,
+                    icon: const Icon(Icons.home_work_outlined),
+                    label: const Text('Ana Sayfa Reklami Olustur'),
                   ),
                   OutlinedButton.icon(
                     onPressed: () => _loadCampaigns(refresh: true),
@@ -2514,16 +2615,36 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
     };
   }
 
-  // ignore: unused_element
-  String _campaignTypeLabel(AdCampaignType type) {
-    return switch (type) {
-      AdCampaignType.productBoost => 'Urun one cikarma',
-      AdCampaignType.storeBoost => 'Magaza one cikarma',
-      AdCampaignType.collectionBoost => 'Liste one cikar',
-      AdCampaignType.geoPush => 'Konum bildirim',
-      AdCampaignType.banner => 'Banner',
-      AdCampaignType.categorySponsor => 'Kategori sponsor',
-    };
+  Future<void> _openHomeFeatureForm() async {
+    final sellerId = _effectiveSellerId;
+    if (sellerId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Satici kimligi bulunamadi.')),
+      );
+      return;
+    }
+    setState(() => _isOpeningCreateWizard = true);
+    try {
+      final result = await Navigator.of(context).push<AdCampaign>(
+        MaterialPageRoute(
+          builder: (context) => HomeFeatureAdFormPage(sellerId: sellerId),
+          fullscreenDialog: true,
+        ),
+      );
+      if (result != null) {
+        _applyOptimisticCampaign(result);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Reklaminiz admin onayina gonderildi.'),
+            ),
+          );
+        }
+        unawaited(_loadCampaigns(refresh: true));
+      }
+    } finally {
+      if (mounted) setState(() => _isOpeningCreateWizard = false);
+    }
   }
 
   Widget _filterDropdown({

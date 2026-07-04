@@ -558,7 +558,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       final page = await _dbHelper.getCategoryProductsPaged(
         category: category,
         subCategory: subCategory == "HEPSİ" ? null : subCategory,
-        limit: 120,
+        limit: 24,
       );
       if (!mounted) return;
 
@@ -575,6 +575,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
             subCategory: subCategory,
             products: products,
             productMeta: productMeta,
+            initialNextCursor: page.nextCursor,
           ),
         ),
       );

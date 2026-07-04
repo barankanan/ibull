@@ -10,6 +10,8 @@ import 'package:flutter/foundation.dart'
         debugPrint,
         debugPrintStack,
         kIsWeb;
+import '../core/auth/auth_debug_logger.dart';
+import '../core/auth/ibul_auth_context.dart';
 import '../core/config/runtime_config.dart';
 import '../core/secure_local_store.dart';
 import 'store_service.dart';
@@ -55,7 +57,7 @@ class LoginRouteResolution {
 }
 
 class AuthService {
-  final SupabaseClient _supabase = Supabase.instance.client;
+  SupabaseClient get _supabase => Supabase.instance.client;
   static const String _sellerSwitchSessionBackupKey =
       'auth.user_session_before_seller_switch';
   static const List<String> adminRoles = [
@@ -472,8 +474,18 @@ class AuthService {
     } catch (_) {}
   }
 
-  // Sign Out
-  Future<void> signOut() async {
+  IbulAuthContextService get _authContext => IbulAuthContextService.instance;
+
+  // Sign Out — clears Supabase session and active auth context.
+  Future<void> signOut({String logoutType = 'global'}) async {
+    final userId = currentUser?.id;
+    final priorContext = _authContext.activeContext;
+    AuthDebugLogger.logoutStart(
+      type: logoutType,
+      userId: userId,
+      activeContext: priorContext,
+    );
+
     try {
       await _googleSignIn?.signOut();
     } catch (e) {
@@ -481,7 +493,20 @@ class AuthService {
     }
     await _supabase.auth.signOut();
     await clearSellerSwitchBackup();
+    await _authContext.setActiveContext(IbulAuthContext.none);
+
+    AuthDebugLogger.logoutFinish(
+      type: logoutType,
+      hasSupabaseSession: _supabase.auth.currentSession != null,
+      customerState: false,
+      sellerState: false,
+      activeContext: IbulAuthContext.none,
+    );
   }
+
+  Future<void> signOutCustomer() => signOut(logoutType: 'customer');
+
+  Future<void> signOutSeller() => signOut(logoutType: 'seller');
 
   Future<void> backupCurrentSessionForSellerSwitch() async {
     final session = _supabase.auth.currentSession;
@@ -511,21 +536,72 @@ class AuthService {
       _sellerSwitchSessionBackupKey,
     );
 
+    AuthDebugLogger.logoutStart(
+      type: 'seller_restore_consumer',
+      userId: currentUser?.id,
+    );
+
     try {
       await _googleSignIn?.signOut();
     } catch (e) {
       debugPrint('Google sign-out skipped during seller restore: $e');
     }
     await _supabase.auth.signOut();
+    await _authContext.setActiveContext(IbulAuthContext.none);
 
     if (rawSession == null || rawSession.trim().isEmpty) {
       await SecureLocalStore.instance.delete(_sellerSwitchSessionBackupKey);
+      AuthDebugLogger.logoutFinish(
+        type: 'seller_restore_consumer',
+        hasSupabaseSession: false,
+        customerState: false,
+        sellerState: false,
+      );
       return false;
     }
 
     await _supabase.auth.recoverSession(rawSession);
     await SecureLocalStore.instance.delete(_sellerSwitchSessionBackupKey);
+    await _authContext.setActiveContext(IbulAuthContext.customer);
+
+    AuthDebugLogger.logoutFinish(
+      type: 'seller_restore_consumer',
+      hasSupabaseSession: _supabase.auth.currentSession != null,
+      customerState: true,
+      sellerState: false,
+      activeContext: IbulAuthContext.customer,
+    );
     return true;
+  }
+
+  Future<void> markCustomerLoginSuccess({
+    required String userId,
+    String? role,
+  }) async {
+    AuthDebugLogger.loginStart(type: 'customer');
+    await _authContext.setActiveContext(IbulAuthContext.customer);
+    AuthDebugLogger.loginSuccess(
+      type: 'customer',
+      userId: userId,
+      role: role,
+      activeContext: IbulAuthContext.customer,
+    );
+  }
+
+  Future<void> markSellerLoginSuccess({
+    required String userId,
+    String? role,
+    String? storeId,
+  }) async {
+    AuthDebugLogger.loginStart(type: 'seller');
+    await _authContext.setActiveContext(IbulAuthContext.seller);
+    AuthDebugLogger.loginSuccess(
+      type: 'seller',
+      userId: userId,
+      role: role,
+      storeId: storeId,
+      activeContext: IbulAuthContext.seller,
+    );
   }
 
   // Save/Update User in Supabase 'users' table

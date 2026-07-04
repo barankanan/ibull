@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants.dart';
 import '../../core/store_logo_helper.dart';
-import '../../screens/business_detail_page.dart';
-import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../models/product_model.dart';
+import '../../screens/business_detail_page.dart';
+import '../../screens/product_detail_page.dart';
+import '../../utils/product_image_resolver.dart';
+import '../../viewmodels/product_detail_viewmodel.dart';
+import '../optimized_image.dart';
+import '../product_list_thumbnail.dart';
 import '../skeleton_loading.dart';
 
 class ProductOtherSellersFull extends StatefulWidget {
@@ -66,11 +70,10 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
             const SkeletonLoading(width: 220, height: 22, borderRadius: 8),
             const SizedBox(height: 16),
             SizedBox(
-              height: 170,
+              height: 190,
               child: ListView.separated(
-                controller: _scrollController,
                 scrollDirection: Axis.horizontal,
-                itemCount: 3,
+                itemCount: 2,
                 separatorBuilder: (context, index) => const SizedBox(width: 12),
                 itemBuilder: (context, index) => Container(
                   width: 270,
@@ -112,44 +115,6 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
       return const SizedBox.shrink();
     }
 
-    final sellers = items.map<_SellerData>((item) {
-      final store = item['store'] as Map<String, dynamic>;
-      final product = item['product'];
-
-      final storeName = store['name']?.toString() ?? '';
-      final ratingStr = store['rating']?.toString() ?? '0';
-      final rating = double.tryParse(ratingStr) ?? 0;
-
-      Color ratingColor;
-      if (rating >= 9.0) {
-        ratingColor = const Color(0xFF4CAF50);
-      } else if (rating >= 8.0) {
-        ratingColor = const Color(0xFFFF8C00);
-      } else {
-        ratingColor = Colors.grey;
-      }
-
-      String price = '';
-      if (store['price'] != null) {
-        price = store['price'].toString();
-      } else if (product is Product) {
-        price = product.price;
-      }
-
-      return _SellerData(
-        name: storeName,
-        isVerified: true,
-        rating: rating,
-        ratingColor: ratingColor,
-        badge: null,
-        badgeColor: null,
-        deliveryInfo: null,
-        urgentInfo: null,
-        perks: const ['Kargo Bedava'],
-        price: price,
-      );
-    }).toList();
-
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -160,7 +125,6 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
           const Text(
             'Ürünün Diğer Satıcıları',
             style: TextStyle(
@@ -170,29 +134,25 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
             ),
           ),
           const SizedBox(height: 16),
-
-          // Horizontal scrollable seller cards with arrows
           Stack(
             alignment: Alignment.center,
             children: [
               SizedBox(
-                height: 170,
+                height: 190,
                 child: ListView.separated(
                   controller: _scrollController,
                   scrollDirection: Axis.horizontal,
-                  itemCount: sellers.length,
+                  itemCount: items.length,
                   separatorBuilder: (_, _) => const SizedBox(width: 10),
                   itemBuilder: (context, index) {
-                    return _buildSellerCard(sellers[index]);
+                    return _buildSellerCard(context, items[index]);
                   },
                 ),
               ),
-              // Left arrow
               Positioned(
                 left: 0,
                 child: _buildScrollArrow(Icons.chevron_left, _scrollLeft),
               ),
-              // Right arrow
               Positioned(
                 right: 0,
                 child: _buildScrollArrow(Icons.chevron_right, _scrollRight),
@@ -226,200 +186,148 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
     );
   }
 
-  Widget _buildSellerCard(_SellerData seller) {
+  Widget _buildSellerCard(BuildContext context, Map<String, dynamic> item) {
+    final store = item['store'] is Map
+        ? Map<String, dynamic>.from(item['store'] as Map)
+        : <String, dynamic>{};
+    final product = item['product'] is Product
+        ? item['product'] as Product
+        : null;
+    if (product == null) return const SizedBox.shrink();
+
+    final storeName = store['name']?.toString().trim() ?? product.store ?? '';
+    final logoUrl = store['logoUrl']?.toString().trim();
+    final variantSummary = _variantSummary(product);
+    final imageUrl = ProductImageResolver.primaryUrl(images: product.images);
+    final hasFreeShipping = product.tags.any(
+      (tag) => tag.toLowerCase().contains('ücretsiz kargo'),
+    );
+
     return Container(
-      width: 250,
-      padding: const EdgeInsets.all(10),
+      width: 270,
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey.shade200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Store name + rating
           Row(
             children: [
+              _buildStoreLogo(storeName: storeName, logoUrl: logoUrl),
+              const SizedBox(width: 8),
               Expanded(
                 child: InkWell(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => BusinessDetailPage(
-                          business: {
-                            'name': seller.name,
-                            'rating': seller.rating,
-                            'verified': seller.isVerified,
-                          },
-                        ),
-                      ),
-                    );
-                  },
-                  child: Row(
-                    children: [
-                      if (StoreLogoHelper.hasLogo(seller.name)) ...[
-                        Container(
-                          width: 24,
-                          height: 24,
-                          margin: const EdgeInsets.only(right: 8),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: Colors.grey.shade200),
-                            image: DecorationImage(
-                              image: AssetImage(
-                                StoreLogoHelper.getStoreLogo(seller.name)!,
-                              ),
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                        ),
-                      ],
-                      Flexible(
-                        child: Text(
-                          seller.name,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1565C0),
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (seller.isVerified) ...[
-                        const SizedBox(width: 3),
-                        const Icon(
-                          Icons.verified,
-                          size: 14,
-                          color: Color(0xFF1565C0),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              if (seller.rating > 0) ...[
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: seller.ratingColor,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+                  onTap: () => _openStore(context, storeName, store),
                   child: Text(
-                    seller.rating.toStringAsFixed(1),
+                    storeName,
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
+                      color: Color(0xFF1565C0),
                     ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 4),
-
-          // Badge
-          if (seller.badge != null) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color:
-                    seller.badgeColor?.withValues(alpha: 0.1) ??
-                    Colors.green.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color:
-                      seller.badgeColor?.withValues(alpha: 0.3) ??
-                      Colors.green.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Text(
-                seller.badge!,
-                style: TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  color: seller.badgeColor ?? Colors.green,
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-          ],
-
-          // Delivery info or urgent info
-          if (seller.urgentInfo != null) ...[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('🚀 ', style: TextStyle(fontSize: 10)),
-                Expanded(
-                  child: Text(
-                    seller.urgentInfo!,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: Colors.black87,
-                      height: 1.3,
-                    ),
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 3),
-          ] else if (seller.deliveryInfo != null) ...[
-            Text(
-              seller.deliveryInfo!,
-              style: TextStyle(fontSize: 10, color: Colors.grey[700]),
-            ),
-            const SizedBox(height: 3),
-          ],
-
-          // Perks
-          Wrap(
-            spacing: 8,
-            runSpacing: 2,
-            children: seller.perks.map((perk) {
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.local_shipping_outlined,
-                    size: 10,
-                    color: Colors.grey[500],
-                  ),
-                  const SizedBox(width: 3),
-                  Text(
-                    perk,
-                    style: TextStyle(fontSize: 9, color: Colors.grey[600]),
-                  ),
-                ],
-              );
-            }).toList(),
+              ),
+            ],
           ),
-
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ProductListThumbnail(
+                imageUrlOrPath: imageUrl,
+                width: 56,
+                height: 56,
+                borderRadius: BorderRadius.circular(8),
+                padding: const EdgeInsets.all(4),
+                fallbackIconSize: 20,
+                cacheWidth: 112,
+                cacheHeight: 112,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        height: 1.25,
+                      ),
+                    ),
+                    if (variantSummary != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        variantSummary,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.shade600,
+                          height: 1.2,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
           const Spacer(),
-
-          // Price + button
+          Row(
+            children: [
+              Icon(
+                Icons.local_shipping_outlined,
+                size: 12,
+                color: Colors.grey.shade600,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  hasFreeShipping ? 'Ücretsiz Kargo' : 'Kargo bilgisi mağazada',
+                  style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                seller.price,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
+              Expanded(
+                child: Text(
+                  product.price,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
+              const SizedBox(width: 8),
               ElevatedButton(
-                onPressed: () {},
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ProductDetailPage(product: product),
+                    ),
+                  );
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
@@ -444,30 +352,79 @@ class _ProductOtherSellersFullState extends State<ProductOtherSellersFull> {
       ),
     );
   }
-}
 
-class _SellerData {
-  final String name;
-  final bool isVerified;
-  final double rating;
-  final Color ratingColor;
-  final String? badge;
-  final Color? badgeColor;
-  final String? deliveryInfo;
-  final String? urgentInfo;
-  final List<String> perks;
-  final String price;
+  Widget _buildStoreLogo({required String storeName, String? logoUrl}) {
+    if (logoUrl != null && logoUrl.startsWith('http')) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: OptimizedImage(
+          imageUrlOrPath: logoUrl,
+          width: 24,
+          height: 24,
+          fit: BoxFit.contain,
+        ),
+      );
+    }
+    if (StoreLogoHelper.hasLogo(storeName)) {
+      return Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.grey.shade200),
+          image: DecorationImage(
+            image: AssetImage(StoreLogoHelper.getStoreLogo(storeName)!),
+            fit: BoxFit.contain,
+          ),
+        ),
+      );
+    }
+    return Container(
+      width: 24,
+      height: 24,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        storeName.isNotEmpty ? storeName[0].toUpperCase() : '?',
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
 
-  _SellerData({
-    required this.name,
-    required this.isVerified,
-    required this.rating,
-    required this.ratingColor,
-    this.badge,
-    this.badgeColor,
-    this.deliveryInfo,
-    this.urgentInfo,
-    required this.perks,
-    required this.price,
-  });
+  void _openStore(
+    BuildContext context,
+    String storeName,
+    Map<String, dynamic> store,
+  ) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BusinessDetailPage(
+          business: {
+            'name': storeName,
+            'seller_id': store['sellerId']?.toString() ?? '',
+          },
+        ),
+      ),
+    );
+  }
+
+  String? _variantSummary(Product product) {
+    final attributes = product.attributes;
+    if (attributes != null && attributes.isNotEmpty) {
+      return attributes.take(3).join(' · ');
+    }
+    final variantOptions = product.variantOptions?.trim();
+    if (variantOptions != null && variantOptions.isNotEmpty) {
+      return variantOptions.replaceAll('|', ' · ');
+    }
+    final subCategory = product.subCategory?.trim();
+    if (subCategory != null && subCategory.isNotEmpty) {
+      return subCategory;
+    }
+    return null;
+  }
 }

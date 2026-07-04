@@ -415,6 +415,15 @@ void main() {
 
 class _FakePrinterRepository implements PrinterRepositoryPort {
   @override
+  Future<PrinterModel> repairPrinterProfileMetadata(String printerId) async {
+    final printer = await fetchPrinterById(printerId);
+    if (printer == null) {
+      throw StateError('missing printer $printerId');
+    }
+    return printer;
+  }
+
+  @override
   Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
     required String restaurantId,
     String? stationId,
@@ -706,6 +715,8 @@ class _FakeOrchestrator extends DesktopPrintOrchestrator {
     PrinterSetupRole? role,
     String? printerId,
     UnifiedPrinterModel? explicitLivePrinter,
+    String? stationId,
+    String? stationName,
     String testSource = 'role_test',
     String flowName = 'role_test',
     String source = 'orchestrator',

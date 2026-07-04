@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../core/app_state.dart';
 import '../core/app_motion.dart';
+import '../core/auth/auth_session_guard.dart';
 import '../core/constants.dart';
 import 'become_seller_page.dart';
 import '../services/auth_service.dart';
@@ -58,6 +61,7 @@ class _SellerLoginPageState extends State<SellerLoginPage>
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
       final hadExistingUserSession = _authService.currentUser != null;
+      final appState = Provider.of<AppState>(context, listen: false);
 
       try {
         if (hadExistingUserSession) {
@@ -99,6 +103,13 @@ class _SellerLoginPageState extends State<SellerLoginPage>
 
         if (resolution.resolvedRole == LoginResolvedRole.seller) {
           if (resolution.isSellerApproved) {
+            await _authService.markSellerLoginSuccess(
+              userId: resolution.userId ?? '',
+              role: resolution.rawRole,
+              storeId: resolution.storeProfile?['id']?.toString(),
+            );
+            appState.clearCustomerSessionView();
+            if (!mounted) return;
             Navigator.of(
               context,
               rootNavigator: true,
@@ -106,7 +117,7 @@ class _SellerLoginPageState extends State<SellerLoginPage>
             return;
           } else {
             // Not approved yet
-            await _authService.signOut(); // Logout
+            await _authService.signOutSeller(); // Logout
             throw Exception(
               'Satıcı hesabınız henüz onaylanmadı. Lütfen yönetici onayını bekleyin.',
             );
@@ -114,6 +125,12 @@ class _SellerLoginPageState extends State<SellerLoginPage>
         }
 
         if (resolution.resolvedRole == LoginResolvedRole.waiter) {
+          await _authService.markSellerLoginSuccess(
+            userId: resolution.userId ?? '',
+            role: resolution.rawRole,
+          );
+          appState.clearCustomerSessionView();
+          if (!mounted) return;
           Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
             '/seller',
             (route) => false,
@@ -122,9 +139,9 @@ class _SellerLoginPageState extends State<SellerLoginPage>
           return;
         }
 
-        await _authService.signOut();
+        await _authService.signOutSeller();
         throw Exception(
-          'Bu e-posta adresi seller/garson hesabına ait değil. Rol: ${resolution.rawRole ?? 'unknown'}',
+          AuthSessionGuard.sellerLoginRejectionMessage(resolution.resolvedRole),
         );
       } catch (e) {
         try {

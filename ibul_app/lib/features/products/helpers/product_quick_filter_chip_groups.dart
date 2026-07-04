@@ -1,5 +1,6 @@
 import '../models/product_filter_models.dart';
 import '../../../utils/text_normalizer.dart';
+import 'category_filter_config.dart';
 
 /// Mobil kategori ürün listesi hızlı filtre chip'leri için aday grupları
 /// tekilleştirir ve öncelik sırasına göre döner.
@@ -36,8 +37,17 @@ class ProductQuickFilterChipGroups {
   static List<ProductFilterGroup> resolve(
     List<ProductFilterGroup> allGroups, {
     int maxChips = 4,
+    String? mainCategory,
   }) {
     final candidates = _buildCandidates(allGroups);
+    if (CategoryFilterConfig.isFoodCategory(mainCategory)) {
+      return CategoryFilterConfig.filterQuickChipGroups(
+        candidates: candidates,
+        allGroups: allGroups,
+        mainCategory: mainCategory!,
+        maxChips: maxChips,
+      );
+    }
     return dedupeAndSort(candidates).take(maxChips).toList(growable: false);
   }
 

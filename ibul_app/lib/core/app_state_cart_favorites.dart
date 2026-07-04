@@ -9,6 +9,30 @@ extension _AppStateCartFavoritesDomain on AppState {
     _syncPushInterests();
   }
 
+  Future<String?> addToCartValidated(
+    Product product, {
+    bool variantSelectionComplete = true,
+  }) async {
+    final key = CartState.productKey(product);
+    if (_cartAddInFlightKeys.contains(key)) {
+      return null;
+    }
+    _cartAddInFlightKeys.add(key);
+    try {
+      final validation = await CartValidationService.instance.validateForAdd(
+        product,
+        variantSelectionComplete: variantSelectionComplete,
+      );
+      if (!validation.allowed) {
+        return validation.message;
+      }
+      _addToCartImpl(validation.product ?? product);
+      return null;
+    } finally {
+      _cartAddInFlightKeys.remove(key);
+    }
+  }
+
   void _addToCartImpl(Product product) {
     final resolvedProduct = product.copyWith(
       productId: (product.productId ?? '').trim().isEmpty
@@ -18,14 +42,14 @@ extension _AppStateCartFavoritesDomain on AppState {
     _cartState.addOrReplace(resolvedProduct);
     _selectedCartTabIndex = CartState.tabIndexForProduct(resolvedProduct);
     _clearCartAttention(resolvedProduct);
-    _persistCartState();
+    unawaited(_persistCartState());
     _syncPushInterests();
   }
 
   void _removeFromCartImpl(Product product) {
     _cartState.remove(product);
     _clearCartAttention(product);
-    _persistCartState();
+    unawaited(_persistCartState());
     _syncPushInterests();
   }
 }

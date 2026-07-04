@@ -12,6 +12,8 @@ import '../screens/account_page.dart';
 import '../screens/followed_stores_page.dart';
 import '../screens/addresses_page.dart';
 import '../screens/ai_chat_page.dart';
+import '../features/customer_support/screens/customer_support_page.dart';
+import '../features/saved_payment_cards/screens/saved_payment_cards_page.dart';
 import '../core/app_state.dart';
 import '../core/auth/user_identity.dart';
 
@@ -264,6 +266,11 @@ class AccountSidebar extends StatelessWidget {
         Icons.credit_card_outlined,
         'Kayıtlı Kartlarım',
         isActive: activePage == 'Kayıtlı Kartlarım',
+        onTap: () {
+          if (activePage != 'Kayıtlı Kartlarım') {
+            _pushReplacementPage(context, const SavedPaymentCardsPage());
+          }
+        },
       ),
       _buildWebMenuItem(
         context,
@@ -273,6 +280,18 @@ class AccountSidebar extends StatelessWidget {
         onTap: () {
           if (activePage != 'Değerlendirmelerim') {
             _pushReplacementPage(context, const ReviewsPage());
+          }
+        },
+      ),
+      _buildWebMenuItem(
+        context,
+        Icons.support_agent_outlined,
+        'Müşteri Hizmetleri',
+        subtitle: 'Destek ve talepler',
+        isActive: activePage == 'Müşteri Hizmetleri',
+        onTap: () {
+          if (activePage != 'Müşteri Hizmetleri') {
+            _pushReplacementPage(context, const CustomerSupportPage());
           }
         },
       ),
@@ -303,6 +322,7 @@ class AccountSidebar extends StatelessWidget {
     BuildContext context,
     IconData icon,
     String title, {
+    String? subtitle,
     bool isActive = false,
     bool isDestructive = false,
     VoidCallback? onTap,
@@ -332,16 +352,33 @@ class AccountSidebar extends StatelessWidget {
                     : (isActive ? AppColors.primary : Colors.grey.shade600),
               ),
               const SizedBox(width: 12),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-                  color: isDestructive
-                      ? Colors.red
-                      : (isActive
-                            ? AppColors.primary
-                            : const Color(0xFF4B5563)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                        color: isDestructive
+                            ? Colors.red
+                            : (isActive
+                                  ? AppColors.primary
+                                  : const Color(0xFF4B5563)),
+                      ),
+                    ),
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               if (isActive) const Spacer(),

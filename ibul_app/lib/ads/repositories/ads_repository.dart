@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../constants/ads_defaults.dart';
 import '../constants/ads_table_names.dart';
 import '../enums/ad_enums.dart';
+import '../helpers/ad_json_helper.dart';
 import '../models/ab_test_variant.dart';
 import '../models/ad_campaign.dart';
 import '../models/ad_campaign_page.dart';
@@ -12,6 +14,7 @@ import '../models/ad_metrics.dart';
 import '../models/ad_revenue_record.dart';
 import '../models/ad_wallet_transaction.dart';
 import '../models/campaign_asset.dart';
+import '../models/campaign_target.dart';
 import '../models/campaign_review.dart';
 import '../models/geo_push_trigger.dart';
 import '../models/user_interest.dart';
@@ -36,6 +39,49 @@ class AdsRepository {
 
   static const String _campaignSelect =
       '*, campaign_targets(*), campaign_assets(*), ab_test_variants(*)';
+
+  /// RPC `fetch_active_home_sponsored_collections` satırını müşteri kampanyasına çevirir.
+  /// Sıralama sunucu tarafında yapılır; teklif/bütçe skoru client'a dönmez.
+  @visibleForTesting
+  static AdCampaign mapHomeSponsoredCollectionRpcRow(Map<String, dynamic> row) {
+    final campaignId = AdJsonHelper.asString(row['campaign_id']);
+    final collectionId = AdJsonHelper.asString(row['collection_id']);
+    final coverUrl = AdJsonHelper.asNullableString(row['cover_url']);
+    final placement = AdPlacementParser.fromDbValue(row['placement']?.toString());
+
+    return AdCampaign(
+      id: campaignId,
+      sellerId: AdJsonHelper.asString(row['seller_id']),
+      storeId: AdJsonHelper.asNullableString(row['store_id']),
+      name: AdJsonHelper.asString(row['title'], fallback: '-'),
+      type: AdCampaignType.collectionBoost,
+      objective: CampaignObjective.collectionDiscovery,
+      status: CampaignStatus.active,
+      billingModel: BillingModel.cpc,
+      dailyBudget: 0,
+      totalBudget: 0,
+      currency: AdsDefaults.defaultCurrency,
+      startsAt: AdJsonHelper.asDateTime(row['starts_at']) ?? DateTime.now(),
+      endsAt: AdJsonHelper.asDateTime(row['ends_at']) ?? DateTime.now(),
+      bidAmount: 0,
+      isPremiumPlacementEnabled: false,
+      target: CampaignTarget(
+        campaignId: campaignId,
+        objective: CampaignObjective.collectionDiscovery,
+        placements: [placement],
+      ),
+      assets: [
+        CampaignAsset(
+          campaignId: campaignId,
+          assetType: AdAssetType.collection,
+          entityId: collectionId,
+          mediaUrl: coverUrl,
+          thumbnailUrl: coverUrl,
+          placements: [placement],
+        ),
+      ],
+    );
+  }
 
   List<T> _parseListResponse<T>(
     dynamic response,
@@ -227,6 +273,42 @@ class AdsRepository {
         objective: objective,
         limit: limit,
       ),
+    );
+  }
+
+  /// Müşteri ana sayfası için hafif koleksiyon boost kampanya sorgusu.
+  /// Hassas kolonları açmamak için SECURITY DEFINER RPC kullanır.
+  Future<List<AdCampaign>> getActiveHomeCollectionCampaigns({
+    int limit = 20,
+  }) {
+    return _run(
+      label: 'home_collection_campaigns',
+      action: () async {
+        final response = await _client.rpc(
+          'fetch_active_home_sponsored_collections',
+          params: {'p_limit': limit},
+        );
+        final rows = AdJsonHelper.asMapList(response);
+        return rows
+            .map(mapHomeSponsoredCollectionRpcRow)
+            .toList(growable: false);
+      },
+      preview: () => _preview
+          .getCampaigns(
+            type: AdCampaignType.collectionBoost,
+            statuses: const [
+              CampaignStatus.active,
+              CampaignStatus.approved,
+              CampaignStatus.scheduled,
+            ],
+            limit: limit,
+          )
+          .where((campaign) {
+            final now = DateTime.now();
+            return !campaign.startsAt.isAfter(now) &&
+                !campaign.endsAt.isBefore(now);
+          })
+          .toList(growable: false),
     );
   }
 
@@ -751,18 +833,21 @@ class AdsRepository {
       action: () async {
         final response = await _client
             .from(AdsTableNames.campaignReviews)
-            .insert(review.toJson())
+            .insert(_compactPayload(review.toJson()))
             .select()
             .single();
 
         try {
-          await _client.from(AdsTableNames.adminReviewLogs).insert({
+          final logPayload = _compactPayload({
             'campaign_id': review.campaignId,
             'reviewer_id': review.reviewerId,
             'status': review.status.dbValue,
             'note': review.note,
             'created_at': review.createdAt.toUtc().toIso8601String(),
           });
+          if (logPayload.isNotEmpty) {
+            await _client.from(AdsTableNames.adminReviewLogs).insert(logPayload);
+          }
         } catch (_) {}
 
         return CampaignReview.fromJson(Map<String, dynamic>.from(response));

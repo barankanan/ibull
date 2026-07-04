@@ -12,6 +12,7 @@ class AdminModules {
   static const String support = 'support';
   static const String ihiz = 'ihiz';
   static const String permissionSystem = 'permission_system';
+  static const String teamTasks = 'team_tasks';
   static const String securityLogs = 'security_logs';
 
   static const List<String> all = [
@@ -28,6 +29,7 @@ class AdminModules {
     support,
     ihiz,
     permissionSystem,
+    teamTasks,
     securityLogs,
   ];
 
@@ -45,6 +47,7 @@ class AdminModules {
     support: 'Destek & Sikayet',
     ihiz: 'Ihiz',
     permissionSystem: 'Yetki Sistemi',
+    teamTasks: 'Ekip & Gorevler',
     securityLogs: 'Log & Guvenlik',
   };
 }

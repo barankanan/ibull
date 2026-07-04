@@ -5,11 +5,11 @@ import 'dart:html' as html;
 import 'dart:typed_data';
 
 class BrowserFileDownload {
-  static void saveBytes({
+  static Future<String?> saveBytes({
     required List<int> bytes,
     required String fileName,
     required String mimeType,
-  }) {
+  }) async {
     final base64Data = base64Encode(bytes);
     final url = 'data:$mimeType;base64,$base64Data';
     final anchor = html.AnchorElement(href: url)
@@ -18,6 +18,7 @@ class BrowserFileDownload {
     html.document.body?.append(anchor);
     anchor.click();
     anchor.remove();
+    return fileName;
   }
 
   static void openPrintHtml({required String title, required String htmlBody}) {

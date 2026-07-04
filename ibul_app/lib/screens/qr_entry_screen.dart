@@ -5,7 +5,8 @@ import '../core/app_ready.dart';
 import '../core/constants.dart';
 import '../core/qr_initial_params.dart';
 import '../services/store_service.dart';
-import 'business_detail_page.dart';
+import '../widgets/deferred_module_screen.dart';
+import 'business_detail_page.dart' deferred as business_detail;
 
 /// Standalone screen shown when the app is opened via a QR code URL
 /// (`/qr?seller=...&table=...&token=...`).
@@ -147,7 +148,8 @@ class _QrEntryScreenState extends State<QrEntryScreen> {
 
       if (!mounted) return;
 
-      if (business == null) {
+      final resolvedBusiness = business;
+      if (resolvedBusiness == null) {
         _setError('Bu QR kodu için mağaza bulunamadı.');
         return;
       }
@@ -172,12 +174,16 @@ class _QrEntryScreenState extends State<QrEntryScreen> {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         PageRouteBuilder<void>(
-          pageBuilder: (_, _, _) => BusinessDetailPage(
-            business: business!,
-            forceTableSelection: true,
-            initialTableNumber: tableNumber,
-            fromQr: true,
-            unverifiedQrTableFlow: !qrVerified,
+          pageBuilder: (_, _, _) => DeferredModuleScreen(
+            moduleName: 'business_detail_page',
+            loadLibrary: business_detail.loadLibrary,
+            builder: () => business_detail.BusinessDetailPage(
+              business: resolvedBusiness,
+              forceTableSelection: true,
+              initialTableNumber: tableNumber,
+              fromQr: true,
+              unverifiedQrTableFlow: !qrVerified,
+            ),
           ),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,

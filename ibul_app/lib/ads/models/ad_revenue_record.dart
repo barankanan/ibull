@@ -39,8 +39,12 @@ class AdRevenueRecord {
       walletTransactionId: AdJsonHelper.asNullableString(
         json['wallet_transaction_id'],
       ),
-      grossAmount: AdJsonHelper.asDouble(json['gross_amount']),
-      netAmount: AdJsonHelper.asDouble(json['net_amount']),
+      grossAmount: AdJsonHelper.asDouble(
+        json['gross_amount'] ?? json['amount'],
+      ),
+      netAmount: AdJsonHelper.asDouble(
+        json['net_amount'] ?? json['amount'],
+      ),
       taxAmount: AdJsonHelper.asDouble(json['tax_amount']),
       platformFee: AdJsonHelper.asDouble(json['platform_fee']),
       currency: AdJsonHelper.asString(json['currency'], fallback: 'TRY'),

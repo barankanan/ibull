@@ -194,36 +194,59 @@ Future<T?> showAppModalBottomSheet<T>({
   );
 }
 
-class AppAnimatedIndexedStack extends StatelessWidget {
+class AppAnimatedIndexedStack extends StatefulWidget {
   const AppAnimatedIndexedStack({
     super.key,
     required this.index,
     required this.children,
+    this.lazyMount = false,
   });
 
   final int index;
   final List<Widget> children;
+  /// When true, tab widgets mount only after first visit (Map/Cart skip boot work).
+  final bool lazyMount;
+
+  @override
+  State<AppAnimatedIndexedStack> createState() => _AppAnimatedIndexedStackState();
+}
+
+class _AppAnimatedIndexedStackState extends State<AppAnimatedIndexedStack> {
+  late final Set<int> _mountedIndices = {widget.index.clamp(0, widget.children.length - 1)};
+
+  @override
+  void didUpdateWidget(covariant AppAnimatedIndexedStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.children.isEmpty) return;
+    _mountedIndices.add(widget.index.clamp(0, widget.children.length - 1));
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (children.isEmpty) {
+    if (widget.children.isEmpty) {
       return const SizedBox.shrink();
     }
-    final safeIndex = index.clamp(0, children.length - 1);
-    // IndexedStack only paints the active child. A Stack + AnimatedOpacity
-    // kept every tab in the paint tree, which caused visible overlap on web
-    // (e.g. account guest card under another tab's footer layer).
+    final safeIndex = widget.index.clamp(0, widget.children.length - 1);
+    if (widget.lazyMount) {
+      _mountedIndices.add(safeIndex);
+    }
+
     return IndexedStack(
       index: safeIndex,
       sizing: StackFit.expand,
-      children: List<Widget>.generate(children.length, (childIndex) {
+      children: List<Widget>.generate(widget.children.length, (childIndex) {
         final isActive = childIndex == safeIndex;
+        final shouldBuild =
+            !widget.lazyMount || _mountedIndices.contains(childIndex);
+        final child = shouldBuild
+            ? widget.children[childIndex]
+            : const SizedBox.shrink();
         return RepaintBoundary(
           child: KeyedSubtree(
             key: ValueKey<int>(childIndex),
             child: TickerMode(
               enabled: isActive,
-              child: children[childIndex],
+              child: child,
             ),
           ),
         );

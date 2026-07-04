@@ -15,6 +15,7 @@ import '../../../../screens/admin/brand_verification_admin_page.dart';
 import '../../../../screens/admin/store_management_page.dart';
 import '../../../../screens/admin/support_complaints_page.dart';
 import '../../../../screens/admin/support_tickets_admin_page.dart';
+import '../../../../screens/admin/team_tasks_page.dart';
 import '../widgets/admin_panel_state_widgets.dart';
 
 Widget buildAdminPanelContent({
@@ -51,6 +52,8 @@ Widget buildAdminPanelContent({
       return const IhizAdminPage();
     case 'Yetki Sistemi':
       return const PermissionSystemPage();
+    case 'Ekip & Görevler':
+      return const TeamTasksPage();
     case 'Log & Güvenlik':
       return const AdminSecurityLogsPage();
     default:

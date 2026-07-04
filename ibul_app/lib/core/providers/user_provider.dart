@@ -1,14 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import '../../services/auth_service.dart';
 import '../../utils/dynamic_value_helpers.dart';
+import '../auth/auth_listener_guard.dart';
+import '../auth/ibul_auth_context.dart';
+import '../app_ready.dart';
 
 class UserProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
+  final AuthListenerGuard _authListenerGuard = AuthListenerGuard();
   int _authStateVersion = 0;
   
   Map<String, dynamic>? _currentUser;
   Map<String, dynamic>? get currentUser => _currentUser;
-  bool get isLoggedIn => _currentUser != null;
+  bool get isLoggedIn =>
+      _currentUser != null &&
+      IbulAuthContextService.instance.isCustomerContext;
 
   // Takip edilen mağazalar
   final List<Map<String, dynamic>> _followedStores = [];
@@ -26,26 +34,78 @@ class UserProvider extends ChangeNotifier {
   }
 
   void _initAuth() {
+    unawaited(IbulAuthContextService.instance.ensureLoaded());
+    unawaited(_startAuthListenerWhenReady());
+  }
+
+  Future<void> _startAuthListenerWhenReady() async {
+    try {
+      await appServicesReady.timeout(const Duration(seconds: 8));
+    } catch (error) {
+      debugPrint('UserProvider auth init skipped (services not ready): $error');
+      return;
+    }
+
     _authService.authStateChanges.listen((authState) async {
       final requestVersion = ++_authStateVersion;
+      await IbulAuthContextService.instance.ensureLoaded();
       final user = authState.session?.user;
-      if (user != null) {
-        final profile = await _authService.getUserProfile();
-        if (_isStaleAuthRequest(requestVersion)) return;
-        _currentUser = _buildCurrentUserMap(user, profile);
-        
-        if (user.id.startsWith('guest_') || user.email == 'misafir@ibul.com') {
-           _loadGuestData();
-        } else {
-           await _loadUserData(requestVersion: requestVersion);
-           if (_isStaleAuthRequest(requestVersion)) return;
-        }
-      } else {
-        _currentUser = null;
-        _clearUserData();
+      final activeContext = IbulAuthContextService.instance.activeContext;
+
+      if (!_authListenerGuard.enter(
+        userId: user?.id,
+        context: activeContext,
+      )) {
+        return;
       }
-      if (_isStaleAuthRequest(requestVersion)) return;
-      notifyListeners();
+
+      var stateChanged = false;
+      final previousUserId = _currentUser?['uid']?.toString();
+
+      try {
+        if (user != null && !IbulAuthContextService.instance.isCustomerContext) {
+          if (previousUserId != null) {
+            stateChanged = true;
+          }
+          _currentUser = null;
+          _clearUserData();
+          if (_isStaleAuthRequest(requestVersion)) return;
+          if (stateChanged) notifyListeners();
+          return;
+        }
+        if (user != null) {
+          final profile = await _authService.getUserProfile();
+          if (_isStaleAuthRequest(requestVersion)) return;
+          final nextUser = _buildCurrentUserMap(user, profile);
+          if (previousUserId != nextUser['uid']?.toString()) {
+            stateChanged = true;
+          }
+          _currentUser = nextUser;
+
+          if (user.id.startsWith('guest_') || user.email == 'misafir@ibul.com') {
+            _loadGuestData();
+          } else {
+            await _loadUserData(requestVersion: requestVersion);
+            if (_isStaleAuthRequest(requestVersion)) return;
+          }
+        } else {
+          if (previousUserId != null) {
+            stateChanged = true;
+          }
+          _currentUser = null;
+          _clearUserData();
+        }
+        if (_isStaleAuthRequest(requestVersion)) return;
+        if (stateChanged) {
+          notifyListeners();
+        }
+      } finally {
+        _authListenerGuard.leave(
+          userId: user?.id,
+          context: IbulAuthContextService.instance.activeContext,
+          stateChanged: stateChanged,
+        );
+      }
     });
   }
 

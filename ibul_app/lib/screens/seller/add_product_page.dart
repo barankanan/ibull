@@ -6,9 +6,12 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../../core/category_pricing_helper.dart';
 import '../../core/constants.dart';
+import '../../core/mobile_category_catalog.dart';
 import '../../models/product_pricing.dart';
 import '../../core/providers/category_attribute_form_provider.dart';
+import '../../core/product_rich_description.dart';
 import '../../models/seller_product.dart';
 import '../../services/category_attribute_service.dart';
 import '../../models/store_sub_category.dart';
@@ -17,13 +20,18 @@ import '../../services/media/product_media_repository.dart';
 import '../../services/media/product_media_types.dart';
 import '../../services/store_service.dart';
 import '../../utils/pick_image_file.dart';
+import '../../utils/product_image_format_helper.dart';
 import '../../utils/preparation_time_formatter.dart';
 import '../../utils/product_create_log.dart';
 import '../../utils/xfile_image_provider.dart';
 import '../../widgets/dynamic_category_attribute_form.dart';
+import '../../widgets/product_list_thumbnail.dart';
+import '../../widgets/seller/product_image_editor_dialog.dart';
+import '../../widgets/seller/rich_product_description_editor.dart';
 import '../../widgets/seller/service_control_selector.dart';
 import '../../widgets/seller/service_stepper_fields.dart';
 import '../../widgets/seller/weight_pricing_fields.dart';
+import 'product_management/bulk_product_import_mapping.dart';
 
 class _EditableProductSizeOption {
   _EditableProductSizeOption({
@@ -86,7 +94,13 @@ class _AddProductPageState extends State<AddProductPage> {
   final _maxWeightController = TextEditingController();
   final _stockController = TextEditingController();
   final _skuController = TextEditingController();
+  final _barcodeController = TextEditingController();
+  final _warrantyMonthsController = TextEditingController();
   final _preparationTimeController = TextEditingController();
+  final _cargoWeightController = TextEditingController();
+  final _cargoWidthController = TextEditingController();
+  final _cargoLengthController = TextEditingController();
+  final _cargoHeightController = TextEditingController();
   // _additionalInfoController removed
 
   // Selected Values
@@ -102,10 +116,19 @@ class _AddProductPageState extends State<AddProductPage> {
   final List<_EditableProductSizeOption> _sizeOptionRows =
       <_EditableProductSizeOption>[];
   String _selectedVatRate = '%18';
+  String _selectedCurrency = 'TRY';
   String _selectedShippingOption = 'Ücretsiz Kargo';
   String? _selectedServiceType;
   String? _selectedServiceTime;
   Map<String, dynamic> _foodSpecificationSeed = <String, dynamic>{};
+  Map<String, dynamic> _nonFoodSpecificationSeed = <String, dynamic>{};
+  List<ProductRichDescriptionBlock> _richDescriptionBlocks =
+      const <ProductRichDescriptionBlock>[];
+  final Map<String, Uint8List> _descriptionPendingImages =
+      <String, Uint8List>{};
+  final GlobalKey<ProductDescriptionStoryEditorState> _storyEditorKey =
+      GlobalKey<ProductDescriptionStoryEditorState>();
+  String? _localDraftProductId;
 
   /// Mağazanın başvuruda seçtiği kategori; sadece bu kategoride ürün eklenebilir. Null ise henüz yüklenmedi veya kısıtlama yok.
   String? _storeMainCategory;
@@ -118,6 +141,9 @@ class _AddProductPageState extends State<AddProductPage> {
 
   /// Düzenleme modunda mevcut görsellerin URL'leri (yeni yükleme yoksa bunlar kullanılır).
   List<String> _existingImageUrls = [];
+
+  /// Önizleme ve cache bust için görsel state sürümü.
+  int _productImagePreviewVersion = 0;
 
   // Ürün Videosu
   XFile? _videoFile;
@@ -166,7 +192,8 @@ class _AddProductPageState extends State<AddProductPage> {
 
   bool get _isFoodCategory {
     final cat = _storeMainCategory ?? _selectedMainCategory;
-    return cat == 'Yemek';
+    final sub = _selectedSubCategory ?? _subCategoryController.text;
+    return isFoodPricingCategory(cat, sub);
   }
 
   bool get _isWeightPricingActive =>
@@ -286,18 +313,7 @@ class _AddProductPageState extends State<AddProductPage> {
     'Sadece Akşam',
   ];
 
-  static const List<String> _allMainCategories = [
-    'Elektronik',
-    'Spor & Outdoor',
-    'Giyim & Aksesuar',
-    'Anne & Bebek & Oyuncak',
-    'Kozmetik & Kişisel Bakım',
-    'Ev & Yaşam',
-    'Süpermarket & Petshop',
-    'Kitap & Hobi',
-    '2.el Ürünler',
-    'Yemek',
-  ];
+  static const List<String> _allMainCategories = sellerProductMainCategoryNames;
 
   /// Başvuru kategorisini ürün ana kategorisine eşler (stores.category -> add_product mainCategory).
   static String? _storeCategoryToMainCategory(String? storeCategory) {
@@ -649,6 +665,11 @@ class _AddProductPageState extends State<AddProductPage> {
       service: _categoryAttributeService,
     );
     _loadComplementaryCandidates();
+    if (_richDescriptionBlocks.isEmpty) {
+      _richDescriptionBlocks = const <ProductRichDescriptionBlock>[
+        ProductRichDescriptionBlock(type: 'text', text: ''),
+      ];
+    }
     if (widget.isEdit && widget.productId != null) {
       _loadProduct(widget.productId!).whenComplete(_loadStoreCategory);
     } else {
@@ -666,9 +687,27 @@ class _AddProductPageState extends State<AddProductPage> {
       setState(() {
         _initialProductStatus = product.status;
         _foodSpecificationSeed = _decodeSpecifications(product.specifications);
+        _nonFoodSpecificationSeed = Map<String, dynamic>.from(
+          _foodSpecificationSeed,
+        );
+        _hydrateCargoFieldsFromSpecifications();
+        _richDescriptionBlocks = extractDescriptionStoryFromSpecifications(
+          product.specifications,
+        );
+        if (_richDescriptionBlocks.isEmpty) {
+          _richDescriptionBlocks = storyBlocksFromPlainDescription(
+            product.description,
+          );
+        }
+        if (_richDescriptionBlocks.isEmpty) {
+          _richDescriptionBlocks = const <ProductRichDescriptionBlock>[
+            ProductRichDescriptionBlock(type: 'text', text: ''),
+          ];
+        }
+        _longDescController.text =
+            storyDescriptionPlainText(_richDescriptionBlocks);
         _productNameController.text = product.name;
         _brandController.text = product.brand;
-        _longDescController.text = product.description ?? '';
         _selectedPricingType = ProductPricingType.fromValue(
           product.pricingType,
         );
@@ -716,11 +755,14 @@ class _AddProductPageState extends State<AddProductPage> {
         _maxWeightController.text = product.maxWeightGrams?.toString() ?? '';
         _stockController.text = product.stock.toString();
         _skuController.text = product.sku;
-        // Split by newline
-        _additionalInfos = (product.additionalInfo ?? '')
-            .split('\n')
-            .where((s) => s.trim().isNotEmpty)
-            .toList();
+        // Split by newline; JSON/list formatı additionalInfoItems ile gelir.
+        _additionalInfos = List<String>.from(
+          product.additionalInfoItems ??
+              (product.additionalInfo ?? '')
+                  .split('\n')
+                  .where((String s) => s.trim().isNotEmpty)
+                  .toList(),
+        );
         _faqs = List<Map<String, String>>.from(product.faq ?? []);
 
         _selectedMainCategory = product.mainCategory;
@@ -932,11 +974,11 @@ class _AddProductPageState extends State<AddProductPage> {
         _selectedAccessoryIds.remove(productId);
         return;
       }
-      if (_selectedAccessoryIds.length >= 2) {
+      if (_selectedAccessoryIds.length >= 5) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Bir ürün için en fazla 2 tamamlayıcı ürün seçebilirsiniz.',
+              'Bir ürün için en fazla 5 birlikte iyi gider ürünü seçebilirsiniz.',
             ),
           ),
         );
@@ -996,7 +1038,13 @@ class _AddProductPageState extends State<AddProductPage> {
     _maxWeightController.dispose();
     _stockController.dispose();
     _skuController.dispose();
+    _barcodeController.dispose();
+    _warrantyMonthsController.dispose();
     _preparationTimeController.dispose();
+    _cargoWeightController.dispose();
+    _cargoWidthController.dispose();
+    _cargoLengthController.dispose();
+    _cargoHeightController.dispose();
     for (final row in _sizeOptionRows) {
       row.dispose();
     }
@@ -1023,40 +1071,55 @@ class _AddProductPageState extends State<AddProductPage> {
         _showExitDialog();
       },
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: const Color(0xFFF8FAFC),
         appBar: AppBar(
           backgroundColor: Colors.white,
           elevation: 0,
+          scrolledUnderElevation: 0,
+          surfaceTintColor: Colors.transparent,
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(1),
+            child: Container(height: 1, color: const Color(0xFFE2E8F0)),
+          ),
           leading: IconButton(
             onPressed: () => _showExitDialog(),
-            icon: const Icon(Icons.close, color: Colors.black87),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                color: Color(0xFF334155), size: 18),
           ),
           title: Text(
             widget.isEdit ? 'Ürün Düzenle' : 'Yeni Ürün Ekle',
             style: const TextStyle(
-              color: Colors.black87,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
+              color: Color(0xFF0F172A),
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
             ),
           ),
           actions: [
             if (!isCompactLayout) ...[
               TextButton.icon(
                 onPressed: _isLoading ? null : _saveDraft,
-                icon: const Icon(Icons.save_outlined, size: 18),
+                icon: const Icon(Icons.save_outlined, size: 16),
                 label: const Text('Taslak Kaydet'),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF475569),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               ElevatedButton.icon(
                 onPressed: _isLoading ? null : _publishProduct,
-                icon: const Icon(Icons.check, size: 18),
+                icon: const Icon(Icons.check, size: 16),
                 label: const Text('Yayınla'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
+                  elevation: 0,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
                   ),
                 ),
               ),
@@ -1104,7 +1167,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   Expanded(
                     flex: 7,
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(32),
+                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -1118,11 +1181,11 @@ class _AddProductPageState extends State<AddProductPage> {
 
                   // Sağ Taraf - Önizleme ve Hesaplamalar
                   Container(
-                    width: 380,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade50,
+                    width: 360,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
                       border: Border(
-                        left: BorderSide(color: Colors.grey.shade200),
+                        left: BorderSide(color: Color(0xFFE2E8F0)),
                       ),
                     ),
                     child: SingleChildScrollView(
@@ -1136,34 +1199,45 @@ class _AddProductPageState extends State<AddProductPage> {
             ? SafeArea(
                 top: false,
                 child: Container(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
                   decoration: const BoxDecoration(
                     color: Colors.white,
                     border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
                   ),
                   child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _isLoading ? null : _saveDraft,
-                          icon: const Icon(Icons.save_outlined, size: 16),
-                          label: const Text('Taslak'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _isLoading ? null : _publishProduct,
-                          icon: const Icon(Icons.check, size: 16),
-                          label: const Text('Yayınla'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _isLoading ? null : _saveDraft,
+                              icon: const Icon(Icons.save_outlined, size: 16),
+                              label: const Text('Taslak'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: _isLoading ? null : _publishProduct,
+                              icon: const Icon(Icons.check, size: 16),
+                              label: const Text('Yayınla'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
                 ),
               )
             : null,
@@ -1188,72 +1262,177 @@ class _AddProductPageState extends State<AddProductPage> {
             {'icon': Icons.palette_outlined, 'label': 'Varyantlar'},
             {'icon': Icons.local_shipping_outlined, 'label': 'Kargo & Boyut'},
           ];
+    final int totalSteps = steps.length;
 
-    return Row(
-      children: List.generate(steps.length, (index) {
-        final isActive = index == _currentStep;
-        final isCompleted = index < _currentStep;
-
-        return Expanded(
-          child: Column(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  if (index > 0)
-                    Expanded(
-                      child: Container(
-                        height: 2,
-                        color: isCompleted
-                            ? AppColors.primary
-                            : Colors.grey.shade300,
-                      ),
-                    ),
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: isActive
-                          ? AppColors.primary
-                          : isCompleted
-                          ? AppColors.primary
-                          : Colors.grey.shade200,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      isCompleted
-                          ? Icons.check
-                          : steps[index]['icon'] as IconData,
-                      color: isActive || isCompleted
-                          ? Colors.white
-                          : Colors.grey.shade500,
-                      size: 20,
-                    ),
-                  ),
-                  if (index < steps.length - 1)
-                    Expanded(
-                      child: Container(
-                        height: 2,
-                        color: isCompleted
-                            ? AppColors.primary
-                            : Colors.grey.shade300,
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
               Text(
-                steps[index]['label'] as String,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-                  color: isActive ? AppColors.primary : Colors.grey.shade600,
+                'Adım ${_currentStep + 1}/$totalSteps',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF64748B),
                 ),
-                textAlign: TextAlign.center,
+              ),
+              const Spacer(),
+              Text(
+                steps[_currentStep]['label'] as String,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0F172A),
+                ),
               ),
             ],
           ),
-        );
-      }),
+          const SizedBox(height: 12),
+          Row(
+            children: List.generate(steps.length, (index) {
+              final isActive = index == _currentStep;
+              final isCompleted = index < _currentStep;
+
+              return Expanded(
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        if (index > 0)
+                          Expanded(
+                            child: Container(
+                              height: 2,
+                              decoration: BoxDecoration(
+                                color: isCompleted
+                                    ? AppColors.primary
+                                    : const Color(0xFFE2E8F0),
+                                borderRadius: BorderRadius.circular(1),
+                              ),
+                            ),
+                          ),
+                        Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: isActive || isCompleted
+                                ? AppColors.primary
+                                : const Color(0xFFF8FAFC),
+                            shape: BoxShape.circle,
+                            border: isActive || isCompleted
+                                ? null
+                                : Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Icon(
+                            isCompleted
+                                ? Icons.check_rounded
+                                : steps[index]['icon'] as IconData,
+                            color: isActive || isCompleted
+                                ? Colors.white
+                                : const Color(0xFF94A3B8),
+                            size: 14,
+                          ),
+                        ),
+                        if (index < steps.length - 1)
+                          Expanded(
+                            child: Container(
+                              height: 2,
+                              decoration: BoxDecoration(
+                                color: isCompleted
+                                    ? AppColors.primary
+                                    : const Color(0xFFE2E8F0),
+                                borderRadius: BorderRadius.circular(1),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStepPageHeader({
+    required String title,
+    required String subtitle,
+    Widget? trailing,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF0F172A),
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                if (subtitle.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      height: 1.45,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          ?trailing,
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _formFieldDecoration({
+    String? hint,
+    String? helper,
+    String? prefix,
+    String? suffix,
+  }) {
+    const border = OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(10)),
+      borderSide: BorderSide(color: Color(0xFFE2E8F0)),
+    );
+    return InputDecoration(
+      hintText: hint,
+      helperText: helper,
+      helperStyle: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+      prefixText: prefix,
+      suffixText: suffix,
+      filled: true,
+      fillColor: const Color(0xFFFAFBFC),
+      border: border,
+      enabledBorder: border,
+      focusedBorder: border.copyWith(
+        borderSide: BorderSide(
+          color: AppColors.primary.withValues(alpha: 0.55),
+        ),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
     );
   }
 
@@ -1304,9 +1483,7 @@ class _AddProductPageState extends State<AddProductPage> {
         final mainColumn = [
           _buildBasicSectionCard(
             title: isFood ? 'Menü Vitrini' : 'Vitrin Bilgileri',
-            subtitle: isFood
-                ? 'Müşterinin ilk bakışta göreceği adı ve marka bilgisini sade ama güçlü tutun.'
-                : 'Arama sonuçlarında daha iyi görünmek için ürün adını, markayı ve model bilgisini net yazın.',
+            subtitle: 'Ad, marka ve temel tanımlayıcı bilgiler.',
             icon: isFood ? Icons.restaurant_menu : Icons.inventory_2_outlined,
             accentColor: isFood ? const Color(0xFFEA580C) : AppColors.primary,
             child: Column(
@@ -1316,7 +1493,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   label: isFood ? 'Yemek Adı' : 'Ürün Adı',
                   hint: isFood
                       ? 'Örn: Kaşarlı Tavuk Dürüm'
-                      : 'Örn: iPhone 15 Pro Max 256GB Titanyum Mavi',
+                      : 'Ürün adını giriniz',
                   required: true,
                   helperText: isFood
                       ? 'Kısa, net ve iştah açıcı bir isim tercih edin'
@@ -1368,11 +1545,9 @@ class _AddProductPageState extends State<AddProductPage> {
               ],
             ),
           ),
-          const SizedBox(height: 20),
           _buildBasicSectionCard(
             title: 'Kategori Yerleşimi',
-            subtitle:
-                'Doğru kategori seçimi filtrelenme, keşfedilme ve hazır özelliklerin yüklenmesi için kritik.',
+            subtitle: 'Doğru kategori, filtreleme ve hazır özellikler için önemli.',
             icon: Icons.account_tree_outlined,
             accentColor: const Color(0xFF0F766E),
             child: Column(
@@ -1475,59 +1650,52 @@ class _AddProductPageState extends State<AddProductPage> {
               ],
             ),
           ),
-          const SizedBox(height: 20),
           if (isFood) ...[
             _buildBasicSectionCard(
               title: 'Servis Tercihleri',
-              subtitle:
-                  'Müşteri sipariş verirken seçebileceği hızlı tercihleri buradan ekleyin.',
+              subtitle: 'Sipariş sırasında seçilebilecek hızlı tercihler.',
               icon: Icons.tune,
               accentColor: const Color(0xFFEA580C),
               child: _buildAttributesSection(),
             ),
-            const SizedBox(height: 20),
           ],
           _buildBasicSectionCard(
             title: 'Açıklama ve Hikaye',
-            subtitle:
-                'Ürünün ne sunduğunu, neden iyi olduğunu ve ayırt edici detaylarını kısa paragraflarla anlatın.',
+            subtitle: 'Metin ve görsellerle ürün hikayesini anlatın.',
             icon: Icons.notes_outlined,
             accentColor: const Color(0xFF1D4ED8),
             child: Column(
               children: [
-                _buildRichTextEditor(
-                  controller: _longDescController,
-                  label: 'Detaylı Açıklama',
-                  required: true,
+                ProductDescriptionStoryEditor(
+                  key: _storyEditorKey,
+                  blocks: _richDescriptionBlocks,
+                  pendingImages: _descriptionPendingImages,
+                  onUploadImage: _uploadDescriptionStoryImage,
+                  onChanged: _onDescriptionStoryChanged,
                 ),
                 const SizedBox(height: 18),
                 _buildAIDescriptionAssistant(),
               ],
             ),
           ),
-          const SizedBox(height: 20),
           _buildBasicSectionCard(
             title: 'Öne Çıkan Bilgiler',
-            subtitle:
-                'Kullanıcının hızlı tarayacağı kısa madde maddeleri ekleyin.',
+            subtitle: 'Kısa madde maddeleri ekleyin.',
             icon: Icons.format_list_bulleted_outlined,
             accentColor: const Color(0xFF2563EB),
             child: _buildAdditionalInfoSection(),
           ),
-          const SizedBox(height: 20),
           _buildBasicSectionCard(
             title: 'Sıkça Sorulan Sorular',
-            subtitle:
-                'Tekrar eden müşteri sorularını önceden cevaplayarak dönüşümü artırın.',
+            subtitle: 'Sık sorulan soruları önceden yanıtlayın.',
             icon: Icons.quiz_outlined,
             accentColor: const Color(0xFF7C3AED),
             child: _buildFAQSection(),
           ),
           if (!isFood && _selectedMainCategory != null) ...[
-            const SizedBox(height: 20),
             _buildNonFoodAttributeSection(),
           ],
-          const SizedBox(height: 28),
+          const SizedBox(height: 8),
           _buildNavigationButtons(),
         ];
 
@@ -1542,40 +1710,12 @@ class _AddProductPageState extends State<AddProductPage> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildBasicInfoHero(
-              isFood: isFood,
-              categorySummary: categorySummary,
-              subCategorySummary: subCategorySummary,
-              attributeSummary: attributeSummary,
+            _buildStepPageHeader(
+              title: isFood ? 'Menü Bilgileri' : 'Temel Bilgiler',
+              subtitle: isFood
+                  ? 'Menü kartı için temel bilgileri doldurun.'
+                  : 'Ürün adı, kategori ve açıklamayı girin.',
             ),
-            const SizedBox(height: 18),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                _buildBasicInfoSummaryTile(
-                  icon: Icons.category_outlined,
-                  label: 'Kategori',
-                  value: categorySummary,
-                  accentColor: const Color(0xFF0F766E),
-                ),
-                _buildBasicInfoSummaryTile(
-                  icon: Icons.widgets_outlined,
-                  label: 'Alt Kategori',
-                  value: subCategorySummary,
-                  accentColor: const Color(0xFF1D4ED8),
-                ),
-                _buildBasicInfoSummaryTile(
-                  icon: isFood ? Icons.room_service : Icons.fact_check_outlined,
-                  label: isFood ? 'Tercihler' : 'Özellik Sistemi',
-                  value: attributeSummary,
-                  accentColor: isFood
-                      ? const Color(0xFFEA580C)
-                      : AppColors.primary,
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
             if (isWide || !showInlineSidePanel)
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1592,186 +1732,6 @@ class _AddProductPageState extends State<AddProductPage> {
     );
   }
 
-  Widget _buildBasicInfoHero({
-    required bool isFood,
-    required String categorySummary,
-    required String subCategorySummary,
-    required String attributeSummary,
-  }) {
-    final accentColor = isFood
-        ? const Color(0xFFEA580C)
-        : const Color(0xFF1D4ED8);
-    final accentSoft = accentColor.withValues(alpha: 0.10);
-    final title = isFood ? 'Menü Bilgileri' : 'Temel Bilgiler';
-    final subtitle = isFood
-        ? 'Hızlı, sade ve iştah açıcı bir menü kartı oluşturun. İlk adımda kullanıcıya görünen tüm temel bilgileri tamamlayın.'
-        : 'Ürünün başlığını, konumunu ve açıklamasını tek ekranda net şekilde hazırlayın. Doğru bilgiler ürünün daha kolay bulunmasını sağlar.';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [accentSoft, Colors.white, const Color(0xFFF8FAFC)],
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: accentColor.withValues(alpha: 0.18)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 54,
-                height: 54,
-                decoration: BoxDecoration(
-                  color: accentColor,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(
-                  isFood ? Icons.restaurant_menu : Icons.storefront_outlined,
-                  color: Colors.white,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        height: 1.45,
-                        color: Color(0xFF475569),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildHeroPill(
-                icon: Icons.category_outlined,
-                text: categorySummary,
-              ),
-              _buildHeroPill(
-                icon: Icons.widgets_outlined,
-                text: subCategorySummary,
-              ),
-              _buildHeroPill(
-                icon: isFood ? Icons.room_service : Icons.auto_awesome_motion,
-                text: attributeSummary,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeroPill({required IconData icon, required String text}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 15, color: const Color(0xFF475569)),
-          const SizedBox(width: 8),
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF334155),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBasicInfoSummaryTile({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color accentColor,
-  }) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 180, maxWidth: 260),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: accentColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: accentColor, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF64748B),
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildBasicSectionCard({
     required String title,
     required String subtitle,
@@ -1781,35 +1741,20 @@ class _AddProductPageState extends State<AddProductPage> {
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(22),
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.04),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: accentColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: accentColor, size: 20),
-              ),
-              const SizedBox(width: 14),
+              Icon(icon, color: accentColor, size: 18),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1817,26 +1762,28 @@ class _AddProductPageState extends State<AddProductPage> {
                     Text(
                       title,
                       style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
                         color: Color(0xFF0F172A),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        height: 1.45,
-                        color: Color(0xFF64748B),
+                    if (subtitle.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          height: 1.35,
+                          color: Color(0xFF64748B),
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           child,
         ],
       ),
@@ -1879,10 +1826,11 @@ class _AddProductPageState extends State<AddProductPage> {
       children: [
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFF0F172A),
-            borderRadius: BorderRadius.circular(24),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1890,53 +1838,55 @@ class _AddProductPageState extends State<AddProductPage> {
               const Text(
                 'Hızlı Kontrol',
                 style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0F172A),
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 '$completedChecks / ${checks.length} temel alan hazır',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white.withValues(alpha: 0.72),
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF64748B),
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               ClipRRect(
                 borderRadius: BorderRadius.circular(999),
                 child: LinearProgressIndicator(
                   value: progress,
-                  minHeight: 8,
-                  backgroundColor: Colors.white.withValues(alpha: 0.14),
+                  minHeight: 6,
+                  backgroundColor: const Color(0xFFE2E8F0),
                   valueColor: const AlwaysStoppedAnimation<Color>(
-                    Color(0xFF38BDF8),
+                    AppColors.primary,
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               ...checks.map(
                 (item) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: Row(
                     children: [
                       Icon(
                         item.done
-                            ? Icons.check_circle
+                            ? Icons.check_circle_rounded
                             : Icons.radio_button_unchecked,
-                        size: 16,
+                        size: 15,
                         color: item.done
-                            ? const Color(0xFF22C55E)
-                            : Colors.white.withValues(alpha: 0.40),
+                            ? const Color(0xFF16A34A)
+                            : const Color(0xFFCBD5E1),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           item.label,
                           style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white.withValues(alpha: 0.88),
+                            fontSize: 11,
+                            color: item.done
+                                ? const Color(0xFF334155)
+                                : const Color(0xFF94A3B8),
                           ),
                         ),
                       ),
@@ -1947,13 +1897,13 @@ class _AddProductPageState extends State<AddProductPage> {
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
           child: Column(
@@ -1962,8 +1912,8 @@ class _AddProductPageState extends State<AddProductPage> {
               const Text(
                 'Yayın Kalitesi',
                 style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
                   color: Color(0xFF0F172A),
                 ),
               ),
@@ -2148,7 +2098,7 @@ class _AddProductPageState extends State<AddProductPage> {
             return const DynamicCategoryAttributeForm(
               title: 'Kategoriye Özel Özellikler',
               subtitle:
-                  'Bu alanlar seçilen alt kategoriye göre hazır gelir. Sadece değer girmeniz yeterlidir.',
+                  'Hazır alanlara değer seçebilir veya elle yazabilirsiniz. İhtiyaç duyarsanız ek özellik ekleyin.',
             );
           }
 
@@ -2540,18 +2490,13 @@ class _AddProductPageState extends State<AddProductPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          isFood ? 'Fiyatlandirma ve Stok' : 'Fiyatlandirma ve Stok',
-          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        _buildStepPageHeader(
+          title: 'Fiyatlandırma ve Stok',
+          subtitle: isFood
+              ? 'Porsiyon, kilo ve boyut fiyatlarını yönetin.'
+              : 'Fiyat, stok ve vergi bilgilerini girin.',
         ),
-        const SizedBox(height: 8),
-        Text(
-          isFood
-              ? 'Porsiyon, kilo ve boyut fiyatlarini tek panelden yonetin.'
-              : 'Fiyat, stok ve vergi bilgilerini girin',
-          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 20),
+        if (isFood) ...<Widget>[
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(18),
@@ -2905,6 +2850,133 @@ class _AddProductPageState extends State<AddProductPage> {
             ],
           ),
         ),
+        ] else ...<Widget>[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildPricingGroupCard(
+                  title: 'Satış fiyatı',
+                  subtitle: 'Ürünün liste fiyatı, indirim ve vergi bilgileri.',
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _buildTextField(
+                          controller: _portionPriceController,
+                          label: 'Satış Fiyatı',
+                          hint: '0',
+                          prefix: '₺',
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) => setState(() {}),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            ThousandsSeparatorInputFormatter(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _buildTextField(
+                          controller: _discountPriceController,
+                          label: 'İndirimli Fiyat',
+                          hint: 'Opsiyonel',
+                          prefix: '₺',
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) => setState(() {}),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            ThousandsSeparatorInputFormatter(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _buildDropdownField(
+                          label: 'KDV Oranı',
+                          value: _selectedVatRate,
+                          items: const <String>['%1', '%8', '%18', '%20'],
+                          onChanged: (value) {
+                            setState(() {
+                              _selectedVatRate = value!;
+                            });
+                          },
+                          required: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _buildTextField(
+                        controller: _skuController,
+                        label: 'SKU',
+                        hint: 'Stok kodu',
+                        onChanged: (value) => setState(() {}),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildTextField(
+                        controller: _barcodeController,
+                        label: 'Barkod',
+                        hint: 'EAN / UPC',
+                        onChanged: (value) => setState(() {}),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildTextField(
+                        controller: _warrantyMonthsController,
+                        label: 'Garanti Süresi',
+                        hint: '24',
+                        suffix: 'ay',
+                        keyboardType: TextInputType.number,
+                        onChanged: (value) => setState(() {}),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildDropdownField(
+                        label: 'Para Birimi',
+                        value: _selectedCurrency,
+                        items: const <String>['TRY', 'USD', 'EUR'],
+                        onChanged: (value) {
+                          setState(() {
+                            _selectedCurrency = value!;
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Varyant bazlı fiyat/stok için Varyant adımını kullanın. Kargo ağırlığı ve boyutları Kargo adımında girilir.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
 
         const SizedBox(height: 24),
 
@@ -3164,39 +3236,27 @@ class _AddProductPageState extends State<AddProductPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Ürün Görselleri',
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        _buildStepPageHeader(
+          title: 'Ürün Görselleri',
+          subtitle: 'En az 1, en fazla 8 görsel ekleyebilirsiniz.',
         ),
-        const SizedBox(height: 8),
-        Text(
-          'En az 1, en fazla 8 görsel ekleyebilirsiniz',
-          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 24),
-
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.blue.shade50,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.blue.shade200),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.tips_and_updates, color: Colors.blue.shade700),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'İlk görsel ana görsel olarak kullanılacaktır. Beyaz arka planlı, yüksek çözünürlüklü görseller kullanın.',
-                  style: TextStyle(fontSize: 12, color: Colors.blue.shade900),
-                ),
-              ),
-            ],
+        _buildBasicSectionCard(
+          title: 'Görsel Kuralları',
+          subtitle: 'Önerilen boyut ve format bilgileri.',
+          icon: Icons.info_outline,
+          accentColor: const Color(0xFF2563EB),
+          child: Text(
+            'Önerilen: ${ProductImageFormatHelper.recommendedSize}×${ProductImageFormatHelper.recommendedSize} px kare\n'
+            'Min: ${ProductImageFormatHelper.minSize}×${ProductImageFormatHelper.minSize} px · '
+            'Max: ${ProductImageFormatHelper.maxSize}×${ProductImageFormatHelper.maxSize} px\n'
+            'Formatlar: JPG, PNG, WebP · Seçimden sonra kırpma ekranı açılır.',
+            style: const TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: Color(0xFF475569),
+            ),
           ),
         ),
-
-        const SizedBox(height: 24),
 
         Wrap(
           spacing: 16,
@@ -3205,16 +3265,20 @@ class _AddProductPageState extends State<AddProductPage> {
             ...List.generate(_existingImageUrls.length, (index) {
               return _buildImageUploadBox(
                 index: null,
+                existingUrlIndex: index,
                 isMain: index == 0 && _productImages.every((x) => x == null),
                 imageFile: null,
                 imageUrl: _existingImageUrls[index],
-                onRemoveExisting: () =>
-                    setState(() => _existingImageUrls.removeAt(index)),
+                onRemoveExisting: () => setState(() {
+                  _existingImageUrls.removeAt(index);
+                  _productImagePreviewVersion++;
+                }),
               );
             }),
             ...List.generate(8, (index) {
               return _buildImageUploadBox(
                 index: index,
+                existingUrlIndex: null,
                 isMain: _existingImageUrls.isEmpty && index == 0,
                 imageFile: _productImages[index],
                 imageUrl: null,
@@ -3223,50 +3287,51 @@ class _AddProductPageState extends State<AddProductPage> {
           ],
         ),
 
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
 
         Row(
           children: [
             Expanded(
               child: OutlinedButton.icon(
                 onPressed: _pickMultipleImages,
-                icon: const Icon(Icons.upload_file, size: 18),
+                icon: const Icon(Icons.upload_file, size: 16),
                 label: const Text('Toplu Yükleme'),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.auto_fix_high, size: 18),
-                label: const Text('Arka Plan Sil (AI)'),
+                onPressed: _openPrimaryImageEditor,
+                icon: const Icon(Icons.auto_fix_high, size: 16),
+                label: const Text('Arka Plan Sil'),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ),
           ],
         ),
 
-        const SizedBox(height: 32),
+        const SizedBox(height: 24),
 
-        // --- Video Ekleme Alanı ---
-        const Text(
-          'Ürün Tanıtım Videosu',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        _buildBasicSectionCard(
+          title: 'Ürün Tanıtım Videosu',
+          subtitle: 'Maks. 30 sn, 720p optimize. Opsiyonel.',
+          icon: Icons.videocam_outlined,
+          accentColor: AppColors.primary,
+          child: _buildVideoSelectionPanel(),
         ),
+
         const SizedBox(height: 8),
-        Text(
-          'Maksimum 30 saniye. Upload öncesi 720p (H264/AAC) optimize edilir. (Opsiyonel)',
-          style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 16),
-        _buildVideoSelectionPanel(),
-
-        const SizedBox(height: 32),
         _buildNavigationButtons(),
       ],
     );
@@ -3531,49 +3596,32 @@ class _AddProductPageState extends State<AddProductPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    variantTitle,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    variantSubtitle,
-                    style: const TextStyle(fontSize: 14, color: Colors.grey),
-                  ),
-                ],
+        _buildStepPageHeader(
+          title: variantTitle,
+          subtitle: variantSubtitle,
+          trailing: ElevatedButton.icon(
+            onPressed: _addVariant,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Ekle'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
             ),
-            ElevatedButton.icon(
-              onPressed: _addVariant,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Ekle'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ],
+          ),
         ),
-
-        const SizedBox(height: 24),
 
         if (_variants.isEmpty)
           Container(
-            padding: const EdgeInsets.all(32),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
             decoration: BoxDecoration(
-              border: Border.all(
-                color: Colors.grey.shade300,
-                style: BorderStyle.solid,
-              ),
+              color: const Color(0xFFFAFBFC),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Center(
@@ -3622,16 +3670,10 @@ class _AddProductPageState extends State<AddProductPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Servis ve Hazırlık Bilgileri',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          _buildStepPageHeader(
+            title: 'Servis ve Hazırlık Bilgileri',
+            subtitle: 'Servis tipi ve hazırlık süresini belirleyin.',
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Müşterilerin sipariş verirken göreceği servis ve süre bilgilerini tanımlayın',
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 32),
           _buildDropdownField(
             label: 'Servis Tipi',
             items: _dropdownItems(_serviceTypeOptions, _selectedServiceType),
@@ -3656,21 +3698,16 @@ class _AddProductPageState extends State<AddProductPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Kargo ve Boyut Bilgileri',
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        _buildStepPageHeader(
+          title: 'Kargo ve Boyut Bilgileri',
+          subtitle: 'Ürün boyutları ve kargo seçeneklerini girin.',
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Ürün boyutları ve kargo seçeneklerini girin',
-          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 32),
 
         Row(
           children: [
             Expanded(
               child: _buildTextField(
+                controller: _cargoWeightController,
                 label: 'Ağırlık',
                 hint: '0.0',
                 suffix: 'kg',
@@ -3680,6 +3717,7 @@ class _AddProductPageState extends State<AddProductPage> {
             const SizedBox(width: 16),
             Expanded(
               child: _buildTextField(
+                controller: _cargoWidthController,
                 label: 'En',
                 hint: '0',
                 suffix: 'cm',
@@ -3689,6 +3727,7 @@ class _AddProductPageState extends State<AddProductPage> {
             const SizedBox(width: 16),
             Expanded(
               child: _buildTextField(
+                controller: _cargoLengthController,
                 label: 'Boy',
                 hint: '0',
                 suffix: 'cm',
@@ -3698,6 +3737,7 @@ class _AddProductPageState extends State<AddProductPage> {
             const SizedBox(width: 16),
             Expanded(
               child: _buildTextField(
+                controller: _cargoHeightController,
                 label: 'Yükseklik',
                 hint: '0',
                 suffix: 'cm',
@@ -3787,6 +3827,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
   Widget _buildImageUploadBox({
     required int? index,
+    required int? existingUrlIndex,
     required bool isMain,
     XFile? imageFile,
     String? imageUrl,
@@ -3794,17 +3835,17 @@ class _AddProductPageState extends State<AddProductPage> {
   }) {
     final hasImage = imageFile != null || imageUrl != null;
     return GestureDetector(
-      onTap: index != null ? () => _pickImage(index) : null,
+      onTap: index != null && !hasImage ? () => _pickImage(index) : null,
       child: Container(
         width: 140,
         height: 140,
         decoration: BoxDecoration(
           border: Border.all(
-            color: isMain ? AppColors.primary : Colors.grey.shade300,
-            width: isMain ? 2 : 1,
+            color: isMain ? AppColors.primary : const Color(0xFFE2E8F0),
+            width: isMain ? 1.5 : 1,
           ),
-          borderRadius: BorderRadius.circular(12),
-          color: hasImage ? Colors.white : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(10),
+          color: hasImage ? Colors.white : const Color(0xFFFAFBFC),
         ),
         child: hasImage
             ? Stack(
@@ -3812,36 +3853,62 @@ class _AddProductPageState extends State<AddProductPage> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(11),
                     child: imageFile != null
-                        ? Image(
-                            image: xFileImageProvider(imageFile),
+                        ? ProductListThumbnail(
+                            imageFile: imageFile,
                             width: 140,
                             height: 140,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) =>
-                                const Icon(Icons.image_outlined, size: 40),
+                            borderRadius: BorderRadius.circular(11),
+                            padding: const EdgeInsets.all(8),
+                            fallbackIconSize: 40,
                           )
-                        : OptimizedImage(
-                            imageUrlOrPath: imageUrl!,
+                        : ProductListThumbnail(
+                            imageUrlOrPath: imageUrl,
                             width: 140,
                             height: 140,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) =>
-                                const Icon(Icons.image_outlined, size: 40),
+                            borderRadius: BorderRadius.circular(11),
+                            padding: const EdgeInsets.all(8),
+                            fallbackIconSize: 40,
                           ),
                   ),
                   Positioned(
                     top: 4,
                     right: 4,
-                    child: IconButton(
-                      onPressed: imageUrl != null
-                          ? onRemoveExisting
-                          : (index != null ? () => _removeImage(index) : null),
-                      icon: const Icon(Icons.close, size: 18),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.black54,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.all(4),
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Düzenle',
+                          onPressed: () => _openProductImageEditor(
+                            productImageIndex: index,
+                            existingUrlIndex: existingUrlIndex,
+                            imageFile: imageFile,
+                            imageUrl: imageUrl,
+                          ),
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          style: IconButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.all(4),
+                            minimumSize: const Size(28, 28),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: 'Sil',
+                          onPressed: imageUrl != null
+                              ? onRemoveExisting
+                              : (index != null
+                                    ? () => _removeImage(index)
+                                    : null),
+                          icon: const Icon(Icons.close, size: 16),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black54,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.all(4),
+                            minimumSize: const Size(28, 28),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   if (isMain)
@@ -4078,7 +4145,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Ürün sayfasında ana ürünün yanında göstermek istediğiniz en fazla 2 kendi ürününüzü seçin.',
+                      'Ürün sayfasında ana ürünün yanında göstermek istediğiniz en fazla 5 kendi ürününüzü seçin.',
                       style: TextStyle(
                         fontSize: 13,
                         color: Colors.grey.shade700,
@@ -4098,7 +4165,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  '${_selectedAccessoryIds.length}/2 seçildi',
+                  '${_selectedAccessoryIds.length}/5 seçildi',
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -4190,13 +4257,15 @@ class _AddProductPageState extends State<AddProductPage> {
               clipBehavior: Clip.antiAlias,
               child: imageUrl.isEmpty
                   ? Icon(Icons.image_outlined, color: Colors.grey.shade400)
-                  : OptimizedImage(
+                  : ProductListThumbnail(
                       imageUrlOrPath: imageUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Icon(
-                        Icons.image_outlined,
-                        color: Colors.grey.shade400,
-                      ),
+                      width: 72,
+                      height: 72,
+                      borderRadius: BorderRadius.circular(12),
+                      padding: const EdgeInsets.all(6),
+                      cacheWidth: 144,
+                      cacheHeight: 144,
+                      fallbackIconSize: 28,
                     ),
             ),
             const SizedBox(width: 12),
@@ -4305,16 +4374,11 @@ class _AddProductPageState extends State<AddProductPage> {
           keyboardType: keyboardType,
           onChanged: onChanged,
           inputFormatters: inputFormatters,
-          decoration: InputDecoration(
-            hintText: hint,
-            helperText: helperText,
-            prefixText: prefix,
-            suffixText: suffix,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 12,
-            ),
+          decoration: _formFieldDecoration(
+            hint: hint,
+            helper: helperText,
+            prefix: prefix,
+            suffix: suffix,
           ),
         ),
       ],
@@ -4343,11 +4407,11 @@ class _AddProductPageState extends State<AddProductPage> {
         ),
         const SizedBox(height: 8),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
           decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey.shade400),
-            borderRadius: BorderRadius.circular(8),
-            color: Colors.grey.shade100,
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            borderRadius: BorderRadius.circular(10),
+            color: const Color(0xFFF1F5F9),
           ),
           child: Row(
             children: [
@@ -4487,7 +4551,50 @@ class _AddProductPageState extends State<AddProductPage> {
             style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
           ),
         ],
+        if (_selectedMainCategory != null) ...[
+          const SizedBox(height: 8),
+          _buildCustomSubCategoryAction(suggestions),
+        ],
       ],
+    );
+  }
+
+  Widget _buildCustomSubCategoryAction(List<String> suggestions) {
+    final String typed = _subCategoryController.text.trim();
+    if (typed.isEmpty) return const SizedBox.shrink();
+    final bool exists = suggestions.any(
+      (String item) =>
+          _normalizeSubCategoryName(item) == _normalizeSubCategoryName(typed),
+    );
+    if (exists) return const SizedBox.shrink();
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ActionChip(
+        avatar: const Icon(Icons.add, size: 16),
+        label: Text('"$typed" yeni alt kategori olarak ekle'),
+        onPressed: () async {
+          final sellerId = _storeService.currentUserId;
+          final mainCategory =
+              (_selectedMainCategory ?? _storeMainCategory ?? '').trim();
+          if (sellerId == null || mainCategory.isEmpty) return;
+          final created = await _storeService.ensureStoreSubCategory(
+            sellerId: sellerId,
+            mainCategory: mainCategory,
+            name: typed,
+          );
+          if (!mounted) return;
+          setState(() {
+            _selectedSubCategory = typed;
+            _selectedSubCategoryId = created?.id;
+          });
+          await _loadStoreSubCategories(mainCategory: mainCategory);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Alt kategori kaydedildi: $typed')),
+          );
+        },
+      ),
     );
   }
 
@@ -4553,7 +4660,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     initialValue: row['value'] ?? '',
                     onChanged: (v) => _nonFoodAttributeRows[index]['value'] = v,
                     decoration: InputDecoration(
-                      hintText: 'Örn: 1 Yıl',
+                      hintText: 'Değer giriniz',
                       filled: true,
                       fillColor: Colors.white,
                       border: OutlineInputBorder(
@@ -4614,21 +4721,24 @@ class _AddProductPageState extends State<AddProductPage> {
       _nonFoodAttributeRows = [];
       return;
     }
-    if (_selectedMainCategory == 'Elektronik') {
+    final template = subCategoryAttributeTemplate(
+      _selectedMainCategory ?? _storeMainCategory,
+      _selectedSubCategory ?? _subCategoryController.text,
+    );
+    if (template.isNotEmpty) {
+      _nonFoodAttributeRows = template
+          .map((String key) => <String, String>{'key': key, 'value': ''})
+          .toList(growable: true);
+      return;
+    }
+    if (_selectedMainCategory == 'Elektronik' &&
+        _nonFoodAttributeRows.isEmpty) {
       _nonFoodAttributeRows = [
-        {'key': 'Dahili Hafıza', 'value': '64 GB'},
-        {'key': 'Kozmetik Durum', 'value': 'B seviye-Çok İyi'},
-        {'key': 'Garanti Süresi', 'value': '1 Yıl'},
-        {'key': 'Pil Gücü (mAh)', 'value': '2800 ve üstü'},
-        {'key': 'Ana Kamera Çözünürlük Aralığı', 'value': '10 - 15 MP'},
-        {'key': 'Garanti Tipi', 'value': 'Yenilenmiş Ürün (12 Ay Garanti)'},
-        {'key': 'Renk', 'value': 'Beyaz'},
-        {'key': 'Ekran Boyutu', 'value': '6,8 inç'},
-        {'key': 'Kamera Çözünürlüğü', 'value': '10 - 15 MP'},
-        {'key': 'RAM Kapasitesi', 'value': '3 GB'},
-        {'key': 'Batarya Kapasitesi Aralığı', 'value': '2000-3000 mAh'},
-        {'key': 'Menşei', 'value': 'TR'},
-        {'key': 'Cep Telefonu Modeli', 'value': 'iPhone 11'},
+        {'key': 'Dahili Hafıza', 'value': ''},
+        {'key': 'RAM Kapasitesi', 'value': ''},
+        {'key': 'Ekran Boyutu', 'value': ''},
+        {'key': 'Garanti Süresi', 'value': ''},
+        {'key': 'Renk', 'value': ''},
       ];
       return;
     }
@@ -4644,10 +4754,7 @@ class _AddProductPageState extends State<AddProductPage> {
       return _productAttributes;
     }
     if (_attributeFormProvider.hasDefinitions) {
-      final attributeLines = _attributeFormProvider.attributeLines();
-      if (attributeLines.isNotEmpty) {
-        return attributeLines;
-      }
+      return _attributeFormProvider.attributeLines();
     }
     final rows = _nonFoodAttributeRows
         .map(
@@ -4735,11 +4842,189 @@ class _AddProductPageState extends State<AddProductPage> {
         foodSpecs['serviceTime'] = serviceTime;
       }
 
+      _applyRichDescriptionToSpecifications(foodSpecs);
+
       return foodSpecs.isEmpty ? null : jsonEncode(foodSpecs);
     }
     final values = _finalStructuredAttributesMap();
-    if (values.isEmpty) return null;
-    return jsonEncode(values);
+    final specs = Map<String, dynamic>.from(_nonFoodSpecificationSeed);
+    if (values.isNotEmpty) {
+      specs['attributes'] = values;
+    }
+
+    final double? weightKg =
+        parseBulkImportFlexibleDouble(_cargoWeightController.text);
+    final double? widthCm =
+        parseBulkImportFlexibleDouble(_cargoWidthController.text);
+    final double? lengthCm =
+        parseBulkImportFlexibleDouble(_cargoLengthController.text);
+    final double? heightCm =
+        parseBulkImportFlexibleDouble(_cargoHeightController.text);
+
+    if (weightKg != null) specs['weightKg'] = weightKg;
+    if (widthCm != null) specs['widthCm'] = widthCm;
+    if (lengthCm != null) specs['lengthCm'] = lengthCm;
+    if (heightCm != null) specs['heightCm'] = heightCm;
+
+    final bool freeShipping = _selectedShippingOption == 'Ücretsiz Kargo';
+    specs['freeShipping'] = freeShipping;
+    specs['cargo'] = <String, dynamic>{
+      'weightKg': weightKg,
+      'widthCm': widthCm,
+      'lengthCm': lengthCm,
+      'heightCm': heightCm,
+      'shippingProfile': specs['shippingProfile'],
+      'freeShipping': freeShipping,
+    };
+
+    _applyRichDescriptionToSpecifications(specs);
+
+    if (specs.isEmpty) return null;
+    return jsonEncode(specs);
+  }
+
+  void _applyRichDescriptionToSpecifications(Map<String, dynamic> specs) {
+    applyDescriptionStoryToSpecifications(specs, _richDescriptionBlocks);
+  }
+
+  void _onDescriptionStoryChanged(List<ProductRichDescriptionBlock> blocks) {
+    _richDescriptionBlocks = List<ProductRichDescriptionBlock>.from(blocks);
+    _longDescController.text = storyDescriptionPlainText(_richDescriptionBlocks);
+  }
+
+  void _syncStoryBlocksFromEditor() {
+    final ProductDescriptionStoryEditorState? editorState =
+        _storyEditorKey.currentState;
+    if (editorState == null) return;
+    _richDescriptionBlocks = editorState.captureBlocksForSave();
+    _longDescController.text = storyDescriptionPlainText(_richDescriptionBlocks);
+  }
+
+  String _productIdForDescriptionUploads() {
+    return widget.productId ?? _localDraftProductId ?? _faqDraftProductId ?? '';
+  }
+
+  Future<String?> _uploadDescriptionStoryImage(
+    Uint8List bytes,
+    String fileName,
+  ) async {
+    final String pendingKey =
+        'pending_${DateTime.now().millisecondsSinceEpoch}';
+    final String productId = _productIdForDescriptionUploads();
+    if (productId.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _descriptionPendingImages[pendingKey] = bytes;
+        });
+      } else {
+        _descriptionPendingImages[pendingKey] = bytes;
+      }
+      return pendingKey;
+    }
+    try {
+      return await _storeService.uploadProductDescriptionImage(
+        productId,
+        bytes,
+        fileName,
+      );
+    } catch (error) {
+      if (mounted) {
+        _showError(
+          'Açıklama görseli yüklenemedi. Storage izinlerini kontrol edin.',
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<List<ProductRichDescriptionBlock>> _prepareDescriptionStoryForSave(
+    String productId,
+  ) async {
+    _localDraftProductId ??= productId;
+    _syncStoryBlocksFromEditor();
+
+    final List<ProductRichDescriptionBlock> resolved =
+        <ProductRichDescriptionBlock>[];
+    for (final ProductRichDescriptionBlock block in _richDescriptionBlocks) {
+      if (!block.isImage) {
+        resolved.add(block);
+        continue;
+      }
+      final String url = block.url?.trim() ?? '';
+      if (isPendingStoryImageUrl(url)) {
+        final Uint8List? bytes = _descriptionPendingImages[url];
+        if (bytes == null) {
+          throw Exception(
+            'Açıklama görseli yüklenemedi. Lütfen görseli tekrar ekleyin.',
+          );
+        }
+        try {
+          final String uploaded =
+              await _storeService.uploadProductDescriptionImage(
+            productId,
+            bytes,
+            '$url.jpg',
+          );
+          resolved.add(block.copyWith(url: uploaded));
+          _descriptionPendingImages.remove(url);
+        } catch (_) {
+          throw Exception(
+            'Açıklama görseli yüklenemedi. Storage izinlerini kontrol edin.',
+          );
+        }
+        continue;
+      }
+      if (isPersistableStoryImageUrl(url)) {
+        resolved.add(block);
+      }
+    }
+    return normalizeStoryBlocks(resolved);
+  }
+
+  void _hydrateCargoFieldsFromSpecifications() {
+    if (_isFoodCategory) {
+      return;
+    }
+
+    final Map<String, dynamic> specs = _nonFoodSpecificationSeed;
+    _cargoWeightController.text = _formatCargoNumber(
+      readSpecificationCargoDouble(specs, 'weightKg'),
+    );
+    _cargoWidthController.text = _formatCargoNumber(
+      readSpecificationCargoDouble(specs, 'widthCm'),
+    );
+    _cargoLengthController.text = _formatCargoNumber(
+      readSpecificationCargoDouble(specs, 'lengthCm'),
+    );
+    _cargoHeightController.text = _formatCargoNumber(
+      readSpecificationCargoDouble(specs, 'heightCm'),
+    );
+
+    final dynamic cargo = specs['cargo'];
+    final String? profile = specs['shippingProfile']?.toString().trim().isNotEmpty ==
+            true
+        ? specs['shippingProfile']?.toString()
+        : (cargo is Map ? cargo['shippingProfile']?.toString() : null);
+    final bool freeShipping = specs['freeShipping'] == true ||
+        specs['freeShipping']?.toString().toLowerCase() == 'true' ||
+        (cargo is Map &&
+            (cargo['freeShipping'] == true ||
+                cargo['freeShipping']?.toString().toLowerCase() == 'true'));
+
+    _selectedShippingOption = mapBulkImportShippingProfileToUiOption(
+      profile: profile,
+      freeShipping: freeShipping,
+    );
+  }
+
+  String _formatCargoNumber(double? value) {
+    if (value == null) {
+      return '';
+    }
+    if (value % 1 == 0) {
+      return value.toInt().toString();
+    }
+    return value.toString();
   }
 
   Future<void> _persistStructuredProductAttributes(String productId) async {
@@ -5088,13 +5373,7 @@ class _AddProductPageState extends State<AddProductPage> {
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           initialValue: value,
-          decoration: InputDecoration(
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 12,
-            ),
-          ),
+          decoration: _formFieldDecoration(),
           items: items
               .map((item) => DropdownMenuItem(value: item, child: Text(item)))
               .toList(),
@@ -5102,95 +5381,6 @@ class _AddProductPageState extends State<AddProductPage> {
           hint: const Text('Seçiniz'),
         ),
       ],
-    );
-  }
-
-  Widget _buildRichTextEditor({
-    required TextEditingController controller,
-    required String label,
-    bool required = false,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              label,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-            if (required)
-              const Text(
-                ' *',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.red,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey.shade300),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            children: [
-              // Toolbar
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  border: Border(
-                    bottom: BorderSide(color: Colors.grey.shade300),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    _buildEditorButton(Icons.format_bold, 'Kalın'),
-                    _buildEditorButton(Icons.format_italic, 'İtalik'),
-                    _buildEditorButton(Icons.format_list_bulleted, 'Liste'),
-                    _buildEditorButton(
-                      Icons.format_list_numbered,
-                      'Numaralı Liste',
-                    ),
-                    const Spacer(),
-                    Text(
-                      '${controller.text.length} karakter',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Text Area
-              TextField(
-                controller: controller,
-                maxLines: 8,
-                decoration: const InputDecoration(
-                  hintText: 'Ürününüzü detaylı olarak tanıtın...',
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.all(12),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEditorButton(IconData icon, String tooltip) {
-    return IconButton(
-      onPressed: () {},
-      icon: Icon(icon, size: 18),
-      tooltip: tooltip,
-      padding: const EdgeInsets.all(4),
-      constraints: const BoxConstraints(),
     );
   }
 
@@ -5249,37 +5439,54 @@ class _AddProductPageState extends State<AddProductPage> {
     final canContinue = _currentStep == 1
         ? _validatePricingStep(showErrors: false)
         : true;
-    return Row(
-      children: [
-        if (_currentStep > 0)
-          OutlinedButton(
-            onPressed: () {
-              setState(() {
-                _currentStep--;
-              });
-            },
-            child: const Text('Geri'),
-          ),
-        const Spacer(),
-        if (!isLastStep)
-          ElevatedButton(
-            onPressed: canContinue
-                ? () {
-                    if (_validateCurrentStep()) {
-                      setState(() {
-                        _currentStep++;
-                      });
-                    }
-                  }
-                : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: 16),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+      ),
+      child: Row(
+        children: [
+          if (_currentStep > 0)
+            OutlinedButton(
+              onPressed: () {
+                setState(() {
+                  _currentStep--;
+                });
+              },
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text('Geri'),
             ),
-            child: const Text('Devam Et'),
-          ),
-      ],
+          const Spacer(),
+          if (!isLastStep)
+            ElevatedButton(
+              onPressed: canContinue
+                  ? () {
+                      if (_validateCurrentStep()) {
+                        setState(() {
+                          _currentStep++;
+                        });
+                      }
+                    }
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text('Devam Et'),
+            ),
+        ],
+      ),
     );
   }
 
@@ -5368,34 +5575,31 @@ class _AddProductPageState extends State<AddProductPage> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
             'Ürün Önizleme',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF0F172A),
+            ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Container(
             width: double.infinity,
-            height: 200,
+            height: 180,
             decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8),
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
             ),
-            child: _productImages[0] != null
-                ? Image(
-                    image: xFileImageProvider(_productImages[0]!),
-                    fit: BoxFit.cover,
-                  )
-                : const Icon(
-                    Icons.image_outlined,
-                    size: 48,
-                    color: Colors.grey,
-                  ),
+            clipBehavior: Clip.antiAlias,
+            child: _buildPreviewPrimaryImage(),
           ),
           const SizedBox(height: 12),
           Text(
@@ -5464,9 +5668,9 @@ class _AddProductPageState extends State<AddProductPage> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.green.shade50,
+        color: const Color(0xFFFAFBFC),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.green.shade200),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5475,13 +5679,17 @@ class _AddProductPageState extends State<AddProductPage> {
             children: [
               Icon(
                 Icons.account_balance_wallet_outlined,
-                color: Colors.green.shade700,
-                size: 20,
+                color: AppColors.primary,
+                size: 18,
               ),
               const SizedBox(width: 8),
               const Text(
                 'Kazanç Hesaplayıcı',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0F172A),
+                ),
               ),
             ],
           ),
@@ -5516,18 +5724,22 @@ class _AddProductPageState extends State<AddProductPage> {
             label,
             style: TextStyle(
               fontSize: isTotal ? 13 : 12,
-              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
-              color: isTotal ? Colors.green.shade900 : Colors.grey.shade700,
+              fontWeight: isTotal ? FontWeight.w700 : FontWeight.w500,
+              color: isTotal
+                  ? const Color(0xFF0F172A)
+                  : const Color(0xFF64748B),
             ),
           ),
           Text(
             '${isDeduction ? '-' : ''}₺${amount.toStringAsFixed(2)}',
             style: TextStyle(
               fontSize: isTotal ? 14 : 12,
-              fontWeight: isTotal ? FontWeight.bold : FontWeight.w600,
+              fontWeight: isTotal ? FontWeight.w700 : FontWeight.w600,
               color: isTotal
-                  ? Colors.green.shade900
-                  : (isDeduction ? Colors.red.shade700 : Colors.grey.shade900),
+                  ? AppColors.primary
+                  : (isDeduction
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF334155)),
             ),
           ),
         ],
@@ -5539,24 +5751,28 @@ class _AddProductPageState extends State<AddProductPage> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.blue.shade50,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.blue.shade200),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
               Icon(
                 Icons.lightbulb_outline,
-                color: Colors.blue.shade700,
-                size: 20,
+                color: Color(0xFF64748B),
+                size: 18,
               ),
-              const SizedBox(width: 8),
-              const Text(
+              SizedBox(width: 8),
+              Text(
                 'İpuçları',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0F172A),
+                ),
               ),
             ],
           ),
@@ -5575,12 +5791,16 @@ class _AddProductPageState extends State<AddProductPage> {
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          Icon(Icons.check_circle, size: 16, color: Colors.blue.shade600),
+          const Icon(
+            Icons.check_circle_outline,
+            size: 15,
+            color: Color(0xFF94A3B8),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               text,
-              style: TextStyle(fontSize: 12, color: Colors.blue.shade900),
+              style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
             ),
           ),
         ],
@@ -5590,91 +5810,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
   // Helper Methods
   List<String> _legacySubCategories(String? mainCategory) {
-    if (mainCategory == null) return const <String>[];
-
-    const Map<String, List<String>> subCategories = <String, List<String>>{
-      'Elektronik': [
-        'Telefonlar',
-        'Laptop & Tablet',
-        'Televizyon',
-        'Gaming',
-        'Oyuncu Ekipmanları',
-        'Telefon Aksesuarları',
-        'Oyun Konsolları',
-      ],
-      'Spor & Outdoor': [
-        'Spor Giyim',
-        'Fitness',
-        'Outdoor',
-        'Sporcu Besinleri',
-        'Kamp & Kampçılık',
-        'Bisiklet',
-      ],
-      'Giyim & Aksesuar': [
-        'Kadın Giyim',
-        'Erkek Giyim',
-        'Çocuk Giyim',
-        'Ayakkabı',
-        'Çanta',
-        'Saat & Aksesuar',
-      ],
-      'Anne & Bebek & Oyuncak': [
-        'Bebek Giyim',
-        'Bebek Bakım',
-        'Oyuncak',
-        'Bebek Arabası',
-        'Bebek Beslenme',
-      ],
-      'Kozmetik & Kişisel Bakım': [
-        'Cilt Bakım',
-        'Makyaj',
-        'Parfüm',
-        'Saç Bakım',
-        'Kişisel Bakım',
-        'Erkek Bakım',
-      ],
-      'Ev & Yaşam': [
-        'Mobilya',
-        'Dekorasyon',
-        'Mutfak',
-        'Banyo',
-        'Bahçe',
-        'Aydınlatma',
-        'Ev Tekstili',
-      ],
-      'Süpermarket & Petshop': [
-        'Gıda',
-        'İçecek',
-        'Temizlik',
-        'Petshop',
-        'Bebek Ürünleri',
-      ],
-      'Kitap & Hobi': [
-        'Kitap',
-        'Müzik & Film',
-        'Hobi & Oyun',
-        'Kırtasiye',
-        'Sanat',
-      ],
-      '2.el Ürünler': [
-        '2.el Elektronik',
-        '2.el Giyim',
-        '2.el Mobilya',
-        '2.el Kitap',
-        'Diğer',
-      ],
-      'Yemek': [
-        'Ana Yemek',
-        'Çorba',
-        'Salata',
-        'Tatlı',
-        'İçecek',
-        'Atıştırmalık',
-        'Kahvaltı',
-        'Diğer',
-      ],
-    };
-    return subCategories[mainCategory] ?? const <String>[];
+    return sellerProductSubCategoriesFor(mainCategory);
   }
 
   String _normalizeSubCategoryName(String value) {
@@ -5766,59 +5902,127 @@ class _AddProductPageState extends State<AddProductPage> {
   Future<XFile?> _pickSingleImageFile() async {
     final picked = await pickImageFile();
     if (picked == null) return null;
+    final ProductImageInputValidation validation = validateProductImageInput(
+      bytes: picked.bytes,
+      fileName: picked.name,
+    );
+    if (!validation.isValid) {
+      if (mounted) {
+        _showError(validation.errorMessage ?? 'Görsel seçilemedi.');
+      }
+      return null;
+    }
+    if (validation.lowResolutionWarning != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(validation.lowResolutionWarning!)),
+      );
+    }
+    final String? mimeType = validation.format == null
+        ? 'image/jpeg'
+        : mimeTypeForProductImageFormat(validation.format!);
     return XFile.fromData(
       picked.bytes,
       name: picked.name,
-      mimeType: 'image/jpeg',
+      mimeType: mimeType,
     );
   }
 
   List<XFile> _toXFiles(List<PickedImageFile> pickedFiles) {
     return pickedFiles
         .map(
-          (picked) => XFile.fromData(
-            picked.bytes,
-            name: picked.name,
-            mimeType: 'image/jpeg',
-          ),
+          (picked) {
+            final ProductImageInputValidation validation =
+                validateProductImageInput(
+              bytes: picked.bytes,
+              fileName: picked.name,
+            );
+            if (!validation.isValid) {
+              return null;
+            }
+            final String? mimeType = validation.format == null
+                ? 'image/jpeg'
+                : mimeTypeForProductImageFormat(validation.format!);
+            return XFile.fromData(
+              picked.bytes,
+              name: picked.name,
+              mimeType: mimeType,
+            );
+          },
         )
+        .whereType<XFile>()
         .toList(growable: false);
   }
 
-  Future<void> _pickImage(int index) async {
+  Future<bool> _pickAndCropImageIntoSlot(int index) async {
     productCreateLog('image_pick_start', extra: {'slot': index});
     try {
       final XFile? image = await _pickSingleImageFile();
-      if (image != null) {
-        final bytes = await image.readAsBytes();
-        productCreateLog(
-          'image_pick_success',
-          extra: {
-            'slot': index,
-            'name': image.name,
-            'path': image.path,
-            'bytes': bytes.length,
-          },
-        );
-        if (!mounted) return;
-        setState(() {
-          _productImages[index] = image;
-        });
+      if (image == null) return false;
+
+      final bytes = await image.readAsBytes();
+      if (bytes.isEmpty) {
+        if (mounted) _showError('Görsel dosyası boş.');
+        return false;
       }
+      final ProductImageInputValidation validation = validateProductImageInput(
+        bytes: bytes,
+        fileName: image.name,
+      );
+      if (!validation.isValid) {
+        if (mounted) {
+          _showError(validation.errorMessage ?? 'Görsel seçilemedi.');
+        }
+        return false;
+      }
+      if (validation.lowResolutionWarning != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(validation.lowResolutionWarning!)),
+        );
+      }
+      if (!mounted) return false;
+
+      final edited = await showProductImageEditorDialog(
+        context,
+        initialBytes: bytes,
+      );
+      if (edited == null || !mounted) return false;
+
+      productCreateLog(
+        'image_pick_success',
+        extra: {
+          'slot': index,
+          'bytes': edited.length,
+          'cropped': true,
+        },
+      );
+
+      setState(() {
+        _productImages[index] = editedBytesToXFile(
+          edited,
+          slotIndex: index,
+        );
+        _productImagePreviewVersion++;
+      });
+      return true;
     } catch (e, stack) {
       productCreateLog(
         'product_save_error',
         extra: {
           'errorType': e.runtimeType.toString(),
           'message': e.toString(),
-          'phase': 'image_pick',
+          'phase': 'image_pick_crop',
         },
       );
-      debugPrint('Error picking image stack: $stack');
+      debugPrint('Error picking/cropping image stack: $stack');
       if (mounted) {
         _showError('Görsel seçilemedi. Lütfen tekrar deneyin.');
       }
+      return false;
     }
+  }
+
+  Future<void> _pickImage(int index) async {
+    await _pickAndCropImageIntoSlot(index);
   }
 
   Future<void> _pickVideo() async {
@@ -5940,25 +6144,41 @@ class _AddProductPageState extends State<AddProductPage> {
     try {
       final picked = await pickImageFiles(allowMultiple: true);
       final List<XFile> images = _toXFiles(picked);
-      if (!mounted) return;
-      if (images.isNotEmpty) {
-        int uploadedCount = 0;
-        for (var i = 0; i < images.length && i < 8; i++) {
-          // Boş slot bul
-          int emptyIndex = _productImages.indexOf(null);
-          if (emptyIndex == -1) break;
+      if (!mounted || images.isEmpty) return;
 
-          setState(() {
-            _productImages[emptyIndex] = images[i];
-          });
-          uploadedCount++;
-        }
+      var uploadedCount = 0;
+      for (final image in images) {
+        final emptyIndex = _productImages.indexOf(null);
+        if (emptyIndex == -1) break;
+
+        final bytes = await image.readAsBytes();
+        if (!mounted) return;
+        if (bytes.isEmpty) continue;
+
+        final edited = await showProductImageEditorDialog(
+          context,
+          initialBytes: bytes,
+        );
+        if (edited == null || !mounted) continue;
+
+        setState(() {
+          _productImages[emptyIndex] = editedBytesToXFile(
+            edited,
+            slotIndex: emptyIndex,
+          );
+          _productImagePreviewVersion++;
+        });
+        uploadedCount++;
+      }
+
+      if (!mounted) return;
+      if (uploadedCount > 0) {
         productCreateLog(
           'image_pick_success',
           extra: {'bulk': true, 'count': uploadedCount},
         );
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$uploadedCount görsel seçildi')),
+          SnackBar(content: Text('$uploadedCount görsel eklendi')),
         );
       }
     } catch (e, stack) {
@@ -5980,7 +6200,212 @@ class _AddProductPageState extends State<AddProductPage> {
   void _removeImage(int index) {
     setState(() {
       _productImages[index] = null;
+      _productImagePreviewVersion++;
     });
+  }
+
+  List<Object> _combinedProductImages() {
+    final items = <Object>[];
+    items.addAll(_existingImageUrls);
+    for (final image in _productImages) {
+      if (image != null) {
+        items.add(image);
+      }
+    }
+    return items;
+  }
+
+  int _combinedImageIndex({int? productImageIndex, int? existingUrlIndex}) {
+    if (existingUrlIndex != null) return existingUrlIndex;
+    if (productImageIndex == null) return -1;
+
+    var localOrdinal = 0;
+    for (var i = 0; i < productImageIndex; i++) {
+      if (_productImages[i] != null) localOrdinal++;
+    }
+    return _existingImageUrls.length + localOrdinal;
+  }
+
+  void _replaceCombinedImageAt(int combinedIndex, XFile file) {
+    final items = _combinedProductImages();
+    if (combinedIndex < 0 || combinedIndex >= items.length) return;
+
+    items[combinedIndex] = file;
+    _writeBackCombinedImages(items);
+  }
+
+  void _writeBackCombinedImages(List<Object> items) {
+    _existingImageUrls = <String>[];
+    final locals = <XFile>[];
+
+    for (final item in items) {
+      if (item is String) {
+        _existingImageUrls.add(item);
+      } else if (item is XFile) {
+        locals.add(item);
+      }
+    }
+
+    _productImages.fillRange(0, _productImages.length, null);
+    for (var i = 0; i < locals.length && i < _productImages.length; i++) {
+      _productImages[i] = locals[i];
+    }
+    _productImagePreviewVersion++;
+  }
+
+  /// Ana ürün görseli — sol slotlarla aynı sıra: combined listenin ilk öğesi.
+  Object? _resolvePrimaryPreviewImageSource() {
+    final combined = _combinedProductImages();
+    if (combined.isEmpty) return null;
+    return combined.first;
+  }
+
+  String _previewImageWidgetKey(Object source) {
+    if (source is XFile) {
+      return 'preview_xfile_${source.name}_${source.path}_v$_productImagePreviewVersion';
+    }
+    if (source is String) {
+      return 'preview_url_${source}_v$_productImagePreviewVersion';
+    }
+    return 'preview_empty_v$_productImagePreviewVersion';
+  }
+
+  Widget _buildPreviewPrimaryImage() {
+    final source = _resolvePrimaryPreviewImageSource();
+    if (source == null) {
+      return const ProductListThumbnail(
+        imageUrlOrPath: null,
+        height: 200,
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+        fallbackIconSize: 48,
+      );
+    }
+
+    if (source is XFile) {
+      return ProductListThumbnail(
+        key: ValueKey(_previewImageWidgetKey(source)),
+        imageFile: source,
+        height: 200,
+        width: double.infinity,
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        padding: const EdgeInsets.all(10),
+        fallbackIconSize: 48,
+      );
+    }
+
+    if (source is String) {
+      final url = source;
+      return ProductListThumbnail(
+        key: ValueKey(_previewImageWidgetKey(url)),
+        imageUrlOrPath: url,
+        height: 200,
+        width: double.infinity,
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        padding: const EdgeInsets.all(10),
+        fallbackIconSize: 48,
+      );
+    }
+
+    return const ProductListThumbnail(
+      imageUrlOrPath: null,
+      height: 200,
+      borderRadius: BorderRadius.all(Radius.circular(12)),
+      fallbackIconSize: 48,
+    );
+  }
+
+  Future<List<String>> _resolveImageUrlsForSave(
+    String productId, {
+    void Function(String status)? onProgress,
+  }) async {
+    final combined = _combinedProductImages();
+    final urls = <String>[];
+    var uploadIndex = 0;
+
+    for (var i = 0; i < combined.length; i++) {
+      final item = combined[i];
+      if (item is String) {
+        urls.add(item);
+        continue;
+      }
+      if (item is XFile) {
+        onProgress?.call('Görsel ${i + 1}/${combined.length} yükleniyor...');
+        final uploaded = await _storeService.uploadProductImageAt(
+          productId,
+          item,
+          uploadIndex++,
+        );
+        urls.add(uploaded);
+      }
+    }
+    return urls;
+  }
+
+  Future<void> _openPrimaryImageEditor() async {
+    final items = _combinedProductImages();
+    if (items.isEmpty) {
+      _showError('Önce bir ürün görseli ekleyin.');
+      return;
+    }
+
+    final first = items.first;
+    await _openProductImageEditor(
+      productImageIndex: first is XFile ? _productImages.indexOf(first) : null,
+      existingUrlIndex: first is String ? 0 : null,
+      imageFile: first is XFile ? first : null,
+      imageUrl: first is String ? first : null,
+    );
+  }
+
+  Future<void> _openProductImageEditor({
+    required int? productImageIndex,
+    required int? existingUrlIndex,
+    XFile? imageFile,
+    String? imageUrl,
+  }) async {
+    try {
+      final bytes = await loadProductImageBytes(
+        file: imageFile,
+        imageUrl: imageUrl,
+      );
+      if (!mounted) return;
+
+      final edited = await showProductImageEditorDialog(
+        context,
+        initialBytes: bytes,
+      );
+      if (edited == null || !mounted) return;
+
+      final combinedIndex = _combinedImageIndex(
+        productImageIndex: productImageIndex,
+        existingUrlIndex: existingUrlIndex,
+      );
+      final replacement = editedBytesToXFile(
+        edited,
+        slotIndex: productImageIndex ?? existingUrlIndex,
+      );
+
+      setState(() {
+        _replaceCombinedImageAt(combinedIndex, replacement);
+      });
+    } on ProductImageDownloadException catch (error) {
+      if (mounted) _showError(error.toString());
+    } on FormatException catch (error) {
+      if (mounted) _showError(error.message);
+    } catch (error, stack) {
+      productCreateLog(
+        'product_save_error',
+        extra: {
+          'errorType': error.runtimeType.toString(),
+          'message': error.toString(),
+          'phase': 'image_edit',
+        },
+      );
+      debugPrint('Image edit error stack: $stack');
+      if (mounted) {
+        _showError('Görsel düzenlenemedi. Lütfen tekrar deneyin.');
+      }
+    }
   }
 
   Future<void> _addVariant() async {
@@ -6198,9 +6623,24 @@ class _AddProductPageState extends State<AddProductPage> {
         .take(5)
         .toList();
 
+    final String draftProductId =
+        widget.productId ?? DateTime.now().millisecondsSinceEpoch.toString();
+    try {
+      _richDescriptionBlocks =
+          await _prepareDescriptionStoryForSave(draftProductId);
+      _longDescController.text =
+          storyDescriptionPlainText(_richDescriptionBlocks);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showError(_friendlyError(e));
+      }
+      return;
+    }
+
     // Taslak ürün verilerini oluştur
     final product = SellerProduct(
-      id: widget.productId ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      id: draftProductId,
       name: _productNameController.text.isEmpty
           ? 'Taslak Ürün'
           : _productNameController.text,
@@ -6614,6 +7054,10 @@ class _AddProductPageState extends State<AddProductPage> {
       );
     }
 
+    _richDescriptionBlocks =
+        await _prepareDescriptionStoryForSave(productId);
+    _longDescController.text = storyDescriptionPlainText(_richDescriptionBlocks);
+
     // Ürün nesnesini oluştur
     final product = SellerProduct(
       id: productId,
@@ -6705,9 +7149,22 @@ class _AddProductPageState extends State<AddProductPage> {
 
       if (widget.isEdit && widget.productId != null) {
         // GÜNCELLEME İŞLEMİ
+        List<String>? imageUrlsOverride;
+        if (validImages.isNotEmpty) {
+          imageUrlsOverride = await _resolveImageUrlsForSave(
+            productId,
+            onProgress: (status) {
+              progressNotifier.value = status;
+            },
+          );
+        }
+
         await _storeService.updateProduct(
           product,
-          newImages: validImages.isEmpty ? null : validImages,
+          newImages: imageUrlsOverride == null && validImages.isNotEmpty
+              ? validImages
+              : null,
+          finalImageUrlsOverride: imageUrlsOverride,
           previousStatus: _initialProductStatus,
           variants: _variants, // Varyantları gönder
           onProgress: (status) {

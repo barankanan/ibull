@@ -209,6 +209,7 @@ class RankingEngineHelper {
       AdCampaignType.geoPush => 0.3,
       AdCampaignType.banner => 0.2,
       AdCampaignType.categorySponsor => 0.32,
+      AdCampaignType.homeFeature => 0.4,
     };
     return bidWeight + premiumWeight + typeWeight;
   }

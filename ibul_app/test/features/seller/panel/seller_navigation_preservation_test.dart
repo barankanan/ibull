@@ -10,6 +10,8 @@ SellerProduct _mkProduct({
   String status = 'active',
   double? discountPrice,
   String name = 'Test',
+  String? imageUrl,
+  List<String> imageUrls = const [],
 }) {
   return SellerProduct(
     id: id,
@@ -23,6 +25,8 @@ SellerProduct _mkProduct({
     status: status,
     createdAt: DateTime.utc(2026, 5, 25),
     discountPrice: discountPrice,
+    imageUrl: imageUrl,
+    imageUrls: imageUrls,
   );
 }
 
@@ -613,6 +617,15 @@ void main() {
       final a = <SellerProduct>[_mkProduct(id: 'p1', name: 'A')];
       final b = <SellerProduct>[_mkProduct(id: 'p1', name: 'B')];
       expect(sellerProductsListSignature(a), sellerProductsListSignature(b));
+    });
+
+    test('primary image change invalidates the signature', () {
+      final a = <SellerProduct>[_mkProduct(id: 'p1', imageUrl: 'https://a')];
+      final b = <SellerProduct>[_mkProduct(id: 'p1', imageUrl: 'https://b')];
+      expect(
+        sellerProductsListSignature(a),
+        isNot(sellerProductsListSignature(b)),
+      );
     });
 
     test('adding a product invalidates the signature', () {

@@ -3,48 +3,55 @@ import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/build_profile.dart';
 
+typedef HomeShortcutTapCallback = void Function(String shortcutKey, String label);
+
 class FeatureMenu extends StatelessWidget {
   final List<Map<String, dynamic>> remoteCategories;
+  final HomeShortcutTapCallback? onShortcutTap;
 
-  const FeatureMenu({super.key, this.remoteCategories = const []});
+  const FeatureMenu({
+    super.key,
+    this.remoteCategories = const [],
+    this.onShortcutTap,
+  });
 
-  static const List<_FeatureConfig> _featureConfigs = [
-    _FeatureConfig(
+  static const List<HomeFeatureMenuConfig> featureConfigs = [
+    HomeFeatureMenuConfig(
       key: 'yakin_lokasyon',
       label: 'Yakın Lokasyon',
       assetPath: 'assets/images/features/yakin-lokasyon.png',
     ),
-    _FeatureConfig(
+    HomeFeatureMenuConfig(
       key: 'urun_listele',
       label: 'Ürün Listele',
       assetPath: 'assets/images/features/listele.png',
     ),
-    _FeatureConfig(
+    HomeFeatureMenuConfig(
       key: 'gorsel_zeka',
       label: 'Görsel Zeka',
       assetPath: 'assets/images/features/gorsel-zeka.png',
     ),
-    _FeatureConfig(
+    HomeFeatureMenuConfig(
       key: 'urun_parcala',
       label: 'Ürün Parçala',
       assetPath: 'assets/images/features/urun-parcala.png',
     ),
-    _FeatureConfig(
+    HomeFeatureMenuConfig(
       key: 'ibul_premium',
       label: 'İBUL Premium',
       assetPath: 'assets/images/features/ibul-premium.png',
     ),
-    _FeatureConfig(
+    HomeFeatureMenuConfig(
       key: 'bana_ozel',
       label: 'Bana Özel',
       assetPath: 'assets/images/features/sana-ozel.png',
     ),
-    _FeatureConfig(
+    HomeFeatureMenuConfig(
       key: 'hizli_yemek',
       label: 'Hızlı Yemek',
       assetPath: 'assets/images/features/hizli-yemek.png',
     ),
-    _FeatureConfig(
+    HomeFeatureMenuConfig(
       key: 'yapay_zeka',
       label: 'Yapay Zeka',
       assetPath: 'assets/images/features/yapay-zeka.png',
@@ -75,20 +82,26 @@ class FeatureMenu extends StatelessWidget {
           childAspectRatio: isSmallScreen ? 0.75 : 0.7,
           padding: EdgeInsets.zero,
           shrinkWrap: true,
-          children: _featureConfigs.map((config) {
+          children: featureConfigs.map((config) {
             final remote = remoteByKey[config.key];
             final remoteUrl = remote?['image_url']?.toString();
             final displayName = remote?['display_name']?.toString();
             final isActive = remote?['is_active'] != false;
+            final label = (displayName != null && displayName.isNotEmpty)
+                ? displayName
+                : config.label;
 
             return _FeatureTile(
+              shortcutKey: config.key,
               imageUrl: (isActive && remoteUrl != null && remoteUrl.isNotEmpty)
                   ? remoteUrl
                   : null,
               assetPath: config.assetPath,
-              label: (displayName != null && displayName.isNotEmpty)
-                  ? displayName
-                  : config.label,
+              label: label,
+              comingSoon: !isActive,
+              onTap: onShortcutTap == null
+                  ? null
+                  : () => onShortcutTap!(config.key, label),
             );
           }).toList(),
         ),
@@ -97,68 +110,132 @@ class FeatureMenu extends StatelessWidget {
   }
 }
 
-class _FeatureTile extends StatelessWidget {
-  final String? imageUrl;
-  final String assetPath;
-  final String label;
-
+class _FeatureTile extends StatefulWidget {
   const _FeatureTile({
+    required this.shortcutKey,
     this.imageUrl,
     required this.assetPath,
     required this.label,
+    required this.onTap,
+    this.comingSoon = false,
   });
+
+  final String shortcutKey;
+  final String? imageUrl;
+  final String assetPath;
+  final String label;
+  final VoidCallback? onTap;
+  final bool comingSoon;
+
+  @override
+  State<_FeatureTile> createState() => _FeatureTileState();
+}
+
+class _FeatureTileState extends State<_FeatureTile> {
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isSmallScreen = screenWidth < 360;
     final fontSize = isSmallScreen ? 10.0 : 11.0;
+    final onTap = widget.onTap;
 
-    return InkWell(
-      onTap: () {},
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.start,
-        children: [
-          // Force square aspect ratio for the image box
-          AspectRatio(
-            aspectRatio: 1.0,
-            child: Container(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(isSmallScreen ? 12 : 16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withValues(alpha: 0.1),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
+    return Semantics(
+      button: true,
+      label: widget.label,
+      enabled: onTap != null,
+      child: Tooltip(
+        message: widget.label,
+        child: MouseRegion(
+          cursor: onTap == null
+              ? SystemMouseCursors.basic
+              : SystemMouseCursors.click,
+          child: GestureDetector(
+            onTapDown: onTap == null ? null : (_) => setState(() => _pressed = true),
+            onTapUp: onTap == null ? null : (_) => setState(() => _pressed = false),
+            onTapCancel: onTap == null ? null : () => setState(() => _pressed = false),
+            onTap: onTap,
+            child: AnimatedScale(
+              scale: _pressed ? 0.96 : 1.0,
+              duration: const Duration(milliseconds: 120),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 1.0,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            borderRadius:
+                                BorderRadius.circular(isSmallScreen ? 12 : 16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.06),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(
+                              isSmallScreen ? 12 : 16,
+                            ),
+                            child: _buildImage(),
+                          ),
+                        ),
+                        if (widget.comingSoon)
+                          Positioned(
+                            top: 4,
+                            right: 4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.65),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                'Yakında',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: isSmallScreen ? 4 : 8),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isSmallScreen ? 1.0 : 2.0,
+                    ),
+                    child: Text(
+                      widget.label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: fontSize,
+                        color: Colors.grey[800],
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ],
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(isSmallScreen ? 12 : 16),
-                child: _buildImage(),
-              ),
             ),
           ),
-          SizedBox(height: isSmallScreen ? 4 : 8),
-          Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: isSmallScreen ? 1.0 : 2.0,
-            ),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: fontSize,
-                color: Colors.grey[800],
-                fontWeight: FontWeight.w600,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -171,9 +248,9 @@ class _FeatureTile extends StatelessWidget {
       ),
     );
 
-    if (imageUrl != null && imageUrl!.isNotEmpty) {
+    if (widget.imageUrl != null && widget.imageUrl!.isNotEmpty) {
       return OptimizedImage(
-        imageUrlOrPath: imageUrl!,
+        imageUrlOrPath: widget.imageUrl!,
         fit: BoxFit.cover,
         errorWidget: _buildAssetFallback(fallback),
       );
@@ -184,11 +261,11 @@ class _FeatureTile extends StatelessWidget {
 
   Widget _buildAssetFallback(Widget fallback) {
     return Image.asset(
-      assetPath,
+      widget.assetPath,
       package: 'ibul_app',
       fit: BoxFit.cover,
       errorBuilder: (context, error, stackTrace) => Image.asset(
-        assetPath,
+        widget.assetPath,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) => fallback,
       ),
@@ -196,12 +273,12 @@ class _FeatureTile extends StatelessWidget {
   }
 }
 
-class _FeatureConfig {
+class HomeFeatureMenuConfig {
   final String key;
   final String label;
   final String assetPath;
 
-  const _FeatureConfig({
+  const HomeFeatureMenuConfig({
     required this.key,
     required this.label,
     required this.assetPath,

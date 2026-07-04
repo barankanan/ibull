@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../core/app_image_cdn.dart';
+import '../core/product_rich_description.dart';
 import 'product_pricing.dart';
 import '../utils/dynamic_value_helpers.dart';
 import '../utils/preparation_time_formatter.dart';
@@ -64,6 +65,13 @@ class Product {
   variants; // Varyantlar (SellerProduct.variants ile eşleşmeli)
   final String? additionalInfo; // Ek Bilgiler
   final List<Map<String, String>>? faq; // Sıkça Sorulan Sorular
+  /// Public katalog snapshot — sepete ekle fast path için (checkout DB doğrulaması ayrı).
+  final String? catalogStatus;
+  final String? approvalStatus;
+  final String? adminApprovalStatus;
+  final int? stock;
+  final double? catalogDiscountPrice;
+  final DateTime? catalogUpdatedAt;
 
   Product({
     this.productId,
@@ -122,7 +130,35 @@ class Product {
     this.variants,
     this.additionalInfo,
     this.faq,
+    this.catalogStatus,
+    this.approvalStatus,
+    this.adminApprovalStatus,
+    this.stock,
+    this.catalogDiscountPrice,
+    this.catalogUpdatedAt,
   });
+
+  /// Sepete ekle hızlı doğrulama map'i (checkout yerine geçmez).
+  Map<String, dynamic> toCartValidationMap() {
+    return {
+      'id': productId,
+      'status': catalogStatus,
+      'approval_status': approvalStatus,
+      'admin_approval_status': adminApprovalStatus,
+      'stock': stock,
+      'price': _cartValidationNumericPrice(price),
+      if (catalogDiscountPrice != null) 'discount_price': catalogDiscountPrice,
+      if (catalogUpdatedAt != null)
+        'updated_at': catalogUpdatedAt!.toIso8601String(),
+    };
+  }
+
+  static num? _cartValidationNumericPrice(String rawPrice) {
+    final match = RegExp(r'[\d.,]+').firstMatch(rawPrice.trim());
+    if (match == null) return null;
+    final normalized = match.group(0)!.replaceAll('.', '').replaceAll(',', '.');
+    return num.tryParse(normalized);
+  }
 
   Product copyWith({
     String? productId,
@@ -181,6 +217,12 @@ class Product {
     List<dynamic>? variants,
     String? additionalInfo,
     List<Map<String, String>>? faq,
+    String? catalogStatus,
+    String? approvalStatus,
+    String? adminApprovalStatus,
+    int? stock,
+    double? catalogDiscountPrice,
+    DateTime? catalogUpdatedAt,
   }) {
     return Product(
       productId: productId ?? this.productId,
@@ -239,6 +281,12 @@ class Product {
       variants: variants ?? this.variants,
       additionalInfo: additionalInfo ?? this.additionalInfo,
       faq: faq ?? this.faq,
+      catalogStatus: catalogStatus ?? this.catalogStatus,
+      approvalStatus: approvalStatus ?? this.approvalStatus,
+      adminApprovalStatus: adminApprovalStatus ?? this.adminApprovalStatus,
+      stock: stock ?? this.stock,
+      catalogDiscountPrice: catalogDiscountPrice ?? this.catalogDiscountPrice,
+      catalogUpdatedAt: catalogUpdatedAt ?? this.catalogUpdatedAt,
     );
   }
 
@@ -716,6 +764,12 @@ class Product {
     String? oldPrice;
     String? variantOptions;
     String? variantGroupId;
+    String? catalogStatus;
+    String? approvalStatus;
+    String? adminApprovalStatus;
+    int? stock;
+    double? catalogDiscountPrice;
+    DateTime? catalogUpdatedAt;
 
     try {
       productId = (dbProduct as dynamic).id?.toString();
@@ -932,6 +986,21 @@ class Product {
           } catch (_) {}
         }
       }
+      catalogStatus ??= dbProduct['status']?.toString();
+      catalogStatus ??= dbProduct['catalogStatus']?.toString();
+      approvalStatus ??= dbProduct['approval_status']?.toString();
+      approvalStatus ??= dbProduct['approvalStatus']?.toString();
+      adminApprovalStatus ??= dbProduct['admin_approval_status']?.toString();
+      adminApprovalStatus ??= dbProduct['adminApprovalStatus']?.toString();
+      stock ??= (dbProduct['stock'] as num?)?.toInt();
+      catalogDiscountPrice ??=
+          (dbProduct['discount_price'] as num?)?.toDouble() ??
+          (dbProduct['catalogDiscountPrice'] as num?)?.toDouble();
+      catalogUpdatedAt ??= _parseCatalogUpdatedAt(
+        dbProduct['updated_at'] ??
+            dbProduct['created_at'] ??
+            dbProduct['catalogUpdatedAt'],
+      );
     }
 
     try {
@@ -982,6 +1051,18 @@ class Product {
         variantGroupId = readNullableString(
           (dbProduct as dynamic).variantGroupId,
         );
+        catalogStatus ??= readNullableString((dbProduct as dynamic).catalogStatus);
+        approvalStatus ??=
+            readNullableString((dbProduct as dynamic).approvalStatus);
+        adminApprovalStatus ??=
+            readNullableString((dbProduct as dynamic).adminApprovalStatus);
+        stock ??= ((dbProduct as dynamic).stock as num?)?.toInt();
+        catalogDiscountPrice ??=
+            ProductPriceCalculator.parsePriceValue(
+              readNullableString((dbProduct as dynamic).oldPrice),
+            );
+        catalogUpdatedAt ??=
+            (dbProduct as dynamic).catalogUpdatedAt as DateTime?;
       }
     } catch (_) {}
 
@@ -1055,6 +1136,12 @@ class Product {
       variants: variants,
       additionalInfo: additionalInfo,
       faq: faq,
+      catalogStatus: catalogStatus,
+      approvalStatus: approvalStatus,
+      adminApprovalStatus: adminApprovalStatus,
+      stock: stock,
+      catalogDiscountPrice: catalogDiscountPrice,
+      catalogUpdatedAt: catalogUpdatedAt,
     );
   }
 
@@ -1456,6 +1543,12 @@ class Product {
     return null;
   }
 
+  static DateTime? _parseCatalogUpdatedAt(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    return DateTime.tryParse(value.toString());
+  }
+
   static String? _normalizeJsonText(dynamic raw) {
     if (raw == null) return null;
     if (raw is String) {
@@ -1529,8 +1622,25 @@ class Product {
     return text;
   }
 
+  List<ProductRichDescriptionBlock> get displayRichDescriptionBlocks =>
+      extractDescriptionStoryFromSpecifications(specifications);
+
   // UI Helper methods to ensure consistency across pages
   String getDisplayDescription() {
+    final List<ProductRichDescriptionBlock> richBlocks =
+        displayRichDescriptionBlocks;
+    if (richBlocks.isNotEmpty) {
+      final String richPlain = richDescriptionPlainText(richBlocks);
+      if (richPlain.isNotEmpty) {
+        return richPlain;
+      }
+    }
+
+    final String? actualDescription = displayFullDescription;
+    if (actualDescription != null && actualDescription.trim().isNotEmpty) {
+      return actualDescription;
+    }
+
     final lowerName = name.toLowerCase();
     final lowerBrand = brand.toLowerCase();
     final lowerCategory = (category ?? '').toLowerCase();

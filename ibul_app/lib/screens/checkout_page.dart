@@ -60,6 +60,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   int _selectedAddressIndex = 0;
   bool _isPlacingOrder = false;
+  late final String _checkoutIdempotencyKey =
+      'checkout-${DateTime.now().microsecondsSinceEpoch}';
 
   final _cardsService = SavedPaymentCardsService.instance;
   List<SavedPaymentCard> _savedCards = [];
@@ -311,6 +313,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
     await appState.ensureCartProductIdsResolved();
     if (!mounted) return;
+    final revalidation = await appState.revalidateCart();
+    if (!mounted) return;
+    if (revalidation?.hasBlockingIssues == true) {
+      await _showCheckoutFeedback(
+        'Sepetinizde satışta olmayan ürünler var. Lütfen sepeti güncelleyin.',
+        isError: true,
+      );
+      return;
+    }
+    if ((revalidation?.summaryMessage ?? '').isNotEmpty) {
+      await _showCheckoutFeedback(
+        revalidation!.summaryMessage!,
+        isError: false,
+      );
+    }
     final normalizedSelectedProducts = widget.selectedProducts
         .map((source) => Map<String, dynamic>.from(source))
         .toList(growable: false);
@@ -369,7 +386,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
     });
     if (hasInvalidItems) {
       await _showCheckoutFeedback(
-        'Bazi sepet urunlerinde urun kimligi eksik. Lutfen urunu sepetten silip yeniden ekleyin.',
+        'Sepetinizdeki bazı ürünler artık satışta değil. Lütfen sepeti güncelleyin.',
+        isError: true,
       );
       return;
     }
@@ -386,6 +404,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         deliverySlot: _selectedDeliveryType == 0
             ? '${_selectedFastDate.toIso8601String()}|$_selectedFastTime'
             : _selectedStandardDate.toIso8601String(),
+        idempotencyKey: _checkoutIdempotencyKey,
       );
 
       if (_useNewCard && _saveCardForFuture) {
@@ -423,7 +442,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     } catch (e) {
       if (!mounted) return;
       final normalized = e.toString().replaceFirst('Exception: ', '');
-      await _showCheckoutFeedback(normalized);
+      await _showCheckoutFeedback(normalized, isError: true);
     } finally {
       if (mounted) {
         setState(() => _isPlacingOrder = false);
@@ -1687,12 +1706,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                     elevation: 0,
                                   ),
                                   child: _isPlacingOrder
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
+                                      ? const Text(
+                                          'Sipariş oluşturuluyor...',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
                                           ),
                                         )
                                       : const Text(

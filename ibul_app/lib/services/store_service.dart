@@ -1,16 +1,21 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config/runtime_config.dart';
+import '../core/home_load_audit.dart';
 import '../models/seller_product.dart';
 import '../models/store_sub_category.dart';
 import '../models/sub_admin.dart';
 import '../utils/product_create_log.dart';
 import '../utils/product_edit_log.dart';
+import '../utils/product_visibility_helper.dart';
+import 'map_store_emergency_pipeline.dart';
 import 'store/store_media_service.dart';
 import 'store/store_mapping_helpers.dart';
 import 'store_notification_trigger_service.dart';
+import 'supabase_service.dart';
 import 'store/store_table_service.dart';
 import 'store/store_upload_progress_details.dart';
 import 'store_service_mappers.dart';
@@ -229,6 +234,8 @@ class StoreService {
   /// Mağaza ID'sine göre logo, galeri ve duyuru banner'larını döndürür.
   Future<Map<String, dynamic>?> getStorePublicInfoById(String sellerId) async {
     if (sellerId.isEmpty) return null;
+    final cached = _getCachedStorePublicInfoBySellerId(sellerId);
+    if (cached != null) return cached;
     try {
       final res = await _supabase
           .from('stores')
@@ -260,16 +267,74 @@ class StoreService {
         }
       }
 
-      return {
+      final data = {
         'logoUrl': res['logo_url'] as String?,
         'businessName': res['business_name'] as String?,
         'galleryImages': gallery,
         'banners': banners,
         'sellerVideos': videos,
       };
+      _setCachedStorePublicInfoBySellerId(sellerId, data);
+      return data;
     } catch (_) {
       return null;
     }
+  }
+
+  /// Birden fazla satıcı için logo ve temel bilgileri tek sorguda döndürür.
+  Future<Map<String, Map<String, dynamic>>> getStorePublicInfoByIds(
+    List<String> sellerIds,
+  ) async {
+    final normalizedIds = sellerIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalizedIds.isEmpty) return const {};
+
+    final results = <String, Map<String, dynamic>>{};
+    final missingIds = <String>[];
+
+    for (final sellerId in normalizedIds) {
+      final cached = _getCachedStorePublicInfoBySellerId(sellerId);
+      if (cached != null) {
+        results[sellerId] = cached;
+      } else {
+        missingIds.add(sellerId);
+      }
+    }
+
+    if (missingIds.isEmpty) {
+      HomeLoadAudit.recordStoreLogoBatch(
+        uniqueStoreIds: normalizedIds.length,
+        queryCount: 0,
+      );
+      return results;
+    }
+
+    try {
+      HomeLoadAudit.recordStoreLogoBatch(
+        uniqueStoreIds: normalizedIds.length,
+        queryCount: 1,
+      );
+      final response = await _supabase
+          .from('stores')
+          .select('seller_id, logo_url, business_name')
+          .inFilter('seller_id', missingIds);
+
+      for (final raw in List<Map<String, dynamic>>.from(response as List)) {
+        final sellerId = raw['seller_id']?.toString().trim() ?? '';
+        if (sellerId.isEmpty) continue;
+        final info = {
+          'logoUrl': raw['logo_url'] as String?,
+          'businessName': raw['business_name'] as String?,
+        };
+        _setCachedStorePublicInfoBySellerId(sellerId, info);
+        results[sellerId] = info;
+      }
+    } catch (_) {}
+
+    return results;
   }
 
   Future<List<StoreSubCategory>> getStoreSubCategories({
@@ -423,6 +488,17 @@ class StoreService {
     return cached.data;
   }
 
+  Map<String, dynamic>? _getCachedStorePublicInfoBySellerId(String sellerId) {
+    final key = _sellerPublicInfoCacheKey(sellerId);
+    final cached = _storePublicInfoCache[key];
+    if (cached == null) return null;
+    if (cached.expiresAt.isBefore(DateTime.now())) {
+      _storePublicInfoCache.remove(key);
+      return null;
+    }
+    return cached.data;
+  }
+
   void _setCachedStorePublicInfo(
     String businessName,
     Map<String, dynamic> data,
@@ -433,75 +509,70 @@ class StoreService {
     );
   }
 
-  /// Haritada gösterilecek onaylı mağazaları döndürür (store_lat, store_lng dolu olanlar). logo_url ve gallery_images dahil.
+  void _setCachedStorePublicInfoBySellerId(
+    String sellerId,
+    Map<String, dynamic> data,
+  ) {
+    _storePublicInfoCache[_sellerPublicInfoCacheKey(sellerId)] = (
+      expiresAt: DateTime.now().add(_storePublicInfoTtl),
+      data: data,
+    );
+  }
+
+  String _sellerPublicInfoCacheKey(String sellerId) =>
+      'seller_id:${sellerId.trim()}';
+
+  /// Haritada gösterilecek mağazalar — acil çok kaynaklı pipeline.
   Future<List<Map<String, dynamic>>> getStoresForMap() async {
-    const attempts = <({bool includeBrandVerified, bool includeDescription})>[
-      (includeBrandVerified: true, includeDescription: true),
-      (includeBrandVerified: false, includeDescription: true),
-      (includeBrandVerified: true, includeDescription: false),
-      (includeBrandVerified: false, includeDescription: false),
-    ];
+    final result = await MapStoreEmergencyPipeline().load();
+    return result.rows;
+  }
 
-    Object? lastError;
-    StackTrace? lastStackTrace;
+  Future<({
+    int productCount,
+    int uniqueSellerCount,
+    List<String> sellerIds,
+    List<({String sellerId, String storeName})> entries,
+  })> _loadActiveProductSellerStats() async {
+    final statuses = SupabaseService.publicCatalogProductStatuses;
+    final productRows = await _supabase
+        .from('products')
+        .select('seller_id, store_name')
+        .inFilter('status', statuses)
+        .limit(500);
 
-    for (final attempt in attempts) {
-      try {
-        return await _fetchStoresForMap(
-          includeBrandVerified: attempt.includeBrandVerified,
-          includeDescription: attempt.includeDescription,
-        );
-      } catch (e, stackTrace) {
-        lastError = e;
-        lastStackTrace = stackTrace;
+    final sellerIds = <String>[];
+    final entries = <({String sellerId, String storeName})>[];
+    final seen = <String>{};
 
-        if (isMissingDbColumnError(e, mapStoreBrandVerifiedColumn) &&
-            attempt.includeBrandVerified) {
-          debugPrint(
-            '[MapPage] getStoresForMap: $mapStoreBrandVerifiedColumn column '
-            'missing, retrying without brand verification field',
-          );
-          continue;
-        }
-
-        if (isMissingDbColumnError(e, mapStoreDescriptionColumn) &&
-            attempt.includeDescription) {
-          debugPrint(
-            '[MapPage] getStoresForMap: $mapStoreDescriptionColumn column '
-            'missing, retrying without store description field',
-          );
-          continue;
-        }
-
-        break;
+    for (final raw in productRows as List) {
+      final row = Map<String, dynamic>.from(raw as Map);
+      final sellerId = row['seller_id']?.toString().trim() ?? '';
+      if (sellerId.isEmpty) continue;
+      final storeName = row['store_name']?.toString().trim() ?? '';
+      entries.add((sellerId: sellerId, storeName: storeName));
+      if (seen.add(sellerId)) {
+        sellerIds.add(sellerId);
       }
     }
 
-    debugPrint('[MapPage] getStoresForMap failed: $lastError');
-    if (lastStackTrace != null) {
-      debugPrintStack(stackTrace: lastStackTrace);
-    }
-    return [];
+    return (
+      productCount: entries.length,
+      uniqueSellerCount: sellerIds.length,
+      sellerIds: sellerIds,
+      entries: entries,
+    );
   }
 
-  Future<List<Map<String, dynamic>>> _fetchStoresForMap({
-    required bool includeBrandVerified,
-    required bool includeDescription,
-  }) async {
+  Future<List<Map<String, dynamic>>> _fetchStoresRowsForSellerIds(
+    List<String> sellerIds,
+  ) async {
+    if (sellerIds.isEmpty) return const [];
     final list = await _supabase
         .from('stores')
-        .select(
-          mapStoreSelect(
-            includeBrandVerified: includeBrandVerified,
-            includeDescription: includeDescription,
-          ),
-        )
-        .not('store_lat', 'is', null)
-        .not('store_lng', 'is', null);
-    return normalizeMapStoreRows(
-      List<Map<String, dynamic>>.from(list as List),
-      brandVerifiedAvailable: includeBrandVerified,
-    );
+        .select(mapStoreSelectMinimal)
+        .inFilter('seller_id', sellerIds);
+    return List<Map<String, dynamic>>.from(list as List);
   }
 
   /// Ana sayfa hızlı teslimat mesafe hesabı için kullanılan hafif fetch.
@@ -509,15 +580,17 @@ class StoreService {
   /// ağır JSON kolonlarını almaz (~10x küçük payload).
   Future<List<Map<String, dynamic>>> getStoresForFastDelivery() async {
     try {
-      final list = await _supabase
-          .from('stores')
-          .select('seller_id, business_name, store_lat, store_lng')
-          .not('store_lat', 'is', null)
-          .not('store_lng', 'is', null);
+      final list = await _supabase.from('stores').select(mapStoreSelectMinimal);
       return List<Map<String, dynamic>>.from(list as List);
     } catch (e) {
       debugPrint('getStoresForFastDelivery error: $e');
-      return [];
+      try {
+        final stats = await _loadActiveProductSellerStats();
+        if (stats.sellerIds.isEmpty) return [];
+        return _fetchStoresRowsForSellerIds(stats.sellerIds);
+      } catch (_) {
+        return [];
+      }
     }
   }
 
@@ -899,16 +972,22 @@ class StoreService {
         }
       }
 
-      // 3. Ürün Verisini Güncelle (Resim URL'leri ve Durum)
+      // 3. Ürün Verisini Güncelle (Resim URL'leri, durum ve onay alanları)
+      final canonicalStatus = _canonicalPersistedProductStatus(product.status);
       final Map<String, dynamic> uploadedProductData = <String, dynamic>{
         'image_urls': uploadedUrls,
         'image_url': uploadedUrls.isNotEmpty ? uploadedUrls.first : null,
-        'status': _canonicalPersistedProductStatus(product.status),
+        'status': canonicalStatus,
         'updated_at': DateTime.now().toIso8601String(),
+        ..._sellerApprovalFieldsForStatus(canonicalStatus),
       };
       productCreateLog(
         'approval_status_resolved',
-        extra: {'status': uploadedProductData['status']},
+        extra: {
+          'status': uploadedProductData['status'],
+          'approval_status': uploadedProductData['approval_status'],
+          'admin_approval_status': uploadedProductData['admin_approval_status'],
+        },
       );
       if (updatedVariants != null) {
         uploadedProductData['variants'] = updatedVariants;
@@ -918,7 +997,8 @@ class StoreService {
           .update(uploadedProductData)
           .eq('id', productId);
 
-      if (uploadedProductData['status'] == 'Aktif') {
+      if (uploadedProductData['status'] == 'Aktif' &&
+          uploadedProductData['approval_status'] == _approvalApproved) {
         unawaited(
           _notifyFollowersNewProduct(
             productId: productId,
@@ -952,6 +1032,7 @@ class StoreService {
     Function(String)? onProgress,
     String? previousStatus,
     List<dynamic>? variants,
+    List<String>? finalImageUrlsOverride,
     @Deprecated(
       'Yayın anında Aktif; parametre geriye uyumluluk için tutuluyor.',
     )
@@ -969,8 +1050,10 @@ class StoreService {
         finalImageUrls = <String>[primaryImage, ...finalImageUrls];
       }
 
-      // Yeni resimler varsa yükle ve listeye ekle
-      if (newImages != null && newImages.isNotEmpty) {
+      if (finalImageUrlsOverride != null) {
+        finalImageUrls = List<String>.from(finalImageUrlsOverride);
+      } else if (newImages != null && newImages.isNotEmpty) {
+        // Yeni resimler varsa yükle ve listeye ekle
         for (int i = 0; i < newImages.length; i++) {
           final file = newImages[i];
           if (onProgress != null) {
@@ -1001,9 +1084,9 @@ class StoreService {
         updateData['accessories'] = product.accessories;
       }
 
-      updateData['status'] = _canonicalPersistedProductStatus(product.status);
-      final bool isActiveStatus =
-          _canonicalPersistedProductStatus(product.status) == 'Aktif';
+      final canonicalStatus = _canonicalPersistedProductStatus(product.status);
+      updateData['status'] = canonicalStatus;
+      updateData.addAll(_sellerApprovalFieldsForStatus(canonicalStatus));
 
       if (variants != null) {
         final updatedVariants = <dynamic>[];
@@ -1061,7 +1144,9 @@ class StoreService {
             _supabase.from('products').update(payload).eq('id', product.id),
       );
 
-      if (isActiveStatus) {
+      if (bypassApproval &&
+          canonicalStatus == 'Aktif' &&
+          updateData['approval_status'] == _approvalApproved) {
         final hadDiscount = previousProduct?.hasDiscount ?? false;
         if (!hadDiscount && product.hasDiscount) {
           unawaited(
@@ -1131,7 +1216,9 @@ class StoreService {
       }
       if (trimmedStatus.isNotEmpty &&
           normalizeStatus(trimmedStatus) != normalizeStatus(product.status)) {
-        updateData['status'] = trimmedStatus;
+        final canonicalStatus = _canonicalPersistedProductStatus(trimmedStatus);
+        updateData['status'] = canonicalStatus;
+        updateData.addAll(_sellerApprovalFieldsForStatus(canonicalStatus));
       }
 
       if (replacementImage != null) {
@@ -1218,6 +1305,26 @@ class StoreService {
     return _mediaService.uploadProductImage(productId, file, index);
   }
 
+  Future<String> uploadProductImageAt(
+    String productId,
+    XFile file,
+    int index,
+  ) {
+    return _uploadProductImage(productId, file, index);
+  }
+
+  Future<String> uploadProductDescriptionImage(
+    String productId,
+    Uint8List bytes,
+    String originalName,
+  ) {
+    return _mediaService.uploadProductDescriptionImage(
+      productId,
+      bytes,
+      originalName,
+    );
+  }
+
   Future<String> _uploadVariantImage(String productId, XFile file, int index) {
     return _mediaService.uploadVariantImage(productId, file, index);
   }
@@ -1245,6 +1352,7 @@ class StoreService {
         ? draftPrimary
         : (mergedImageUrls.isNotEmpty ? mergedImageUrls.first : null);
     productDbData['status'] = 'Taslak';
+    productDbData.addAll(_sellerApprovalFieldsForStatus('Taslak'));
     productDbData['updated_at'] = DateTime.now().toIso8601String();
     if (product.accessories != null) {
       productDbData['accessories'] = product.accessories;
@@ -1387,13 +1495,11 @@ class StoreService {
 
   Future<void> approveProduct(String productId) async {
     adminProductApprovalLog('approve_product', extra: {'productId': productId});
-    await _supabase
-        .from('products')
-        .update({
-          'status': 'Aktif',
-          'approved_at': DateTime.now().toIso8601String(),
-        })
-        .eq('id', productId);
+    await _runProductWriteWithFallback(
+      _adminApprovedProductUpdate(),
+      (payload) =>
+          _supabase.from('products').update(payload).eq('id', productId),
+    );
   }
 
   Future<void> rejectProduct(String productId, String reason) async {
@@ -1401,14 +1507,69 @@ class StoreService {
       'reject_product',
       extra: {'productId': productId, 'reason': reason},
     );
-    await _supabase
-        .from('products')
-        .update({
-          'status': 'rejected',
-          'rejection_reason': reason,
-          'rejected_at': DateTime.now().toIso8601String(),
-        })
-        .eq('id', productId);
+    await _runProductWriteWithFallback(
+      _adminRejectedProductUpdate(reason),
+      (payload) =>
+          _supabase.from('products').update(payload).eq('id', productId),
+    );
+  }
+
+  static const String _approvalApproved = 'approved';
+  static const String _approvalPending = 'pending_approval';
+  static const String _approvalRejected = 'rejected';
+  static const String _approvalDraft = 'draft';
+
+  Map<String, dynamic> _adminApprovedProductUpdate() {
+    final now = DateTime.now().toIso8601String();
+    final adminId = currentUserId;
+    return {
+      'status': 'Aktif',
+      'approval_status': _approvalApproved,
+      'admin_approval_status': _approvalApproved,
+      'approved_at': now,
+      'updated_at': now,
+      if (adminId != null && adminId.isNotEmpty) 'approved_by': adminId,
+    };
+  }
+
+  Map<String, dynamic> _adminRejectedProductUpdate(String reason) {
+    final now = DateTime.now().toIso8601String();
+    return {
+      'status': 'rejected',
+      'approval_status': _approvalRejected,
+      'admin_approval_status': _approvalRejected,
+      'rejection_reason': reason.trim(),
+      'rejected_at': now,
+      'updated_at': now,
+    };
+  }
+
+  /// Satıcı yayın/taslak/red akışlarında approval alanlarını status ile hizalar.
+  Map<String, dynamic> _sellerApprovalFieldsForStatus(String canonicalStatus) {
+    switch (canonicalStatus) {
+      case 'Taslak':
+        return {
+          'approval_status': _approvalDraft,
+          'admin_approval_status': _approvalDraft,
+        };
+      case 'rejected':
+        return {
+          'approval_status': _approvalRejected,
+          'admin_approval_status': _approvalRejected,
+        };
+      case 'Aktif':
+        // Satıcı doğrudan Aktif yazsa bile admin onayı gerekir.
+        return {
+          'approval_status': _approvalPending,
+          'admin_approval_status': _approvalPending,
+        };
+      case 'pending_approval':
+      default:
+        return {
+          'approval_status': _approvalPending,
+          'admin_approval_status': _approvalPending,
+        };
+    }
   }
 
   /// DB'ye yazılacak ürün durumunu normalize eder.
@@ -1910,6 +2071,28 @@ class StoreService {
     ).map(_mapSnakeCaseToProduct).toList(growable: false);
   }
 
+  Future<({int succeeded, List<String> failedIds})> deleteProducts(
+    Iterable<String> productIds,
+  ) async {
+    if (currentUserId == null) throw Exception('Kullanıcı girişi yapılmamış');
+
+    final List<String> failedIds = <String>[];
+    var succeeded = 0;
+    for (final String productId in productIds) {
+      try {
+        await _supabase
+            .from('products')
+            .delete()
+            .eq('id', productId)
+            .eq('seller_id', currentUserId!);
+        succeeded++;
+      } catch (_) {
+        failedIds.add(productId);
+      }
+    }
+    return (succeeded: succeeded, failedIds: failedIds);
+  }
+
   Future<void> deleteProduct(String productId) async {
     await _supabase.from('products').delete().eq('id', productId);
   }
@@ -2093,8 +2276,9 @@ class StoreService {
   /// Lightweight fetch for the restaurant menu dialog — only columns the
   /// dialog actually uses. Avoids pulling video/thumbnail/variant payload.
   Future<List<Map<String, dynamic>>> getMenuProductsBySellerId(
-    String sellerId,
-  ) async {
+    String sellerId, {
+    int limit = 300,
+  }) async {
     const richMenuSelect =
         'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, '
         'price, pricing_type, portion_price, price_per_kg, service_control_type, min_portion, max_portion, portion_step, default_weight_grams, min_weight_grams, weight_step_grams, max_weight_grams, stock, status, '
@@ -2119,8 +2303,12 @@ class StoreService {
           .from('products')
           .select(select)
           .eq('seller_id', sellerId)
-          .order('created_at', ascending: false);
-      return List<Map<String, dynamic>>.from(list as List);
+          .inFilter('status', SupabaseService.publicCatalogProductStatuses)
+          .order('created_at', ascending: false)
+          .limit(limit.clamp(1, 500));
+      return ProductVisibilityHelper.filterPublicProductMaps(
+        List<Map<String, dynamic>>.from(list as List),
+      );
     }
 
     try {
@@ -2220,6 +2408,39 @@ class StoreService {
       debugPrint('getMenuProductsBySellerId error: $e');
       return [];
     }
+  }
+
+  /// Seller-panel product list for Yazıcı Ayarları > Ürün Eşleme.
+  ///
+  /// Unlike [getMenuProductsBySellerId], this does **not** apply public catalog
+  /// visibility filters — the seller must see their own products for routing.
+  Future<List<Map<String, dynamic>>> getSellerProductsForPrinterMapping(
+    String sellerId, {
+    int limit = 500,
+  }) async {
+    final normalizedSellerId = sellerId.trim();
+    if (normalizedSellerId.isEmpty) {
+      throw ArgumentError('sellerId boş olamaz');
+    }
+
+    const select =
+        'id, seller_id, name, brand, image_url, image_urls, main_category, sub_category, '
+        'price, stock, status, station_id, printer_routing_enabled, '
+        'approval_status, admin_approval_status, created_at';
+
+    final list = await _supabase
+        .from('products')
+        .select(select)
+        .eq('seller_id', normalizedSellerId)
+        .order('created_at', ascending: false)
+        .limit(limit.clamp(1, 500));
+
+    final rows = List<Map<String, dynamic>>.from(list as List);
+    debugPrint(
+      '[PrinterMappingProducts] sellerId=$normalizedSellerId '
+      'fetchedCount=${rows.length}',
+    );
+    return rows;
   }
 
   Future<List<Map<String, dynamic>>> getProductsBySellerId(

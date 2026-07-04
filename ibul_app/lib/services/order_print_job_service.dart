@@ -23,9 +23,12 @@ import 'kitchen_order_number_fields.dart';
 import 'kitchen_print_trace_log.dart';
 import 'kitchen_product_mapping_cache_store.dart';
 import 'kitchen_routing_service.dart';
+import 'restaurant_offline/restaurant_offline_order_router.dart';
 import 'printer_encoding_profile_store.dart';
 import 'printer_event_log_service.dart';
 import 'printer_repository.dart';
+import '../utils/garson_flow_cache.dart';
+import '../utils/garson_perf_helper.dart';
 import '../utils/garson_product_selection.dart';
 import '../utils/print_perf_log.dart';
 
@@ -236,6 +239,7 @@ class OrderPrintJobService {
   _productStationMappingsByRestaurant =
       <String, Map<String, ProductStationMapping>>{};
   static const Duration _stationNamesCacheTtl = Duration(minutes: 30);
+  static final Set<String> _reprintInFlightKeys = <String>{};
 
   Map<String, String> cachedStationNamesForRestaurant(String restaurantId) {
     return Map<String, String>.from(_readCachedStationNames(restaurantId));
@@ -252,6 +256,31 @@ class OrderPrintJobService {
     _stationCodesMemoryCache.remove(normalized);
     _stationNamesMemoryCachedAt.remove(normalized);
     _logKitchen('StationCache', 'invalidated restaurantId=$normalized');
+  }
+
+  void registerOfflineSnapshotCaches({
+    required String restaurantId,
+    required Map<String, String> stationNamesById,
+    required Map<String, String> stationCodesById,
+    required Map<String, ProductStationMapping> productMappings,
+  }) {
+    final id = restaurantId.trim();
+    if (id.isEmpty) return;
+    _stationNamesMemoryCache[id] = Map<String, String>.from(stationNamesById);
+    _stationCodesMemoryCache[id] = Map<String, String>.from(stationCodesById);
+    _stationNamesMemoryCachedAt[id] = DateTime.now();
+    _productStationMappingsByRestaurant[id] =
+        Map<String, ProductStationMapping>.from(productMappings);
+    KitchenTicketHeaderResolver.registerRestaurantStationCaches(
+      restaurantId: id,
+      stationNamesById: stationNamesById,
+      stationCodesById: stationCodesById,
+    );
+    KitchenTicketHeaderResolver.registerRestaurantProductStationMappings(
+      id,
+      productMappings,
+    );
+    KitchenProductMappingCacheStore.applyMemoryToResolver(id);
   }
 
   Map<String, ProductStationMapping> cachedProductStationMappingsForRestaurant(
@@ -918,7 +947,30 @@ class OrderPrintJobService {
     String? notes,
     String jobType = 'new_order',
     bool garsonDesktopFastKitchen = false,
+    bool skipOfflineFallback = false,
+    String? storeCategory,
+    String? tableName,
   }) async {
+    final offlineRouter = RestaurantOfflineOrderRouter(
+      orderPrintJobService: this,
+    );
+    if (!skipOfflineFallback &&
+        await offlineRouter.shouldRouteOffline(
+          restaurantId: restaurantId,
+          storeCategory: storeCategory,
+        )) {
+      return offlineRouter.dispatchOfflineOrder(
+        restaurantId: restaurantId,
+        tableNumber: tableNumber,
+        items: items,
+        waiterId: waiterId,
+        waiterName: waiterName,
+        notes: notes,
+        tableName: tableName,
+        storeCategory: storeCategory,
+      );
+    }
+
     final traceId = _generateTraceId();
     final pipelineStartedAt = DateTime.now().toIso8601String();
     final pipelineWatch = Stopwatch()..start();
@@ -969,16 +1021,37 @@ class OrderPrintJobService {
     );
 
     final rpcWatch = Stopwatch()..start();
-    final response = await _runCreateTableOrderWithPrintJobsRpc(
-      restaurantId: restaurantId,
-      tableNumber: tableNumber,
-      normalized: normalized,
-      waiterId: waiterId,
-      waiterName: waiterName,
-      notes: notes,
-      traceId: traceId,
-      jobType: jobType,
-    );
+    late final dynamic response;
+    try {
+      response = await _runCreateTableOrderWithPrintJobsRpc(
+        restaurantId: restaurantId,
+        tableNumber: tableNumber,
+        normalized: normalized,
+        waiterId: waiterId,
+        waiterName: waiterName,
+        notes: notes,
+        traceId: traceId,
+        jobType: jobType,
+      ).timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      if (!skipOfflineFallback &&
+          await offlineRouter.shouldRouteOffline(
+            restaurantId: restaurantId,
+            storeCategory: storeCategory,
+          )) {
+        return offlineRouter.dispatchOfflineOrder(
+          restaurantId: restaurantId,
+          tableNumber: tableNumber,
+          items: items,
+          waiterId: waiterId,
+          waiterName: waiterName,
+          notes: notes,
+          tableName: tableName,
+          storeCategory: storeCategory,
+        );
+      }
+      rethrow;
+    }
     final rpcMs = rpcWatch.elapsedMilliseconds;
 
     final data = response is Map<String, dynamic>
@@ -1364,6 +1437,217 @@ class OrderPrintJobService {
       notes: notes,
       jobType: 'reprint',
     );
+  }
+
+  /// Fast reprint: clone existing kitchen print_job payloads instead of
+  /// recreating orders via [create_table_order_with_print_jobs].
+  Future<OrderPrintJobDispatchResult> dispatchReprintFast({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> tableOrders,
+    String? waiterId,
+    String? waiterName,
+    String? notes,
+  }) async {
+    final perf = GarsonPerfTrace('reprint');
+    final inFlightKey = reprintInFlightKey(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+    );
+    if (!_reprintInFlightKeys.add(inFlightKey)) {
+      return OrderPrintJobDispatchResult(
+        orderId: null,
+        orderNumber: null,
+        printJobCount: 0,
+        printJobIds: const <String>[],
+        raw: const <String, dynamic>{'status': 'duplicate_in_flight'},
+        printPendingReason: 'duplicate_in_flight',
+      );
+    }
+    try {
+      final orderIds = tableOrders
+          .map((order) => order['id']?.toString().trim() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (orderIds.isEmpty) {
+        return dispatchReprint(
+          restaurantId: restaurantId,
+          tableNumber: tableNumber,
+          items: _flattenTableOrderItems(tableOrders),
+          waiterId: waiterId,
+          waiterName: waiterName,
+          notes: notes,
+        );
+      }
+
+      final fetchWatch = Stopwatch()..start();
+      final rows = await _client
+          .from('print_jobs')
+          .select(
+            'id, restaurant_id, order_id, station_id, printer_id, job_type, payload, status, created_at',
+          )
+          .eq('restaurant_id', restaurantId)
+          .inFilter('order_id', orderIds)
+          .order('created_at', ascending: false)
+          .limit(80);
+      fetchWatch.stop();
+      perf.mark('fetchJobMs=${fetchWatch.elapsedMilliseconds}');
+      final sourceJobs = pickLatestKitchenPrintJobsForReprint(
+        List<Map<String, dynamic>>.from(rows as List)
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false),
+      );
+      if (sourceJobs.isEmpty) {
+        logGarsonPerfReprint(
+          tableId: tableNumber,
+          fetchJobMs: fetchWatch.elapsedMilliseconds,
+          usedCachedPayload: false,
+          totalMs: perf.elapsedMs,
+        );
+        return dispatchReprint(
+          restaurantId: restaurantId,
+          tableNumber: tableNumber,
+          items: _flattenTableOrderItems(tableOrders),
+          waiterId: waiterId,
+          waiterName: waiterName,
+          notes: notes,
+        );
+      }
+
+      final prepareWatch = Stopwatch()..start();
+      final clonedJobIds = <String>[];
+      try {
+        for (final sourceJob in sourceJobs) {
+          final sourceJobId = sourceJob['id']?.toString() ?? '';
+          final payload = Map<String, dynamic>.from(
+            sourceJob['payload'] is Map
+                ? Map<String, dynamic>.from(sourceJob['payload'] as Map)
+                : const <String, dynamic>{},
+          );
+          payload.remove('print_job_id');
+          payload['table_number'] = tableNumber;
+          payload['table_no'] = tableNumber.toString();
+          if (notes != null && notes.trim().isNotEmpty) {
+            payload['notes'] = notes.trim();
+          }
+          final mergedPayload = await _payloadWithPrinterConfig(
+            <String, dynamic>{...sourceJob, 'payload': payload},
+          );
+
+          final response = await _client.rpc(
+            'enqueue_active_kitchen_reprint_clone',
+            params: <String, dynamic>{
+              'p_restaurant_id': restaurantId,
+              'p_table_number': tableNumber,
+              'p_payload': mergedPayload,
+              'p_source_job_id': sourceJobId.isEmpty ? null : sourceJobId,
+              'p_order_id': sourceJob['order_id'],
+              'p_station_id': sourceJob['station_id'],
+              'p_printer_id': sourceJob['printer_id'],
+              'p_waiter_id': (waiterId == null || waiterId.trim().isEmpty)
+                  ? null
+                  : waiterId,
+              'p_waiter_name': waiterName,
+              'p_notes': notes,
+            },
+          );
+          final data = response is Map<String, dynamic>
+              ? response
+              : (response is Map
+                    ? Map<String, dynamic>.from(response)
+                    : <String, dynamic>{});
+          clonedJobIds.addAll(_extractPrintJobIds(data['print_job_ids']));
+        }
+      } on PostgrestException catch (error) {
+        _logKitchen(
+          'ReprintFast',
+          'restaurantId=$restaurantId tableNo=$tableNumber '
+              'phase=clone_rpc_failed error=${error.message}',
+        );
+        return dispatchReprint(
+          restaurantId: restaurantId,
+          tableNumber: tableNumber,
+          items: _flattenTableOrderItems(tableOrders),
+          waiterId: waiterId,
+          waiterName: waiterName,
+          notes: notes,
+        );
+      }
+      prepareWatch.stop();
+      perf.mark('preparePayload');
+      if (clonedJobIds.isEmpty) {
+        return dispatchReprint(
+          restaurantId: restaurantId,
+          tableNumber: tableNumber,
+          items: _flattenTableOrderItems(tableOrders),
+          waiterId: waiterId,
+          waiterName: waiterName,
+          notes: notes,
+        );
+      }
+
+      final primaryOrderId = orderIds.first;
+      final dispatchWatch = Stopwatch()..start();
+      final outcome = await _dispatchCreatedPrintJobsGarsonFast(
+        restaurantId: restaurantId,
+        tableNumber: tableNumber,
+        orderId: primaryOrderId,
+        printJobIds: clonedJobIds,
+      );
+      dispatchWatch.stop();
+      perf.mark('bridgeMs=${dispatchWatch.elapsedMilliseconds}');
+      logGarsonPerfReprint(
+        orderId: primaryOrderId,
+        tableId: tableNumber,
+        fetchJobMs: fetchWatch.elapsedMilliseconds,
+        preparePayloadMs: prepareWatch.elapsedMilliseconds,
+        bridgeMs: dispatchWatch.elapsedMilliseconds,
+        usedCachedPayload: true,
+        totalMs: perf.elapsedMs,
+      );
+
+      return OrderPrintJobDispatchResult(
+        orderId: primaryOrderId,
+        orderNumber: null,
+        printJobCount: clonedJobIds.length,
+        printJobIds: clonedJobIds,
+        raw: <String, dynamic>{
+          'status': 'ok',
+          'reprint_fast_path': true,
+          'source_job_count': sourceJobs.length,
+        },
+        dispatchedJobCount: outcome.dispatchedJobCount,
+        failedJobCount: outcome.failedJobCount,
+        physicallyDispatched: outcome.dispatchedJobCount > 0,
+        bridgeRequestMs: dispatchWatch.elapsedMilliseconds,
+        dispatchPath: outcome.dispatchPath,
+        handoffToHub: outcome.handoffToHub,
+        printerNotPrintedYet: outcome.printerNotPrintedYet,
+        printPendingReason: outcome.pendingReason,
+        pendingForHubJobIds: outcome.pendingForHubJobIds,
+        printFailureMessage: outcome.hasFailures
+            ? outcome.failureMessages.join(' | ')
+            : null,
+      );
+    } finally {
+      _reprintInFlightKeys.remove(inFlightKey);
+      perf.finish(extra: <String, Object?>{'tableId': tableNumber});
+    }
+  }
+
+  List<Map<String, dynamic>> _flattenTableOrderItems(
+    List<Map<String, dynamic>> tableOrders,
+  ) {
+    return tableOrders
+        .expand((order) {
+          final rawItems = order['items'];
+          if (rawItems is! List) return const <Map<String, dynamic>>[];
+          return rawItems.whereType<Map>().map(
+            (item) => Map<String, dynamic>.from(item),
+          );
+        })
+        .toList(growable: false);
   }
 
   Future<void> retryPrintJob({

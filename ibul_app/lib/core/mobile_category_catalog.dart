@@ -1168,6 +1168,201 @@ MobileCategoryNode _mergeMainCategory(
   );
 }
 
+/// Satıcı ürün ekleme ekranındaki canonical ana kategori listesi.
+const List<String> sellerProductMainCategoryNames = [
+  'Elektronik',
+  'Spor & Outdoor',
+  'Giyim & Aksesuar',
+  'Anne & Bebek & Oyuncak',
+  'Kozmetik & Kişisel Bakım',
+  'Ev & Yaşam',
+  'Süpermarket & Petshop',
+  'Kitap & Hobi',
+  '2.el Ürünler',
+  'Yemek',
+];
+
+/// Satıcı ürün ekleme ekranındaki canonical alt kategori listesi.
+const Map<String, List<String>> sellerProductSubCategoriesByMain =
+    <String, List<String>>{
+  'Elektronik': [
+    'Telefon',
+    'Bilgisayar',
+    'Laptop & Tablet',
+    'Televizyon',
+    'Gaming',
+    'Oyuncu Ekipmanları',
+    'Telefon Aksesuarları',
+    'Oyun Konsolları',
+    'Ev Aletleri',
+    'Küçük Ev Aletleri',
+    'Beyaz Eşya',
+    'Ses & Görüntü',
+    'Kamera & Fotoğraf',
+  ],
+  'Spor & Outdoor': [
+    'Spor Giyim',
+    'Fitness',
+    'Outdoor',
+    'Sporcu Besinleri',
+    'Kamp & Kampçılık',
+    'Bisiklet',
+  ],
+  'Giyim & Aksesuar': [
+    'Kadın Giyim',
+    'Erkek Giyim',
+    'Çocuk Giyim',
+    'Ayakkabı',
+    'Çanta',
+    'Saat & Aksesuar',
+  ],
+  'Anne & Bebek & Oyuncak': [
+    'Bebek Giyim',
+    'Bebek Bakım',
+    'Oyuncak',
+    'Bebek Arabası',
+    'Bebek Beslenme',
+  ],
+  'Kozmetik & Kişisel Bakım': [
+    'Saç Bakımı',
+    'Cilt Bakımı',
+    'Ağız Bakımı',
+    'Tıraş & Bakım',
+    'Parfüm',
+    'Makyaj',
+    'Kişisel Bakım Cihazları',
+    'Erkek Bakım',
+    'Kişisel Bakım',
+  ],
+  'Ev & Yaşam': [
+    'Mobilya',
+    'Dekorasyon',
+    'Mutfak',
+    'Banyo',
+    'Bahçe',
+    'Aydınlatma',
+    'Ev Tekstili',
+  ],
+  'Süpermarket & Petshop': [
+    'Gıda',
+    'İçecek',
+    'Temizlik',
+    'Petshop',
+    'Bebek Ürünleri',
+  ],
+  'Kitap & Hobi': [
+    'Kitap',
+    'Müzik & Film',
+    'Hobi & Oyun',
+    'Kırtasiye',
+    'Sanat',
+  ],
+  '2.el Ürünler': [
+    '2.el Elektronik',
+    '2.el Giyim',
+    '2.el Mobilya',
+    '2.el Kitap',
+    'Diğer',
+  ],
+  'Yemek': [
+    'Ana Yemek',
+    'Çorba',
+    'Salata',
+    'Tatlı',
+    'İçecek',
+    'Atıştırmalık',
+    'Kahvaltı',
+    'Diğer',
+  ],
+};
+
+List<String> sellerProductSubCategoriesFor(String? mainCategory) {
+  if (mainCategory == null || mainCategory.trim().isEmpty) {
+    return const [];
+  }
+  return sellerProductSubCategoriesByMain[mainCategory] ?? const [];
+}
+
+/// Ürün ekleme ekranı ile aynı canonical kategori ağacını DB id'leriyle birleştirir.
+List<CategoryWithSubcategories> buildSellerProductCategoryGroups(
+  List<CategoryWithSubcategories> remoteDb,
+) {
+  final dbMainByName = <String, DBCategory>{};
+  final dbSubsByMainName = <String, Map<String, DBCategory>>{};
+  final dbSubByName = <String, DBCategory>{};
+
+  for (final group in remoteDb) {
+    final mainKey = normalizeCategoryNameForLookup(group.mainCategory.name);
+    dbMainByName[mainKey] = group.mainCategory;
+    dbSubsByMainName[mainKey] = {
+      for (final sub in group.subCategories)
+        normalizeCategoryNameForLookup(sub.name): sub,
+    };
+    for (final sub in group.subCategories) {
+      dbSubByName.putIfAbsent(
+        normalizeCategoryNameForLookup(sub.name),
+        () => sub,
+      );
+    }
+  }
+
+  DBCategory? findDbSub(String mainName, String subName) {
+    final mainKey = normalizeCategoryNameForLookup(mainName);
+    final subKey = normalizeCategoryNameForLookup(subName);
+    final underMain = dbSubsByMainName[mainKey]?[subKey];
+    if (underMain != null) return underMain;
+
+    final mainId = dbMainByName[mainKey]?.id;
+    if (mainId != null) {
+      for (final group in remoteDb) {
+        if (group.mainCategory.id != mainId) continue;
+        for (final sub in group.subCategories) {
+          if (normalizeCategoryNameForLookup(sub.name) == subKey) {
+            return sub;
+          }
+        }
+      }
+    }
+
+    return dbSubByName[subKey];
+  }
+
+  return sellerProductMainCategoryNames.map((mainName) {
+    final mainKey = normalizeCategoryNameForLookup(mainName);
+    final dbMain = dbMainByName[mainKey];
+    final mainCategory = DBCategory(
+      id: dbMain?.id,
+      name: mainName,
+      iconName: dbMain?.iconName,
+      imageUrl: dbMain?.imageUrl,
+      orderIndex: dbMain?.orderIndex ??
+          sellerProductMainCategoryNames.indexOf(mainName) + 1,
+      parentId: null,
+      isActive: dbMain?.isActive ?? true,
+    );
+
+    final subCategories = (sellerProductSubCategoriesByMain[mainName] ??
+            const <String>[])
+        .map((subName) {
+      final dbSub = findDbSub(mainName, subName);
+      return DBCategory(
+        id: dbSub?.id,
+        name: subName,
+        iconName: dbSub?.iconName,
+        imageUrl: dbSub?.imageUrl,
+        orderIndex: dbSub?.orderIndex ?? 0,
+        parentId: dbSub?.parentId ?? mainCategory.id,
+        isActive: dbSub?.isActive ?? true,
+      );
+    }).toList(growable: false);
+
+    return CategoryWithSubcategories(
+      mainCategory: mainCategory,
+      subCategories: subCategories,
+    );
+  }).toList(growable: false);
+}
+
 String normalizeCategoryNameForLookup(String value) {
   return _normalizeCategoryName(value);
 }

@@ -4,8 +4,9 @@ from typing import Any
 
 from .config import BridgeSettings
 from .receipt import (
+    append_text_tail_blank_lines,
+    append_trailing_feed_and_cut,
     _begin_document,
-    _cut,
     _feed,
     _set_alignment,
     _set_bold,
@@ -75,11 +76,22 @@ class EscPosDocumentRenderer:
                 )
             )
 
-        feed_lines = max(0, int(document.get("feed", 3) or 0))
-        if feed_lines:
-            chunks.append(_feed(feed_lines))
-        if document.get("cut", True):
-            chunks.append(_cut(self.settings.cut_mode))
+        doc_feed = document.get("feed")
+        try:
+            explicit_feed = int(doc_feed) if doc_feed is not None else None
+        except (TypeError, ValueError):
+            explicit_feed = None
+        trailing = max(
+            bottom_feed,
+            getattr(self.settings, "min_trailing_blank_lines", bottom_feed),
+        )
+        append_text_tail_blank_lines(chunks, min_trailing_blank_lines=trailing)
+        append_trailing_feed_and_cut(
+            chunks,
+            cut_mode=self.settings.cut_mode if document.get("cut", True) else "none",
+            bottom_feed_lines=bottom_feed,
+            cut_feed_lines=self.settings.cut_feed_lines,
+        )
         return b"".join(chunks)
 
     def _render_text_line(

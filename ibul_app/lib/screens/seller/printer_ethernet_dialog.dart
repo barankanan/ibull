@@ -24,6 +24,10 @@ import '../../services/desktop_print_orchestrator.dart';
 import '../../services/local_print_service.dart';
 import '../../services/printer_error_messages.dart';
 import '../../services/printer_repository.dart';
+import '../../services/restaurant_offline/restaurant_connectivity_service.dart';
+import '../../services/restaurant_offline/restaurant_offline_snapshot_sync.dart';
+import '../../features/seller/panel/printer_center/widgets/printer_receipt_length_settings_section.dart';
+import '../../services/printer_receipt_length_settings.dart';
 
 /// Opens the Ethernet printer dialog and returns the saved [PrinterModel]
 /// when the operator finishes the flow, or ``null`` on cancel.
@@ -119,8 +123,13 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
 
   bool _saving = false;
   String? _formError;
+  String? _technicalError;
+  String? _saveStatusMessage;
+  bool _savedToDb = false;
   String? _ipError;
   String? _portError;
+  PrinterReceiptLengthSettings _receiptLengthSettings =
+      PrinterReceiptLengthSettings.normal;
 
   PrinterProfile get _selectedPrinterProfile =>
       PrinterProfile.resolveForEthernetSetup(
@@ -145,13 +154,24 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   bool get _printOk => _printDiagnostic?.ok == true;
 
   String get _saveStatusLabel {
-    if (_connectionOk) return 'Hazır';
-    final host = _ipCtrl.text.trim();
-    if (host.isNotEmpty &&
-        _networkCompatibilityPlan.hasMismatch) {
-      return 'Ağ uyumsuzluğu — bağlantı doğrulanmadı';
+    if (_savedToDb) return 'Kaydedildi';
+    if (_saveStatusMessage != null && _saveStatusMessage!.isNotEmpty) {
+      return _saveStatusMessage!;
     }
-    return 'Bağlantı doğrulanmadı';
+    if (_connectionOk && _printOk) return 'Hazır';
+    if (_connectionOk) return 'Hazır';
+    if (_connectionTesting || _printTesting || _saving) {
+      return 'Bağlantı bekleniyor';
+    }
+    return 'Bağlantı bekleniyor';
+  }
+
+  String? get _manualScanSuccessMessage {
+    if (!_connectionOk) return null;
+    final scanFailed = _scanError != null ||
+        (_scanResult != null && (_scanResult!.devices.isEmpty));
+    if (!scanFailed) return null;
+    return 'Otomatik tarama cihaz bulamadı. Manuel IP ile bağlantı başarılı.';
   }
 
   EthernetNetworkCompatibilityPlan get _networkCompatibilityPlan {
@@ -218,6 +238,8 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       } else {
         _role = EthernetPrinterRole.adisyon;
       }
+      _receiptLengthSettings =
+          PrinterReceiptLengthSettings.fromPrinterModel(existing);
     }
   }
 
@@ -479,6 +501,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         _ => 'adisyon',
       },
       'source': 'ethernet_dialog_form',
+      ..._receiptLengthSettings.toLiveBridgeFields(paperWidthMm: _paperWidth),
     };
   }
 
@@ -635,6 +658,13 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     }
     final syntheticPrinter = _buildSyntheticEthernetPrinter(form);
     final payload = _buildEthernetDispatchPayload(form);
+    debugPrint(
+      '[ReceiptLength][ui_test] '
+      'preset=${_receiptLengthSettings.preset.bridgeValue} '
+      'bottom_feed_lines=${payload['bottom_feed_lines']} '
+      'bottom_padding_px=${payload['bottom_padding_px']} '
+      'min_receipt_height_px=${payload['min_receipt_height_px']}',
+    );
     setState(() {
       _printTesting = true;
       _printDiagnostic = null;
@@ -681,6 +711,18 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
           )
           .timeout(const Duration(seconds: 20));
       if (!mounted) return;
+      final raw = result.raw;
+      final duplicateSuppressed =
+          raw?['errorCode']?.toString() == 'duplicate_test_suppressed';
+      if (duplicateSuppressed) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Test fişi zaten gönderiliyor, lütfen bekleyin.'),
+          ),
+        );
+        return;
+      }
       if (result.ok) {
         setState(() {
           _printDiagnostic = EthernetConnectionDiagnostic(
@@ -753,15 +795,30 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       _applyValidation(form);
       return;
     }
+    final profileError = _validateSelectedProfile();
+    if (profileError != null) {
+      setState(() => _formError = profileError);
+      return;
+    }
+    if (!_connectionOk) {
+      setState(() {
+        _formError =
+            'Kaydetmeden önce "Bağlantıyı Test Et" ile bağlantıyı doğrulayın.';
+      });
+      return;
+    }
     setState(() {
       _saving = true;
       _formError = null;
+      _technicalError = null;
       _ipError = null;
       _portError = null;
+      _saveStatusMessage = null;
     });
     final host = form.host;
     final port = form.port;
     final name = form.name;
+    final isUpdate = widget.existing?.id.isNotEmpty == true;
     try {
       final repo = widget.repository ?? PrinterRepository();
       final saved = await repo.upsertEthernetPrinter(
@@ -773,44 +830,76 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         port: port,
         paperWidthMm: _paperWidth,
         supportsCut: _autoCut,
-        isActive: _connectionOk,
+        isActive: true,
         assignedRoles: _role.assignedRoles,
         printerProfileId: _selectedPrinterProfile.id,
+        receiptLengthSettings: _receiptLengthSettings,
       );
-      if (_connectionOk && _printOk) {
-        await repo.recordTestPrintResult(printerId: saved.id, success: true);
-      } else if (!_connectionOk) {
-        final mismatch = _networkCompatibilityPlan.hasMismatch;
+      if (_connectionOk) {
         await repo.recordTestPrintResult(
           printerId: saved.id,
-          success: false,
-          statusOverride: 'pending',
-          error: mismatch
-              ? 'network_mismatch: ${_networkCompatibilityPlan.mismatchGuidance}'
-              : 'unverified: Bağlantı doğrulanmadı',
+          success: _printOk || _connectionOk,
         );
       }
       if (!mounted) return;
-      if (!_connectionOk) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _networkCompatibilityPlan.hasMismatch
-                  ? ethernetUnverifiedSaveWarning
-                  : ethernetUnverifiedSaveWarning,
-            ),
-          ),
-        );
-      }
+      setState(() {
+        _savedToDb = true;
+        _saveStatusMessage = 'Kaydedildi';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isUpdate ? 'Yazıcı güncellendi.' : 'Yazıcı kaydedildi.'),
+        ),
+      );
       Navigator.of(context).pop(saved);
     } catch (e) {
       if (!mounted) return;
-      final message = e.toString().replaceAll(
-        'generic_80mm_escpos',
-        _selectedPrinterProfile.id,
-      );
+      final connectivity = RestaurantConnectivityService.instance;
+      await connectivity.refresh();
+      final canLocalSave = !connectivity.hasNetwork ||
+          !connectivity.supabaseReachable;
+      if (canLocalSave) {
+        try {
+          await RestaurantOfflineSnapshotSync().upsertFromSellerPanelState(
+            restaurantId: widget.restaurantId,
+            storeName: widget.restaurantId,
+            sellerId: widget.restaurantId,
+            storeCategory: 'Restoran',
+            printers: <Map<String, dynamic>>[
+              <String, dynamic>{
+                'id': widget.existing?.id ?? 'local-${PrinterModel.ethernetPrinterId(host: host, port: port)}',
+                'name': name,
+                'ip_address': host,
+                'port': port,
+                'device_identifier': PrinterModel.ethernetPrinterId(
+                  host: host,
+                  port: port,
+                ),
+                'connection_type': PrinterModel.networkConnectionType,
+                'printer_profile_id':
+                    PrinterProfile.canonicalDatabaseId(
+                      _selectedPrinterProfile.id,
+                    ),
+                'assigned_roles':
+                    _role.assignedRoles.map((role) => role.value).toList(),
+              },
+            ],
+          );
+          setState(() {
+            _saveStatusMessage = 'Yerel kaydedildi, senkron bekliyor';
+            _formError =
+                'Yazıcı yerel olarak kaydedildi. İnternet gelince senkronlanacak.';
+          });
+          return;
+        } catch (_) {
+          // fall through to DB error message
+        }
+      }
       setState(() {
-        _formError = 'Kaydedilemedi: $message';
+        _formError =
+            'Yazıcı kaydedilemedi. Profil ve bağlantı bilgilerini kontrol edin.';
+        _technicalError = e.toString();
+        _saveStatusMessage = 'Kaydedilemedi';
       });
     } finally {
       if (mounted) {
@@ -875,10 +964,10 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
               _Field(
                 label: 'Yazıcı Adı',
                 fieldKey: const Key('ethernet_name_field'),
-                hint: 'NETUM ZJ-8360 Ethernet',
+                hint: 'Yazıcı adı giriniz',
                 controller: _nameCtrl,
                 helper:
-                    'Boş bırakırsanız kayıtta "Ethernet Yazıcı ${_ipCtrl.text.trim().isEmpty ? "<IP>" : _ipCtrl.text.trim()}" üretilir.',
+                    'Boş bırakılırsa kayıtta "Ethernet Yazıcı ${ _ipCtrl.text.trim().isEmpty ? "<IP>" : _ipCtrl.text.trim()}" üretilir.',
               ),
               const SizedBox(height: 14),
               Row(
@@ -888,8 +977,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                     child: _Field(
                       label: 'IP Adresi',
                       fieldKey: const Key('ethernet_ip_field'),
-                      hint: 'Değer giriniz',
-                      helper: 'Örn: 192.168.1.100',
+                      hint: 'IP adresi giriniz',
                       controller: _ipCtrl,
                       errorText: _ipError,
                       keyboardType: const TextInputType.numberWithOptions(
@@ -903,7 +991,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                     child: _Field(
                       label: 'Port',
                       fieldKey: const Key('ethernet_port_field'),
-                      hint: PrinterModel.ethernetDefaultPort.toString(),
+                      hint: 'Port',
                       controller: _portCtrl,
                       errorText: _portError,
                       keyboardType: TextInputType.number,
@@ -924,6 +1012,16 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                 title: 'Otomatik Kesici',
                 subtitle:
                     'Fiş sonunda yazıcı kağıdı otomatik kessin (genelde 80mm yazıcılarda vardır).',
+              ),
+              const SizedBox(height: 14),
+              PrinterReceiptLengthSettingsSection(
+                paperWidthMm: _paperWidth,
+                settings: _receiptLengthSettings,
+                onChanged: (PrinterReceiptLengthSettings settings) =>
+                    setState(() => _receiptLengthSettings = settings),
+                showTestButton: _connectionOk,
+                testing: _printTesting,
+                onTestReceipt: _connectionOk ? _runPrintTest : null,
               ),
               const SizedBox(height: 14),
               _RoleSelector(
@@ -954,9 +1052,20 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                   ),
                 ),
               ],
+              if (_manualScanSuccessMessage != null) ...[
+                const SizedBox(height: 10),
+                _ScanMessageBanner(
+                  message: _manualScanSuccessMessage!,
+                  isError: false,
+                ),
+              ],
               if (_formError != null) ...[
                 const SizedBox(height: 12),
                 _ErrorBanner(message: _formError!),
+              ],
+              if (_technicalError != null) ...[
+                const SizedBox(height: 8),
+                _TechnicalErrorPanel(error: _technicalError!),
               ],
               const SizedBox(height: 22),
               Row(
@@ -1029,7 +1138,10 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                 ),
               ],
               const SizedBox(height: 12),
-              _SaveStatusChip(label: _saveStatusLabel, ok: _connectionOk),
+              _SaveStatusChip(
+                label: _saveStatusLabel,
+                ok: _connectionOk || _savedToDb,
+              ),
               const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: _saving ? null : _save,
@@ -1488,6 +1600,51 @@ class _ErrorBanner extends StatelessWidget {
                 height: 1.45,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TechnicalErrorPanel extends StatelessWidget {
+  const _TechnicalErrorPanel({required this.error});
+
+  final String error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F4F6),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              error,
+              style: const TextStyle(
+                fontSize: 11,
+                color: Color(0xFF6B7280),
+                height: 1.4,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Teknik hatayı kopyala',
+            visualDensity: VisualDensity.compact,
+            iconSize: 16,
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: error));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Teknik hata kopyalandı.')),
+              );
+            },
+            icon: const Icon(Icons.copy_rounded, color: Color(0xFF6B7280)),
           ),
         ],
       ),

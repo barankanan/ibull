@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-
+import '../../features/admin/panel/helpers/admin_panel_density.dart';
 import 'package:ibul_app/services/admin_service.dart';
 
 class DataAnalyticsPage extends StatefulWidget {
@@ -150,14 +150,15 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final density = AdminPanelDensity.fromWidth(constraints.maxWidth);
         final tab = _tabs[_selectedTabIndex];
         return Column(
           children: [
-            _buildHeader(tab),
+            _buildHeader(tab, density: density),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: _buildCurrentTab(constraints),
+                padding: EdgeInsets.all(density.pagePadding),
+                child: _buildCurrentTab(density),
               ),
             ),
           ],
@@ -166,10 +167,15 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildHeader(_AnalyticsTab tab) {
+  Widget _buildHeader(_AnalyticsTab tab, {required AdminPanelDensity density}) {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(24, 22, 24, 18),
+      padding: EdgeInsets.fromLTRB(
+        density.pagePadding,
+        density.isCompact ? 10 : 12,
+        density.pagePadding,
+        density.isCompact ? 8 : 10,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -180,103 +186,119 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Veri Merkezi',
                       style: TextStyle(
-                        fontSize: 22,
+                        fontSize: density.headerTitleFontSize,
                         fontWeight: FontWeight.w800,
-                        color: Color(0xFF111827),
+                        color: const Color(0xFF111827),
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                     Text(
                       tab.subtitle,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF6B7280),
-                        height: 1.4,
+                      maxLines: density.isCompact ? 1 : 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: density.heroSubtitleFontSize,
+                        color: const Color(0xFF6B7280),
+                        height: 1.35,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10),
               OutlinedButton.icon(
                 onPressed: _refreshCurrentTab,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: const Text('Yenile'),
+                icon: Icon(
+                  Icons.refresh_rounded,
+                  size: density.tabButtonIconSize,
+                ),
+                label: Text(
+                  'Yenile',
+                  style: TextStyle(fontSize: density.tabButtonFontSize),
+                ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF111827),
                   side: BorderSide(color: Colors.grey.shade300),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: density.tabButtonPaddingH,
+                    vertical: density.tabButtonPaddingV,
                   ),
+                  visualDensity: VisualDensity.compact,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: List.generate(_tabs.length, (index) {
-              final item = _tabs[index];
-              final selected = index == _selectedTabIndex;
-              return InkWell(
-                borderRadius: BorderRadius.circular(18),
-                onTap: () => setState(() => _selectedTabIndex = index),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+          SizedBox(height: density.isCompact ? 8 : 10),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: List.generate(_tabs.length, (index) {
+                final item = _tabs[index];
+                final selected = index == _selectedTabIndex;
+                return Padding(
+                  padding: EdgeInsets.only(
+                    right: index == _tabs.length - 1 ? 0 : density.gridSpacing,
                   ),
-                  decoration: BoxDecoration(
-                    gradient: selected
-                        ? LinearGradient(
-                            colors: [item.startColor, item.endColor],
-                          )
-                        : null,
-                    color: selected ? null : const Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: selected
-                          ? Colors.transparent
-                          : const Color(0xFFE5E7EB),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        item.icon,
-                        size: 18,
-                        color: selected ? Colors.white : item.startColor,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(density.tabButtonRadius),
+                    onTap: () => setState(() => _selectedTabIndex = index),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: density.tabButtonPaddingH,
+                        vertical: density.tabButtonPaddingV,
                       ),
-                      const SizedBox(width: 10),
-                      Text(
-                        item.title,
-                        style: TextStyle(
+                      decoration: BoxDecoration(
+                        gradient: selected
+                            ? LinearGradient(
+                                colors: [item.startColor, item.endColor],
+                              )
+                            : null,
+                        color: selected ? null : const Color(0xFFF8FAFC),
+                        borderRadius:
+                            BorderRadius.circular(density.tabButtonRadius),
+                        border: Border.all(
                           color: selected
-                              ? Colors.white
-                              : const Color(0xFF111827),
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
+                              ? Colors.transparent
+                              : const Color(0xFFE5E7EB),
                         ),
                       ),
-                    ],
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            item.icon,
+                            size: density.tabButtonIconSize,
+                            color: selected ? Colors.white : item.startColor,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            item.title,
+                            style: TextStyle(
+                              color: selected
+                                  ? Colors.white
+                                  : const Color(0xFF111827),
+                              fontWeight: FontWeight.w700,
+                              fontSize: density.tabButtonFontSize,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              );
-            }),
+                );
+              }),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCurrentTab(BoxConstraints constraints) {
+  Widget _buildCurrentTab(AdminPanelDensity density) {
     switch (_selectedTabIndex) {
       case 0:
         return FutureBuilder<AdminUserAnalyticsSnapshot>(
@@ -284,7 +306,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
           builder: (context, snapshot) {
             return _buildAsyncState(
               snapshot: snapshot,
-              builder: (data) => _buildUserView(data, constraints.maxWidth),
+              builder: (data) => _buildUserView(data, density: density),
             );
           },
         );
@@ -294,7 +316,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
           builder: (context, snapshot) {
             return _buildAsyncState(
               snapshot: snapshot,
-              builder: (data) => _buildStoreView(data, constraints.maxWidth),
+              builder: (data) => _buildStoreView(data, density: density),
             );
           },
         );
@@ -304,7 +326,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
           builder: (context, snapshot) {
             return _buildAsyncState(
               snapshot: snapshot,
-              builder: (data) => _buildCargoView(data, constraints.maxWidth),
+              builder: (data) => _buildCargoView(data, density: density),
             );
           },
         );
@@ -314,7 +336,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
           builder: (context, snapshot) {
             return _buildAsyncState(
               snapshot: snapshot,
-              builder: (data) => _buildSystemView(data, constraints.maxWidth),
+              builder: (data) => _buildSystemView(data, density: density),
             );
           },
         );
@@ -338,11 +360,15 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     return builder(data);
   }
 
-  Widget _buildUserView(AdminUserAnalyticsSnapshot data, double width) {
+  Widget _buildUserView(
+    AdminUserAnalyticsSnapshot data, {
+    required AdminPanelDensity density,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildHeroCard(
+          density: density,
           title: 'Gerçek kullanıcı akışı',
           subtitle:
               'Kullanıcı, sipariş ve teslimat tercihleri doğrudan canlı tablolardan okunuyor.',
@@ -356,9 +382,9 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             '30 gün tekrar satın alma: ${_percent(data.repeatBuyerRate)}',
           ],
         ),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
         _buildMetricGrid(
-          width: width,
+          density: density,
           items: [
             _DashboardMetric(
               title: '30 gün aktif',
@@ -390,12 +416,13 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             ),
           ],
         ),
-        const SizedBox(height: 20),
-        _buildUserGrowthCard(data.userGrowth),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
+        _buildUserGrowthCard(data.userGrowth, density: density),
+        SizedBox(height: density.sectionGap),
         _buildSplitSection(
-          width: width,
+          density: density,
           left: _buildSliceCard(
+            density: density,
             title: 'Şehir yoğunluğu',
             subtitle: 'Sipariş adreslerinden çıkan gerçek dağılım',
             icon: Icons.location_city_rounded,
@@ -403,6 +430,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             slices: data.topCities,
           ),
           right: _buildSliceCard(
+            density: density,
             title: 'Teslimat tercihi',
             subtitle: 'Checkout sırasında seçilen teslimat tipi',
             icon: Icons.delivery_dining_rounded,
@@ -410,27 +438,32 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             slices: data.deliveryTypes,
           ),
         ),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
         _buildSplitSection(
-          width: width,
+          density: density,
           left: _buildSliceCard(
+            density: density,
             title: 'Aktivite bandı',
             subtitle: 'Canlı kullanıcıların tazelik seviyesi',
             icon: Icons.timeline_rounded,
             color: const Color(0xFF1D4ED8),
             slices: data.activityBands,
           ),
-          right: _buildRecentUsersCard(data.recentUsers),
+          right: _buildRecentUsersCard(data.recentUsers, density: density),
         ),
       ],
     );
   }
 
-  Widget _buildStoreView(AdminStoreAnalyticsSnapshot data, double width) {
+  Widget _buildStoreView(
+    AdminStoreAnalyticsSnapshot data, {
+    required AdminPanelDensity density,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildHeroCard(
+          density: density,
           title: 'Mağaza ağı sağlığı',
           subtitle:
               'Mağaza ve ürün tablosundaki canlı yoğunluk, açılış hızı ve satış akışı birlikte okunuyor.',
@@ -444,9 +477,9 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             'Düşük stok riski: ${_compactNumber(data.lowStockStores)} mağaza',
           ],
         ),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
         _buildMetricGrid(
-          width: width,
+          density: density,
           items: [
             _DashboardMetric(
               title: 'Toplam mağaza',
@@ -480,10 +513,11 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             ),
           ],
         ),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
         _buildSplitSection(
-          width: width,
+          density: density,
           left: _buildSliceCard(
+            density: density,
             title: 'Kategori dengesi',
             subtitle: 'Mağaza sayısına göre ilk kategoriler',
             icon: Icons.category_rounded,
@@ -491,6 +525,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             slices: data.topCategories,
           ),
           right: _buildSliceCard(
+            density: density,
             title: 'Şehir dağılımı',
             subtitle: 'Mağazaların yoğunlaştığı şehirler',
             icon: Icons.map_rounded,
@@ -498,13 +533,16 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             slices: data.topCities,
           ),
         ),
-        const SizedBox(height: 20),
-        _buildTopStoresCard(data.topStores),
+        SizedBox(height: density.sectionGap),
+        _buildTopStoresCard(data.topStores, density: density),
       ],
     );
   }
 
-  Widget _buildCargoView(AdminCargoAnalyticsSnapshot data, double width) {
+  Widget _buildCargoView(
+    AdminCargoAnalyticsSnapshot data, {
+    required AdminPanelDensity density,
+  }) {
     final deliveredRate = data.totalShipments == 0
         ? 0.0
         : data.deliveredShipments / data.totalShipments;
@@ -513,6 +551,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildHeroCard(
+          density: density,
           title: 'Kargo operasyon görünümü',
           subtitle:
               '${data.windowLabel} içindeki order item hareketlerinden canlı lojistik özeti çıkarılıyor.',
@@ -526,9 +565,9 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             '48 saati geçen açık sevkiyat: ${_compactNumber(data.delayedShipments)}',
           ],
         ),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
         _buildMetricGrid(
-          width: width,
+          density: density,
           items: [
             _DashboardMetric(
               title: 'Teslim edildi',
@@ -560,10 +599,11 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             ),
           ],
         ),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
         _buildSplitSection(
-          width: width,
+          density: density,
           left: _buildSliceCard(
+            density: density,
             title: 'Kargo firması dağılımı',
             subtitle: 'Atanan kargo firmalarına göre hacim',
             icon: Icons.local_shipping_outlined,
@@ -571,6 +611,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             slices: data.companyBreakdown,
           ),
           right: _buildSliceCard(
+            density: density,
             title: 'Durum dağılımı',
             subtitle: 'Shipment step ve sipariş durumundan türetilen özet',
             icon: Icons.stacked_bar_chart_rounded,
@@ -578,13 +619,16 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             slices: data.statusBreakdown,
           ),
         ),
-        const SizedBox(height: 20),
-        _buildRecentShipmentsCard(data.recentShipments),
+        SizedBox(height: density.sectionGap),
+        _buildRecentShipmentsCard(data.recentShipments, density: density),
       ],
     );
   }
 
-  Widget _buildSystemView(AdminSystemMetrics data, double width) {
+  Widget _buildSystemView(
+    AdminSystemMetrics data, {
+    required AdminPanelDensity density,
+  }) {
     final projections = _buildCapacityProjections(data);
     final quota = data.supabaseQuota;
 
@@ -592,6 +636,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildHeroCard(
+          density: density,
           title: 'Sistem kapasite resmi',
           subtitle:
               'Bu alan canlı sayımları gösterir; kullanıcı, görsel ve trafik eşikleri ise mevcut yoğunluğa göre tahmini projeksiyondur.',
@@ -607,9 +652,9 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             'Supabase ${quota.planName.toUpperCase()} • DB ${_percent(quota.databaseUsagePercent)}',
           ],
         ),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
         _buildMetricGrid(
-          width: width,
+          density: density,
           items: [
             _DashboardMetric(
               title: 'Kayıtlı kullanıcı',
@@ -662,25 +707,26 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             ),
           ],
         ),
-        const SizedBox(height: 20),
-        _buildSupabaseLimitsCard(data),
-        const SizedBox(height: 20),
+        SizedBox(height: density.sectionGap),
+        _buildSupabaseLimitsCard(data, density: density),
+        SizedBox(height: density.sectionGap),
         _buildSplitSection(
-          width: width,
-          left: _buildUsageCard(data),
-          right: _buildSignalCard(data),
+          density: density,
+          left: _buildUsageCard(data, density: density),
+          right: _buildSignalCard(data, density: density),
         ),
-        const SizedBox(height: 20),
-        _buildCapacityCard(projections),
-        const SizedBox(height: 20),
-        _buildSystemLogsCard(data.logs),
-        const SizedBox(height: 20),
-        _buildGeneralCleanupCard(),
+        SizedBox(height: density.sectionGap),
+        _buildCapacityCard(projections, density: density),
+        SizedBox(height: density.sectionGap),
+        _buildSystemLogsCard(data.logs, density: density),
+        SizedBox(height: density.sectionGap),
+        _buildGeneralCleanupCard(density: density),
       ],
     );
   }
 
   Widget _buildHeroCard({
+    required AdminPanelDensity density,
     required String title,
     required String subtitle,
     required IconData icon,
@@ -690,9 +736,9 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     required List<String> bullets,
   }) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: density.heroPadding,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(density.heroBorderRadius),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -706,23 +752,27 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 56,
-                height: 56,
+                width: density.dataHeroIconBox,
+                height: density.dataHeroIconBox,
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: Colors.white, size: 28),
+                child: Icon(
+                  icon,
+                  color: Colors.white,
+                  size: density.dataHeroIconSize,
+                ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: density.isCompact ? 8 : 9,
+                        vertical: density.isCompact ? 4 : 5,
                       ),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.14),
@@ -730,30 +780,36 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                       ),
                       child: Text(
                         badge,
-                        style: const TextStyle(
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
                           color: Colors.white,
-                          fontSize: 11,
+                          fontSize: density.isCompact ? 10 : 11,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    SizedBox(height: density.isCompact ? 6 : 8),
                     Text(
                       title,
-                      style: const TextStyle(
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         color: Colors.white,
-                        fontSize: 24,
+                        fontSize: density.dataHeroTitleFontSize,
                         fontWeight: FontWeight.w800,
                         height: 1.15,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      style: const TextStyle(
-                        color: Color(0xFFE5E7EB),
-                        fontSize: 13,
-                        height: 1.5,
+                      maxLines: density.heroSubtitleMaxLines,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: const Color(0xFFE5E7EB),
+                        fontSize: density.heroSubtitleFontSize,
+                        height: 1.35,
                       ),
                     ),
                   ],
@@ -761,29 +817,31 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          SizedBox(height: density.isCompact ? 8 : 10),
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
+            spacing: density.gridSpacing,
+            runSpacing: density.gridSpacing,
             children: bullets
                 .map(
                   (item) => Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: density.isCompact ? 8 : 10,
+                      vertical: density.isCompact ? 5 : 6,
                     ),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(10),
                       border: Border.all(
                         color: Colors.white.withValues(alpha: 0.18),
                       ),
                     ),
                     child: Text(
                       item,
-                      style: const TextStyle(
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         color: Colors.white,
-                        fontSize: 12,
+                        fontSize: density.isCompact ? 10 : 11,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -797,109 +855,131 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
   }
 
   Widget _buildMetricGrid({
-    required double width,
+    required AdminPanelDensity density,
     required List<_DashboardMetric> items,
   }) {
-    final cardWidth = width >= 1400
-        ? (width - 48) / 4
-        : width >= 820
-        ? (width - 16) / 2
-        : width;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final localDensity =
+            AdminPanelDensity.fromWidth(constraints.maxWidth);
+        final columns = localDensity.kpiColumns;
+        final spacing = localDensity.gridSpacing;
+        final itemWidth =
+            (constraints.maxWidth - (columns - 1) * spacing) / columns;
 
-    return Wrap(
-      spacing: 16,
-      runSpacing: 16,
-      children: items
-          .map(
-            (item) => SizedBox(
-              width: cardWidth,
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.03),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: items
+              .map(
+                (item) => SizedBox(
+                  width: itemWidth,
+                  child: _buildMetricCard(item, density: localDensity),
                 ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: item.color.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Icon(item.icon, color: item.color),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.title,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF6B7280),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            item.value,
-                            style: const TextStyle(
-                              fontSize: 22,
-                              color: Color(0xFF111827),
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            item.subtitle,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Color(0xFF9CA3AF),
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildMetricCard(
+    _DashboardMetric item, {
+    required AdminPanelDensity density,
+  }) {
+    return Container(
+      padding: EdgeInsets.all(density.kpiCardPadding),
+      constraints: BoxConstraints(
+        minHeight: density.kpiMinHeight,
+        maxHeight: density.kpiMaxHeight,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            padding: EdgeInsets.all(density.kpiIconPadding),
+            decoration: BoxDecoration(
+              color: item.color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
             ),
-          )
-          .toList(),
+            child: Icon(item.icon, color: item.color, size: density.kpiIconSize),
+          ),
+          SizedBox(width: density.isCompact ? 8 : 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: density.kpiTitleFontSize,
+                    color: const Color(0xFF6B7280),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  item.value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: density.kpiValueFontSize,
+                    color: const Color(0xFF111827),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  item.subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: density.kpiSubtitleFontSize,
+                    color: const Color(0xFF9CA3AF),
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildSplitSection({
-    required double width,
+    required AdminPanelDensity density,
     required Widget left,
     required Widget right,
   }) {
-    if (width < 1080) {
-      return Column(children: [left, const SizedBox(height: 16), right]);
+    if (!density.splitSectionSideBySide) {
+      return Column(
+        children: [
+          left,
+          SizedBox(height: density.gridSpacing),
+          right,
+        ],
+      );
     }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(child: left),
-        const SizedBox(width: 16),
+        SizedBox(width: density.gridSpacing),
         Expanded(child: right),
       ],
     );
   }
 
   Widget _buildSliceCard({
+    required AdminPanelDensity density,
     required String title,
     required String subtitle,
     required IconData icon,
@@ -907,18 +987,19 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     required List<AdminAnalyticsSlice> slices,
   }) {
     return _buildSurfaceCard(
+      density: density,
       title: title,
       subtitle: subtitle,
       icon: icon,
       child: slices.isEmpty
           ? const Text(
               'Gösterilecek canlı dağılım verisi yok.',
-              style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
             )
           : Column(
               children: slices.map((slice) {
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.only(bottom: 10),
                   child: Column(
                     children: [
                       Row(
@@ -926,8 +1007,10 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                           Expanded(
                             child: Text(
                               slice.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w700,
                                 color: Color(0xFF111827),
                               ),
@@ -936,28 +1019,28 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                           Text(
                             _compactNumber(slice.value),
                             style: const TextStyle(
-                              fontSize: 13,
+                              fontSize: 12,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF111827),
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           Text(
                             _percent(slice.share),
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 10,
                               fontWeight: FontWeight.w700,
                               color: color,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(999),
                         child: LinearProgressIndicator(
                           value: slice.share,
-                          minHeight: 9,
+                          minHeight: 6,
                           backgroundColor: const Color(0xFFF1F5F9),
                           color: color,
                         ),
@@ -970,8 +1053,12 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildRecentUsersCard(List<AdminRecentUserActivity> users) {
+  Widget _buildRecentUsersCard(
+    List<AdminRecentUserActivity> users, {
+    required AdminPanelDensity density,
+  }) {
     return _buildSurfaceCard(
+      density: density,
       title: 'Yeni gelen kullanıcılar',
       subtitle:
           'Sisteme eklenen kullanıcıların isim, e-posta ve ilk hareketleri',
@@ -979,22 +1066,37 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
       child: users.isEmpty
           ? const Text(
               'Kullanıcı listesi boş görünüyor.',
-              style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
             )
-          : Column(
-              children: users.map((user) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: Container(
-                    padding: const EdgeInsets.all(14),
+          : Container(
+              constraints: BoxConstraints(maxHeight: density.scrollPanelMaxHeight),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(8),
+                itemCount: users.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final user = users[index];
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 7,
+                    ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(16),
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
                     ),
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         CircleAvatar(
-                          radius: 22,
+                          radius: 14,
                           backgroundColor: const Color(0xFF0F766E),
                           child: Text(
                             user.name.isEmpty
@@ -1003,57 +1105,55 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w800,
+                              fontSize: 10,
                             ),
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 user.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w800,
                                   color: Color(0xFF111827),
                                 ),
                               ),
-                              const SizedBox(height: 4),
                               Text(
                                 user.email,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   color: Color(0xFF6B7280),
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Kayıt: ${_fullDate(user.createdAt)}',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF9CA3AF),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 4),
                               Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
+                                spacing: 4,
+                                runSpacing: 4,
                                 children: [
                                   _buildMiniChip(
-                                    icon: Icons.shopping_bag_outlined,
-                                    text: '${user.orderCount30d} sipariş / 30g',
-                                  ),
-                                  _buildMiniChip(
-                                    icon: Icons.location_on_outlined,
-                                    text: user.city,
-                                  ),
-                                  _buildMiniChip(
                                     icon: Icons.schedule_rounded,
-                                    text:
-                                        'Son hareket ${_relativeDate(user.lastSeenAt)}',
+                                    text: _fullDate(user.createdAt),
+                                    compact: true,
                                   ),
+                                  _buildMiniChip(
+                                    icon: Icons.shopping_bag_outlined,
+                                    text: '${user.orderCount30d} sipariş',
+                                    compact: true,
+                                  ),
+                                  if (user.city.trim().isNotEmpty)
+                                    _buildMiniChip(
+                                      icon: Icons.location_on_outlined,
+                                      text: user.city,
+                                      compact: true,
+                                    ),
                                 ],
                               ),
                             ],
@@ -1061,14 +1161,17 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                         ),
                       ],
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                },
+              ),
             ),
     );
   }
 
-  Widget _buildUserGrowthCard(List<AdminTimelinePoint> points) {
+  Widget _buildUserGrowthCard(
+    List<AdminTimelinePoint> points, {
+    required AdminPanelDensity density,
+  }) {
     final maxValue = points.fold<int>(
       1,
       (max, item) => [
@@ -1079,13 +1182,14 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
 
     return _buildSurfaceCard(
+      density: density,
       title: 'Kullanıcı grafiği',
       subtitle: 'Son 6 ay yeni kullanıcı ve aktif kullanıcı hareketi',
       icon: Icons.query_stats_rounded,
       child: points.isEmpty
           ? const Text(
               'Grafik verisi bulunamadı.',
-              style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1095,17 +1199,19 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                     _buildStatusPill(
                       label: 'Yeni kullanıcı',
                       color: const Color(0xFF2563EB),
+                      compact: density.isCompact,
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     _buildStatusPill(
                       label: 'Aktif kullanıcı',
                       color: const Color(0xFF0F766E),
+                      compact: density.isCompact,
                     ),
                   ],
                 ),
-                const SizedBox(height: 18),
+                SizedBox(height: density.blockGap),
                 SizedBox(
-                  height: 240,
+                  height: density.isCompact ? 160 : 180,
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -1186,182 +1292,220 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildTopStoresCard(List<AdminStorePerformance> stores) {
+  Widget _buildTopStoresCard(
+    List<AdminStorePerformance> stores, {
+    required AdminPanelDensity density,
+  }) {
     return _buildSurfaceCard(
+      density: density,
       title: 'Öne çıkan mağazalar',
       subtitle: 'Son 30 günlük sipariş gelirine göre ilk mağazalar',
       icon: Icons.leaderboard_rounded,
       child: stores.isEmpty
           ? const Text(
               'Mağaza performans verisi yok.',
-              style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
             )
-          : Column(
-              children: stores.map((store) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
+          : Container(
+              constraints: BoxConstraints(maxHeight: density.scrollPanelMaxHeight),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(8),
+                itemCount: stores.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final store = stores[index];
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
+                      borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: const Color(0xFFE5E7EB)),
                     ),
                     child: Row(
                       children: [
                         Container(
-                          width: 52,
-                          height: 52,
+                          width: 36,
+                          height: 36,
                           decoration: BoxDecoration(
                             color: store.isOpen
                                 ? const Color(0xFFE0F2FE)
                                 : const Color(0xFFF3F4F6),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
                             store.isOpen
                                 ? Icons.storefront_rounded
                                 : Icons.store_mall_directory_outlined,
+                            size: 18,
                             color: store.isOpen
                                 ? const Color(0xFF0284C7)
                                 : const Color(0xFF6B7280),
                           ),
                         ),
-                        const SizedBox(width: 14),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 store.storeName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 14,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w800,
                                   color: Color(0xFF111827),
                                 ),
                               ),
-                              const SizedBox(height: 4),
                               Text(
                                 '${store.city} • ${store.category}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   color: Color(0xFF6B7280),
                                 ),
                               ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 4),
                               Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
+                                spacing: 4,
+                                runSpacing: 4,
                                 children: [
                                   _buildMiniChip(
                                     icon: Icons.payments_outlined,
                                     text: _currency(store.revenue30d),
+                                    compact: true,
                                   ),
                                   _buildMiniChip(
                                     icon: Icons.receipt_outlined,
                                     text: '${store.orderCount30d} sipariş',
-                                  ),
-                                  _buildMiniChip(
-                                    icon: Icons.inventory_outlined,
-                                    text: '${store.productCount} ürün',
-                                  ),
-                                  _buildMiniChip(
-                                    icon: Icons.star_outline_rounded,
-                                    text: store.rating == 0
-                                        ? 'Puan yok'
-                                        : store.rating.toStringAsFixed(1),
+                                    compact: true,
                                   ),
                                 ],
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 6),
                         _buildStatusPill(
                           label: store.isOpen ? 'Açık' : 'Kapalı',
                           color: store.isOpen
                               ? const Color(0xFF16A34A)
                               : const Color(0xFF6B7280),
+                          compact: true,
                         ),
                       ],
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                },
+              ),
             ),
     );
   }
 
-  Widget _buildRecentShipmentsCard(List<AdminCargoShipment> shipments) {
+  Widget _buildRecentShipmentsCard(
+    List<AdminCargoShipment> shipments, {
+    required AdminPanelDensity density,
+  }) {
     return _buildSurfaceCard(
+      density: density,
       title: 'Son sevkiyat hareketleri',
       subtitle: 'Order item kayıtlarındaki en güncel akış',
       icon: Icons.route_rounded,
       child: shipments.isEmpty
           ? const Text(
               'Sevkiyat hareketi bulunamadı.',
-              style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
             )
-          : Column(
-              children: shipments.map((shipment) {
-                final color = _shipmentColor(shipment.stateLabel);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
+          : Container(
+              constraints: BoxConstraints(maxHeight: density.scrollPanelMaxHeight),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(8),
+                itemCount: shipments.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final shipment = shipments[index];
+                  final color = _shipmentColor(shipment.stateLabel);
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(18),
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
                     ),
                     child: Row(
                       children: [
                         Container(
-                          width: 46,
-                          height: 46,
+                          width: 34,
+                          height: 34,
                           decoration: BoxDecoration(
                             color: color.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
                             Icons.local_shipping_outlined,
+                            size: 16,
                             color: color,
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 shipment.storeName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w800,
                                   color: Color(0xFF111827),
                                 ),
                               ),
-                              const SizedBox(height: 4),
                               Text(
                                 '${shipment.cargoCompany} • ${_fullDate(shipment.createdAt)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   color: Color(0xFF6B7280),
                                 ),
                               ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 4),
                               Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
+                                spacing: 4,
+                                runSpacing: 4,
                                 children: [
                                   _buildStatusPill(
                                     label: shipment.stateLabel,
                                     color: color,
+                                    compact: true,
                                   ),
                                   _buildMiniChip(
                                     icon: Icons.pin_outlined,
                                     text: shipment.hasTracking
                                         ? shipment.trackingNumber
                                         : 'Takip no yok',
+                                    compact: true,
                                   ),
                                 ],
                               ),
@@ -1370,16 +1514,20 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                         ),
                       ],
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                },
+              ),
             ),
     );
   }
 
-  Widget _buildUsageCard(AdminSystemMetrics data) {
+  Widget _buildUsageCard(
+    AdminSystemMetrics data, {
+    required AdminPanelDensity density,
+  }) {
     final quota = data.supabaseQuota;
     return _buildSurfaceCard(
+      density: density,
       title: 'Operasyon basıncı',
       subtitle: 'Uygulama içi trafik ve iş yükü göstergeleri',
       icon: Icons.speed_rounded,
@@ -1426,10 +1574,14 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildSupabaseLimitsCard(AdminSystemMetrics data) {
+  Widget _buildSupabaseLimitsCard(
+    AdminSystemMetrics data, {
+    required AdminPanelDensity density,
+  }) {
     final quota = data.supabaseQuota;
     final fetchedAtText = _fullDate(quota.fetchedAt);
     return _buildSurfaceCard(
+      density: density,
       title: 'Supabase kota ve doluluk',
       subtitle:
           'Canlı backend verisi. Egress/realtime/edge değerleri kullanım modeline göre tahmindir.',
@@ -1494,8 +1646,12 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildSignalCard(AdminSystemMetrics data) {
+  Widget _buildSignalCard(
+    AdminSystemMetrics data, {
+    required AdminPanelDensity density,
+  }) {
     return _buildSurfaceCard(
+      density: density,
       title: 'Veri sinyalleri',
       subtitle: 'Admin panelinin beslendiği operasyon kaynakları',
       icon: Icons.monitor_heart_rounded,
@@ -1541,8 +1697,12 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildCapacityCard(List<_CapacityProjection> projections) {
+  Widget _buildCapacityCard(
+    List<_CapacityProjection> projections, {
+    required AdminPanelDensity density,
+  }) {
     return _buildSurfaceCard(
+      density: density,
       title: 'Tahmini ölçek eşikleri',
       subtitle:
           'Bu bölüm Supabase FREE plan limitlerine göre hesaplanan erken uyarı eşiğidir.',
@@ -1612,74 +1772,102 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildSystemLogsCard(List<AdminSystemLogEntry> logs) {
+  Widget _buildSystemLogsCard(
+    List<AdminSystemLogEntry> logs, {
+    required AdminPanelDensity density,
+  }) {
     return _buildSurfaceCard(
+      density: density,
       title: 'Son sistem olayları',
       subtitle: 'Sipariş, destek ve başvuru akışından türetilen olay listesi',
       icon: Icons.history_rounded,
       child: logs.isEmpty
           ? const Text(
               'Henüz olay kaydı görünmüyor.',
-              style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
             )
-          : Column(
-              children: logs.map((log) {
-                final color = _logColor(log.level);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
+          : Container(
+              constraints: BoxConstraints(maxHeight: density.scrollPanelMaxHeight),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(8),
+                itemCount: logs.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final log = logs[index];
+                  final color = _logColor(log.level);
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(18),
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
                     ),
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
-                          width: 44,
-                          height: 44,
+                          width: 30,
+                          height: 30,
                           decoration: BoxDecoration(
                             color: color.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Icon(Icons.info_outline_rounded, color: color),
+                          child: Icon(
+                            Icons.info_outline_rounded,
+                            size: 14,
+                            color: color,
+                          ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 log.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
+                                  fontSize: 12,
                                   color: Color(0xFF111827),
                                 ),
                               ),
-                              const SizedBox(height: 4),
                               Text(
                                 log.subtitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 10,
                                   color: Color(0xFF6B7280),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 6),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             _buildStatusPill(
                               label: _logLabel(log.level),
                               color: color,
+                              compact: true,
                             ),
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 4),
                             Text(
                               _fullDate(log.occurredAt),
                               style: const TextStyle(
-                                fontSize: 11,
+                                fontSize: 9,
                                 color: Color(0xFF9CA3AF),
                               ),
                             ),
@@ -1687,15 +1875,16 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
                         ),
                       ],
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                },
+              ),
             ),
     );
   }
 
-  Widget _buildGeneralCleanupCard() {
+  Widget _buildGeneralCleanupCard({required AdminPanelDensity density}) {
     return _buildSurfaceCard(
+      density: density,
       title: 'Genel Temizleme',
       subtitle: 'Deneme verilerini hızlıca sıfırla',
       icon: Icons.cleaning_services_rounded,
@@ -1743,9 +1932,9 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFFB42318),
                 foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(48),
+                minimumSize: Size.fromHeight(density.isCompact ? 40 : 44),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
             ),
@@ -1756,24 +1945,18 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
   }
 
   Widget _buildSurfaceCard({
+    required AdminPanelDensity density,
     required String title,
     required String subtitle,
     required IconData icon,
     required Widget child,
   }) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(density.surfaceCardPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(density.surfaceCardRadius),
         border: Border.all(color: const Color(0xFFE5E7EB)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1781,34 +1964,42 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
           Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
+                width: density.isCompact ? 32 : 36,
+                height: density.isCompact ? 32 : 36,
                 decoration: BoxDecoration(
                   color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(icon, color: const Color(0xFF111827), size: 20),
+                child: Icon(
+                  icon,
+                  color: const Color(0xFF111827),
+                  size: density.isCompact ? 16 : 18,
+                ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
-                        fontSize: 16,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: density.isCompact ? 13 : 14,
                         fontWeight: FontWeight.w800,
-                        color: Color(0xFF111827),
+                        color: const Color(0xFF111827),
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
                       subtitle,
+                      maxLines: density.isCompact ? 1 : 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 12,
+                        fontSize: 11,
                         color: Color(0xFF6B7280),
-                        height: 1.4,
+                        height: 1.35,
                       ),
                     ),
                   ],
@@ -1816,7 +2007,7 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          SizedBox(height: density.blockGap),
           child,
         ],
       ),
@@ -1955,9 +2146,16 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildMiniChip({required IconData icon, required String text}) {
+  Widget _buildMiniChip({
+    required IconData icon,
+    required String text,
+    bool compact = false,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 6 : 8,
+        vertical: compact ? 4 : 5,
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(999),
@@ -1966,14 +2164,18 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12, color: const Color(0xFF6B7280)),
-          const SizedBox(width: 6),
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF374151),
+          Icon(icon, size: compact ? 10 : 11, color: const Color(0xFF6B7280)),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 9 : 10,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF374151),
+              ),
             ),
           ),
         ],
@@ -1981,17 +2183,26 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     );
   }
 
-  Widget _buildStatusPill({required String label, required Color color}) {
+  Widget _buildStatusPill({
+    required String label,
+    required Color color,
+    bool compact = false,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 6 : 8,
+        vertical: compact ? 4 : 5,
+      ),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: compact ? 9 : 10,
           fontWeight: FontWeight.w700,
           color: color,
         ),
@@ -2071,14 +2282,6 @@ class _DataAnalyticsPageState extends State<DataAnalyticsPage> {
     return '%${(ratio * 100).toStringAsFixed(ratio * 100 >= 10 ? 0 : 1)}';
   }
 
-  String _relativeDate(DateTime? value) {
-    if (value == null) return 'Tarih yok';
-    final difference = DateTime.now().difference(value.toLocal());
-    if (difference.inMinutes < 1) return 'Az önce';
-    if (difference.inHours < 1) return '${difference.inMinutes} dk önce';
-    if (difference.inDays < 1) return '${difference.inHours} sa önce';
-    return '${difference.inDays} gün önce';
-  }
 
   String _fullDate(DateTime? value) {
     if (value == null) return 'Tarih yok';

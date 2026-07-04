@@ -132,6 +132,14 @@ class ProductFilterAttributeExtractor {
     if (key.contains('bilgisayar') || key.contains('laptop')) {
       return _categoryHints['elektronik::bilgisayar']!;
     }
+    if (key.contains('yemek') || mainCategory.toLowerCase().contains('yemek')) {
+      return const [
+        'Yemek Türü',
+        'Porsiyon',
+        'Teslimat',
+        'Marka',
+      ];
+    }
 
     return const ['Renk', 'Marka', 'Model', 'Beden', 'Depolama', 'RAM'];
   }

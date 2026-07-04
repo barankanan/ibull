@@ -2,7 +2,9 @@ import 'package:flutter/foundation.dart' show debugPrint, debugPrintStack;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/printer_model.dart';
+import 'printer_receipt_length_settings.dart';
 import '../models/station_printer_model.dart';
+import '../models/printer_profile.dart';
 import 'desktop_print_ports.dart';
 
 export 'desktop_print_ports.dart' show ExpectedKitchenPrinterResolution;
@@ -101,31 +103,113 @@ class PrinterRepository implements PrinterRepositoryPort {
     int? codePage,
     List<PrinterRole> assignedRoles = const [],
     String? printerProfileId,
-  }) {
+    PrinterReceiptLengthSettings? receiptLengthSettings,
+  }) async {
     final normalizedHost = ipAddress.trim();
     final normalizedPort = port > 0 ? port : PrinterModel.ethernetDefaultPort;
+    final deviceIdentifier = PrinterModel.ethernetPrinterId(
+      host: normalizedHost,
+      port: normalizedPort,
+    );
+    final canonicalProfileId = PrinterProfile.canonicalDatabaseId(
+      printerProfileId,
+    );
+    var resolvedPrinterId = printerId?.trim();
+    if (resolvedPrinterId == null || resolvedPrinterId.isEmpty) {
+      final existingByDevice = await fetchEthernetPrinterByEndpoint(
+        restaurantId: restaurantId,
+        host: normalizedHost,
+        port: normalizedPort,
+      );
+      resolvedPrinterId = existingByDevice?.id;
+    }
     return upsertPrinter(
       restaurantId: restaurantId,
-      printerId: printerId,
+      printerId: resolvedPrinterId,
       name: name,
       code: code,
       connectionType: PrinterModel.networkConnectionType,
       ipAddress: normalizedHost,
       port: normalizedPort,
-      deviceIdentifier: PrinterModel.ethernetPrinterId(
-        host: normalizedHost,
-        port: normalizedPort,
-      ),
+      deviceIdentifier: deviceIdentifier,
       paperWidthMm: paperWidthMm,
       isActive: isActive,
       supportsCut: supportsCut,
       charset: charset,
       codePage: codePage,
       assignedRoles: assignedRoles,
-      printerProfileId: printerProfileId,
+      printerProfileId: canonicalProfileId,
+      receiptLengthSettings: receiptLengthSettings,
     );
   }
 
+  Future<PrinterModel?> fetchEthernetPrinterByEndpoint({
+    required String restaurantId,
+    required String host,
+    required int port,
+  }) async {
+    final normalizedRestaurantId = restaurantId.trim();
+    final normalizedHost = host.trim();
+    final normalizedPort = port > 0 ? port : PrinterModel.ethernetDefaultPort;
+    if (normalizedRestaurantId.isEmpty || normalizedHost.isEmpty) {
+      return null;
+    }
+    final deviceIdentifier = PrinterModel.ethernetPrinterId(
+      host: normalizedHost,
+      port: normalizedPort,
+    );
+    try {
+      final row = await _client
+          .from('printers')
+          .select()
+          .eq('restaurant_id', normalizedRestaurantId)
+          .eq('device_identifier', deviceIdentifier)
+          .maybeSingle();
+      if (row == null) return null;
+      return PrinterModel.fromMap(Map<String, dynamic>.from(row as Map));
+    } catch (error, stackTrace) {
+      _logPrinterSettings(
+        'Error',
+        'source=fetchEthernetPrinterByEndpoint restaurantId=$normalizedRestaurantId '
+            'deviceIdentifier=$deviceIdentifier',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+  }
+
+  /// Updates only the Ethernet IP/port while preserving printer UUID and roles.
+  Future<PrinterModel> updateEthernetIpAddress({
+    required String restaurantId,
+    required String printerId,
+    required String ipAddress,
+    int? port,
+  }) async {
+    final existing = await fetchPrinterById(printerId);
+    if (existing == null) {
+      throw StateError('Printer not found: $printerId');
+    }
+    final normalizedPort =
+        port ?? existing.port ?? PrinterModel.ethernetDefaultPort;
+    return upsertEthernetPrinter(
+      restaurantId: restaurantId,
+      printerId: printerId,
+      name: existing.name,
+      code: existing.code,
+      ipAddress: ipAddress.trim(),
+      port: normalizedPort,
+      paperWidthMm: existing.paperWidthMm,
+      isActive: existing.isActive,
+      supportsCut: existing.supportsCut,
+      charset: existing.charset,
+      codePage: existing.codePage,
+      assignedRoles: existing.assignedRoles,
+      printerProfileId: existing.printerProfileId,
+    );
+  }
+
+  @override
   @override
   Future<PrinterModel> upsertPrinter({
     required String restaurantId,
@@ -143,6 +227,7 @@ class PrinterRepository implements PrinterRepositoryPort {
     int? codePage,
     List<PrinterRole> assignedRoles = const [],
     String? printerProfileId,
+    PrinterReceiptLengthSettings? receiptLengthSettings,
   }) async {
     final encodingSelection = PrinterEncodingSelection.normalize(
       charset: charset,
@@ -158,6 +243,11 @@ class PrinterRepository implements PrinterRepositoryPort {
         'warning=${encodingSelection.warning}',
       );
     }
+    final normalizedMetadata = PrinterProfile.normalizeSaveMetadata(
+      profileId: printerProfileId,
+      paperWidthMm: paperWidthMm,
+      displayName: name,
+    );
     final payload = <String, dynamic>{
       if (printerId != null && printerId.isNotEmpty) 'id': printerId,
       'restaurant_id': restaurantId,
@@ -167,14 +257,14 @@ class PrinterRepository implements PrinterRepositoryPort {
       'ip_address': ipAddress,
       'port': port,
       'device_identifier': deviceIdentifier,
-      'paper_width_mm': paperWidthMm,
+      'paper_width_mm': normalizedMetadata.paperWidthMm,
       'is_active': isActive,
       'supports_cut': supportsCut,
       'charset': encodingSelection.charset.value,
       'code_page': encodingSelection.codePage,
       'assigned_roles': assignedRoles.map((r) => r.value).toList(),
-      if (printerProfileId != null && printerProfileId.isNotEmpty)
-        'printer_profile_id': printerProfileId,
+      'printer_profile_id': normalizedMetadata.profileId,
+      ...?receiptLengthSettings?.toDbFields(),
     };
 
     try {
@@ -209,12 +299,39 @@ class PrinterRepository implements PrinterRepositoryPort {
           );
         }
       }
+      if (deviceIdentifier != null &&
+          deviceIdentifier.trim().isNotEmpty &&
+          _isDuplicateDeviceIdentifierError(error)) {
+        final existing = await fetchEthernetPrinterByEndpoint(
+          restaurantId: restaurantId,
+          host: ipAddress?.trim() ?? '',
+          port: port ?? PrinterModel.ethernetDefaultPort,
+        );
+        if (existing != null) {
+          final updatePayload = Map<String, dynamic>.from(payload)
+            ..remove('id');
+          final updated = await _client
+              .from('printers')
+              .update(updatePayload)
+              .eq('id', existing.id)
+              .select()
+              .single();
+          return PrinterModel.fromMap(
+            Map<String, dynamic>.from(updated as Map),
+          );
+        }
+      }
       _logPrinterSettings(
         'Error',
         'source=upsertPrinter restaurantId=$restaurantId printerId=${printerId ?? "-"} code=${code.trim().toUpperCase()}',
         error: error,
         stackTrace: stackTrace,
       );
+      if (_isReceiptLengthMigrationMissing(error)) {
+        throw StateError(
+          'Fiş uzunluğu ayarları için veritabanı güncellemesi gerekli.',
+        );
+      }
       rethrow;
     }
   }
@@ -227,6 +344,24 @@ class PrinterRepository implements PrinterRepositoryPort {
             details.contains('idx_printers_restaurant_code_unique') ||
             message.contains('duplicate key') ||
             details.contains('duplicate key'));
+  }
+
+  bool _isDuplicateDeviceIdentifierError(PostgrestException error) {
+    final message = error.message.toLowerCase();
+    final details = (error.details?.toString() ?? '').toLowerCase();
+    return error.code == '23505' &&
+        (message.contains('device_identifier') ||
+            details.contains('device_identifier'));
+  }
+
+  bool _isReceiptLengthMigrationMissing(PostgrestException error) {
+    final combined =
+        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
+            .toLowerCase();
+    return combined.contains('receipt_length_preset') ||
+        combined.contains('receipt_bottom_feed_lines') ||
+        combined.contains('receipt_bottom_padding_px') ||
+        combined.contains('receipt_min_receipt_height_px');
   }
 
   @override
@@ -254,6 +389,30 @@ class PrinterRepository implements PrinterRepositoryPort {
   @override
   Future<PrinterModel?> getPrinterByRecordId(String recordId) async {
     return fetchPrinterById(recordId);
+  }
+
+  /// Normalizes inconsistent profile id / paper width on an existing printer row.
+  @override
+  Future<PrinterModel> repairPrinterProfileMetadata(String printerId) async {
+    final existing = await fetchPrinterById(printerId);
+    if (existing == null) {
+      throw StateError('Yazıcı kaydı bulunamadı: $printerId');
+    }
+    final normalized = PrinterProfile.normalizeSaveMetadata(
+      profileId: existing.printerProfileId,
+      paperWidthMm: existing.paperWidthMm,
+      displayName: existing.name,
+    );
+    final updated = await _client
+        .from('printers')
+        .update(<String, dynamic>{
+          'printer_profile_id': normalized.profileId,
+          'paper_width_mm': normalized.paperWidthMm,
+        })
+        .eq('id', printerId)
+        .select()
+        .single();
+    return PrinterModel.fromMap(Map<String, dynamic>.from(updated as Map));
   }
 
   @override

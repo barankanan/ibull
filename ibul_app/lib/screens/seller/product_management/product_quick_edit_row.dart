@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/constants.dart';
 import '../../../utils/pick_image_file.dart';
-import '../../../utils/xfile_image_provider.dart';
-import '../../../widgets/optimized_image.dart';
+import '../../../widgets/product_list_thumbnail.dart';
 import 'product_quick_edit_models.dart';
 
 class ProductQuickEditRow extends StatefulWidget {
@@ -20,6 +20,9 @@ class ProductQuickEditRow extends StatefulWidget {
     required this.onChanged,
     required this.onSave,
     required this.onCancel,
+    this.selectionColumnWidth = 44,
+    this.isSelected = false,
+    this.onSelectionChanged,
   });
 
   final ProductQuickEditDraft draft;
@@ -32,6 +35,9 @@ class ProductQuickEditRow extends StatefulWidget {
   final ValueChanged<ProductQuickEditDraft> onChanged;
   final VoidCallback onSave;
   final VoidCallback onCancel;
+  final double selectionColumnWidth;
+  final bool isSelected;
+  final ValueChanged<bool>? onSelectionChanged;
 
   @override
   State<ProductQuickEditRow> createState() => _ProductQuickEditRowState();
@@ -141,31 +147,24 @@ class _ProductQuickEditRowState extends State<ProductQuickEditRow> {
 
     Widget child;
     if (localImage != null) {
-      child = DecoratedBox(
-        decoration: BoxDecoration(
-          image: DecorationImage(
-            image: xFileImageProvider(localImage),
-            fit: BoxFit.cover,
-          ),
-        ),
+      child = ProductListThumbnail(
+        imageFile: localImage,
+        width: 72,
+        height: 72,
+        borderRadius: BorderRadius.circular(9),
+        padding: const EdgeInsets.all(6),
+        fallbackIconSize: 24,
       );
     } else if (hasImage) {
-      child = OptimizedImage(
+      child = ProductListThumbnail(
         imageUrlOrPath: previewImageUrl!,
-        fit: BoxFit.cover,
+        width: 72,
+        height: 72,
+        borderRadius: BorderRadius.circular(9),
+        padding: const EdgeInsets.all(6),
         cacheWidth: 160,
         cacheHeight: 160,
-        errorWidget: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.broken_image_outlined, color: Colors.grey.shade500),
-            const SizedBox(height: 4),
-            Text(
-              'Tekrar seç',
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-            ),
-          ],
-        ),
+        fallbackIconSize: 24,
       );
     } else {
       child = Column(
@@ -258,14 +257,19 @@ class _ProductQuickEditRowState extends State<ProductQuickEditRow> {
         draft.errorMessage != null && draft.errorMessage!.isNotEmpty;
     final hasSuccess =
         draft.successMessage != null && draft.successMessage!.isNotEmpty;
-    final backgroundColor = hasError
+    final bool isRowSelected = widget.isSelected;
+    final backgroundColor = isRowSelected
+        ? AppColors.primary.withValues(alpha: 0.06)
+        : hasError
         ? const Color(0xFFFEF2F2)
         : hasSuccess
         ? const Color(0xFFF0FDF4)
         : draft.isDirty
         ? const Color(0xFFF8FAFC)
         : Colors.white;
-    final borderColor = hasError
+    final borderColor = isRowSelected
+        ? AppColors.primary.withValues(alpha: 0.22)
+        : hasError
         ? const Color(0xFFFCA5A5)
         : hasSuccess
         ? const Color(0xFF86EFAC)
@@ -283,6 +287,22 @@ class _ProductQuickEditRowState extends State<ProductQuickEditRow> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          SizedBox(
+            width: widget.selectionColumnWidth,
+            child: Center(
+              child: Checkbox(
+                value: widget.isSelected,
+                onChanged: widget.onSelectionChanged == null
+                    ? null
+                    : (bool? value) {
+                        widget.onSelectionChanged?.call(value ?? false);
+                      },
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           _buildImageBox(),
           const SizedBox(width: 16),
           Expanded(

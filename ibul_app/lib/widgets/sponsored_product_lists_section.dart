@@ -1,15 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-import '../ads/ads.dart';
+import '../ads/enums/ad_enums.dart';
+import '../ads/services/home_sponsored_content_service.dart';
+import '../core/app_perf_logger.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/home_section_trace.dart';
+import '../core/section_load_state.dart';
 import '../models/product_list_model.dart';
 import 'optimized_image.dart';
 import 'premium_interactions.dart';
-import '../screens/list_detail_page.dart';
 import 'skeleton_loading.dart';
-import '../services/product_list_service.dart';
+import '../screens/list_detail_page.dart';
 
 class SponsoredProductListsSection extends StatefulWidget {
   const SponsoredProductListsSection({
@@ -18,6 +23,7 @@ class SponsoredProductListsSection extends StatefulWidget {
     this.subtitle,
     this.categoryFilter,
     this.maxItems = 6,
+    this.loadTimeout = const Duration(seconds: 10),
     super.key,
   });
 
@@ -26,6 +32,7 @@ class SponsoredProductListsSection extends StatefulWidget {
   final AdPlacement placement;
   final String? categoryFilter;
   final int maxItems;
+  final Duration loadTimeout;
 
   @override
   State<SponsoredProductListsSection> createState() =>
@@ -34,16 +41,17 @@ class SponsoredProductListsSection extends StatefulWidget {
 
 class _SponsoredProductListsSectionState
     extends State<SponsoredProductListsSection> {
-  final AdsService _adsService = AdsService();
-  final ProductListService _productListService = ProductListService.instance;
+  final HomeSponsoredContentService _sponsoredContentService =
+      HomeSponsoredContentService();
   final AppState _appState = AppState();
 
-  late Future<List<ProductList>> _future;
+  SectionLoadState _loadState = SectionLoadState.beginLoading();
+  List<ProductList> _lists = const [];
 
   @override
   void initState() {
     super.initState();
-    _future = _loadLists();
+    unawaited(_loadLists());
   }
 
   @override
@@ -52,152 +60,195 @@ class _SponsoredProductListsSectionState
     if (oldWidget.placement != widget.placement ||
         oldWidget.categoryFilter != widget.categoryFilter ||
         oldWidget.maxItems != widget.maxItems) {
-      _future = _loadLists();
+      setState(() {
+        _loadState = SectionLoadState.beginLoading();
+        _lists = const [];
+      });
+      unawaited(_loadLists());
     }
   }
 
-  String _normalize(String? value) => (value ?? '').trim().toLowerCase();
+  Future<void> _loadLists() async {
+    final started = DateTime.now().millisecondsSinceEpoch;
+    var source = 'network';
+    var state = SectionLoadPhase.loaded;
+    String? error;
 
-  bool _matchesCategory(ProductList list) {
-    final filter = _normalize(widget.categoryFilter);
-    if (filter.isEmpty) return true;
-    final listCategory = _normalize(list.category);
-    final listSubCategory = _normalize(list.subCategory);
-    return listCategory == filter || listSubCategory == filter;
-  }
-
-  Future<List<ProductList>> _loadLists() async {
     try {
-      final sponsored = await _adsService.getSponsoredCollections(
-        placement: widget.placement,
-        limit: widget.maxItems * 2,
-      );
-      final ids = sponsored
-          .map((item) => item.collectionId.trim())
-          .where((id) => id.isNotEmpty)
-          .toList(growable: false);
-      if (ids.isEmpty) return const [];
+      final lists = await _sponsoredContentService
+          .fetchActiveSponsoredHomeLists(
+            placement: widget.placement,
+            limit: widget.maxItems,
+            categoryFilter: widget.categoryFilter,
+          )
+          .timeout(widget.loadTimeout);
 
-      final lists = await _productListService.getListsByIds(ids);
-      final byId = {for (final list in lists) list.id: list};
-      return ids
-          .map((id) => byId[id])
-          .whereType<ProductList>()
-          .where(_matchesCategory)
-          .take(widget.maxItems)
-          .toList(growable: false);
-    } catch (_) {
-      return const [];
+      if (!mounted) return;
+      setState(() {
+        _lists = lists;
+        _loadState = lists.isEmpty
+            ? const SectionLoadState(phase: SectionLoadPhase.empty)
+            : const SectionLoadState(phase: SectionLoadPhase.loaded);
+      });
+      state = lists.isEmpty ? SectionLoadPhase.empty : SectionLoadPhase.loaded;
+    } on TimeoutException {
+      source = 'timeout';
+      state = SectionLoadPhase.empty;
+      error = 'timeout';
+      if (!mounted) return;
+      setState(() {
+        _lists = const [];
+        _loadState = const SectionLoadState(phase: SectionLoadPhase.empty);
+      });
+    } catch (e) {
+      source = 'network';
+      state = SectionLoadPhase.error;
+      error = e.toString();
+      if (!mounted) return;
+      setState(() {
+        _lists = const [];
+        _loadState = SectionLoadState(
+          phase: SectionLoadPhase.error,
+          errorMessage: error,
+          startedAt: DateTime.now(),
+        );
+      });
     }
+
+    if (!mounted) return;
+    final resolved = SectionLoadState(
+      phase: state,
+      errorMessage: error,
+      startedAt: _loadState.startedAt,
+    );
+    AppPerfLogger.logHomeSection(
+      sectionName: 'sponsoredLists',
+      source: source,
+      state: resolved.logStateLabel,
+      itemCount: _lists.length,
+      ms: DateTime.now().millisecondsSinceEpoch - started,
+      error: error,
+    );
+    notifyHomeSectionLoadOutcome(
+      sectionName: 'sponsoredLists',
+      source: source,
+      state: resolved.logStateLabel,
+      elapsedMs: DateTime.now().millisecondsSinceEpoch - started,
+      itemCount: _lists.length,
+      error: error,
+      timeoutMs: widget.loadTimeout.inMilliseconds,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<ProductList>>(
-      future: _future,
-      builder: (context, snapshot) {
-        final lists = snapshot.data ?? const <ProductList>[];
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            lists.isEmpty) {
-          return _SponsoredProductListsSkeleton(
-            title: widget.title,
-            hasSubtitle: (widget.subtitle ?? '').trim().isNotEmpty,
-          );
-        }
-        if (lists.isEmpty) return const SizedBox.shrink();
+    if (_loadState.isLoading) {
+      return const _SponsoredListsSectionSkeleton();
+    }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.title,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                        if ((widget.subtitle ?? '').trim().isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            widget.subtitle!,
-                            style: const TextStyle(
-                              color: Color(0xFF64748B),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF3C7),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: const Text(
-                      'Sponsorlu',
-                      style: TextStyle(
-                        color: Color(0xFF92400E),
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
+    if (_lists.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    if (_loadState.shouldShowError) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Text(
+          'Sponsorlu listeler şu an yüklenemedi.',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F172A),
                       ),
                     ),
-                  ),
-                ],
+                    if ((widget.subtitle ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.subtitle!,
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  'Sponsorlu',
+                  style: TextStyle(
+                    color: Color(0xFF92400E),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 252,
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: {
+                PointerDeviceKind.touch,
+                PointerDeviceKind.mouse,
+              },
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 252,
-              child: ScrollConfiguration(
-                behavior: ScrollConfiguration.of(context).copyWith(
-                  dragDevices: {
-                    PointerDeviceKind.touch,
-                    PointerDeviceKind.mouse,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: _lists.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 14),
+              itemBuilder: (context, index) => SizedBox(
+                width: 250,
+                child: _SponsoredListCard(
+                  list: _lists[index],
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (routeContext) => ListDetailPage(
+                          listData: _appState.productListToMap(
+                            _lists[index],
+                          ),
+                        ),
+                      ),
+                    );
                   },
                 ),
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  itemCount: lists.length,
-                  separatorBuilder: (context, index) =>
-                      const SizedBox(width: 14),
-                  itemBuilder: (context, index) => SizedBox(
-                    width: 250,
-                    child: _SponsoredListCard(
-                      list: lists[index],
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (routeContext) => ListDetailPage(
-                              listData: _appState.productListToMap(
-                                lists[index],
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
               ),
             ),
-          ],
-        );
-      },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -369,133 +420,6 @@ class _SponsoredListCard extends StatelessWidget {
   }
 }
 
-class _SponsoredProductListsSkeleton extends StatelessWidget {
-  const _SponsoredProductListsSkeleton({
-    required this.title,
-    required this.hasSubtitle,
-  });
-
-  final String title;
-  final bool hasSubtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final cardWidth = width >= 1100 ? 250.0 : 232.0;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SkeletonLoading(
-                      width: title.length > 20 ? 210 : 170,
-                      height: 20,
-                      borderRadius: 8,
-                    ),
-                    if (hasSubtitle) ...[
-                      const SizedBox(height: 6),
-                      const SkeletonLoading(
-                        width: 240,
-                        height: 12,
-                        borderRadius: 6,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SkeletonLoading(width: 76, height: 28, borderRadius: 999),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 252,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            physics: const NeverScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: width >= 1100 ? 4 : 3,
-            separatorBuilder: (context, index) => const SizedBox(width: 14),
-            itemBuilder: (context, index) =>
-                _SponsoredListCardSkeleton(width: cardWidth),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SponsoredListCardSkeleton extends StatelessWidget {
-  const _SponsoredListCardSkeleton({required this.width});
-
-  final double width;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: width,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0D0F172A),
-            blurRadius: 18,
-            offset: Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            SkeletonLoading(
-              width: double.infinity,
-              height: 106,
-              borderRadius: 16,
-            ),
-            SizedBox(height: 14),
-            SkeletonLoading(width: 150, height: 16, borderRadius: 8),
-            SizedBox(height: 8),
-            SkeletonLoading(
-              width: double.infinity,
-              height: 12,
-              borderRadius: 6,
-            ),
-            SizedBox(height: 6),
-            SkeletonLoading(width: 132, height: 12, borderRadius: 6),
-            Spacer(),
-            Row(
-              children: [
-                SkeletonLoading(width: 82, height: 26, borderRadius: 999),
-                SizedBox(width: 8),
-                SkeletonLoading(width: 92, height: 26, borderRadius: 999),
-              ],
-            ),
-            SizedBox(height: 12),
-            SkeletonLoading(
-              width: double.infinity,
-              height: 12,
-              borderRadius: 6,
-            ),
-            SizedBox(height: 6),
-            SkeletonLoading(width: 112, height: 12, borderRadius: 6),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _MetaChip extends StatelessWidget {
   const _MetaChip({required this.icon, required this.label});
 
@@ -525,6 +449,47 @@ class _MetaChip extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SponsoredListsSectionSkeleton extends StatelessWidget {
+  const _SponsoredListsSectionSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: const [
+              Expanded(
+                child: SkeletonLoading(width: 160, height: 20, borderRadius: 6),
+              ),
+              SizedBox(width: 12),
+              SkeletonLoading(width: 72, height: 24, borderRadius: 999),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 252,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: 3,
+            separatorBuilder: (context, index) => const SizedBox(width: 12),
+            itemBuilder: (context, index) => const SkeletonLoading(
+              width: 220,
+              height: 252,
+              borderRadius: 16,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

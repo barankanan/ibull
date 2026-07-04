@@ -3,6 +3,7 @@ import 'package:ibul_app/utils/order_status_constants.dart';
 
 
 import '../../ads/presentation/pages/admin_ads_manager_page.dart';
+import '../../features/admin/panel/helpers/admin_panel_density.dart';
 import '../../services/admin_service.dart';
 import 'store_application_detail_dialog.dart';
 
@@ -24,6 +25,11 @@ class _StoreManagementPageState extends State<StoreManagementPage>
   bool _isProcessing = false;
   final TextEditingController _searchController = TextEditingController();
   DateTime? _lastStoreRefreshAt;
+  List<Map<String, dynamic>> _applicationHistory = const [];
+  bool _loadingApplicationHistory = false;
+  String _applicationListMode = 'pending';
+  String _historyActionFilter = 'all';
+  String _historyDateFilter = 'all';
 
   @override
   void initState() {
@@ -31,6 +37,82 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(_handleTabChange);
     _fetchAllStores();
+    _loadApplicationHistory();
+  }
+
+  Future<void> _loadApplicationHistory() async {
+    setState(() => _loadingApplicationHistory = true);
+    try {
+      int? lastDays;
+      if (_historyDateFilter == '7') lastDays = 7;
+      if (_historyDateFilter == '30') lastDays = 30;
+      final rows = await _adminService.fetchStoreApplicationHistory(
+        actionFilter: _historyActionFilter == 'all' ? null : _historyActionFilter,
+        lastDays: lastDays,
+        limit: 200,
+      );
+      if (mounted) setState(() => _applicationHistory = rows);
+    } finally {
+      if (mounted) setState(() => _loadingApplicationHistory = false);
+    }
+  }
+
+  List<Map<String, dynamic>> _priorHistoryForSeller(
+    String sellerId,
+    Map<String, dynamic> application,
+  ) {
+    if (sellerId.isEmpty) return const [];
+    final appCreated = _readDate(application['created_at']);
+    return _applicationHistory
+        .where((entry) => (entry['seller_id'] ?? '').toString() == sellerId)
+        .where((entry) {
+          if (appCreated == null) return true;
+          final actedAt = _readDate(entry['acted_at']);
+          if (actedAt == null) return true;
+          return actedAt.isBefore(appCreated);
+        })
+        .toList();
+  }
+
+  _ApplicationResubmitHints _resubmitHintsFor(
+    String sellerId,
+    Map<String, dynamic> application,
+  ) {
+    final prior = _priorHistoryForSeller(sellerId, application);
+    final previouslyRejected = prior.any(
+      (entry) => (entry['action'] ?? '').toString() == 'rejected',
+    );
+    final previouslyMissing = prior.any(
+      (entry) =>
+          (entry['action'] ?? '').toString() ==
+          AdminService.storeHistoryChangesRequested,
+    );
+    return _ApplicationResubmitHints(
+      previouslyRejected: previouslyRejected,
+      previouslyMissingDocuments: previouslyMissing,
+      isResubmission: previouslyRejected || previouslyMissing,
+    );
+  }
+
+  String _historyActionLabel(String action) {
+    switch (action) {
+      case AdminService.storeHistoryApproved:
+        return 'Onaylandı';
+      case AdminService.storeHistoryRejected:
+        return 'Reddedildi';
+      case AdminService.storeHistoryChangesRequested:
+        return 'Eksik Belge';
+      case AdminService.storeHistoryResubmitted:
+        return 'Tekrar Başvuru';
+      default:
+        return action;
+    }
+  }
+
+  String _shortId(String value) {
+    final trimmed = value.trim();
+    if (trimmed.length <= 10) return trimmed;
+    return '${trimmed.substring(0, 8)}…';
   }
 
   @override
@@ -95,168 +177,163 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     );
   }
 
-  Future<void> _approveApplication(String applicationId) async {
-    if (_isProcessing) return;
-    setState(() => _isProcessing = true);
-    try {
-      await _adminService.updateSellerApplicationStatus(
-        applicationId,
-        'approved',
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Mağaza başvurusu onaylandı.')),
-        );
-        _fetchAllStores();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Hata oluştu: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
-    }
-  }
-
-  Future<void> _rejectApplication(
-    String applicationId, {
-    String reason = 'Admin tarafından reddedildi',
-  }) async {
-    if (_isProcessing) return;
-    setState(() => _isProcessing = true);
-    try {
-      await _adminService.updateSellerApplicationStatus(
-        applicationId,
-        'rejected',
-        rejectionReason: reason,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Başvuru reddedildi.')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Hata oluştu: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
-    }
-  }
-
-  Future<void> _markApplicationMissingDocuments(
-    String applicationId, {
-    String note = 'Eksik belge nedeniyle ek evrak talep edildi',
-  }) async {
-    if (_isProcessing) return;
-    setState(() => _isProcessing = true);
-    try {
-      await _adminService.updateSellerApplicationStatus(
-        applicationId,
-        'missing_documents',
-        rejectionReason: note,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Eksik belge bildirimi kaydedildi.')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Hata oluştu: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
-    }
-  }
-
-  void _showApplicationDetail(Map<String, dynamic> application) {
+  void _showApplicationDetail(
+    Map<String, dynamic> application, {
+    Map<String, dynamic>? historyEntry,
+    bool allowAdminActions = true,
+    bool isSnapshotView = false,
+  }) {
+    final sellerId = (application['user_id'] ?? '').toString();
+    final canAct =
+        allowAdminActions && AdminService.canAdminActOnApplication(application);
     showDialog(
       context: context,
       builder: (context) => StoreApplicationDetailDialog(
         application: application,
-        onUpdateStatus: (id, status, {rejectionReason}) async {
+        priorHistory: _priorHistoryForSeller(sellerId, application),
+        allowAdminActions: canAct,
+        historyEntry: historyEntry,
+        isSnapshotView: isSnapshotView,
+        onUpdateStatus: (id, status, {rejectionReason, adminNote}) async {
           await _adminService.updateSellerApplicationStatus(
             id,
             status,
             rejectionReason: rejectionReason,
+            adminNote: adminNote,
           );
-          if (mounted) setState(() {});
+          await _loadApplicationHistory();
+          if (mounted) {
+            setState(() {});
+            _fetchAllStores();
+          }
         },
       ),
     );
   }
 
+  Future<void> _openHistoryEntryDetail(
+    Map<String, dynamic> entry,
+    AdminPanelDensity density,
+  ) async {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    final resolution =
+        await _adminService.resolveApplicationFromHistoryEntry(entry);
+
+    if (mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+    if (!mounted) return;
+
+    if (resolution.application['id'] == null &&
+        (resolution.application['business_name'] ?? '').toString().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Başvuru detayı bulunamadı.')),
+      );
+      return;
+    }
+
+    _showApplicationDetail(
+      resolution.application,
+      historyEntry: entry,
+      allowAdminActions: resolution.allowAdminActions,
+      isSnapshotView: resolution.isSnapshot,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _adminService.getSellerApplicationsStream(),
-      builder: (context, snapshot) {
-        final rejectedApplicationsCount = (snapshot.data ?? const [])
-            .where(
-              (application) =>
-                  (application['status'] ?? '').toString().toLowerCase() ==
-                  'rejected',
-            )
-            .length;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final density = AdminPanelDensity.fromWidth(constraints.maxWidth);
+        return StreamBuilder<List<Map<String, dynamic>>>(
+          stream: _adminService.getSellerApplicationsStream(),
+          builder: (context, snapshot) {
+            final rejectedApplicationsCount = (snapshot.data ?? const [])
+                .where(
+                  (application) =>
+                      (application['status'] ?? '').toString().toLowerCase() ==
+                      'rejected',
+                )
+                .length;
 
-        return Container(
-          color: const Color(0xFFF4F7FB),
-          child: NestedScrollView(
-            headerSliverBuilder: (context, innerBoxIsScrolled) {
-              return [
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
-                    child: _buildOverviewHero(
-                      rejectedApplicationsCount: rejectedApplicationsCount,
+            return Container(
+              color: const Color(0xFFF4F7FB),
+              child: NestedScrollView(
+                headerSliverBuilder: (context, innerBoxIsScrolled) {
+                  return [
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          density.pagePadding,
+                          density.pagePadding,
+                          density.pagePadding,
+                          density.sectionGap,
+                        ),
+                        child: _buildOverviewHero(
+                          rejectedApplicationsCount: rejectedApplicationsCount,
+                          density: density,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                    child: _buildTabStrip(),
-                  ),
-                ),
-              ];
-            },
-            body: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x0D0F172A),
-                      blurRadius: 28,
-                      offset: Offset(0, 12),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          density.pagePadding,
+                          0,
+                          density.pagePadding,
+                          density.blockGap,
+                        ),
+                        child: _buildTabStrip(density),
+                      ),
                     ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(28),
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildApplicationsTab(),
-                      _buildAllStoresTab(),
-                      _buildLocationChangeRequestsTab(),
-                      _buildDeletionRequestsTab(),
-                    ],
+                  ];
+                },
+                body: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    density.pagePadding,
+                    0,
+                    density.pagePadding,
+                    density.pagePadding,
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(
+                        density.isCompact ? 16 : 20,
+                      ),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x0D0F172A),
+                          blurRadius: 28,
+                          offset: Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        density.isCompact ? 16 : 20,
+                      ),
+                      child: TabBarView(
+                        controller: _tabController,
+                        children: [
+                          _buildApplicationsTab(),
+                          _buildAllStoresTab(),
+                          _buildLocationChangeRequestsTab(),
+                          _buildDeletionRequestsTab(),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
@@ -292,7 +369,10 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     }
   }
 
-  Widget _buildOverviewHero({required int rejectedApplicationsCount}) {
+  Widget _buildOverviewHero({
+    required int rejectedApplicationsCount,
+    required AdminPanelDensity density,
+  }) {
     final openStores = _allStores
         .where((store) => store['is_store_open'] == true)
         .length;
@@ -303,39 +383,59 @@ class _StoreManagementPageState extends State<StoreManagementPage>
         .length;
 
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: density.storeHeroPadding,
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF0F172A), Color(0xFF134E4A)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x1A0F172A),
-            blurRadius: 32,
-            offset: Offset(0, 16),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(density.heroBorderRadius),
+        boxShadow: density.isCompact
+            ? null
+            : const [
+                BoxShadow(
+                  color: Color(0x1A0F172A),
+                  blurRadius: 24,
+                  offset: Offset(0, 12),
+                ),
+              ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildHeroCopy(),
-          const SizedBox(height: 16),
-          _buildHeroMetrics(
-            totalStores: _allStores.length,
-            openStores: openStores,
-            rejectedApplicationsCount: rejectedApplicationsCount,
-            uniqueCategories: uniqueCategories,
-          ),
-        ],
-      ),
+      child: density.heroSideBySide
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: _buildHeroCopy(density: density)),
+                SizedBox(width: density.blockGap),
+                Expanded(
+                  child: _buildHeroMetrics(
+                    totalStores: _allStores.length,
+                    openStores: openStores,
+                    rejectedApplicationsCount: rejectedApplicationsCount,
+                    uniqueCategories: uniqueCategories,
+                    density: density,
+                  ),
+                ),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeroCopy(density: density),
+                SizedBox(height: density.sectionGap),
+                _buildHeroMetrics(
+                  totalStores: _allStores.length,
+                  openStores: openStores,
+                  rejectedApplicationsCount: rejectedApplicationsCount,
+                  uniqueCategories: uniqueCategories,
+                  density: density,
+                ),
+              ],
+            ),
     );
   }
 
-  Widget _buildHeroCopy() {
+  Widget _buildHeroCopy({required AdminPanelDensity density}) {
     final syncLabel = _lastStoreRefreshAt == null
         ? 'Henüz senkron alınmadı'
         : 'Son senkron ${_formatTime(_lastStoreRefreshAt!)}';
@@ -343,7 +443,7 @@ class _StoreManagementPageState extends State<StoreManagementPage>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(999),
@@ -353,73 +453,95 @@ class _StoreManagementPageState extends State<StoreManagementPage>
             _activeTabTitle,
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.9),
-              fontSize: 12,
+              fontSize: 10,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.2,
             ),
           ),
         ),
-        const SizedBox(height: 16),
-        const Text(
-          'Mağaza operasyon merkezini daha net, daha hızlı ve daha kontrollü yönetin.',
+        SizedBox(height: density.isCompact ? 6 : 8),
+        Text(
+          density.isCompact ? _activeTabTitle : 'Mağaza operasyon merkezi',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: Colors.white,
-            fontSize: 22,
+            fontSize: density.storeHeroTitleFontSize,
             fontWeight: FontWeight.w800,
-            height: 1.2,
+            height: 1.15,
           ),
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: density.isCompact ? 3 : 4),
         Text(
           _activeTabDescription,
+          maxLines: density.storeHeroSubtitleMaxLines,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: Colors.white.withValues(alpha: 0.72),
-            fontSize: 13,
-            height: 1.5,
+            fontSize: density.heroSubtitleFontSize,
+            height: 1.35,
           ),
         ),
-        const SizedBox(height: 14),
+        SizedBox(height: density.isCompact ? 6 : 8),
         Wrap(
-          spacing: 10,
-          runSpacing: 10,
+          spacing: density.gridSpacing,
+          runSpacing: 6,
           children: [
-            _buildHeroSignalPill(icon: Icons.sync_rounded, label: syncLabel),
+            _buildHeroSignalPill(
+              icon: Icons.sync_rounded,
+              label: syncLabel,
+              density: density,
+            ),
             _buildHeroSignalPill(
               icon: Icons.search_rounded,
               label: _searchController.text.trim().isEmpty
                   ? 'Liste filtresi kapalı'
                   : '${_filteredStores.length} filtreli sonuç',
+              density: density,
             ),
             _buildHeroSignalPill(
               icon: Icons.verified_user_outlined,
               label: 'Detay ve aksiyonlar tek panelde',
+              density: density,
             ),
           ],
         ),
-        const SizedBox(height: 14),
+        SizedBox(height: density.isCompact ? 6 : 8),
         Wrap(
-          spacing: 10,
-          runSpacing: 10,
+          spacing: density.gridSpacing,
+          runSpacing: 6,
           children: [
             OutlinedButton.icon(
               onPressed: _isLoadingStores ? null : _fetchAllStores,
               icon: _isLoadingStores
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
+                  ? SizedBox(
+                      width: density.storeHeroActionIconSize,
+                      height: density.storeHeroActionIconSize,
+                      child: const CircularProgressIndicator(
                         strokeWidth: 2,
                         color: Colors.white,
                       ),
                     )
-                  : const Icon(Icons.refresh_rounded, size: 18),
-              label: Text(_isLoadingStores ? 'Yenileniyor' : 'Mağazaları Yenile'),
+                  : Icon(
+                      Icons.refresh_rounded,
+                      size: density.storeHeroActionIconSize,
+                    ),
+              label: Text(
+                _isLoadingStores ? 'Yenileniyor' : 'Yenile',
+                style: TextStyle(fontSize: density.isCompact ? 11 : 12),
+              ),
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.white,
                 side: BorderSide(color: Colors.white.withValues(alpha: 0.18)),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding: EdgeInsets.symmetric(
+                  horizontal: density.storeHeroActionPaddingH,
+                  vertical: density.storeHeroActionPaddingV,
+                ),
+                visualDensity: VisualDensity.compact,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
             ),
@@ -431,14 +553,26 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                   ),
                 );
               },
-              icon: const Icon(Icons.ads_click_outlined, size: 18),
-              label: const Text('Reklam Yonetimi'),
+              icon: Icon(
+                Icons.ads_click_outlined,
+                size: density.storeHeroActionIconSize,
+              ),
+              label: Text(
+                'Reklam Yönetimi',
+                style: TextStyle(fontSize: density.isCompact ? 11 : 12),
+              ),
               style: FilledButton.styleFrom(
                 backgroundColor: Colors.white,
                 foregroundColor: const Color(0xFF0F172A),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding: EdgeInsets.symmetric(
+                  horizontal: density.storeHeroActionPaddingH,
+                  vertical: density.storeHeroActionPaddingV,
+                ),
+                visualDensity: VisualDensity.compact,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
             ),
@@ -453,34 +587,44 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     required int openStores,
     required int rejectedApplicationsCount,
     required int uniqueCategories,
+    required AdminPanelDensity density,
   }) {
+    final cardWidth = density.storeHeroMetricWidth;
     return Wrap(
-      spacing: 10,
-      runSpacing: 10,
+      spacing: density.gridSpacing,
+      runSpacing: 6,
       children: [
         _buildHeroMetricCard(
           title: 'Toplam Mağaza',
           value: '$totalStores',
           icon: Icons.storefront_rounded,
           accent: const Color(0xFF38BDF8),
+          width: cardWidth,
+          density: density,
         ),
         _buildHeroMetricCard(
           title: 'Açık Mağaza',
           value: '$openStores',
           icon: Icons.lock_open_rounded,
           accent: const Color(0xFF34D399),
+          width: cardWidth,
+          density: density,
         ),
         _buildHeroMetricCard(
-          title: 'Reddedilen Başvuru',
+          title: 'Reddedilen',
           value: '$rejectedApplicationsCount',
           icon: Icons.close_rounded,
           accent: const Color(0xFFEF4444),
+          width: cardWidth,
+          density: density,
         ),
         _buildHeroMetricCard(
           title: 'Kategori',
           value: '$uniqueCategories',
           icon: Icons.category_rounded,
           accent: const Color(0xFFFBBF24),
+          width: cardWidth,
+          density: density,
         ),
       ],
     );
@@ -491,43 +635,61 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     required String value,
     required IconData icon,
     required Color accent,
+    required double width,
+    required AdminPanelDensity density,
   }) {
     return Container(
-      width: 128,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      width: width,
+      padding: EdgeInsets.symmetric(
+        horizontal: density.isCompact ? 8 : 10,
+        vertical: density.storeHeroMetricPaddingV,
+      ),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(density.isCompact ? 10 : 12),
         border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
           Container(
-            width: 34,
-            height: 34,
+            width: density.storeHeroMetricIconBox,
+            height: density.storeHeroMetricIconBox,
             decoration: BoxDecoration(
               color: accent.withValues(alpha: 0.16),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(7),
             ),
-            child: Icon(icon, color: accent, size: 17),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
+            child: Icon(
+              icon,
+              color: accent,
+              size: density.isCompact ? 12 : 13,
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.72),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: density.storeHeroMetricValueFontSize,
+                    fontWeight: FontWeight.w800,
+                    height: 1.1,
+                  ),
+                ),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    fontSize: density.isCompact ? 8.5 : 9,
+                    fontWeight: FontWeight.w600,
+                    height: 1.1,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -535,9 +697,16 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     );
   }
 
-  Widget _buildHeroSignalPill({required IconData icon, required String label}) {
+  Widget _buildHeroSignalPill({
+    required IconData icon,
+    required String label,
+    required AdminPanelDensity density,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: EdgeInsets.symmetric(
+        horizontal: density.storeHeroSignalPillPaddingH,
+        vertical: density.storeHeroSignalPillPaddingV,
+      ),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(999),
@@ -545,14 +714,22 @@ class _StoreManagementPageState extends State<StoreManagementPage>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: Colors.white.withValues(alpha: 0.8)),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.86),
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+          Icon(
+            icon,
+            size: density.storeHeroSignalPillIconSize,
+            color: Colors.white.withValues(alpha: 0.8),
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.86),
+                fontSize: density.storeHeroSignalPillFontSize,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -560,309 +737,520 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     );
   }
 
-  Widget _buildTabStrip() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: TabBar(
-        controller: _tabController,
-        isScrollable: true,
-        dividerColor: Colors.transparent,
-        indicator: BoxDecoration(
-          color: const Color(0xFF0F766E),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x140F766E),
-              blurRadius: 14,
-              offset: Offset(0, 8),
+  Widget _buildTabStrip(AdminPanelDensity density) {
+    return AnimatedBuilder(
+      animation: _tabController,
+      builder: (context, _) {
+        Widget tabItem(int index, IconData icon, String label) {
+          final selected = _tabController.index == index;
+          final color = selected ? Colors.white : const Color(0xFF475569);
+          return Tab(
+            height: density.storeTabHeight,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: density.storeTabPaddingH),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: density.storeTabIconSize, color: color),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: density.storeTabFontSize,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                      color: color,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-        indicatorSize: TabBarIndicatorSize.tab,
-        labelColor: Colors.white,
-        unselectedLabelColor: const Color(0xFF475569),
-        labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-        unselectedLabelStyle: const TextStyle(
-          fontWeight: FontWeight.w600,
-          fontSize: 13,
-        ),
-        tabAlignment: TabAlignment.start,
-        tabs: const [
-          Tab(icon: Icon(Icons.approval_outlined), text: 'Satıcı Başvuruları'),
-          Tab(icon: Icon(Icons.storefront_outlined), text: 'Tüm Mağazalar'),
-          Tab(
-            icon: Icon(Icons.edit_location_alt_outlined),
-            text: 'Konum Değişim',
+          );
+        }
+
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(density.storeTabStripPadding),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(density.isCompact ? 16 : 18),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
-          Tab(
-            icon: Icon(Icons.delete_outline_rounded),
-            text: 'Silme Talepleri',
+          child: TabBar(
+            controller: _tabController,
+            isScrollable: true,
+            dividerColor: Colors.transparent,
+            indicator: BoxDecoration(
+              color: const Color(0xFF0F766E),
+              borderRadius: BorderRadius.circular(density.isCompact ? 10 : 12),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x140F766E),
+                  blurRadius: 10,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            indicatorSize: TabBarIndicatorSize.tab,
+            labelColor: Colors.white,
+            unselectedLabelColor: const Color(0xFF475569),
+            tabAlignment: TabAlignment.start,
+            tabs: [
+              tabItem(0, Icons.approval_outlined, 'Satıcı Başvuruları'),
+              tabItem(1, Icons.storefront_outlined, 'Tüm Mağazalar'),
+              tabItem(2, Icons.edit_location_alt_outlined, 'Konum Değişim'),
+              tabItem(3, Icons.delete_outline_rounded, 'Silme Talepleri'),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
   Widget _buildApplicationsTab() {
-    return Container(
-      color: const Color(0xFFF8FAFC),
-      child: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _adminService.getSellerApplicationsStream(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return _buildErrorState('Başvurular alınamadı', snapshot.error);
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final storeSellerIds = _allStores
-              .map((store) => (store['seller_id'] ?? '').toString())
-              .where((id) => id.isNotEmpty)
-              .toSet();
-          final applications = snapshot.data!.where((app) {
-            final status = (app['status'] ?? 'pending')
-                .toString()
-                .toLowerCase();
-            final userId = (app['user_id'] ?? '').toString();
-            final alreadyStoreOwner =
-                userId.isNotEmpty && storeSellerIds.contains(userId);
-            return status == AdminApprovalStatusConstants.pending && !alreadyStoreOwner;
-          }).toList();
-          return Column(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final density = AdminPanelDensity.fromWidth(constraints.maxWidth);
+        return Container(
+          color: const Color(0xFFF8FAFC),
+          child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-                child: _buildSectionHeader(
-                  title: 'Bekleyen satıcı başvuruları',
-                  subtitle:
-                      'Başvuruları önceliklendirin, detayına inin ve aynı panelden onay ya da ret işlemi verin.',
-                  action: OutlinedButton.icon(
-                    onPressed: _isLoadingStores ? null : _fetchAllStores,
-                    icon: const Icon(Icons.sync_rounded, size: 18),
-                    label: const Text('Mağazaları Eşle'),
-                    style: _secondaryButtonStyle(),
-                  ),
+                padding: EdgeInsets.fromLTRB(
+                  density.storeSectionPadding,
+                  density.storeSectionPadding,
+                  density.storeSectionPadding,
+                  density.storeCardGap,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildSectionHeader(
+                      title: _applicationListMode == 'pending'
+                          ? 'Bekleyen satıcı başvuruları'
+                          : 'Başvuru geçmişi',
+                      subtitle: _applicationListMode == 'pending'
+                          ? 'Başvuruları detay ekranından inceleyin; onay, red ve eksik belge işlemleri yalnızca detayda yapılır.'
+                          : 'Onay, red ve eksik belge kararlarının zaman çizelgesi.',
+                      density: density,
+                      action: OutlinedButton.icon(
+                        onPressed: _isLoadingStores ? null : _fetchAllStores,
+                        icon: Icon(
+                          Icons.sync_rounded,
+                          size: density.storeActionIconSize,
+                        ),
+                        label: const Text('Mağazaları Eşle'),
+                        style: _secondaryButtonStyle(density),
+                      ),
+                    ),
+                    SizedBox(height: density.storeCardGap),
+                    _buildApplicationListModeToggle(density),
+                    if (_applicationListMode == 'history') ...[
+                      SizedBox(height: density.storeCardGap),
+                      _buildApplicationHistoryFilters(density),
+                    ],
+                  ],
                 ),
               ),
               Expanded(
-                child: applications.isEmpty
-                    ? _buildEmptyState(
-                        icon: Icons.verified_rounded,
-                        title: 'Bekleyen başvuru yok',
-                        subtitle:
-                            'Yeni satıcı başvurusu geldiğinde burada kart olarak görünecek.',
-                      )
-                    : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                        itemCount: applications.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 14),
-                        itemBuilder: (context, index) =>
-                            _buildApplicationCard(applications[index]),
-                      ),
+                child: _applicationListMode == 'pending'
+                    ? _buildPendingApplicationsList(density)
+                    : _buildApplicationHistoryList(density),
               ),
             ],
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildApplicationCard(Map<String, dynamic> application) {
+  Widget _buildApplicationListModeToggle(AdminPanelDensity density) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        ChoiceChip(
+          label: const Text('Bekleyenler'),
+          selected: _applicationListMode == 'pending',
+          onSelected: (_) => setState(() => _applicationListMode = 'pending'),
+          visualDensity: VisualDensity.compact,
+        ),
+        ChoiceChip(
+          label: const Text('Geçmiş'),
+          selected: _applicationListMode == 'history',
+          onSelected: (_) {
+            setState(() => _applicationListMode = 'history');
+            _loadApplicationHistory();
+          },
+          visualDensity: VisualDensity.compact,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildApplicationHistoryFilters(AdminPanelDensity density) {
+    const actionFilters = [
+      ('all', 'Tümü'),
+      (AdminService.storeHistoryApproved, 'Onaylananlar'),
+      (AdminService.storeHistoryRejected, 'Reddedilenler'),
+      (AdminService.storeHistoryChangesRequested, 'Eksik Belge'),
+    ];
+    const dateFilters = [
+      ('all', 'Tüm zaman'),
+      ('7', 'Son 7 gün'),
+      ('30', 'Son 30 gün'),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: actionFilters
+              .map(
+                (item) => FilterChip(
+                  label: Text(
+                    item.$2,
+                    style: TextStyle(fontSize: density.isCompact ? 11 : 12),
+                  ),
+                  selected: _historyActionFilter == item.$1,
+                  onSelected: (_) {
+                    setState(() => _historyActionFilter = item.$1);
+                    _loadApplicationHistory();
+                  },
+                  visualDensity: VisualDensity.compact,
+                ),
+              )
+              .toList(),
+        ),
+        SizedBox(height: density.isCompact ? 6 : 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: dateFilters
+              .map(
+                (item) => FilterChip(
+                  label: Text(
+                    item.$2,
+                    style: TextStyle(fontSize: density.isCompact ? 11 : 12),
+                  ),
+                  selected: _historyDateFilter == item.$1,
+                  onSelected: (_) {
+                    setState(() => _historyDateFilter = item.$1);
+                    _loadApplicationHistory();
+                  },
+                  visualDensity: VisualDensity.compact,
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPendingApplicationsList(AdminPanelDensity density) {
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _adminService.getSellerApplicationsStream(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _buildErrorState('Başvurular alınamadı', snapshot.error);
+        }
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final storeSellerIds = _allStores
+            .map((store) => (store['seller_id'] ?? '').toString())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        final applications = snapshot.data!.where((app) {
+          final status = (app['status'] ?? 'pending').toString().toLowerCase();
+          final userId = (app['user_id'] ?? '').toString();
+          final alreadyStoreOwner =
+              userId.isNotEmpty && storeSellerIds.contains(userId);
+          return (status == AdminApprovalStatusConstants.pending ||
+                  status == AdminService.sellerApplicationMissingDocuments) &&
+              !alreadyStoreOwner;
+        }).toList();
+
+        if (applications.isEmpty) {
+          return _buildEmptyState(
+            icon: Icons.verified_rounded,
+            title: 'Bekleyen başvuru yok',
+            subtitle:
+                'Yeni satıcı başvurusu geldiğinde burada kart olarak görünecek.',
+          );
+        }
+
+        return ListView.separated(
+          padding: EdgeInsets.fromLTRB(
+            density.storeSectionPadding,
+            0,
+            density.storeSectionPadding,
+            density.storeSectionPadding,
+          ),
+          itemCount: applications.length,
+          separatorBuilder: (_, _) =>
+              SizedBox(height: density.storeListSeparator),
+          itemBuilder: (context, index) => _buildApplicationCard(
+            applications[index],
+            density,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildApplicationHistoryList(AdminPanelDensity density) {
+    if (_loadingApplicationHistory) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_applicationHistory.isEmpty) {
+      return _buildEmptyState(
+        icon: Icons.history_rounded,
+        title: 'Geçmiş kayıt yok',
+        subtitle:
+            'Onay, red veya eksik belge işlemleri burada zaman çizelgesi olarak görünecek.',
+      );
+    }
+
+    return ListView.separated(
+      padding: EdgeInsets.fromLTRB(
+        density.storeSectionPadding,
+        0,
+        density.storeSectionPadding,
+        density.storeSectionPadding,
+      ),
+      itemCount: _applicationHistory.length,
+      separatorBuilder: (_, _) => SizedBox(height: density.storeListSeparator),
+      itemBuilder: (context, index) =>
+          _buildApplicationHistoryCard(_applicationHistory[index], density),
+    );
+  }
+
+  Widget _buildApplicationCard(
+    Map<String, dynamic> application,
+    AdminPanelDensity density,
+  ) {
     final businessName = (application['business_name'] ?? 'İsimsiz mağaza')
         .toString();
     final category = (application['category'] ?? 'Kategori belirtilmemiş')
         .toString();
     final userId = (application['user_id'] ?? '').toString();
     final createdAt = _formatDateLabel(application['created_at']);
+    final status = (application['status'] ?? AdminApprovalStatusConstants.pending)
+        .toString()
+        .toLowerCase();
+    final isMissingDocuments =
+        status == AdminService.sellerApplicationMissingDocuments;
+    final hints = _resubmitHintsFor(userId, application);
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(density.storeCardPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(density.storeCardBorderRadius),
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: const [
           BoxShadow(
             color: Color(0x0A0F172A),
-            blurRadius: 18,
-            offset: Offset(0, 8),
+            blurRadius: 14,
+            offset: Offset(0, 6),
           ),
         ],
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 860;
-          final infoContent = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFDBEAFE),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: const Icon(
-                      Icons.storefront_rounded,
-                      color: Color(0xFF1D4ED8),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          businessName,
-                          style: const TextStyle(
-                            color: Color(0xFF0F172A),
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            _buildMetaChip(
-                              icon: Icons.sell_outlined,
-                              label: category,
-                            ),
-                            if (userId.isNotEmpty)
-                              _buildMetaChip(
-                                icon: Icons.person_outline_rounded,
-                                label: userId,
-                              ),
-                            _buildMetaChip(
-                              icon: Icons.schedule_rounded,
-                              label: createdAt,
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  _buildStatusChip(
-                    label: 'Bekliyor',
-                    background: const Color(0xFFFFF7ED),
-                    foreground: const Color(0xFFEA580C),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Başvuru önce detay ekranında doğrulanır, ardından mağaza açılışı onaylanır ya da net gerekçe ile reddedilir.',
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                  fontSize: 13,
-                  height: 1.45,
-                ),
-              ),
-            ],
-          );
-          final actions = Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.end,
-            children: [
-              OutlinedButton(
-                onPressed: () => _showApplicationDetail(application),
-                style: _secondaryButtonStyle(),
-                child: const Text('Detay Aç'),
-              ),
-              FilledButton.icon(
-                onPressed: _isProcessing
-                    ? null
-                    : () => _approveApplication(application['id'].toString()),
-                icon: _isProcessing
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.check_rounded, size: 18),
-                label: Text(_isProcessing ? 'İşleniyor' : 'Onayla'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF059669),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: _isProcessing
-                    ? null
-                    : () => _markApplicationMissingDocuments(
-                        application['id'].toString(),
-                      ),
-                icon: const Icon(Icons.mail_outline_rounded, size: 18),
-                label: const Text('Eksik Belge'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF8B5CF6),
-                  side: const BorderSide(color: Color(0xFFD8B4FE)),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: _isProcessing
-                    ? null
-                    : () => _rejectApplication(application['id'].toString()),
-                icon: const Icon(Icons.close_rounded, size: 18),
-                label: const Text('Reddet'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFFDC2626),
-                  side: const BorderSide(color: Color(0xFFFECACA)),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-            ],
-          );
-
-          if (compact) {
-            return Column(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: density.storeCardIconBox,
+            height: density.storeCardIconBox,
+            decoration: BoxDecoration(
+              color: const Color(0xFFDBEAFE),
+              borderRadius: BorderRadius.circular(density.isCompact ? 12 : 14),
+            ),
+            child: Icon(
+              Icons.storefront_rounded,
+              color: const Color(0xFF1D4ED8),
+              size: density.storeCardIconSize,
+            ),
+          ),
+          SizedBox(width: density.isCompact ? 10 : 12),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [infoContent, const SizedBox(height: 18), actions],
-            );
-          }
+              children: [
+                Text(
+                  businessName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: const Color(0xFF0F172A),
+                    fontSize: density.storeCardTitleFontSize,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                SizedBox(height: density.isCompact ? 4 : 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _buildMetaChip(
+                      icon: Icons.sell_outlined,
+                      label: category,
+                      density: density,
+                    ),
+                    if (userId.isNotEmpty)
+                      _buildMetaChip(
+                        icon: Icons.person_outline_rounded,
+                        label: _shortId(userId),
+                        density: density,
+                      ),
+                    _buildMetaChip(
+                      icon: Icons.schedule_rounded,
+                      label: createdAt,
+                      density: density,
+                    ),
+                    _buildStatusChip(
+                      label: isMissingDocuments ? 'Eksik Belge' : 'Bekliyor',
+                      background: isMissingDocuments
+                          ? const Color(0xFFEEF2FF)
+                          : const Color(0xFFFFF7ED),
+                      foreground: isMissingDocuments
+                          ? const Color(0xFF4338CA)
+                          : const Color(0xFFEA580C),
+                      density: density,
+                    ),
+                    if (hints.previouslyRejected)
+                      _buildStatusChip(
+                        label: 'Daha önce reddedildi',
+                        background: const Color(0xFFFFF1F2),
+                        foreground: const Color(0xFFE11D48),
+                        density: density,
+                      ),
+                    if (hints.previouslyMissingDocuments)
+                      _buildStatusChip(
+                        label: 'Tekrar başvuru',
+                        background: const Color(0xFFEEF2FF),
+                        foreground: const Color(0xFF4338CA),
+                        density: density,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: density.isCompact ? 8 : 10),
+          OutlinedButton(
+            onPressed: () => _showApplicationDetail(application),
+            style: _secondaryButtonStyle(density),
+            child: const Text('Detay Aç'),
+          ),
+        ],
+      ),
+    );
+  }
 
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: infoContent),
-              const SizedBox(width: 20),
-              SizedBox(width: 340, child: actions),
-            ],
-          );
-        },
+  Widget _buildApplicationHistoryCard(
+    Map<String, dynamic> entry,
+    AdminPanelDensity density,
+  ) {
+    final action = (entry['action'] ?? '').toString();
+    final storeName =
+        (entry['store_name'] ?? 'İsimsiz mağaza').toString();
+    final noteText = AdminService.formatStoreApplicationHistoryNote(entry);
+    final applicationDate = _formatDateLabel(entry['application_created_at']);
+    final actedDate = _formatDateLabel(entry['acted_at']);
+    final statusLabel = _historyActionLabel(action);
+
+    Color badgeBg = const Color(0xFFF8FAFC);
+    Color badgeFg = const Color(0xFF475569);
+    if (action == AdminService.storeHistoryApproved) {
+      badgeBg = const Color(0xFFECFDF5);
+      badgeFg = const Color(0xFF059669);
+    } else if (action == AdminService.storeHistoryRejected) {
+      badgeBg = const Color(0xFFFFF1F2);
+      badgeFg = const Color(0xFFE11D48);
+    } else if (action == AdminService.storeHistoryChangesRequested) {
+      badgeBg = const Color(0xFFEEF2FF);
+      badgeFg = const Color(0xFF4338CA);
+    }
+
+    final canOpenDetail =
+        action == AdminService.storeHistoryRejected ||
+        action == AdminService.storeHistoryChangesRequested;
+
+    return Container(
+      padding: EdgeInsets.all(density.storeCardPadding),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(density.storeCardBorderRadius),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  storeName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: const Color(0xFF0F172A),
+                    fontSize: density.storeCardTitleFontSize,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                SizedBox(height: density.isCompact ? 4 : 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _buildMetaChip(
+                      icon: Icons.event_note_outlined,
+                      label: 'Başvuru: $applicationDate',
+                      density: density,
+                    ),
+                    _buildMetaChip(
+                      icon: Icons.history_rounded,
+                      label: 'İşlem: $actedDate',
+                      density: density,
+                    ),
+                    _buildStatusChip(
+                      label: statusLabel,
+                      background: badgeBg,
+                      foreground: badgeFg,
+                      density: density,
+                    ),
+                  ],
+                ),
+                SizedBox(height: density.isCompact ? 6 : 8),
+                Text(
+                  noteText,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontSize: density.isCompact ? 12 : 13,
+                    height: 1.4,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (canOpenDetail) ...[
+            SizedBox(width: density.isCompact ? 8 : 10),
+            OutlinedButton(
+              onPressed: () => _openHistoryEntryDetail(entry, density),
+              style: _secondaryButtonStyle(density),
+              child: const Text('Detay'),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1145,56 +1533,76 @@ class _StoreManagementPageState extends State<StoreManagementPage>
   }
 
   Widget _buildDeletionRequestsTab() {
-    return Container(
-      color: const Color(0xFFF8FAFC),
-      child: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _adminService.getStoreDeletionRequestsStream(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return _buildErrorState(
-              'Silme talepleri alınamadı',
-              snapshot.error,
-            );
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final density = AdminPanelDensity.fromWidth(constraints.maxWidth);
+        return Container(
+          color: const Color(0xFFF8FAFC),
+          child: StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _adminService.getStoreDeletionRequestsStream(),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return _buildErrorState(
+                  'Silme talepleri alınamadı',
+                  snapshot.error,
+                );
+              }
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-          final requests = snapshot.data!;
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-                child: _buildSectionHeader(
-                  title: 'Mağaza silme akışı',
-                  subtitle:
-                      'Silme taleplerini gerekçeleriyle birlikte değerlendirin ve kalıcı aksiyonları kontrollü şekilde yönetin.',
-                ),
-              ),
-              Expanded(
-                child: requests.isEmpty
-                    ? _buildEmptyState(
-                        icon: Icons.delete_outline_rounded,
-                        title: 'Silme talebi yok',
-                        subtitle:
-                            'Satıcılardan gelen mağaza kapatma istekleri burada listelenecek.',
-                      )
-                    : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                        itemCount: requests.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 14),
-                        itemBuilder: (context, index) =>
-                            _buildDeletionCard(requests[index]),
-                      ),
-              ),
-            ],
-          );
-        },
-      ),
+              final requests = snapshot.data!;
+              return Column(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      density.storeSectionPadding,
+                      density.storeSectionPadding,
+                      density.storeSectionPadding,
+                      density.storeCardGap,
+                    ),
+                    child: _buildSectionHeader(
+                      title: 'Mağaza silme akışı',
+                      subtitle:
+                          'Silme taleplerini gerekçeleriyle birlikte değerlendirin ve kalıcı aksiyonları kontrollü şekilde yönetin.',
+                      density: density,
+                    ),
+                  ),
+                  Expanded(
+                    child: requests.isEmpty
+                        ? _buildEmptyState(
+                            icon: Icons.delete_outline_rounded,
+                            title: 'Silme talebi yok',
+                            subtitle:
+                                'Satıcılardan gelen mağaza kapatma istekleri burada listelenecek.',
+                          )
+                        : ListView.separated(
+                            padding: EdgeInsets.fromLTRB(
+                              density.storeSectionPadding,
+                              0,
+                              density.storeSectionPadding,
+                              density.storeSectionPadding,
+                            ),
+                            itemCount: requests.length,
+                            separatorBuilder: (_, _) =>
+                                SizedBox(height: density.storeListSeparator),
+                            itemBuilder: (context, index) =>
+                                _buildDeletionCard(requests[index], density),
+                          ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildDeletionCard(Map<String, dynamic> request) {
+  Widget _buildDeletionCard(
+    Map<String, dynamic> request,
+    AdminPanelDensity density,
+  ) {
     final status = (request['status'] ?? 'pending').toString();
     final isPending = status == AdminApprovalStatusConstants.pending;
     final sellerId = (request['seller_id'] ?? '-').toString();
@@ -1217,16 +1625,16 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     };
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(density.storeCardPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(density.storeCardBorderRadius),
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: const [
           BoxShadow(
             color: Color(0x0A0F172A),
-            blurRadius: 18,
-            offset: Offset(0, 8),
+            blurRadius: 14,
+            offset: Offset(0, 6),
           ),
         ],
       ),
@@ -1237,38 +1645,44 @@ class _StoreManagementPageState extends State<StoreManagementPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 52,
-                height: 52,
+                width: density.storeCardIconBox,
+                height: density.storeCardIconBox,
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFF1F2),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(
+                    density.isCompact ? 12 : 14,
+                  ),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.delete_sweep_outlined,
-                  color: Color(0xFFE11D48),
+                  color: const Color(0xFFE11D48),
+                  size: density.storeCardIconSize,
                 ),
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: density.isCompact ? 10 : 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Mağaza ID: $sellerId',
-                      style: const TextStyle(
-                        color: Color(0xFF0F172A),
-                        fontSize: 17,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: const Color(0xFF0F172A),
+                        fontSize: density.storeCardTitleFontSize,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    SizedBox(height: density.isCompact ? 4 : 6),
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: 6,
+                      runSpacing: 6,
                       children: [
                         _buildMetaChip(
                           icon: Icons.schedule_outlined,
                           label: _formatDateLabel(request['created_at']),
+                          density: density,
                         ),
                         if ((request['business_name'] ?? '')
                             .toString()
@@ -1277,6 +1691,7 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                           _buildMetaChip(
                             icon: Icons.store_outlined,
                             label: request['business_name'].toString(),
+                            density: density,
                           ),
                       ],
                     ),
@@ -1287,16 +1702,17 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                 label: statusLabel,
                 background: statusBackground,
                 foreground: statusForeground,
+                density: density,
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          SizedBox(height: density.storeCardGap),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.all(density.storeLocationInfoPadding),
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(density.storeActionRadius),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1305,17 +1721,19 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                   'Talep Gerekçesi',
                   style: TextStyle(
                     color: Colors.grey.shade600,
-                    fontSize: 12,
+                    fontSize: density.storeLocationInfoTitleFontSize,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: density.isCompact ? 4 : 6),
                 Text(
                   reason,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 14,
-                    height: 1.5,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: const Color(0xFF0F172A),
+                    fontSize: density.storeLocationInfoValueFontSize,
+                    height: 1.4,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -1323,10 +1741,10 @@ class _StoreManagementPageState extends State<StoreManagementPage>
             ),
           ),
           if (isPending) ...[
-            const SizedBox(height: 18),
+            SizedBox(height: density.storeCardGap),
             Wrap(
-              spacing: 10,
-              runSpacing: 10,
+              spacing: 8,
+              runSpacing: 8,
               alignment: WrapAlignment.end,
               children: [
                 OutlinedButton.icon(
@@ -1334,17 +1752,24 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                     request['id'].toString(),
                     'Admin tarafından reddedildi',
                   ),
-                  icon: const Icon(Icons.close_rounded, size: 18),
+                  icon: Icon(
+                    Icons.close_rounded,
+                    size: density.storeActionIconSize,
+                  ),
                   label: const Text('Reddet'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFFDC2626),
                     side: const BorderSide(color: Color(0xFFFECACA)),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: density.storeActionPaddingH,
+                      vertical: density.storeActionPaddingV,
                     ),
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius:
+                          BorderRadius.circular(density.storeActionRadius),
                     ),
                   ),
                 ),
@@ -1353,17 +1778,24 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                     request['id'].toString(),
                     sellerId,
                   ),
-                  icon: const Icon(Icons.check_rounded, size: 18),
+                  icon: Icon(
+                    Icons.check_rounded,
+                    size: density.storeActionIconSize,
+                  ),
                   label: const Text('Silmeyi Onayla'),
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFFB91C1C),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: density.storeActionPaddingH,
+                      vertical: density.storeActionPaddingV,
                     ),
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius:
+                          BorderRadius.circular(density.storeActionRadius),
                     ),
                   ),
                 ),
@@ -1376,52 +1808,72 @@ class _StoreManagementPageState extends State<StoreManagementPage>
   }
 
   Widget _buildLocationChangeRequestsTab() {
-    return Container(
-      color: const Color(0xFFF8FAFC),
-      child: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _adminService.getStoreLocationChangeRequestsStream(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return _buildErrorState(
-              'Konum talepleri alınamadı',
-              snapshot.error,
-            );
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final density = AdminPanelDensity.fromWidth(constraints.maxWidth);
+        return Container(
+          color: const Color(0xFFF8FAFC),
+          child: StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _adminService.getStoreLocationChangeRequestsStream(),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return _buildErrorState(
+                  'Konum talepleri alınamadı',
+                  snapshot.error,
+                );
+              }
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-          final requests = snapshot.data!;
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-                child: _buildSectionHeader(
-                  title: 'Konum güncelleme talepleri',
-                  subtitle:
-                      'Mevcut ve talep edilen koordinatları karşılaştırın, konum değişikliğini kontrollü olarak yayına alın.',
-                ),
-              ),
-              Expanded(
-                child: requests.isEmpty
-                    ? _buildEmptyState(
-                        icon: Icons.edit_location_alt_outlined,
-                        title: 'Konum değişim talebi yok',
-                        subtitle:
-                            'Mağazalar yeni adres ya da koordinat gönderdiğinde burada görünecek.',
-                      )
-                    : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                        itemCount: requests.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 14),
-                        itemBuilder: (context, index) =>
-                            _buildLocationRequestCard(requests[index]),
-                      ),
-              ),
-            ],
-          );
-        },
-      ),
+              final requests = snapshot.data!;
+              return Column(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      density.storeSectionPadding,
+                      density.storeSectionPadding,
+                      density.storeSectionPadding,
+                      density.storeCardGap,
+                    ),
+                    child: _buildSectionHeader(
+                      title: 'Konum güncelleme talepleri',
+                      subtitle:
+                          'Mevcut ve talep edilen koordinatları karşılaştırın, konum değişikliğini kontrollü olarak yayına alın.',
+                      density: density,
+                    ),
+                  ),
+                  Expanded(
+                    child: requests.isEmpty
+                        ? _buildEmptyState(
+                            icon: Icons.edit_location_alt_outlined,
+                            title: 'Konum değişim talebi yok',
+                            subtitle:
+                                'Mağazalar yeni adres ya da koordinat gönderdiğinde burada görünecek.',
+                          )
+                        : ListView.separated(
+                            padding: EdgeInsets.fromLTRB(
+                              density.storeSectionPadding,
+                              0,
+                              density.storeSectionPadding,
+                              density.storeSectionPadding,
+                            ),
+                            itemCount: requests.length,
+                            separatorBuilder: (_, _) =>
+                                SizedBox(height: density.storeListSeparator),
+                            itemBuilder: (context, index) =>
+                                _buildLocationRequestCard(
+                              requests[index],
+                              density,
+                            ),
+                          ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -1475,7 +1927,10 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     }
   }
 
-  Widget _buildLocationRequestCard(Map<String, dynamic> request) {
+  Widget _buildLocationRequestCard(
+    Map<String, dynamic> request,
+    AdminPanelDensity density,
+  ) {
     final status = (request['status'] ?? 'pending').toString();
     final isPending = status == AdminApprovalStatusConstants.pending;
     final requestedLat = (request['requested_lat'] as num?)?.toDouble();
@@ -1504,16 +1959,16 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     };
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(density.storeCardPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(density.storeCardBorderRadius),
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: const [
           BoxShadow(
             color: Color(0x0A0F172A),
-            blurRadius: 18,
-            offset: Offset(0, 8),
+            blurRadius: 14,
+            offset: Offset(0, 6),
           ),
         ],
       ),
@@ -1524,47 +1979,55 @@ class _StoreManagementPageState extends State<StoreManagementPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 52,
-                height: 52,
+                width: density.storeCardIconBox,
+                height: density.storeCardIconBox,
                 decoration: BoxDecoration(
                   color: const Color(0xFFDCFCE7),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(
+                    density.isCompact ? 12 : 14,
+                  ),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.location_searching_outlined,
-                  color: Color(0xFF15803D),
+                  color: const Color(0xFF15803D),
+                  size: density.storeCardIconSize,
                 ),
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: density.isCompact ? 10 : 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       (request['business_name'] ?? 'İsimsiz mağaza').toString(),
-                      style: const TextStyle(
-                        color: Color(0xFF0F172A),
-                        fontSize: 17,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: const Color(0xFF0F172A),
+                        fontSize: density.storeCardTitleFontSize,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    SizedBox(height: density.isCompact ? 4 : 6),
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: 6,
+                      runSpacing: 6,
                       children: [
                         _buildMetaChip(
                           icon: Icons.badge_outlined,
                           label: (request['seller_id'] ?? '-').toString(),
+                          density: density,
                         ),
                         if (address.isNotEmpty)
                           _buildMetaChip(
                             icon: Icons.map_outlined,
                             label: address,
+                            density: density,
                           ),
                         _buildMetaChip(
                           icon: Icons.schedule_rounded,
                           label: _formatDateLabel(request['created_at']),
+                          density: density,
                         ),
                       ],
                     ),
@@ -1575,60 +2038,106 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                 label: statusLabel,
                 background: statusBackground,
                 foreground: statusForeground,
+                density: density,
               ),
             ],
           ),
-          const SizedBox(height: 18),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _buildLocationInfoCard(
-                  title: 'Mevcut Konum',
-                  value: currentLat != null && currentLng != null
-                      ? '${currentLat.toStringAsFixed(5)}, ${currentLng.toStringAsFixed(5)}'
-                      : '-',
-                  icon: Icons.my_location_rounded,
-                  tint: const Color(0xFFE0F2FE),
-                  iconColor: const Color(0xFF0284C7),
+          SizedBox(height: density.storeCardGap),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stacked = constraints.maxWidth < 520;
+              final locationCards = [
+                Expanded(
+                  child: _buildLocationInfoCard(
+                    title: 'Mevcut Konum',
+                    value: currentLat != null && currentLng != null
+                        ? '${currentLat.toStringAsFixed(5)}, ${currentLng.toStringAsFixed(5)}'
+                        : '-',
+                    icon: Icons.my_location_rounded,
+                    tint: const Color(0xFFE0F2FE),
+                    iconColor: const Color(0xFF0284C7),
+                    density: density,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildLocationInfoCard(
-                  title: 'Talep Edilen Konum',
-                  value: requestedLat != null && requestedLng != null
-                      ? '${requestedLat.toStringAsFixed(5)}, ${requestedLng.toStringAsFixed(5)}'
-                      : '-',
-                  icon: Icons.place_outlined,
-                  tint: const Color(0xFFDCFCE7),
-                  iconColor: const Color(0xFF15803D),
+                if (!stacked) SizedBox(width: density.isCompact ? 8 : 10),
+                Expanded(
+                  child: _buildLocationInfoCard(
+                    title: 'Talep Edilen Konum',
+                    value: requestedLat != null && requestedLng != null
+                        ? '${requestedLat.toStringAsFixed(5)}, ${requestedLng.toStringAsFixed(5)}'
+                        : '-',
+                    icon: Icons.place_outlined,
+                    tint: const Color(0xFFDCFCE7),
+                    iconColor: const Color(0xFF15803D),
+                    density: density,
+                  ),
                 ),
-              ),
-            ],
+              ];
+
+              if (stacked) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildLocationInfoCard(
+                      title: 'Mevcut Konum',
+                      value: currentLat != null && currentLng != null
+                          ? '${currentLat.toStringAsFixed(5)}, ${currentLng.toStringAsFixed(5)}'
+                          : '-',
+                      icon: Icons.my_location_rounded,
+                      tint: const Color(0xFFE0F2FE),
+                      iconColor: const Color(0xFF0284C7),
+                      density: density,
+                    ),
+                    SizedBox(height: density.isCompact ? 6 : 8),
+                    _buildLocationInfoCard(
+                      title: 'Talep Edilen Konum',
+                      value: requestedLat != null && requestedLng != null
+                          ? '${requestedLat.toStringAsFixed(5)}, ${requestedLng.toStringAsFixed(5)}'
+                          : '-',
+                      icon: Icons.place_outlined,
+                      tint: const Color(0xFFDCFCE7),
+                      iconColor: const Color(0xFF15803D),
+                      density: density,
+                    ),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: locationCards,
+              );
+            },
           ),
           if (isPending) ...[
-            const SizedBox(height: 18),
+            SizedBox(height: density.storeCardGap),
             Wrap(
-              spacing: 10,
-              runSpacing: 10,
+              spacing: 8,
+              runSpacing: 8,
               alignment: WrapAlignment.end,
               children: [
                 OutlinedButton.icon(
                   onPressed: _isProcessing
                       ? null
                       : () => _rejectLocationChangeRequest(request),
-                  icon: const Icon(Icons.close_rounded, size: 18),
+                  icon: Icon(
+                    Icons.close_rounded,
+                    size: density.storeActionIconSize,
+                  ),
                   label: const Text('Reddet'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFFDC2626),
                     side: const BorderSide(color: Color(0xFFFECACA)),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: density.storeActionPaddingH,
+                      vertical: density.storeActionPaddingV,
                     ),
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius:
+                          BorderRadius.circular(density.storeActionRadius),
                     ),
                   ),
                 ),
@@ -1645,17 +2154,24 @@ class _StoreManagementPageState extends State<StoreManagementPage>
                             requestedLng: requestedLng,
                           );
                         },
-                  icon: const Icon(Icons.check_rounded, size: 18),
+                  icon: Icon(
+                    Icons.check_rounded,
+                    size: density.storeActionIconSize,
+                  ),
                   label: const Text('Konumu Onayla'),
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF0F766E),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: density.storeActionPaddingH,
+                      vertical: density.storeActionPaddingV,
                     ),
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius:
+                          BorderRadius.circular(density.storeActionRadius),
                     ),
                   ),
                 ),
@@ -1673,12 +2189,13 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     required IconData icon,
     required Color tint,
     required Color iconColor,
+    required AdminPanelDensity density,
   }) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(density.storeLocationInfoPadding),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(density.storeActionRadius),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1686,31 +2203,41 @@ class _StoreManagementPageState extends State<StoreManagementPage>
           Row(
             children: [
               Container(
-                width: 34,
-                height: 34,
+                width: density.storeLocationInfoIconBox,
+                height: density.storeLocationInfoIconBox,
                 decoration: BoxDecoration(
                   color: tint,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(icon, size: 18, color: iconColor),
+                child: Icon(
+                  icon,
+                  size: density.storeLocationInfoIconSize,
+                  color: iconColor,
+                ),
               ),
-              const SizedBox(width: 10),
-              Text(
-                title,
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+              SizedBox(width: density.isCompact ? 6 : 8),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: density.storeLocationInfoTitleFontSize,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: density.isCompact ? 4 : 6),
           Text(
             value.trim().isEmpty ? '-' : value,
-            style: const TextStyle(
-              color: Color(0xFF0F172A),
-              fontSize: 14,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: const Color(0xFF0F172A),
+              fontSize: density.storeLocationInfoValueFontSize,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1722,6 +2249,7 @@ class _StoreManagementPageState extends State<StoreManagementPage>
   Widget _buildSectionHeader({
     required String title,
     required String subtitle,
+    AdminPanelDensity? density,
     Widget? action,
   }) {
     return Row(
@@ -1733,25 +2261,30 @@ class _StoreManagementPageState extends State<StoreManagementPage>
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  color: Color(0xFF0F172A),
-                  fontSize: 20,
+                style: TextStyle(
+                  color: const Color(0xFF0F172A),
+                  fontSize: density?.storeSectionTitleFontSize ?? 20,
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 6),
+              SizedBox(height: density?.isCompact == true ? 4 : 6),
               Text(
                 subtitle,
+                maxLines: density != null ? 2 : null,
+                overflow: density != null ? TextOverflow.ellipsis : null,
                 style: TextStyle(
                   color: Colors.grey.shade600,
-                  fontSize: 13,
-                  height: 1.5,
+                  fontSize: density?.storeSectionSubtitleFontSize ?? 13,
+                  height: 1.4,
                 ),
               ),
             ],
           ),
         ),
-        if (action != null) ...[const SizedBox(width: 16), action],
+        if (action != null) ...[
+          SizedBox(width: density?.isCompact == true ? 10 : 16),
+          action,
+        ],
       ],
     );
   }
@@ -1760,9 +2293,13 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     required String label,
     required Color background,
     required Color foreground,
+    AdminPanelDensity? density,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: EdgeInsets.symmetric(
+        horizontal: density?.storeStatusChipPaddingH ?? 10,
+        vertical: density?.storeStatusChipPaddingV ?? 7,
+      ),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(999),
@@ -1771,34 +2308,54 @@ class _StoreManagementPageState extends State<StoreManagementPage>
         label,
         style: TextStyle(
           color: foreground,
-          fontSize: 12,
+          fontSize: density?.storeStatusChipFontSize ?? 12,
           fontWeight: FontWeight.w800,
         ),
       ),
     );
   }
 
-  Widget _buildMetaChip({required IconData icon, required String label}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(999),
+  Widget _buildMetaChip({
+    required IconData icon,
+    required String label,
+    AdminPanelDensity? density,
+  }) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: density?.isCompact == true ? 180 : 240,
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 15, color: const Color(0xFF64748B)),
-          const SizedBox(width: 6),
-          Text(
-            label.trim().isEmpty ? '-' : label,
-            style: const TextStyle(
-              color: Color(0xFF334155),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: density?.storeMetaChipPaddingH ?? 10,
+          vertical: density?.storeMetaChipPaddingV ?? 8,
+        ),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: density?.storeMetaChipIconSize ?? 15,
+              color: const Color(0xFF64748B),
             ),
-          ),
-        ],
+            SizedBox(width: density?.isCompact == true ? 4 : 6),
+            Flexible(
+              child: Text(
+                label.trim().isEmpty ? '-' : label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: const Color(0xFF334155),
+                  fontSize: density?.storeMetaChipFontSize ?? 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1897,12 +2454,23 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     );
   }
 
-  ButtonStyle _secondaryButtonStyle() {
+  ButtonStyle _secondaryButtonStyle([AdminPanelDensity? density]) {
     return OutlinedButton.styleFrom(
       foregroundColor: const Color(0xFF0F172A),
       side: const BorderSide(color: Color(0xFFE2E8F0)),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      padding: EdgeInsets.symmetric(
+        horizontal: density?.storeActionPaddingH ?? 16,
+        vertical: density?.storeActionPaddingV ?? 14,
+      ),
+      visualDensity: VisualDensity.compact,
+      minimumSize: density != null ? Size.zero : null,
+      tapTargetSize:
+          density != null ? MaterialTapTargetSize.shrinkWrap : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(
+          density?.storeActionRadius ?? 14,
+        ),
+      ),
     );
   }
 
@@ -1937,6 +2505,18 @@ class _StoreManagementPageState extends State<StoreManagementPage>
     final minute = value.minute.toString().padLeft(2, '0');
     return '$hour:$minute';
   }
+}
+
+class _ApplicationResubmitHints {
+  const _ApplicationResubmitHints({
+    required this.previouslyRejected,
+    required this.previouslyMissingDocuments,
+    required this.isResubmission,
+  });
+
+  final bool previouslyRejected;
+  final bool previouslyMissingDocuments;
+  final bool isResubmission;
 }
 
 class StoreDetailDialog extends StatefulWidget {

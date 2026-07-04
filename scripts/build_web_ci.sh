@@ -57,5 +57,9 @@ do
   append_define "$define_name"
 done
 
-cd "$PROJECT_DIR"
-flutter build web --release "${DART_DEFINES[@]}"
+cd "$PROJECT_DIR/ibul_app"
+flutter build web --release \
+  --target lib/main.dart \
+  --pwa-strategy=none \
+  --no-web-resources-cdn \
+  "${DART_DEFINES[@]}"

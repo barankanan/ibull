@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:ibul_app/core/product_rich_description.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
+import 'package:ibul_app/widgets/product_detail/product_rich_description_view.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
@@ -22,6 +24,7 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
     final viewModel = Provider.of<ProductDetailViewModel>(context);
     final product = viewModel.initialProduct;
     final description = product.getDisplayDescription();
+    final richBlocks = product.displayRichDescriptionBlocks;
     final additionalInfo = ProductDetailContentHelper.buildAdditionalInfo(
       product,
     );
@@ -105,11 +108,17 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
                     border: Border.all(color: Colors.grey[200]!),
                   ),
                   child: isWide
-                      ? _buildWideContent(product, description, additionalInfo)
+                      ? _buildWideContent(
+                          product,
+                          description,
+                          additionalInfo,
+                          richBlocks: richBlocks,
+                        )
                       : _buildNarrowContent(
                           product,
                           description,
                           additionalInfo,
+                          richBlocks: richBlocks,
                         ),
                 ),
 
@@ -261,11 +270,32 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
     return null;
   }
 
+  Widget _buildDescriptionBody(
+    String description, {
+    required List<ProductRichDescriptionBlock> richBlocks,
+    int? maxLines,
+  }) {
+    if (richBlocks.isNotEmpty) {
+      return ProductRichDescriptionView(blocks: richBlocks);
+    }
+    return Text(
+      description,
+      maxLines: maxLines,
+      overflow: maxLines != null ? TextOverflow.ellipsis : null,
+      style: const TextStyle(
+        fontSize: 13,
+        color: Colors.black54,
+        height: 1.6,
+      ),
+    );
+  }
+
   Widget _buildWideContent(
     dynamic product,
     String description,
-    List<String> additionalInfo,
-  ) {
+    List<String> additionalInfo, {
+    required List<ProductRichDescriptionBlock> richBlocks,
+  }) {
     final rightColumn = _buildRightColumn(
       additionalInfo,
       maxItems: _isExpanded ? null : _collapsedAdditionalInfoLimit,
@@ -283,22 +313,18 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Ürün Açıklaması',
-                  style: TextStyle(
+                Text(
+                  richBlocks.isNotEmpty ? 'Açıklama ve Hikaye' : 'Ürün Açıklaması',
+                  style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
                     color: Colors.black87,
                   ),
                 ),
                 const SizedBox(height: 10),
-                Text(
+                _buildDescriptionBody(
                   description,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Colors.black54,
-                    height: 1.6,
-                  ),
+                  richBlocks: richBlocks,
                 ),
               ],
             ),
@@ -321,43 +347,51 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Ürün Açıklaması',
-                    style: TextStyle(
+                  Text(
+                    richBlocks.isNotEmpty
+                        ? 'Açıklama ve Hikaye'
+                        : 'Ürün Açıklaması',
+                    style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
                       color: Colors.black87,
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Expanded(
-                    child: ShaderMask(
-                      shaderCallback: (Rect bounds) {
-                        return const LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.black,
-                            Colors.black,
-                            Colors.transparent,
-                          ],
-                          stops: [0.0, 0.85, 1.0],
-                        ).createShader(bounds);
-                      },
-                      blendMode: BlendMode.dstIn,
-                      child: SingleChildScrollView(
-                        physics: const NeverScrollableScrollPhysics(),
-                        child: Text(
-                          description,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: Colors.black54,
-                            height: 1.6,
+                  if (richBlocks.isNotEmpty)
+                    _buildDescriptionBody(
+                      description,
+                      richBlocks: richBlocks,
+                    )
+                  else
+                    Expanded(
+                      child: ShaderMask(
+                        shaderCallback: (Rect bounds) {
+                          return const LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.black,
+                              Colors.black,
+                              Colors.transparent,
+                            ],
+                            stops: [0.0, 0.85, 1.0],
+                          ).createShader(bounds);
+                        },
+                        blendMode: BlendMode.dstIn,
+                        child: SingleChildScrollView(
+                          physics: const NeverScrollableScrollPhysics(),
+                          child: Text(
+                            description,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.black54,
+                              height: 1.6,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -372,22 +406,12 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
   Widget _buildNarrowContent(
     dynamic product,
     String description,
-    List<String> additionalInfo,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Ürün Açıklaması',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-        const SizedBox(height: 10),
-        AnimatedCrossFade(
-          firstChild: Text(
+    List<String> additionalInfo, {
+    required List<ProductRichDescriptionBlock> richBlocks,
+  }) {
+    final Widget collapsedDescription = richBlocks.isNotEmpty
+        ? _buildDescriptionBody(description, richBlocks: richBlocks, maxLines: 6)
+        : Text(
             description.length > 150
                 ? '${description.substring(0, 150)}...'
                 : description,
@@ -396,18 +420,36 @@ class _ProductFullDescriptionState extends State<ProductFullDescription> {
               color: Colors.black54,
               height: 1.6,
             ),
+          );
+    final Widget expandedDescription = richBlocks.isNotEmpty
+        ? _buildDescriptionBody(description, richBlocks: richBlocks)
+        : Text(
+            description,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Colors.black54,
+              height: 1.6,
+            ),
+          );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          richBlocks.isNotEmpty ? 'Açıklama ve Hikaye' : 'Ürün Açıklaması',
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
           ),
+        ),
+        const SizedBox(height: 10),
+        AnimatedCrossFade(
+          firstChild: collapsedDescription,
           secondChild: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                description,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Colors.black54,
-                  height: 1.6,
-                ),
-              ),
+              expandedDescription,
               const SizedBox(height: 16),
               const Text(
                 'Ek Bilgiler',

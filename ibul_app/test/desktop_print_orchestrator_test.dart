@@ -355,7 +355,7 @@ void main() {
       expect(fakePrint.lastPrintTestPrinter?['transportType'], 'ethernet');
       expect(fakePrint.lastPrintTestTargetHost, '192.168.1.100');
       expect(fakePrint.lastPrintTestTargetPort, 9100);
-      expect(fakePrint.lastPrintTestExtraBody?['document_type'], 'kitchen');
+      expect(fakePrint.lastPrintTestExtraBody?['document_type'], 'kitchen_ticket_test');
       expect(fakePrint.lastPrintTestExtraBody?['printer_role'], 'mutfak');
       expect(fakePrint.lastPrintTestExtraBody?['test_source'], 'role_test');
     },
@@ -649,8 +649,10 @@ void main() {
       final fakePrint = _FakeLocalPrintService(
         kitchenResponse: const <String, dynamic>{
           'ok': true,
-          'actual_backend': 'usb-direct',
-          'actual_queue': 'POS58_QUEUE',
+          'actual_backend': 'cups',
+          'selected_backend': 'cups',
+          'physical_confirmation': true,
+          'transport_output': 'cups',
         },
       );
       final orchestrator = DesktopPrintOrchestrator(
@@ -709,8 +711,9 @@ void main() {
       final fakePrint = _FakeLocalPrintService(
         receiptResponse: const <String, dynamic>{
           'ok': true,
-          'actual_backend': 'cups',
-          'actual_queue': 'POS58_QUEUE',
+          'actual_backend': 'tcp',
+          'selected_backend': 'tcp',
+          'bytes_sent': 512,
         },
       );
       final orchestrator = DesktopPrintOrchestrator(
@@ -852,7 +855,7 @@ void main() {
       );
 
       expect(prepared.printer, isNull);
-      expect(prepared.resolutionSource, 'unresolved');
+      expect(prepared.resolutionSource, 'failed');
       expect(prepared.payload['printer_id'], isNull);
       expect(prepared.payload['printer_device_identifier'], isNull);
       expect(prepared.payload['printer_backend'], isNull);
@@ -1018,11 +1021,11 @@ void main() {
         printerId: 'cups:receipt',
       );
 
-      expect(result.ok, isTrue);
+      expect(result.ok, isFalse);
       expect(result.status, 'ready_unverified');
       expect(
         result.message,
-        'Test işi yazıcı kuyruğuna gönderildi. Fiziksel baskıyı kontrol edin.',
+        'CUPS yazdırma fiziksel olarak doğrulanamadı. Lütfen çıktı alındığını kontrol edin.',
       );
       expect(result.raw?['confirmation_status'], 'cups_accepted_unverified');
       expect(
@@ -1205,7 +1208,7 @@ void main() {
     expect(result.status, 'test_failed');
     expect(
       result.message,
-      'Aynı test kısa süre önce gönderildi. Lütfen birkaç saniye bekleyin.',
+      'Test fişi zaten gönderiliyor, lütfen bekleyin.',
     );
     expect(result.raw?['errorCode'], 'duplicate_test_suppressed');
   });
@@ -1642,7 +1645,7 @@ void main() {
       expect(result.ok, isFalse);
       expect(
         result.message,
-        'CUPS tamamlandı ama USB termal yazıcı fiziksel çıktı vermedi.',
+        'Seçili yazıcı farklı bağlantı yoluna düştü. USB/Ethernet ayarını kontrol edin.',
       );
       expect(fakePrint.lastReceiptPayload?['printer_backend'], 'usb-direct');
       expect(fakePrint.lastReceiptPayload?['printer_queue'], isNull);
@@ -1675,9 +1678,10 @@ void main() {
         ],
         receiptResponse: <String, dynamic>{
           'ok': true,
-          'actual_backend': 'usb-direct',
-          'selected_backend': 'usb-direct',
-          'transport_output': 'USB direct',
+          'actual_backend': 'cups',
+          'selected_backend': 'cups',
+          'physical_confirmation': true,
+          'transport_output': 'cups',
         },
       );
 
@@ -1809,11 +1813,11 @@ void main() {
         restaurantId: 'rest-cups-warning',
       );
 
-      expect(result.ok, isTrue);
-      expect(result.status, 'ready_warning');
+      expect(result.ok, isFalse);
+      expect(result.status, 'print_failed');
       expect(
         result.message,
-        'CUPS işi kabul etti; fiziksel baskı macOS tarafından doğrulanamadı',
+        'CUPS yazdırma fiziksel olarak doğrulanamadı. Lütfen çıktı alındığını kontrol edin.',
       );
       expect(result.raw?['confirmation_status'], 'cups_accepted_unverified');
     },
@@ -3003,6 +3007,15 @@ class _FakePrinterRepository implements PrinterRepositoryPort {
       lastError: error,
       lastTestPrintAt: DateTime.now(),
     );
+  }
+
+  @override
+  Future<PrinterModel> repairPrinterProfileMetadata(String printerId) async {
+    final printer = await fetchPrinterById(printerId);
+    if (printer == null) {
+      throw StateError('missing printer $printerId');
+    }
+    return printer;
   }
 
   @override

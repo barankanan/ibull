@@ -4,6 +4,8 @@ import '../utils/order_status_constants.dart';
 import '../utils/dynamic_value_helpers.dart';
 import 'package:provider/provider.dart';
 import '../core/auth/user_identity.dart';
+import '../core/auth/ibul_auth_context.dart';
+import '../core/auth/auth_debug_logger.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
 import '../widgets/web_header.dart';
@@ -13,16 +15,21 @@ import 'settings_page.dart';
 import 'orders_page.dart';
 import 'favorites_page.dart';
 import 'reviews_page.dart';
+import '../features/customer_support/screens/customer_support_page.dart';
+import '../features/orders/screens/order_history_page.dart';
 import 'ai_chat_page.dart';
 import 'followed_stores_page.dart';
 import 'my_chats_page.dart';
 import 'coupons_page.dart';
 import 'addresses_page.dart';
+import 'ihiz_home_page.dart';
+import '../features/saved_payment_cards/screens/saved_payment_cards_page.dart';
 import 'home_screen.dart';
 import 'login_page.dart';
 import 'seller_login_page.dart';
 import '../core/app_motion.dart';
 import '../services/order_service.dart';
+import '../services/auth_service.dart';
 import 'order_detail_page.dart';
 import 'shipment_tracking_page.dart';
 
@@ -51,6 +58,18 @@ class _AccountPageState extends State<AccountPage> {
   Widget build(BuildContext context) {
     // Watch AppState for login changes
     final appState = Provider.of<AppState>(context);
+    final authContext = IbulAuthContextService.instance;
+    final hasSupabaseSession = AuthService().currentUser != null;
+    AuthDebugLogger.customerHeader(
+      hasSession: hasSupabaseSession,
+      activeContext: authContext.activeContext,
+      isCustomerSession: authContext.isCustomerSessionActive(
+        hasSupabaseSession: hasSupabaseSession,
+      ),
+      isSellerSession: authContext.isSellerSessionActive(
+        hasSupabaseSession: hasSupabaseSession,
+      ),
+    );
     final isWeb = MediaQuery.of(context).size.width >= 800;
 
     if (isWeb) {
@@ -1495,12 +1514,58 @@ class _AccountPageState extends State<AccountPage> {
                   );
                 },
               ),
-              _buildMenuItem(Icons.headset_mic_outlined, 'Müşteri Hizmetleri'),
               _buildMenuItem(
-                Icons.access_time,
-                'Eski Siparişlerim / Tekrar al',
+                Icons.shopping_bag_outlined,
+                'Siparişlerim',
+                subtitle: 'Aktif ve son siparişlerini takip et.',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const OrdersPage(),
+                    ),
+                  );
+                },
               ),
-              _buildMenuItem(Icons.credit_card_outlined, 'Kartlarım'),
+              _buildMenuItem(
+                Icons.history,
+                'Eski Siparişlerim',
+                subtitle: 'Geçmiş alışverişlerini gör, tekrar al.',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const OrderHistoryPage(),
+                    ),
+                  );
+                },
+              ),
+              _buildMenuItem(
+                Icons.support_agent,
+                'Müşteri Hizmetleri',
+                subtitle: 'Şikayet, istek ve destek taleplerini bize ilet.',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const CustomerSupportPage(),
+                    ),
+                  );
+                },
+              ),
+              _buildMenuItem(
+                Icons.credit_card_outlined,
+                'Kartlarım',
+                subtitle: 'Kayıtlı ödeme kartlarını yönet.',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const SavedPaymentCardsPage(),
+                    ),
+                  );
+                },
+              ),
               _buildMenuItem(Icons.home_outlined, 'Barana Özel İndirimler'),
               _buildMenuItem(
                 Icons.local_offer_outlined,
@@ -1561,6 +1626,19 @@ class _AccountPageState extends State<AccountPage> {
               _buildMenuItem(Icons.format_list_bulleted, 'Montaj Hizmeti'),
               _buildMenuItem(Icons.add_circle_outline, 'Mağaza Başvurusu Yap'),
               _buildMenuItem(Icons.star_border, 'Uygulama Görüşün'),
+              _buildMenuItem(
+                Icons.bolt_outlined,
+                'iHız',
+                subtitle: 'iHız hizmetlerini keşfet.',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const IhizHomePage(),
+                    ),
+                  );
+                },
+              ),
               _buildMenuItem(Icons.help_outline, 'Yardım'),
 
               const SizedBox(height: 24),

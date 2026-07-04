@@ -5,6 +5,9 @@ import 'package:flutter/foundation.dart'
     show debugPrint, debugPrintStack, kIsWeb;
 import 'package:http/http.dart' as http;
 
+import '../core/platform_capabilities.dart';
+import '../core/runtime_diagnostic_logger.dart';
+import '../models/printer_profile.dart';
 import '../models/turkish_encoding_calibration.dart';
 
 class LocalPrintHealthStatus {
@@ -105,7 +108,25 @@ class LocalPrintService {
     return DateTime.now().difference(entry.fetchedAt) <= _bridgeStatusCacheTtl;
   }
 
+  static bool _loggedMobileSkip = false;
+
+  /// Defense-in-depth: never touch the local bridge from the mobile customer
+  /// app. Callers should already be gated, but this guarantees no
+  /// `http://127.0.0.1:3001` request is made on iOS/Android phones.
+  static bool get _shouldSkipOnMobile =>
+      PlatformCapabilities.shouldSkipLocalPrintBridge;
+
+  static void _logMobileSkipOnce() {
+    if (_loggedMobileSkip) return;
+    _loggedMobileSkip = true;
+    RuntimeDiagnosticLogger.localPrint('skipped on mobile customer app');
+  }
+
   Future<Map<String, dynamic>?> health({bool useCache = true}) async {
+    if (_shouldSkipOnMobile) {
+      _logMobileSkipOnce();
+      return null;
+    }
     if (useCache && _cacheFresh(_healthCache)) {
       return _healthCache!.data == null
           ? null
@@ -145,6 +166,15 @@ class LocalPrintService {
   Future<LocalPrintHealthStatus> checkAvailability({
     Duration timeout = const Duration(milliseconds: 1500),
   }) async {
+    if (_shouldSkipOnMobile) {
+      _logMobileSkipOnce();
+      return LocalPrintHealthStatus(
+        isAvailable: false,
+        reason: 'skipped_mobile_customer_app',
+        url: _endpoint('/health'),
+        durationMs: 0,
+      );
+    }
     final url = _endpoint('/health');
     final watch = Stopwatch()..start();
     _log(
@@ -285,24 +315,26 @@ class LocalPrintService {
     final backend =
         printer?['backend']?.toString() ??
         printer?['transportType']?.toString();
-    final body = _mergePrintOptions(
-      <String, dynamic>{
-        if (printerId != null && printerId.trim().isNotEmpty)
-          'printer_id': printerId.trim(),
-        if (printerName != null && printerName.trim().isNotEmpty)
-          'printer_name': printerName.trim(),
-        if (printer != null && printer.isNotEmpty)
-          'printer': Map<String, dynamic>.from(printer),
-        'document_type': 'test',
-        'test_mode': testMode,
-        if (backend == 'windows-spool') 'spool_mode': 'RAW',
-        if (extraBody != null) ...Map<String, dynamic>.from(extraBody),
-      },
-      targetHost: targetHost,
-      targetPort: targetPort,
-      encoding: encoding,
-      codePage: codePage,
-      renderMode: renderMode,
+    final body = PrinterProfile.normalizeBridgePayload(
+      _mergePrintOptions(
+        <String, dynamic>{
+          if (printerId != null && printerId.trim().isNotEmpty)
+            'printer_id': printerId.trim(),
+          if (printerName != null && printerName.trim().isNotEmpty)
+            'printer_name': printerName.trim(),
+          if (printer != null && printer.isNotEmpty)
+            'printer': Map<String, dynamic>.from(printer),
+          'document_type': 'test',
+          'test_mode': testMode,
+          if (backend == 'windows-spool') 'spool_mode': 'RAW',
+          if (extraBody != null) ...Map<String, dynamic>.from(extraBody),
+        },
+        targetHost: targetHost,
+        targetPort: targetPort,
+        encoding: encoding,
+        codePage: codePage,
+        renderMode: renderMode,
+      ),
     );
     final embeddedPrinter = printer == null
         ? null
@@ -321,7 +353,11 @@ class LocalPrintService {
       'codePage=${body['codepage'] ?? '-'} '
       'document_type=${body['document_type'] ?? '-'} '
       'spool_mode=${body['spool_mode'] ?? '-'} '
-      'transport=${backend ?? '-'}',
+      'transport=${backend ?? '-'} '
+      'receipt_length=${body['receipt_length'] ?? '-'} '
+      'bottom_feed_lines=${body['bottom_feed_lines'] ?? '-'} '
+      'bottom_padding_px=${body['bottom_padding_px'] ?? '-'} '
+      'min_receipt_height_px=${body['min_receipt_height_px'] ?? '-'}',
     );
     return _send(
       section: 'Receipt',

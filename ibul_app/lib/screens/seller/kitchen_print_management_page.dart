@@ -1,33 +1,47 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
+import '../../features/seller/panel/printer_center/printer_assignment_state.dart';
+import '../../features/seller/panel/printer_center/printer_station_test_guard.dart';
+import '../../features/seller/panel/printer_center/widgets/printer_center_health_banner.dart';
+import '../../features/seller/panel/printer_center/widgets/printer_center_sections.dart';
+import '../../features/seller/panel/printer_center/widgets/printer_role_mappings_card.dart';
+import '../../models/discovered_printer.dart';
 import '../../models/desktop_printer_setup_models.dart';
 import '../../models/printer_model.dart';
+import '../../models/printer_profile.dart';
 import '../../models/print_job_model.dart';
 import '../../models/seller_product.dart';
 import '../../models/station_model.dart';
 import '../../models/station_printer_model.dart';
 import '../../models/mixed_service_order.dart';
+import '../../services/discovered_printer_normalize.dart';
 import '../../services/desktop_print_orchestrator.dart';
-import '../../services/printer_encoding_profile_store.dart';
 import '../../services/order_print_job_service.dart';
 import '../../services/print_job_repository.dart';
 import '../../services/printer_event_log_service.dart';
 import '../../services/print_station_service.dart';
 import '../../services/printer_repository.dart';
+import '../../services/restaurant_printer_dispatch_resolver.dart';
+import '../../services/bridge_print_dispatch_verification.dart';
+import '../../services/restaurant_printer_diagnostics_report_builder.dart';
 import '../../services/station_repository.dart';
 import '../../services/kitchen_print_trace_log.dart';
 import '../../services/kitchen_product_mapping_cache_store.dart';
 import '../../services/kitchen_routing_service.dart';
+import '../../services/restaurant_offline/restaurant_connectivity_service.dart';
+import '../../services/restaurant_offline/restaurant_offline_snapshot_sync.dart';
+import '../../services/restaurant_offline/restaurant_local_cache_service.dart';
+import '../../widgets/restaurant_offline_banner.dart';
 import '../../services/store_service.dart';
 import '../../services/local_print_service.dart';
 import '../../services/bridge_manager.dart';
-import '../../utils/print_perf_log.dart';
-import '../../widgets/bridge_error_dialog.dart';
 import 'printer_guide_dialog.dart';
+import 'restaurant_printer_setup_route.dart';
 import 'printer_system_setup_wizard.dart';
 import 'printer_test_dialog.dart';
 import 'printer_wizard.dart';
@@ -85,7 +99,6 @@ class _KitchenPrintManagementPageState
   late final StationRepository _stationRepository;
   late final PrinterRepository _printerRepository;
   late final PrintJobRepository _printJobRepository;
-  late final OrderPrintJobService _orderPrintJobService;
   late final StoreService _storeService;
   late final PrintStationService _printStationService;
   late final DesktopPrintOrchestrator _printOrchestrator;
@@ -121,6 +134,8 @@ class _KitchenPrintManagementPageState
   String? _printSystemSyncNotice;
   String? _selectedReceiptPrinterId;
   String? _selectedKitchenPrinterId;
+  String? _persistedReceiptPrinterId;
+  String? _persistedKitchenPrinterId;
   String? _selectedReceiptPrinterLabel;
   String? _selectedKitchenPrinterLabel;
   String _selectedPrintStationPlatform = '';
@@ -130,9 +145,16 @@ class _KitchenPrintManagementPageState
   bool? _remotePrintSystemEnabled;
   bool _printSystemSourceIsLocalRuntime = false;
   final Set<String> _deletingPrinterIds = <String>{};
+  final Set<String> _repairingPrinterIds = <String>{};
   List<Map<String, dynamic>> _bridgePrinters = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _staleBridgePrinters = const <Map<String, dynamic>>[];
   bool _usbCupsConflictWarning = false;
+  bool _eligibilityLoading = true;
+  bool _eligibilityAllowed = false;
+  String _storeCategory = '';
+  List<String> _ipMismatchWarnings = const <String>[];
+  final Set<String> _dismissedIpDriftPrinterIds = <String>{};
+  final Set<String> _updatingEthernetIpPrinterIds = <String>{};
   Map<String, dynamic>? _remotePrintStationConfig;
   Map<String, dynamic>? _localQueueStatus;
   Map<String, dynamic>? _localBridgeHealth;
@@ -144,9 +166,19 @@ class _KitchenPrintManagementPageState
   String? _adoptLocalPrinterError;
   Map<String, dynamic>? _lastCupsQueueBlockedDetails;
   bool _clearingCupsQueue = false;
-  PrinterEncodingProfile? _cachedReceiptEncodingProfile;
-  PrinterEncodingProfile? _cachedKitchenEncodingProfile;
-  DateTime? _encodingProfilesCachedAt;
+  final Set<String> _retryingPrintJobIds = <String>{};
+  bool _copyingDiagnosticsReport = false;
+  List<PrintJobModel> _recentPrintJobs = const <PrintJobModel>[];
+  bool _loadingRecentPrintJobs = false;
+  String? _productsLoadError;
+  List<PrinterModel> _allPrintersCache = const <PrinterModel>[];
+
+  bool get _roleMappingsDirty => PrinterAssignmentState.roleMappingsDirty(
+    selectedReceiptPrinterId: _selectedReceiptPrinterId,
+    selectedKitchenPrinterId: _selectedKitchenPrinterId,
+    persistedReceiptPrinterId: _persistedReceiptPrinterId,
+    persistedKitchenPrinterId: _persistedKitchenPrinterId,
+  );
 
   @override
   void initState() {
@@ -154,8 +186,6 @@ class _KitchenPrintManagementPageState
     _stationRepository = widget.stationRepository ?? StationRepository();
     _printerRepository = widget.printerRepository ?? PrinterRepository();
     _printJobRepository = widget.printJobRepository ?? PrintJobRepository();
-    _orderPrintJobService =
-        widget.orderPrintJobService ?? OrderPrintJobService();
     _storeService = widget.storeService ?? StoreService();
     _printStationService = widget.printStationService ?? PrintStationService();
     _printOrchestrator =
@@ -168,7 +198,7 @@ class _KitchenPrintManagementPageState
     unawaited(
       KitchenProductMappingCacheStore.ensureHydrated(widget.restaurantId),
     );
-    _loadPrintStationState();
+    unawaited(_resolveEligibility());
     _logPrinterSettings(
       'Init',
       'screen=KitchenPrintManagementPage openedTab=printers sellerId=${widget.restaurantId} '
@@ -176,7 +206,38 @@ class _KitchenPrintManagementPageState
     );
   }
 
-  Future<void> _loadPrintStationState({bool invalidateBridgeCache = false}) async {
+  Future<void> _resolveEligibility() async {
+    setState(() {
+      _eligibilityLoading = true;
+    });
+    try {
+      final profile = await _storeService.getStoreProfileForSellerId(
+        widget.restaurantId,
+      );
+      final category = profile?['category']?.toString();
+      if (!mounted) return;
+      final allowed = canUseRestaurantPrinterSystem(category);
+      setState(() {
+        _eligibilityAllowed = allowed;
+        _eligibilityLoading = false;
+        _storeCategory = category?.trim() ?? '';
+      });
+      if (allowed) {
+        await _loadPrintStationState();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _eligibilityAllowed = false;
+        _eligibilityLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadPrintStationState({
+    bool invalidateBridgeCache = false,
+    bool preserveRoleSelections = false,
+  }) async {
     if (invalidateBridgeCache) {
       _printOrchestrator.invalidateBridgeStatusCache();
     }
@@ -189,6 +250,15 @@ class _KitchenPrintManagementPageState
       final snapshot = await _printOrchestrator.loadSetupSnapshot(
         restaurantId: widget.restaurantId,
         forceRefresh: true,
+      );
+      final savedPrinters = await _printerRepository.fetchPrinters(
+        widget.restaurantId,
+      );
+      _allPrintersCache = savedPrinters;
+      final enrichedPrinters = DiscoveredPrinterCatalog.enrichUnifiedCatalog(
+        printers: snapshot.printers,
+        savedPrinters: savedPrinters,
+        os: snapshot.os,
       );
       final localChoice = await _printStationService.isThisDevicePrintStation();
       var remoteConfig = snapshot.remoteConfig;
@@ -220,10 +290,11 @@ class _KitchenPrintManagementPageState
               'Yerel bridge runtime değeri gösteriliyor. Bulut ayarı senkronlanamadı.';
         }
       }
-      final bridgePrinters = snapshot.livePrinters
+      final bridgePrinters = enrichedPrinters
           .map(_printerToLegacyMap)
           .toList(growable: false);
-      final staleBridgePrinters = snapshot.stalePrinters
+      final staleBridgePrinters = enrichedPrinters
+          .where((printer) => printer.isStaleSavedMapping)
           .map(_printerToLegacyMap)
           .toList(growable: false);
       final nextBridgePrinterRefreshKey = bridgePrinters
@@ -257,7 +328,17 @@ class _KitchenPrintManagementPageState
         _localDiscoverResult = snapshot.discoveryWarning == null
             ? null
             : <String, dynamic>{'warning': snapshot.discoveryWarning};
-        _usbCupsConflictWarning = _hasUsbCupsConflict(snapshot.printers);
+        _usbCupsConflictWarning = DiscoveredPrinterCatalog.hasUsbCupsDuplicateConflict(
+          enrichedPrinters,
+        );
+        _ipMismatchWarnings = enrichedPrinters
+            .map(
+              (printer) =>
+                  printer.raw['ipMismatchWarning']?.toString().trim() ?? '',
+            )
+            .where((message) => message.isNotEmpty)
+            .toSet()
+            .toList(growable: false);
         _bridgePrinters = bridgePrinters;
         _staleBridgePrinters = staleBridgePrinters;
         _selectedPrintStationPlatform = _selectedPrintStationPlatform.isEmpty
@@ -273,20 +354,26 @@ class _KitchenPrintManagementPageState
             remotePrintSystemEnabled != null ||
             queueStatus != null;
         _printSystemSyncNotice = syncNotice;
-        _selectedReceiptPrinterId = _coerceLiveBridgeSelectionId(
-          snapshotSelectedId:
-              snapshot.selectedReceiptPrinterRecordId ??
-              remoteConfig?['adisyon_printer_id']?.toString() ??
-              snapshot.localConfig?.receiptSelection?.printer.printerRecordId,
-          bridgePrinters: bridgePrinters,
-        );
-        _selectedKitchenPrinterId = _coerceLiveBridgeSelectionId(
-          snapshotSelectedId:
-              snapshot.selectedKitchenPrinterRecordId ??
-              remoteConfig?['kitchen_printer_id']?.toString() ??
-              snapshot.localConfig?.kitchenSelection?.printer.printerRecordId,
-          bridgePrinters: bridgePrinters,
-        );
+        if (!preserveRoleSelections &&
+            !_roleMappingsDirty &&
+            !_savingRoleMappings) {
+          _selectedReceiptPrinterId = PrinterAssignmentState.coercePersistedSelectionId(
+            snapshotSelectedId:
+                snapshot.selectedReceiptPrinterRecordId ??
+                remoteConfig?['adisyon_printer_id']?.toString() ??
+                snapshot.localConfig?.receiptSelection?.printer.printerRecordId,
+            bridgePrinters: bridgePrinters,
+          );
+          _selectedKitchenPrinterId = PrinterAssignmentState.coercePersistedSelectionId(
+            snapshotSelectedId:
+                snapshot.selectedKitchenPrinterRecordId ??
+                remoteConfig?['kitchen_printer_id']?.toString() ??
+                snapshot.localConfig?.kitchenSelection?.printer.printerRecordId,
+            bridgePrinters: bridgePrinters,
+          );
+          _persistedReceiptPrinterId = _selectedReceiptPrinterId;
+          _persistedKitchenPrinterId = _selectedKitchenPrinterId;
+        }
         _selectedReceiptPrinterLabel =
             _printerNameById(_selectedReceiptPrinterId) == ''
             ? snapshot.localConfig?.receiptSelection?.printer.displayName
@@ -303,6 +390,20 @@ class _KitchenPrintManagementPageState
       }
       await _refreshTurkishEncodingStatus();
       unawaited(_cacheEncodingProfilesForSelectedPrinters());
+      unawaited(_loadRecentPrintJobs());
+      unawaited(
+        RestaurantOfflineSnapshotSync().upsertFromSellerPanelState(
+          restaurantId: widget.restaurantId,
+          storeName: widget.restaurantId,
+          sellerId: widget.restaurantId,
+          storeCategory: _storeCategory,
+          printers: savedPrinters
+              .map((printer) => printer.toMap())
+              .toList(growable: false),
+          discoveredPrinters: bridgePrinters,
+          lastSetupSnapshot: snapshot.buildOperatorSetupStatus(),
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -350,104 +451,345 @@ class _KitchenPrintManagementPageState
         _unifiedPrinterForRole(PrinterSetupRole.mutfak);
   }
 
-  bool _hasCachedBridgeHealthForFastPrint() {
-    if (!_bridgeReachable) return false;
-    if (_bridgeHealthy) return true;
-    return _localBridgeHealth?['ok'] == true;
-  }
-
   Future<void> _cacheEncodingProfilesForSelectedPrinters() async {
     final receiptPrinter = _unifiedPrinterForRole(PrinterSetupRole.adisyon);
     final kitchenPrinter = _unifiedPrinterForRole(PrinterSetupRole.mutfak);
-    PrinterEncodingProfile? receiptProfile;
-    PrinterEncodingProfile? kitchenProfile;
     if (receiptPrinter != null) {
-      receiptProfile = await _printOrchestrator.loadEncodingProfile(
+      await _printOrchestrator.loadEncodingProfile(
         restaurantId: widget.restaurantId,
         printerId: receiptPrinter.id,
       );
     }
     if (kitchenPrinter != null) {
-      kitchenProfile = await _printOrchestrator.loadEncodingProfile(
+      await _printOrchestrator.loadEncodingProfile(
         restaurantId: widget.restaurantId,
         printerId: kitchenPrinter.id,
       );
     }
-    if (!mounted) return;
-    setState(() {
-      _cachedReceiptEncodingProfile = receiptProfile;
-      _cachedKitchenEncodingProfile = kitchenProfile;
-      _encodingProfilesCachedAt = DateTime.now();
-    });
   }
 
-  PrinterEncodingProfile? _encodingProfileForRole(PrinterSetupRole role) {
-    if (_encodingProfilesCachedAt != null &&
-        DateTime.now().difference(_encodingProfilesCachedAt!) <=
-            const Duration(minutes: 10)) {
-      return role == PrinterSetupRole.mutfak
-          ? _cachedKitchenEncodingProfile
-          : _cachedReceiptEncodingProfile;
-    }
-    return null;
+  Future<void> _sendDirectAdisyonRoleDebugPrint() async {
+    await _sendPrintStationTest(kitchen: false);
   }
 
-  Future<bool> _tryFastRoleTestPrint({
-    required PrinterSetupRole role,
-    required String clickedButton,
-    required String perfFlow,
-    required void Function(int bridgeRequestMs) onBridgeComplete,
-  }) async {
-    final printer = _unifiedPrinterForRole(role);
-    if (printer == null || !_hasCachedBridgeHealthForFastPrint()) {
-      return false;
-    }
-    final payload = _printOrchestrator.buildFastRoleTestPayload(
-      role: role,
-      profile: _encodingProfileForRole(role),
-      storeName: _selectedReceiptPrinterLabel ?? _selectedKitchenPrinterLabel,
-    );
-    final bridgeWatch = Stopwatch()..start();
-    final result = await _printOrchestrator.printPhysicalToPrinter(
-      printer,
-      payload,
-      restaurantId: widget.restaurantId,
-      flowName: 'role_test',
-      flowType: clickedButton,
-      source: 'kitchen_print_management_page_fast',
-    );
-    onBridgeComplete(bridgeWatch.elapsedMilliseconds);
-    if (!result.ok) {
-      final structured = BridgeStructuredError.tryParse(result.raw);
-      if (structured != null &&
-          (structured.errorCode == 'cups_queue_busy' ||
-              structured.errorCode == 'cups_queue_stuck' ||
-              structured.errorCode == 'duplicate_test_suppressed')) {
-        if (!mounted) return true;
-        await showBridgeStructuredErrorDialog(
-          context,
-          title: 'Test gönderilemedi',
-          primaryMessage: result.message,
-          error: structured,
-          onAfterRefresh: () async {
-            await _loadPrintStationState();
-          },
-        );
-        return true;
+  Future<void> _copyDiagnosticsReport() async {
+    if (_copyingDiagnosticsReport) return;
+    setState(() => _copyingDiagnosticsReport = true);
+    try {
+      final failedJobs = await _printJobRepository.fetchJobs(
+        widget.restaurantId,
+        status: 'failed',
+        limit: 10,
+      );
+      final completedJobs = await _printJobRepository.fetchJobs(
+        widget.restaurantId,
+        status: 'completed',
+        limit: 10,
+      );
+      final report = RestaurantPrinterDiagnosticsReportBuilder.build(
+        restaurantId: widget.restaurantId,
+        bridgeHealth: _localBridgeHealth ?? const <String, dynamic>{},
+        queueStatus: _localQueueStatus,
+        discoveredPrinters: _bridgePrinters,
+        savedPrinters: _bridgePrinters,
+        ipDriftWarnings: _ipMismatchWarnings,
+        duplicateWarnings: _usbCupsConflictWarning
+            ? const <String>['USB ve CUPS aynı yazıcı için çakışma uyarısı aktif.']
+            : const <String>[],
+        roleMappings: <String, dynamic>{
+          'receipt_printer_id': _selectedReceiptPrinterId,
+          'receipt_printer_name': _selectedReceiptPrinterLabel,
+          'kitchen_printer_id': _selectedKitchenPrinterId,
+          'kitchen_printer_name': _selectedKitchenPrinterLabel,
+        },
+        recentFailedJobs: failedJobs,
+        recentCompletedJobs: completedJobs,
+        lastError: _printStationError ?? _lastCupsQueueBlockedDetails?['message']?.toString(),
+      );
+      await Clipboard.setData(ClipboardData(text: report));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tanı raporu panoya kopyalandı.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Tanı raporu oluşturulamadı: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _copyingDiagnosticsReport = false);
       }
-      final dispatch = result.raw?['dispatch'];
-      final dispatchJson = dispatch is Map
-          ? jsonEncode(dispatch)
-          : (result.raw == null ? '-' : jsonEncode(result.raw));
-      throw Exception(
-        '${result.status}: ${result.message}'
-        '\nflow_type=$clickedButton'
-        '\nbackend=${printer.backend.value} queue=${printer.queueName}'
-        '\nbridge_printer_id=${printer.id} printer_record_id=${printer.printerRecordId ?? "-"}'
-        '\ndispatch=$dispatchJson',
+    }
+  }
+
+  Future<void> _loadRecentPrintJobs() async {
+    setState(() => _loadingRecentPrintJobs = true);
+    try {
+      final failed = await _printJobRepository.fetchJobs(
+        widget.restaurantId,
+        status: 'failed',
+        limit: 5,
+      );
+      final completed = await _printJobRepository.fetchJobs(
+        widget.restaurantId,
+        status: 'completed',
+        limit: 5,
+      );
+      final merged = <PrintJobModel>[...failed, ...completed];
+      merged.sort((a, b) {
+        final aAt = a.printJobCreatedAt ?? a.orderSavedAt ?? DateTime(2000);
+        final bAt = b.printJobCreatedAt ?? b.orderSavedAt ?? DateTime(2000);
+        return bAt.compareTo(aAt);
+      });
+      if (!mounted) return;
+      setState(() {
+        _recentPrintJobs = merged.take(5).toList(growable: false);
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _recentPrintJobs = const <PrintJobModel>[]);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingRecentPrintJobs = false);
+      }
+    }
+  }
+
+  int _issueMappingCount({
+    List<PrinterAssignmentSummaryItem>? assignmentItems,
+  }) {
+    if (assignmentItems != null) {
+      final missing = assignmentItems.where((item) => !item.isMapped).length;
+      return missing + (_roleMappingsDirty ? 1 : 0);
+    }
+    var missing = 0;
+    if ((_selectedReceiptPrinterId ?? '').trim().isEmpty) missing++;
+    if ((_selectedKitchenPrinterId ?? '').trim().isEmpty) missing++;
+    return missing + (_roleMappingsDirty ? 1 : 0);
+  }
+
+  List<PrinterAssignmentSummaryItem> _buildAssignmentSummaryItems({
+    required List<StationModel> stations,
+    required List<StationPrinterModel> mappings,
+    required List<PrinterModel> printers,
+  }) {
+    final printerById = <String, PrinterModel>{
+      for (final printer in printers) printer.id: printer,
+    };
+    final items = <PrinterAssignmentSummaryItem>[
+      PrinterAssignmentSummaryItem(
+        label: 'Adisyon',
+        isMapped: (_selectedReceiptPrinterId ?? '').trim().isNotEmpty,
+        printerName: _selectedReceiptPrinterLabel ??
+            _printerNameById(_selectedReceiptPrinterId),
+      ),
+      PrinterAssignmentSummaryItem(
+        label: 'Mutfak',
+        isMapped: (_selectedKitchenPrinterId ?? '').trim().isNotEmpty,
+        printerName: _selectedKitchenPrinterLabel ??
+            _printerNameById(_selectedKitchenPrinterId),
+      ),
+    ];
+    for (final station in stations) {
+      final stationMappings = mappings
+          .where((mapping) => mapping.stationId == station.id)
+          .toList(growable: false);
+      final mapping = _resolvePrimaryStationMapping(stationMappings);
+      final printerId = mapping?.printerId.trim() ?? '';
+      items.add(
+        PrinterAssignmentSummaryItem(
+          label: station.name,
+          isMapped: printerId.isNotEmpty,
+          printerName: printerById[printerId]?.name,
+        ),
       );
     }
-    return true;
+    return items;
+  }
+
+  Future<void> _testRegisteredPrinter(PrinterModel printer) async {
+    final result = await _printOrchestrator.printTestReceipt(
+      restaurantId: widget.restaurantId,
+      printerId: printer.id,
+      testSource: 'printer_center_test',
+      flowName: 'printer_center_registered_test',
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.ok
+              ? '${printer.name} test fişi gönderildi.'
+              : (result.message.isNotEmpty
+                    ? result.message
+                    : 'Test fişi gönderilemedi.'),
+        ),
+      ),
+    );
+  }
+
+  String _printJobStatusLabel(PrintJobModel job) {
+    return job.displayStatusLabel(
+      retrying: _retryingPrintJobIds.contains(job.id),
+    );
+  }
+
+  Future<void> _retryPrintJob(PrintJobModel job) async {
+    if (_retryingPrintJobIds.contains(job.id) || !job.canManualRetry) {
+      return;
+    }
+    setState(() => _retryingPrintJobIds.add(job.id));
+    try {
+      final started = await _printJobRepository.retryJob(job.id);
+      if (!mounted) return;
+      if (!started) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Print job tekrar gönderilemedi. Job zaten işleniyor olabilir.',
+            ),
+          ),
+        );
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Print job yeniden kuyruğa alındı.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text('Print job tekrar gönderilemedi: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _retryingPrintJobIds.remove(job.id));
+      }
+    }
+  }
+
+  Widget _buildPrintJobLogTile(PrintJobModel job) {
+    final retrying = _retryingPrintJobIds.contains(job.id);
+    final statusLabel = _printJobStatusLabel(job);
+    final color = switch (job.normalizedStatus) {
+      'failed' => const Color(0xFFDC2626),
+      'completed' => job.isUnverifiedCompleted
+          ? const Color(0xFFCA8A04)
+          : const Color(0xFF16A34A),
+      'printing' => const Color(0xFFEA580C),
+      'claimed' => const Color(0xFF7C3AED),
+      _ => retrying ? const Color(0xFFEA580C) : const Color(0xFF2563EB),
+    };
+    final failedMessage = (job.lastError ?? '').trim().isNotEmpty
+        ? job.lastError!.trim()
+        : (job.isFailed
+              ? BridgePrintDispatchVerification.dispatchNotDeliveredMessage
+              : '');
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${job.roleLabel} • ${job.stationName}',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${job.printerName} • ${job.backendLabel}',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Bağlantı: ${job.connectionSummary}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Sipariş: ${job.orderNo} • ${job.tableName} • '
+                        '${job.itemCount} kalem • Deneme: ${job.retryCount}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      if (failedMessage.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Hata: $failedMessage',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFFDC2626),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        statusLabel,
+                        style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      job.createdAt.toLocal().toString().substring(0, 16),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF9CA3AF),
+                      ),
+                    ),
+                    if (job.canManualRetry) ...[
+                      const SizedBox(height: 8),
+                      IconButton(
+                        onPressed: retrying ? null : () => _retryPrintJob(job),
+                        tooltip: 'Tekrar Dene',
+                        icon: retrying
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _refreshTurkishEncodingStatus() async {
@@ -521,26 +863,7 @@ class _KitchenPrintManagementPageState
   bool get _isPrintStationOnline =>
       _isRemotePrintStationOnline || _isLocalPrintRuntimeOnline;
 
-  bool get _hasDetectedPrinters =>
-      _bridgePrinters.any((printer) => printer['isLive'] == true);
-
-  bool _hasUsbCupsConflict(List<UnifiedPrinterModel> printers) {
-    bool isPos58Like(String value) {
-      final text = value.toLowerCase();
-      return text.contains('pos58') || text.contains('stmicroelectronics');
-    }
-
-    final hasUsb = printers.any((printer) {
-      final text = '${printer.id} ${printer.queueName} ${printer.displayName}';
-      return printer.backend == DesktopPrinterBackend.usbDirect &&
-          isPos58Like(text);
-    });
-    final hasCups = printers.any((printer) {
-      final text = '${printer.id} ${printer.queueName} ${printer.displayName}';
-      return printer.backend == DesktopPrinterBackend.cups && isPos58Like(text);
-    });
-    return hasUsb && hasCups;
-  }
+  bool get _hasDetectedPrinters => _bridgePrinters.isNotEmpty;
 
   String _wizardStatusLabel(String? status) {
     switch ((status ?? '').trim().toLowerCase()) {
@@ -654,6 +977,10 @@ class _KitchenPrintManagementPageState
 
     if (!_bridgeReachable) {
       return 'Tarama başlamadan önce bridge çalışmalı. "Adım adım kurulum" ile servisi açın.';
+    }
+    if (_bridgeReachable && !_hasDetectedPrinters && _bridgePrinters.isEmpty) {
+      return 'Bridge çalışıyor ama yazıcı bulunamadı. USB/Ethernet yazıcıların açık '
+          'olduğundan emin olun; Ethernet yazıcıları manuel ekleyebilirsiniz.';
     }
     if (!_bridgeHealthy &&
         transportMode == 'cups' &&
@@ -866,185 +1193,47 @@ class _KitchenPrintManagementPageState
     if (_guardPrintSystemDisabled()) {
       return;
     }
-    final role = kitchen ? PrinterSetupRole.mutfak : PrinterSetupRole.adisyon;
-    await _runRoleBasedPhysicalPrint(
-      role: role,
-      payload: PrintPayload.testForRole(role),
-      successMessage: kitchen
-          ? 'Mutfak test fişi gönderildi.'
-          : 'Adisyon test fişi gönderildi.',
-    );
-  }
-
-  Future<void> _sendDirectAdisyonRoleDebugPrint() async {
-    if (_guardPrintSystemDisabled()) {
-      return;
-    }
-    await _runRoleBasedPhysicalPrint(
-      role: PrinterSetupRole.adisyon,
-      payload: PrintPayload.testForRole(PrinterSetupRole.adisyon),
-      successMessage: 'Seçili adisyon yazıcısına direkt baskı gönderildi.',
-    );
-  }
-
-  Future<void> _runRoleBasedPhysicalPrint({
-    required PrinterSetupRole role,
-    required PrintPayload payload,
-    required String successMessage,
-  }) async {
-    final tapAt = DateTime.now();
-    final perf = Stopwatch()..start();
-    var resolvePrinterMs = 0;
-    var healthCheckMs = 0;
-    var payloadBuildMs = 0;
-    var bridgeRequestMs = 0;
-    var ok = false;
-    String? errorMessage;
-    final perfFlow = role == PrinterSetupRole.mutfak
-        ? 'kitchen_test'
-        : 'receipt_test';
     setState(() {
       _testingPrintStation = true;
       _printStationError = null;
     });
     try {
-      final clickedButton = role == PrinterSetupRole.mutfak
-          ? 'kitchen_test'
-          : 'adisyon_test';
-      _printerEventLogService
-          .append(
-            restaurantId: widget.restaurantId,
-            event: 'role_button_clicked',
-            message: 'Rol bazlı fiziksel baskı butonuna basıldı.',
-            role: role.value,
-            details: <String, dynamic>{
-              'clicked_button': clickedButton,
-              'document_type': payload.documentType,
-              'testSource': 'role_test',
-              'selectedReceiptPrinterId': _selectedReceiptPrinterId,
-              'selectedKitchenPrinterId': _selectedKitchenPrinterId,
-            },
-          )
-          .ignore();
-      final explicitPrinterId = role == PrinterSetupRole.adisyon
-          ? _selectedReceiptPrinterId
-          : _selectedKitchenPrinterId;
-      final payloadWatch = Stopwatch()..start();
-      final fastCompleted = await _tryFastRoleTestPrint(
-        role: role,
-        clickedButton: clickedButton,
-        perfFlow: perfFlow,
-        onBridgeComplete: (ms) => bridgeRequestMs = ms,
+      final result = await _printOrchestrator.printTestReceipt(
+        restaurantId: widget.restaurantId,
+        role: kitchen ? PrinterSetupRole.mutfak : PrinterSetupRole.adisyon,
+        printerId: kitchen
+            ? _selectedKitchenPrinterId
+            : _selectedReceiptPrinterId,
+        testSource: 'role_test',
+        flowName: kitchen ? 'kitchen_general_test' : 'receipt_test',
       );
-      if (fastCompleted) {
-        healthCheckMs = 0;
-        resolvePrinterMs = 0;
-        payloadBuildMs = payloadWatch.elapsedMilliseconds;
-      } else {
-        final healthWatch = Stopwatch()..start();
-        final bridgeReachable = await _printOrchestrator.isLocalBridgeReachable(
-          useCache: true,
-        );
-        healthCheckMs = healthWatch.elapsedMilliseconds;
-        if (!bridgeReachable) {
-          throw Exception('Bridge calismiyor');
-        }
-        final resolveWatch = Stopwatch()..start();
-        final printer = await _printOrchestrator.resolvePrinterForDispatch(
-          restaurantId: widget.restaurantId,
-          role: role,
-          printerId: explicitPrinterId,
-          flowName: clickedButton,
-          documentType: payload.documentType,
-          source: 'kitchen_print_management_page',
-          minimalSnapshot: true,
-        );
-        resolvePrinterMs = resolveWatch.elapsedMilliseconds;
-        if (printer == null) {
-          throw Exception(
-            role == PrinterSetupRole.mutfak
-                ? 'Kaydedilmiş mutfak yazıcısı bulunamadı.'
-                : 'Kaydedilmiş adisyon yazıcısı bulunamadı.',
-          );
-        }
-        final fallbackPayload = _printOrchestrator.buildFastRoleTestPayload(
-          role: role,
-          profile: _encodingProfileForRole(role),
-          storeName:
-              _selectedReceiptPrinterLabel ?? _selectedKitchenPrinterLabel,
-        );
-        payloadBuildMs = payloadWatch.elapsedMilliseconds;
-        debugPrint(
-          '[ROLE_TEST_CLICK] clicked_button=$clickedButton '
-          'restaurantId=${widget.restaurantId} '
-          'selectedPrinterId=${explicitPrinterId ?? "-"} '
-          'printerRecordId=${printer.printerRecordId ?? "-"} '
-          'bridgePrinterId=${printer.id} name=${printer.displayName} '
-          'backend=${printer.backend.value} queue=${printer.queueName} '
-          'document_type=${payload.documentType}',
-        );
-        _printerEventLogService
-            .append(
-              restaurantId: widget.restaurantId,
-              event: 'role_printer_resolved',
-              message: 'Rol yazıcısı çözüldü.',
-              role: role.value,
-              printerId: printer.printerRecordId ?? printer.id,
-              queueName: printer.queueName,
-              backend: printer.backend.value,
-              details: <String, dynamic>{'documentType': payload.documentType},
-            )
-            .ignore();
-        final bridgeWatch = Stopwatch()..start();
-        final result = await _printOrchestrator.printPhysicalToPrinter(
-          printer,
-          fallbackPayload,
-          restaurantId: widget.restaurantId,
-          flowName: 'role_test',
-          flowType: clickedButton,
-          source: 'kitchen_print_management_page',
-        );
-        bridgeRequestMs = bridgeWatch.elapsedMilliseconds;
-        if (!result.ok) {
-          final structured = BridgeStructuredError.tryParse(result.raw);
-          if (structured != null &&
-              (structured.errorCode == 'cups_queue_busy' ||
-                  structured.errorCode == 'cups_queue_stuck' ||
-                  structured.errorCode == 'duplicate_test_suppressed')) {
-            if (!mounted) return;
-            await showBridgeStructuredErrorDialog(
-              context,
-              title: 'Test gönderilemedi',
-              primaryMessage: result.message,
-              error: structured,
-              onAfterRefresh: () async {
-                await _loadPrintStationState();
-              },
-            );
-            return;
-          }
-          final dispatch = result.raw?['dispatch'];
-          final dispatchJson = dispatch is Map
-              ? jsonEncode(dispatch)
-              : (result.raw == null ? '-' : jsonEncode(result.raw));
-          final msg =
-              '${result.status}: ${result.message}'
-              '\nflow_type=$clickedButton'
-              '\nbackend=${printer.backend.value} queue=${printer.queueName}'
-              '\nbridge_printer_id=${printer.id} printer_record_id=${printer.printerRecordId ?? "-"}'
-              '\ndispatch=$dispatchJson';
-          throw Exception(msg);
-        }
-      }
       if (!mounted) return;
-      ok = true;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      if (!result.ok) {
+        throw Exception(result.message);
+      }
+      final warnings =
+          (result.raw?['resolution_warnings'] as List?)
+              ?.map((value) => value.toString())
+              .where((value) => value.trim().isNotEmpty)
+              .toList(growable: false) ??
+          const <String>[];
+      for (final warning in warnings) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(warning)));
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            kitchen
+                ? 'Mutfak Genel test fişi gönderildi.'
+                : 'Adisyon test fişi gönderildi.',
+          ),
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       final message = error.toString().replaceFirst('Exception: ', '');
-      errorMessage = message;
       setState(() {
         _printStationError = message;
       });
@@ -1055,26 +1244,93 @@ class _KitchenPrintManagementPageState
         ),
       );
     } finally {
-      logPrintPerf(
-        perfFlow,
-        <String, Object?>{
-          'tap_at': tapAt.toIso8601String(),
-          'resolve_printer_ms': resolvePrinterMs,
-          'health_check_ms': healthCheckMs,
-          'payload_build_ms': payloadBuildMs,
-          'bridge_request_ms': bridgeRequestMs,
-          'total_ms': perf.elapsedMilliseconds,
-          'ok': ok,
-          ...?switch (errorMessage) {
-            final value? => <String, Object?>{'error': value},
-            null => null,
-          },
-        },
-      );
       if (mounted) {
-        setState(() {
-          _testingPrintStation = false;
-        });
+        setState(() => _testingPrintStation = false);
+      }
+    }
+  }
+
+  Future<void> _sendStationAreaTestPrint({
+    required StationModel station,
+    required StationPrinterModel? primaryMapping,
+  }) async {
+    PrinterModel? mappedPrinter;
+    if (primaryMapping != null) {
+      for (final printer in _allPrintersCache) {
+        if (printer.id == primaryMapping.printerId) {
+          mappedPrinter = printer;
+          break;
+        }
+      }
+    }
+    final guardMessage = PrinterStationTestGuard.validate(
+      station: station,
+      primaryMapping: primaryMapping,
+      mappedPrinter: mappedPrinter,
+      printSystemEnabledLoaded: _printSystemEnabledLoaded,
+      printSystemEnabled: _printSystemEnabled,
+      queueRuntimeDisabled: _isQueuePrintSystemDisabled,
+      bridgeReachable: _bridgeReachable,
+      testInFlight: _testingPrintStation,
+    );
+    if (guardMessage != null) {
+      if (_guardPrintSystemDisabled() && guardMessage.contains('kapalı')) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(guardMessage)),
+      );
+      return;
+    }
+    if (_guardPrintSystemDisabled()) {
+      return;
+    }
+    setState(() {
+      _testingPrintStation = true;
+      _printStationError = null;
+    });
+    try {
+      final result = await _printOrchestrator.printTestReceipt(
+        restaurantId: widget.restaurantId,
+        role: PrinterSetupRole.mutfak,
+        stationId: station.id,
+        stationName: station.name,
+        testSource: 'station_test',
+        flowName: 'station_test_${station.code}',
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        throw Exception(result.message);
+      }
+      final warnings =
+          (result.raw?['resolution_warnings'] as List?)
+              ?.map((value) => value.toString())
+              .where((value) => value.trim().isNotEmpty)
+              .toList(growable: false) ??
+          const <String>[];
+      for (final warning in warnings) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(warning)));
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${station.name} test fişi gönderildi.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = error.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _printStationError = message;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange.shade700,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _testingPrintStation = false);
       }
     }
   }
@@ -1140,10 +1396,10 @@ class _KitchenPrintManagementPageState
   Future<void> _saveRoleMappings() async {
     final receiptPrinterId = _selectedReceiptPrinterId?.trim() ?? '';
     final kitchenPrinterId = _selectedKitchenPrinterId?.trim() ?? '';
-    if (receiptPrinterId.isEmpty || kitchenPrinterId.isEmpty) {
+    if (receiptPrinterId.isEmpty && kitchenPrinterId.isEmpty) {
       setState(() {
         _printStationError =
-            'Adisyon ve mutfak yazıcısı eşleştirmesi zorunludur.';
+            'Kaydetmek için en az bir rol yazıcısı seçin.';
       });
       return;
     }
@@ -1170,17 +1426,31 @@ class _KitchenPrintManagementPageState
       if (!result.ok) {
         throw Exception(result.message);
       }
-      await _loadPrintStationState();
+      if (!mounted) return;
+      setState(() {
+        _selectedReceiptPrinterId = receiptPrinterId;
+        _selectedKitchenPrinterId = kitchenPrinterId;
+        _persistedReceiptPrinterId = receiptPrinterId;
+        _persistedKitchenPrinterId = kitchenPrinterId;
+      });
+      await _loadPrintStationState(preserveRoleSelections: true);
       _triggerAssignmentsRefresh(reason: 'roleMappingsSaved');
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(result.message)));
+      ).showSnackBar(const SnackBar(content: Text('Rol eşleştirmeleri kaydedildi.')));
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _printStationError = error.toString().replaceFirst('Exception: ', '');
+        _printStationError = 'Eşleştirme kaydedilemedi.';
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error.toString().replaceFirst('Exception: ', 'Eşleştirme kaydedilemedi: '),
+          ),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -1211,14 +1481,23 @@ class _KitchenPrintManagementPageState
         _printerRepository.fetchStationPrinterMappings(widget.restaurantId),
       ]);
       final stations = results[0] as List<StationModel>;
-      final activePrinters = (results[1] as List<PrinterModel>)
+      final allPrinters = results[1] as List<PrinterModel>;
+      _allPrintersCache = allPrinters;
+      final activePrinters = allPrinters
           .where((printer) => printer.isActive)
           .toList(growable: false);
-      final printers = _filterPrintersToCurrentScan(activePrinters);
-      final printerIds = printers.map((printer) => printer.id).toSet();
-      final mappings = (results[2] as List<StationPrinterModel>)
-          .where((mapping) => printerIds.contains(mapping.printerId))
-          .toList(growable: false);
+      final mappings = results[2] as List<StationPrinterModel>;
+      var printers = _filterPrintersToCurrentScan(activePrinters);
+      final printerById = <String, PrinterModel>{
+        for (final printer in allPrinters) printer.id: printer,
+      };
+      for (final mapping in mappings) {
+        final mappedPrinter = printerById[mapping.printerId];
+        if (mappedPrinter != null &&
+            !printers.any((printer) => printer.id == mappedPrinter.id)) {
+          printers = <PrinterModel>[...printers, mappedPrinter];
+        }
+      }
       final emptyBranch = stations.isEmpty
           ? 'no_areas'
           : printers.isEmpty
@@ -1243,6 +1522,18 @@ class _KitchenPrintManagementPageState
   }
 
   Map<String, dynamic> _printerToLegacyMap(UnifiedPrinterModel printer) {
+    final backendLabel =
+        printer.raw['backendLabel']?.toString() ??
+        DiscoveredPrinterBackend.fromBridgeRaw(printer.backend.value).label;
+    final sourceLabel =
+        printer.raw['sourceLabel']?.toString() ??
+        DiscoveredPrinterSource.fromRaw(printer.raw['source']?.toString()).label;
+    final ip = printer.raw['ip']?.toString() ??
+        printer.raw['host']?.toString() ??
+        printer.raw['ip_address']?.toString() ??
+        '';
+    final port = int.tryParse(printer.raw['port']?.toString() ?? '') ??
+        PrinterModel.ethernetDefaultPort;
     return <String, dynamic>{
       'id': printer.id,
       'selectionId':
@@ -1254,17 +1545,27 @@ class _KitchenPrintManagementPageState
       'printerRecordId': printer.printerRecordId,
       'printer_record_id': printer.printerRecordId,
       'deviceIdentifier':
+          printer.raw['deviceId'] ??
           printer.raw['deviceIdentifier'] ??
           printer.raw['device_identifier'] ??
           printer.queueName,
       'device_identifier':
+          printer.raw['device_id'] ??
           printer.raw['device_identifier'] ??
           printer.raw['deviceIdentifier'] ??
           printer.queueName,
-      'source': printer.raw['source'] ?? 'usb_scan',
+      'source': printer.raw['discoveredSource'] ?? printer.raw['source'] ?? 'bridge',
       'isLive': printer.isLiveDiscovery,
       'isSavedOnly': printer.isStaleSavedMapping,
       'backend': printer.backend.value,
+      'backendLabel': backendLabel,
+      'sourceLabel': sourceLabel,
+      if (ip.isNotEmpty) 'ip': ip,
+      if (ip.isNotEmpty) 'port': port,
+      if (ip.isNotEmpty) 'endpointLabel': '$ip:$port',
+      'configuredIp': printer.raw['configuredIp']?.toString() ?? '',
+      'lastSeenIp': printer.raw['lastSeenIp']?.toString() ?? '',
+      'ipMismatchWarning': printer.raw['ipMismatchWarning']?.toString() ?? '',
       'vendorId': printer.vendorId,
       'productId': printer.productId,
       'statusLevel': printer.isStaleSavedMapping
@@ -1273,50 +1574,49 @@ class _KitchenPrintManagementPageState
           ? 'ready'
           : (printer.isAvailable ? 'warning' : 'error'),
       'statusMessage': printer.isStaleSavedMapping
-          ? 'Eski/kayıp — canlı taramada yok'
+          ? (printer.raw['discoveredStatusMessage']?.toString().trim().isNotEmpty ==
+                  true
+              ? printer.raw['discoveredStatusMessage'].toString()
+              : 'Kayıtlı ama şu an taramada bulunamadı. Bağlantıyı test edin.')
           : printer.statusMessage,
     };
   }
 
-  String? _coerceLiveBridgeSelectionId({
-    required String? snapshotSelectedId,
-    required List<Map<String, dynamic>> bridgePrinters,
-  }) {
-    final id = snapshotSelectedId?.trim() ?? '';
-    if (id.isEmpty) return null;
-    for (final printer in bridgePrinters) {
-      if (printer['isLive'] != true) continue;
-      final bridgeId = printer['id']?.toString().trim() ?? '';
-      final selectionId = printer['selectionId']?.toString().trim() ?? '';
-      final recordId =
-          printer['printerRecordId']?.toString().trim() ??
-          printer['printer_record_id']?.toString().trim() ??
-          '';
-      if (bridgeId == id || selectionId == id || recordId == id) {
-        return selectionId.isNotEmpty ? selectionId : bridgeId;
-      }
-    }
-    return null;
-  }
-
   Future<List<dynamic>> _loadProductRoutingData() async {
+    final sellerId = widget.restaurantId;
     _logPrinterSettings(
       'Products',
-      'fetchStart restaurantId=${widget.restaurantId} areaCount=- productCount=- selectedAreaId=- emptyBranch=pending',
+      'fetchStart restaurantId=$sellerId sellerId=$sellerId storeId=- productCount=- selectedAreaId=- emptyBranch=pending',
     );
     try {
       final results = await Future.wait<dynamic>([
-        _storeService.getMenuProductsBySellerId(widget.restaurantId),
-        _stationRepository.fetchStations(widget.restaurantId),
+        _storeService.getSellerProductsForPrinterMapping(sellerId),
+        _stationRepository.fetchStations(sellerId),
       ]);
-      final products = (results[0] as List<dynamic>)
-          .whereType<Map>()
+      var productRows = List<Map<String, dynamic>>.from(
+        (results[0] as List).whereType<Map>().map(
+          (row) => Map<String, dynamic>.from(row),
+        ),
+      );
+      if (productRows.isEmpty) {
+        final cache = await RestaurantLocalCacheService().read(sellerId);
+        if (cache != null && cache.products.isNotEmpty) {
+          productRows = List<Map<String, dynamic>>.from(cache.products);
+          debugPrint(
+            '[PrinterMappingProducts] offlineFallback sellerId=$sellerId '
+            'cachedCount=${productRows.length}',
+          );
+        }
+      }
+      final fetchedCount = productRows.length;
+      final products = productRows
           .map(
             (row) => SellerProduct.fromMap(
-              Map<String, dynamic>.from(row),
+              row,
               row['id']?.toString() ?? '',
             ),
           )
+          .where((product) => product.id.isNotEmpty)
           .toList(growable: false);
       final stations = results[1] as List<StationModel>;
       final emptyBranch = products.isEmpty
@@ -1326,8 +1626,13 @@ class _KitchenPrintManagementPageState
           : 'has_rows';
       _logPrinterSettings(
         'Products',
-        'fetchSuccess restaurantId=${widget.restaurantId} areaCount=${stations.length} productCount=${products.length} selectedAreaId=- emptyBranch=$emptyBranch',
+        'fetchSuccess restaurantId=$sellerId sellerId=$sellerId storeId=- '
+        'fetchedCount=$fetchedCount filteredCount=${products.length} '
+        'areaCount=${stations.length} selectedAreaId=- emptyBranch=$emptyBranch',
       );
+      if (mounted) {
+        setState(() => _productsLoadError = null);
+      }
       _syncProductRoutingCacheFromLists(products, stations);
       for (final product in products) {
         final stationId =
@@ -1340,10 +1645,16 @@ class _KitchenPrintManagementPageState
     } catch (error, stackTrace) {
       _logPrinterSettings(
         'Products',
-        'fetchFail restaurantId=${widget.restaurantId} areaCount=- productCount=- selectedAreaId=- emptyBranch=fetch_error',
+        'fetchFail restaurantId=${widget.restaurantId} sellerId=${widget.restaurantId} '
+        'storeId=- productCount=- selectedAreaId=- emptyBranch=fetch_error',
         error: error,
         stackTrace: stackTrace,
       );
+      if (mounted) {
+        setState(() {
+          _productsLoadError = error.toString();
+        });
+      }
       rethrow;
     }
   }
@@ -2216,68 +2527,89 @@ class _KitchenPrintManagementPageState
     final queueStatus = runtimeMap['status']?.toString() ?? 'idle';
     final lastSeenAt =
         _remotePrintStationConfig?['last_seen_at']?.toString() ?? '-';
+    final connectivity = RestaurantConnectivityService.instance;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       children: [
+        _constrainedSection(
+          PrinterCenterHealthBanner(
+            bridgeHealthy: _bridgeHealthy,
+            bridgeReachable: _bridgeReachable,
+            printSystemEnabled: _printSystemEnabled,
+            activePrinterCount: _allPrintersCache
+                .where((printer) => printer.isActive)
+                .length,
+            issueMappingCount: _issueMappingCount(),
+            supabaseReachable: connectivity.supabaseReachable,
+            hasNetwork: connectivity.hasNetwork,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _constrainedSection(
+          PrinterCenterQuickSetupCard(
+            bridgeHealthy: _bridgeHealthy,
+            copyingDiagnostics: _copyingDiagnosticsReport,
+            onAddPrinter: () => _showPrinterEditor(),
+            onBridgeSetup: () async {
+              final result = await BridgeManager.ensureReady();
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(result.message),
+                  backgroundColor: result.ok ? Colors.green : Colors.red,
+                ),
+              );
+              _triggerPrintersRefresh(reason: 'bridge_start');
+            },
+            onConnectionTest: () =>
+                _loadPrintStationState(invalidateBridgeCache: true),
+            onCopyDiagnostics: _copyDiagnosticsReport,
+          ),
+        ),
+        const SizedBox(height: 12),
         _constrainedSection(_buildPrintSystemControlCard()),
         const SizedBox(height: 12),
         _constrainedSection(
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3F4F6),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFD1D5DB)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Local Print Bridge',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF111827),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _bridgeHealthy ? 'Bridge is running and healthy' : 'Bridge is currently unreachable',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: _bridgeHealthy ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
-                      ),
-                    ),
-                  ],
+          FutureBuilder<List<dynamic>>(
+            future: _assignmentsFuture,
+            builder: (context, snapshot) {
+              final stations =
+                  snapshot.data?[0] as List<StationModel>? ?? const [];
+              final printers =
+                  snapshot.data?[1] as List<PrinterModel>? ??
+                  _allPrintersCache;
+              final mappings =
+                  snapshot.data?[2] as List<StationPrinterModel>? ??
+                  const [];
+              final summaryItems = _buildAssignmentSummaryItems(
+                stations: stations,
+                mappings: mappings,
+                printers: printers.isNotEmpty ? printers : _allPrintersCache,
+              );
+              return _responsive2Col(
+                left: PrinterAssignmentSummaryCard(
+                  items: summaryItems,
+                  onGoToMapping: () {
+                    DefaultTabController.of(context).animateTo(3);
+                  },
                 ),
-                ElevatedButton.icon(
-                  onPressed: _bridgeHealthy
-                      ? null
-                      : () async {
-                          final result = await BridgeManager.ensureReady();
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(result.message),
-                                backgroundColor: result.ok ? Colors.green : Colors.red,
-                              ),
-                            );
-                            _triggerPrintersRefresh(reason: 'bridge_start');
-                          }
-                        },
-                  icon: const Icon(Icons.power_settings_new),
-                  label: const Text('Start Bridge'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _bridgeHealthy ? Colors.grey : const Color(0xFF2563EB),
-                    foregroundColor: Colors.white,
-                  ),
+                right: PrinterRegisteredListCard(
+                  printers: _allPrintersCache,
+                  repairingIds: _repairingPrinterIds,
+                  onTest: _testRegisteredPrinter,
+                  onEdit: (printer) => _showPrinterEditor(printer: printer),
+                  onDelete: (printer) => _deletePrinter(printer),
                 ),
-              ],
-            ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+        _constrainedSection(
+          PrinterRecentJobsCard(
+            jobs: _recentPrintJobs,
+            loading: _loadingRecentPrintJobs,
           ),
         ),
         const SizedBox(height: 12),
@@ -2581,10 +2913,30 @@ class _KitchenPrintManagementPageState
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: const Color(0xFFF59E0B)),
                     ),
-                    child: const Text(
-                      'Bu yazıcı hem CUPS hem USB Direct olarak görünüyor. '
-                      'Termal yazıcı için USB Direct kullanılacaksa CUPS kaydı kaldırılmalı.',
-                      style: TextStyle(
+                    child: Text(
+                      DiscoveredPrinterCatalog.usbCupsDuplicateMessage(),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF9A3412),
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+                if (_ipMismatchWarnings.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFF59E0B)),
+                    ),
+                    child: Text(
+                      _ipMismatchWarnings.first,
+                      style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF9A3412),
@@ -2744,7 +3096,6 @@ class _KitchenPrintManagementPageState
                   ),
                   const SizedBox(height: 12),
                 ],
-                _buildSelectedPrinterSummaryCard(),
                 if ((_selectedReceiptPrinterId != null ||
                         _selectedKitchenPrinterId != null) &&
                     !_turkishEncodingVerified) ...[
@@ -2837,7 +3188,7 @@ class _KitchenPrintManagementPageState
                                 ? null
                                 : () => _sendPrintStationTest(kitchen: true),
                             icon: const Icon(Icons.restaurant_menu_outlined),
-                            label: const Text('Mutfak test fişi'),
+                            label: const Text('Mutfak Genel test fişi'),
                           ),
                         ),
                         item(
@@ -3277,97 +3628,6 @@ class _KitchenPrintManagementPageState
     );
   }
 
-  Widget _buildSelectedPrinterSummaryCard() {
-    Widget row({
-      required String title,
-      required String? printerId,
-      required VoidCallback onGoToMapping,
-    }) {
-      final normalizedId = printerId?.trim();
-      final mappedName = title.contains('adisyon')
-          ? (_selectedReceiptPrinterLabel ?? _printerNameById(normalizedId))
-          : (_selectedKitchenPrinterLabel ?? _printerNameById(normalizedId));
-      final hasPrinter = normalizedId != null && normalizedId.isNotEmpty;
-      final statusText = hasPrinter
-          ? mappedName
-          : (title.contains('adisyon')
-                ? 'Adisyon yazıcısı eşleştirilmedi'
-                : 'Mutfak yazıcısı eşleştirilmedi');
-      return Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              hasPrinter ? Icons.check_circle_outline : Icons.info_outline,
-              size: 18,
-              color: hasPrinter
-                  ? const Color(0xFF16A34A)
-                  : const Color(0xFF9CA3AF),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF111827),
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    statusText,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF4B5563),
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (!hasPrinter) ...[
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: onGoToMapping,
-                child: const Text('Yazıcı Eşleştir'),
-              ),
-            ],
-          ],
-        ),
-      );
-    }
-
-    void goToMappingTab() {
-      DefaultTabController.of(context).animateTo(3);
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        row(
-          title: 'Aktif adisyon yazıcısı',
-          printerId: _selectedReceiptPrinterId,
-          onGoToMapping: goToMappingTab,
-        ),
-        const SizedBox(height: 10),
-        row(
-          title: 'Aktif mutfak yazıcısı',
-          printerId: _selectedKitchenPrinterId,
-          onGoToMapping: goToMappingTab,
-        ),
-      ],
-    );
-  }
-
   Widget _buildStationRow(StationModel station) {
     final isActive = station.isActive;
     return Container(
@@ -3539,13 +3799,185 @@ class _KitchenPrintManagementPageState
     );
   }
 
+  EthernetIpDriftInfo? _ipDriftForPrinter(PrinterModel printer) {
+    if (_dismissedIpDriftPrinterIds.contains(printer.id)) return null;
+    if (!printer.isEthernetConnection) return null;
+    for (final bridge in _bridgePrinters) {
+      final recordId =
+          bridge['printerRecordId']?.toString() ??
+          bridge['printer_record_id']?.toString() ??
+          '';
+      if (recordId != printer.id) continue;
+      return EthernetIpDriftInfo.fromLegacyMap(<String, dynamic>{
+        ...bridge,
+        'printerRecordId': printer.id,
+        'name': printer.name,
+        'configuredIp': bridge['configuredIp']?.toString().trim().isNotEmpty ==
+                true
+            ? bridge['configuredIp']
+            : printer.ipAddress,
+        'lastSeenIp': bridge['lastSeenIp'] ?? bridge['ip'],
+        'port': bridge['port'] ?? printer.port,
+        'device_identifier': printer.deviceIdentifier,
+      });
+    }
+    return null;
+  }
+
+  Future<void> _testEthernetIpDrift(EthernetIpDriftInfo drift) async {
+    final result = await _printOrchestrator.printTestReceipt(
+      restaurantId: widget.restaurantId,
+      printerId: drift.printerRecordId,
+      testSource: 'role_test',
+      flowName: 'ethernet_ip_drift_test',
+    );
+    if (!mounted) return;
+    final message = result.ok
+        ? 'Ethernet yazıcıya bağlantı başarılı.'
+        : (result.message.isNotEmpty
+              ? result.message
+              : RestaurantPrinterDispatchResolution.tcpUnreachableMessage);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _updateEthernetIpFromDrift(EthernetIpDriftInfo drift) async {
+    setState(() {
+      _updatingEthernetIpPrinterIds.add(drift.printerRecordId);
+    });
+    try {
+      await _printerRepository.updateEthernetIpAddress(
+        restaurantId: widget.restaurantId,
+        printerId: drift.printerRecordId,
+        ipAddress: drift.lastSeenIp,
+        port: drift.port,
+      );
+      if (!mounted) return;
+      setState(() {
+        _dismissedIpDriftPrinterIds.remove(drift.printerRecordId);
+      });
+      _triggerPrintersRefresh(reason: 'ethernetIpUpdated');
+      _triggerAssignmentsRefresh(reason: 'ethernetIpUpdated');
+      await _loadPrintStationState();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Yazıcı IP adresi güncellendi.')),
+      );
+      final updatedDrift = EthernetIpDriftInfo(
+        printerRecordId: drift.printerRecordId,
+        displayName: drift.displayName,
+        configuredIp: drift.lastSeenIp,
+        lastSeenIp: drift.lastSeenIp,
+        port: drift.port,
+        deviceId: DiscoveredPrinter.buildTcpDeviceId(
+          drift.lastSeenIp,
+          drift.port,
+        ),
+      );
+      await _testEthernetIpDrift(updatedDrift);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Yazıcı IP adresi güncellenemedi.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _updatingEthernetIpPrinterIds.remove(drift.printerRecordId);
+        });
+      }
+    }
+  }
+
+  void _dismissIpDrift(String printerId) {
+    setState(() {
+      _dismissedIpDriftPrinterIds.add(printerId);
+    });
+  }
+
+  Widget _buildEthernetIpDriftBanner(EthernetIpDriftInfo drift) {
+    final isUpdating = _updatingEthernetIpPrinterIds.contains(
+      drift.printerRecordId,
+    );
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFF59E0B)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            drift.title,
+            style: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF9A3412),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            drift.detail,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF7C2D12),
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton(
+                onPressed: isUpdating ? null : () => _testEthernetIpDrift(drift),
+                child: const Text('Bağlantıyı Test Et'),
+              ),
+              FilledButton(
+                onPressed: isUpdating
+                    ? null
+                    : () => _updateEthernetIpFromDrift(drift),
+                child: isUpdating
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('IP\'yi Güncelle'),
+              ),
+              TextButton(
+                onPressed: isUpdating
+                    ? null
+                    : () => _dismissIpDrift(drift.printerRecordId),
+                child: const Text('Yok Say'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPrinterRow(PrinterModel printer) {
     final isActive = printer.isActive;
     final isDeleting = _deletingPrinterIds.contains(printer.id);
     final connectionLabel = printer.connectionTypeLabel;
     final targetHost = printer.targetHost;
     final targetRoute = printer.targetRoute;
-    return Container(
+    final ipDrift = _ipDriftForPrinter(printer);
+    final profileRepairMessage = PrinterProfile.inconsistencyMessage(
+      profileId: printer.printerProfileId,
+      paperWidthMm: printer.paperWidthMm,
+      displayName: printer.name,
+    );
+    final isRepairing = _repairingPrinterIds.contains(printer.id);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
@@ -3713,7 +4145,86 @@ class _KitchenPrintManagementPageState
           ),
         ],
       ),
+        ),
+        if (ipDrift != null && ipDrift.hasDrift)
+          _buildEthernetIpDriftBanner(ipDrift),
+        if (profileRepairMessage != null)
+          _buildProfileMetadataRepairBanner(
+            printer: printer,
+            message: profileRepairMessage,
+            isRepairing: isRepairing,
+          ),
+      ],
     );
+  }
+
+  Widget _buildProfileMetadataRepairBanner({
+    required PrinterModel printer,
+    required String message,
+    required bool isRepairing,
+  }) {
+    final targetProfile = PrinterProfile.resolveConsistentProfile(
+      profileId: printer.printerProfileId,
+      paperWidthMm: printer.paperWidthMm,
+      displayName: printer.name,
+    );
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFFDBA74)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFC2410C), size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF9A3412)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            onPressed: isRepairing
+                ? null
+                : () => _repairPrinterProfileMetadata(printer),
+            child: isRepairing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text('Profili ${targetProfile.label} olarak onar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _repairPrinterProfileMetadata(PrinterModel printer) async {
+    setState(() => _repairingPrinterIds.add(printer.id));
+    try {
+      await _printerRepository.repairPrinterProfileMetadata(printer.id);
+      _triggerAssignmentsRefresh(reason: 'profileMetadataRepaired');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${printer.name} profil bilgisi onarıldı.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Profil onarımı başarısız: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _repairingPrinterIds.remove(printer.id));
+      }
+    }
   }
 
   Widget _buildMappingTab() {
@@ -3817,13 +4328,26 @@ class _KitchenPrintManagementPageState
                         horizontal: 12,
                         vertical: 10,
                       ),
-                      itemCount: stations.length + 1,
+                      itemCount: stations.length + 2,
                       separatorBuilder: (_, _) => const SizedBox(height: 6),
                       itemBuilder: (context, index) {
                         if (index == 0) {
                           return _buildRoleMappingsSection(printers);
                         }
-                        final station = stations[index - 1];
+                        if (index == 1) {
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 8, bottom: 4),
+                            child: Text(
+                              'Alan Bazlı Yazıcı Eşleştirmeleri',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF111827),
+                              ),
+                            ),
+                          );
+                        }
+                        final station = stations[index - 2];
                         final stationMappings = mappings
                             .where((m) => m.stationId == station.id)
                             .toList(growable: false);
@@ -3861,6 +4385,11 @@ class _KitchenPrintManagementPageState
     required List<StationModel> stations,
     required List<StationPrinterModel> mappings,
   }) {
+    final stationPrinterOptions = PrinterAssignmentState.mergePrinterOptions(
+      activePrinters: printers,
+      allPrinters: _allPrintersCache,
+      extraPrinterIds: mappings.map((mapping) => mapping.printerId),
+    );
     final isMapped = primaryMapping != null;
     return Container(
       decoration: BoxDecoration(
@@ -3890,10 +4419,15 @@ class _KitchenPrintManagementPageState
                 const SizedBox(height: 8),
                 _buildMappingDropdown(
                   station: station,
-                  printers: printers,
+                  printers: stationPrinterOptions,
                   selectedPrinterId: selectedPrinterId,
                   stations: stations,
                   mappings: mappings,
+                ),
+                const SizedBox(height: 8),
+                _buildStationTestButton(
+                  station: station,
+                  primaryMapping: primaryMapping,
                 ),
               ],
             );
@@ -3910,11 +4444,16 @@ class _KitchenPrintManagementPageState
                 flex: 5,
                 child: _buildMappingDropdown(
                   station: station,
-                  printers: printers,
+                  printers: stationPrinterOptions,
                   selectedPrinterId: selectedPrinterId,
                   stations: stations,
                   mappings: mappings,
                 ),
+              ),
+              const SizedBox(width: 8),
+              _buildStationTestButton(
+                station: station,
+                primaryMapping: primaryMapping,
               ),
             ],
           );
@@ -3923,136 +4462,88 @@ class _KitchenPrintManagementPageState
     );
   }
 
-  Widget _buildRoleMappingsSection(List<PrinterModel> printers) {
-    final receiptPrinterId = _normalizeSelectedPrinterId(
-      printers: printers,
-      selectedPrinterId: _selectedReceiptPrinterId,
+  Widget _buildStationTestButton({
+    required StationModel station,
+    required StationPrinterModel? primaryMapping,
+  }) {
+    PrinterModel? mappedPrinter;
+    if (primaryMapping != null) {
+      for (final printer in _allPrintersCache) {
+        if (printer.id == primaryMapping.printerId) {
+          mappedPrinter = printer;
+          break;
+        }
+      }
+    }
+    final disabledReason = PrinterStationTestGuard.validate(
+      station: station,
+      primaryMapping: primaryMapping,
+      mappedPrinter: mappedPrinter,
+      printSystemEnabledLoaded: _printSystemEnabledLoaded,
+      printSystemEnabled: _printSystemEnabled,
+      queueRuntimeDisabled: _isQueuePrintSystemDisabled,
+      bridgeReachable: _bridgeReachable,
+      testInFlight: _testingPrintStation,
     );
-    final kitchenPrinterId = _normalizeSelectedPrinterId(
-      printers: printers,
-      selectedPrinterId: _selectedKitchenPrinterId,
-    );
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x060F172A),
-            blurRadius: 4,
-            offset: Offset(0, 1),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Rol Eşleştirmeleri',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF111827),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Adisyon, mutfak ve alan eşleştirmeleri sadece burada yönetilir. Listede yalnızca Yazıcılar sekmesindeki aktif kayıtlar görünür.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Color(0xFF4B5563),
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            key: ValueKey<String>('role-receipt-${receiptPrinterId ?? 'none'}'),
-            initialValue: receiptPrinterId,
-            decoration: const InputDecoration(
-              labelText: 'Adisyon yazıcısı',
-              border: OutlineInputBorder(),
-            ),
-            items: printers
-                .map(
-                  (printer) => DropdownMenuItem<String>(
-                    value: printer.id,
-                    child: Text(printer.name),
-                  ),
-                )
-                .toList(growable: false),
-            onChanged: (value) {
-              setState(() {
-                _selectedReceiptPrinterId = value;
-                _selectedReceiptPrinterLabel = printers
-                    .firstWhere(
-                      (printer) => printer.id == value,
-                      orElse: () => printers.first,
-                    )
-                    .name;
-              });
-            },
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            key: ValueKey<String>('role-kitchen-${kitchenPrinterId ?? 'none'}'),
-            initialValue: kitchenPrinterId,
-            decoration: const InputDecoration(
-              labelText: 'Mutfak yazıcısı',
-              border: OutlineInputBorder(),
-            ),
-            items: printers
-                .map(
-                  (printer) => DropdownMenuItem<String>(
-                    value: printer.id,
-                    child: Text(printer.name),
-                  ),
-                )
-                .toList(growable: false),
-            onChanged: (value) {
-              setState(() {
-                _selectedKitchenPrinterId = value;
-                _selectedKitchenPrinterLabel = printers
-                    .firstWhere(
-                      (printer) => printer.id == value,
-                      orElse: () => printers.first,
-                    )
-                    .name;
-              });
-            },
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              FilledButton.icon(
-                onPressed: printers.isEmpty || _savingRoleMappings
-                    ? null
-                    : _saveRoleMappings,
-                icon: _savingRoleMappings
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.save_outlined),
-                label: const Text('Rol eşleştirmelerini kaydet'),
+    return Tooltip(
+      message: disabledReason ?? '${station.name} test fişi gönder',
+      child: OutlinedButton.icon(
+        onPressed: disabledReason != null
+            ? null
+            : () => _sendStationAreaTestPrint(
+                station: station,
+                primaryMapping: primaryMapping,
               ),
-              if (printers.isEmpty)
-                const Text(
-                  'Önce Yazıcılar sekmesinden aktif yazıcı ekleyin.',
-                  style: TextStyle(fontSize: 12, color: Color(0xFFB45309)),
-                ),
-            ],
-          ),
-        ],
+        icon: const Icon(Icons.print_outlined, size: 16),
+        label: Text('${station.name} Test Fişi'),
       ),
+    );
+  }
+
+  Widget _buildRoleMappingsSection(List<PrinterModel> printers) {
+    final rolePrinterOptions = PrinterAssignmentState.mergePrinterOptions(
+      activePrinters: printers,
+      allPrinters: _allPrintersCache,
+      extraPrinterIds: <String?>[
+        _selectedReceiptPrinterId,
+        _selectedKitchenPrinterId,
+        _persistedReceiptPrinterId,
+        _persistedKitchenPrinterId,
+      ],
+    );
+    return PrinterRoleMappingsCard(
+      printers: rolePrinterOptions,
+      selectedReceiptPrinterId: _selectedReceiptPrinterId,
+      selectedKitchenPrinterId: _selectedKitchenPrinterId,
+      roleMappingsDirty: _roleMappingsDirty,
+      saving: _savingRoleMappings,
+      testing: _testingPrintStation,
+      bridgePrinters: _bridgePrinters,
+      onReceiptChanged: (value) {
+        setState(() {
+          _selectedReceiptPrinterId = value;
+          for (final printer in rolePrinterOptions) {
+            if (printer.id == value) {
+              _selectedReceiptPrinterLabel = printer.name;
+              break;
+            }
+          }
+        });
+      },
+      onKitchenChanged: (value) {
+        setState(() {
+          _selectedKitchenPrinterId = value;
+          for (final printer in rolePrinterOptions) {
+            if (printer.id == value) {
+              _selectedKitchenPrinterLabel = printer.name;
+              break;
+            }
+          }
+        });
+      },
+      onSave: _saveRoleMappings,
+      onReceiptTest: () => _sendPrintStationTest(kitchen: false),
+      onKitchenTest: () => _sendPrintStationTest(kitchen: true),
     );
   }
 
@@ -4061,6 +4552,18 @@ class _KitchenPrintManagementPageState
     StationPrinterModel? primaryMapping,
   ) {
     final isMapped = primaryMapping != null;
+    PrinterModel? mappedPrinter;
+    if (primaryMapping != null) {
+      for (final printer in _allPrintersCache) {
+        if (printer.id == primaryMapping.printerId) {
+          mappedPrinter = printer;
+          break;
+        }
+      }
+    }
+    final backendLabel = mappedPrinter == null
+        ? null
+        : PrinterStationTestGuard.backendLabel(mappedPrinter);
     return Row(
       children: [
         Container(
@@ -4102,6 +4605,54 @@ class _KitchenPrintManagementPageState
                   fontWeight: FontWeight.w500,
                 ),
               ),
+              if (backendLabel != null) ...[
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF6FF),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        backendLabel,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1D4ED8),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: (mappedPrinter?.isActive ?? false)
+                            ? const Color(0xFFECFDF5)
+                            : const Color(0xFFFEF2F2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        (mappedPrinter?.isActive ?? false) ? 'Aktif' : 'Pasif',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: (mappedPrinter?.isActive ?? false)
+                              ? const Color(0xFF15803D)
+                              : const Color(0xFFB91C1C),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -4474,13 +5025,87 @@ class _KitchenPrintManagementPageState
           return const Center(child: CircularProgressIndicator());
         }
         if (snapshot.hasError) {
-          return const Center(child: Text('Ürünler yüklenemedi.'));
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline, color: Color(0xFFDC2626), size: 36),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Ürünler yüklenemedi. Bağlantıyı kontrol edin.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF111827),
+                    ),
+                  ),
+                  if (_productsLoadError != null) ...[
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      _productsLoadError!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _productsRefreshNonce += 1;
+                        _productsFuture = _loadProductRoutingData();
+                      });
+                    },
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Yeniden Yükle'),
+                  ),
+                ],
+              ),
+            ),
+          );
         }
         final products = snapshot.data?[0] as List<SellerProduct>? ?? const [];
         final stations = snapshot.data?[1] as List<StationModel>? ?? const [];
 
         if (products.isEmpty) {
-          return const Center(child: Text('Ürün bulunamadı.'));
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Bu restoran için ürün bulunamadı veya ürünler yüklenemedi.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF111827),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Ürünlerim sayfasında ürün varsa bağlantıyı yenileyin.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _productsRefreshNonce += 1;
+                        _productsFuture = _loadProductRoutingData();
+                      });
+                    },
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Yeniden Yükle'),
+                  ),
+                ],
+              ),
+            ),
+          );
         }
 
         return LayoutBuilder(
@@ -5453,6 +6078,28 @@ class _KitchenPrintManagementPageState
             },
           ),
         ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Print job geçmişi',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _copyingDiagnosticsReport ? null : _copyDiagnosticsReport,
+              icon: _copyingDiagnosticsReport
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.copy_all_outlined, size: 18),
+              label: const Text('Tanı raporu kopyala'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
         Expanded(
           child: StreamBuilder<List<PrintJobModel>>(
             stream: _printJobRepository.watchJobs(
@@ -5470,82 +6117,7 @@ class _KitchenPrintManagementPageState
               return ListView.builder(
                 itemCount: jobs.length,
                 itemBuilder: (context, index) {
-                  final job = jobs[index];
-                  final color = switch (job.normalizedStatus) {
-                    'failed' => const Color(0xFFDC2626),
-                    'completed' => const Color(0xFF16A34A),
-                    'printing' => const Color(0xFFEA580C),
-                    'claimed' => const Color(0xFF7C3AED),
-                    _ => const Color(0xFF2563EB),
-                  };
-                  return Card(
-                    child: ListTile(
-                      title: Text('${job.stationName} • ${job.printerName}'),
-                      subtitle: Text(
-                        'Sipariş: ${job.orderNo} • ${job.tableName}\n'
-                        'Durum: ${job.normalizedStatus} • ${job.createdAt.toLocal()} • ${job.itemCount} kalem'
-                        '${(job.lastError ?? '').trim().isEmpty ? '' : '\nHata: ${job.lastError}'}',
-                      ),
-                      isThreeLine: true,
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: color.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              job.status,
-                              style: TextStyle(
-                                color: color,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          IconButton(
-                            onPressed: () async {
-                              try {
-                                await _orderPrintJobService.retryPrintJob(
-                                  restaurantId: widget.restaurantId,
-                                  printJobId: job.id,
-                                );
-                                if (!mounted) return;
-                                ScaffoldMessenger.maybeOf(
-                                  this.context,
-                                )?.showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Print job yeniden yazdirildi.',
-                                    ),
-                                  ),
-                                );
-                              } catch (error) {
-                                if (!mounted) return;
-                                ScaffoldMessenger.maybeOf(
-                                  this.context,
-                                )?.showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Print job tekrar gonderilemedi: $error',
-                                    ),
-                                  ),
-                                );
-                              }
-                            },
-                            tooltip: 'Yeniden Dene',
-                            icon: const Icon(Icons.refresh),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
+                  return _buildPrintJobLogTile(jobs[index]);
                 },
               );
             },
@@ -5557,35 +6129,51 @@ class _KitchenPrintManagementPageState
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 7,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Yazıcı Ayarları'),
-          bottom: const TabBar(
-            isScrollable: true,
-            tabs: [
-              Tab(text: 'Yazıcı Merkezi'),
-              Tab(text: 'Alanlar'),
-              Tab(text: 'Yazıcılar'),
-              Tab(text: 'Eşleştirme'),
-              Tab(text: 'Ürün Eşleme'),
-              Tab(text: 'Gelen Siparişler'),
-              Tab(text: 'Print Log'),
-            ],
+    return RestaurantPrinterEligibilityGate(
+      loading: _eligibilityLoading,
+      allowed: _eligibilityAllowed,
+      child: DefaultTabController(
+        length: 7,
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('Yazıcı Ayarları'),
+            bottom: const TabBar(
+              isScrollable: true,
+              tabs: [
+                Tab(text: 'Yazıcı Merkezi'),
+                Tab(text: 'Alanlar'),
+                Tab(text: 'Yazıcılar'),
+                Tab(text: 'Eşleştirme'),
+                Tab(text: 'Ürün Eşleme'),
+                Tab(text: 'Gelen Siparişler'),
+                Tab(text: 'Print Log'),
+              ],
+            ),
           ),
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(12),
-          child: TabBarView(
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildPrintStationTab(),
-              _buildStationsTab(),
-              _buildPrintersTab(),
-              _buildMappingTab(),
-              _buildProductRoutingTab(),
-              _buildIncomingOrdersTab(),
-              _buildPrintJobsTab(),
+              RestaurantOfflineBanner(
+                restaurantId: widget.restaurantId,
+                storeCategory: _storeCategory,
+                compact: true,
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: TabBarView(
+                    children: [
+                      _buildPrintStationTab(),
+                      _buildStationsTab(),
+                      _buildPrintersTab(),
+                      _buildMappingTab(),
+                      _buildProductRoutingTab(),
+                      _buildIncomingOrdersTab(),
+                      _buildPrintJobsTab(),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -5713,29 +6301,11 @@ class _KitchenPrintManagementPageState
     required List<PrinterModel> printers,
     required String? selectedPrinterId,
   }) {
-    if (selectedPrinterId == null || selectedPrinterId.isEmpty) {
-      return null;
-    }
-    for (final printer in printers) {
-      if (printer.id == selectedPrinterId) {
-        return selectedPrinterId;
-      }
-    }
-    for (final bridgePrinter in _bridgePrinters) {
-      if (bridgePrinter['isLive'] != true) continue;
-      final bridgeId = bridgePrinter['id']?.toString().trim() ?? '';
-      final bridgeRecordId =
-          bridgePrinter['printerRecordId']?.toString().trim() ??
-          bridgePrinter['printer_record_id']?.toString().trim() ??
-          '';
-      if (bridgeId == selectedPrinterId && bridgeRecordId.isNotEmpty) {
-        final matched = printers.any((printer) => printer.id == bridgeRecordId);
-        if (matched) {
-          return bridgeRecordId;
-        }
-      }
-    }
-    return null;
+    return PrinterAssignmentState.normalizeSelectedPrinterId(
+      printers: printers,
+      selectedPrinterId: selectedPrinterId,
+      bridgePrinters: _bridgePrinters,
+    );
   }
 
   void _logPrinterSettings(

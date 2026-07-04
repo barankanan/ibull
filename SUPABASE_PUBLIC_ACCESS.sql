@@ -1,3 +1,7 @@
+-- DANGER: Legacy/dev-only. Do not run in production.
+-- Allows anonymous reads of pending_approval products (status IN ('Aktif', 'pending_approval')).
+-- Use ibul_app/SUPABASE_PUBLIC_PRODUCT_VISIBILITY_FIX.sql instead. 1
+
 -- PRODUCTS TABLE POLICIES
 -- 1. Public can view APPROVED (Aktif) products
 DROP POLICY IF EXISTS "Public can view active products" ON public.products;

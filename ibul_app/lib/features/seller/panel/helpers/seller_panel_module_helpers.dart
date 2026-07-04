@@ -284,6 +284,16 @@ String resolveSellerPanelRenderTarget({
   }
 }
 
+String _primaryImageSignatureValue(SellerProduct product) {
+  final primary = product.imageUrl?.trim() ?? '';
+  if (primary.isNotEmpty) return primary;
+  for (final url in product.imageUrls) {
+    final trimmed = url.trim();
+    if (trimmed.isNotEmpty) return trimmed;
+  }
+  return '-';
+}
+
 /// Builds a stable signature of the products list so [_applySellerProducts]
 /// can drop redundant publishes. The realtime products stream can time out
 /// every 9–10 s, triggering a fallback snapshot fetch followed by an
@@ -293,9 +303,9 @@ String resolveSellerPanelRenderTarget({
 /// even when zero products actually changed — which is one of the visible
 /// causes of the "Genel Bakış sayıları sürekli gidip geliyor" symptom.
 ///
-/// The signature only captures fields the dashboard summaries actually
-/// branch on. Cosmetic edits to a product's description/image do NOT
-/// invalidate the cache key.
+/// The signature captures fields the dashboard summaries branch on plus the
+/// primary image URL so Ürünlerim thumbnails refresh after save without a
+/// full panel rebuild loop.
 String sellerProductsListSignature(List<SellerProduct> products) {
   if (products.isEmpty) return 'empty';
   final entries =
@@ -307,6 +317,7 @@ String sellerProductsListSignature(List<SellerProduct> products) {
               p.price.toStringAsFixed(4),
               p.stock,
               p.discountPrice?.toStringAsFixed(4) ?? '-',
+              _primaryImageSignatureValue(p),
             ].join('|'),
           )
           .toList()

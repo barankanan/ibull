@@ -38,6 +38,7 @@ class SellerPanelGarsonPreview extends StatelessWidget {
         child: _MobileGarsonTableFlowPage(
           sellerId: 'preview-seller',
           tableNumber: 12,
+          routeSessionId: 'preview-session',
           products: data.products,
           initialTabIndex: data.initialTabIndex,
           initialDraftItems: data.initialDraftItems,
@@ -262,6 +263,7 @@ class _SellerPanelGarsonOperationHarnessState
                         key: ValueKey<int>(_flowVersion),
                         sellerId: 'preview-seller',
                         tableNumber: 12,
+                        routeSessionId: 'preview-session-$_flowVersion',
                         products: _products,
                         initialTabIndex: _initialTabIndex,
                         initialDraftItems: _draftItems,

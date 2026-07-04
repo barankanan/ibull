@@ -3438,6 +3438,7 @@ class _CampaignWizardPageState extends State<CampaignWizardPage> {
       AdCampaignType.geoPush => 1.08,
       AdCampaignType.banner => 0.88,
       AdCampaignType.categorySponsor => 0.92,
+      AdCampaignType.homeFeature => 1.0,
     };
     return (_totalBudget * objectiveMultiplier * typeMultiplier).round();
   }
@@ -3459,6 +3460,7 @@ class _CampaignWizardPageState extends State<CampaignWizardPage> {
       AdCampaignType.geoPush => 'Magaza sec',
       AdCampaignType.banner => 'Banner sec',
       AdCampaignType.categorySponsor => 'Kategori sec',
+      AdCampaignType.homeFeature => 'Kart sec',
     };
   }
 
@@ -3499,6 +3501,7 @@ class _CampaignWizardPageState extends State<CampaignWizardPage> {
             : <_EntityOption>[_sellerStoreOption!],
       AdCampaignType.banner => _sellerProducts,
       AdCampaignType.categorySponsor => _resolvedSellerCollections,
+      AdCampaignType.homeFeature => _sellerProducts,
     };
   }
 
@@ -3547,6 +3550,7 @@ class _CampaignWizardPageState extends State<CampaignWizardPage> {
       AdCampaignType.geoPush => 'Konum bazli bildirim',
       AdCampaignType.banner => 'Banner',
       AdCampaignType.categorySponsor => 'Kategori Sponsor',
+      AdCampaignType.homeFeature => 'Ana Sayfa Reklami',
     };
   }
 
@@ -3558,6 +3562,7 @@ class _CampaignWizardPageState extends State<CampaignWizardPage> {
       AdCampaignType.geoPush => AdAssetType.notification,
       AdCampaignType.banner => AdAssetType.image,
       AdCampaignType.categorySponsor => AdAssetType.image,
+      AdCampaignType.homeFeature => AdAssetType.image,
     };
   }
 
@@ -3602,6 +3607,8 @@ class _CampaignWizardPageState extends State<CampaignWizardPage> {
         'Gorsel banner alanlarinda daha genis gorunurluk saglar.',
       AdCampaignType.categorySponsor =>
         'Kategori seviyesinde sponsorlu gorunurluk saglar.',
+      AdCampaignType.homeFeature =>
+        'Ana sayfa kategori kartlarinda banner ve urunlerle one cikar.',
     };
   }
 

@@ -7,7 +7,9 @@ import '../models/product_model.dart';
 import '../services/database_helper.dart';
 import '../services/review_repository.dart';
 import '../services/store_service.dart';
+import '../services/cart_validation_service.dart';
 import '../services/supabase_service.dart';
+import '../utils/product_visibility_helper.dart';
 
 class ProductDetailViewModel extends ChangeNotifier {
   Product initialProduct;
@@ -49,6 +51,12 @@ class ProductDetailViewModel extends ChangeNotifier {
   bool isAddedToCart = false;
   bool isWarrantyAdded = false;
   bool isFastDeliverySelected = false;
+  bool isAddToCartInProgress = false;
+  int? _catalogStock;
+  String? _matchBarcode;
+  String? _matchModelCode;
+
+  int _detailLoadGeneration = 0;
 
   // Selected spare parts for damaged/second-hand products
   List<Product> selectedParts = [];
@@ -115,13 +123,20 @@ class ProductDetailViewModel extends ChangeNotifier {
       } catch (_) {}
     }
 
-    _refreshProductExtrasFromSupabase();
+    final generation = ++_detailLoadGeneration;
+    unawaited(_refreshProductExtrasFromSupabase(generation));
     unawaited(refreshReviewSummary());
     unawaited(loadStoreLogo());
-    _loadOtherStoresWithProducts();
-    _loadVariantGroupData();
-    _loadSimilarProducts();
-    _loadComplementaryProducts();
+    unawaited(_loadDeferredSections(generation));
+  }
+
+  Future<void> _loadDeferredSections(int generation) async {
+    await Future<void>.delayed(Duration.zero);
+    if (generation != _detailLoadGeneration) return;
+
+    unawaited(_loadOtherStoresWithProducts(generation));
+    unawaited(_loadVariantGroupData(generation));
+    unawaited(_loadSimilarProducts(generation));
   }
 
   ReviewSummary get reviewSummary => _reviewSummary;
@@ -199,13 +214,28 @@ class ProductDetailViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _refreshProductExtrasFromSupabase() async {
+  Future<void> _refreshProductExtrasFromSupabase(int generation) async {
     try {
-      final extras = await SupabaseService.instance.getProductExtrasByNameBrand(
-        name: initialProduct.name,
-        brand: initialProduct.brand,
-      );
-      if (extras == null) return;
+      final extras = await SupabaseService.instance
+          .getProductExtrasByNameBrand(
+            name: initialProduct.name,
+            brand: initialProduct.brand,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (extras == null || generation != _detailLoadGeneration) return;
+
+      _catalogStock = (extras['stock'] as num?)?.toInt();
+      _matchBarcode = ProductVisibilityHelper.catalogBarcode(extras);
+      _matchModelCode = ProductVisibilityHelper.catalogModelCode(extras);
+      final resolvedGroupId =
+          extras['variant_group_id']?.toString().trim() ?? '';
+      if (resolvedGroupId.isNotEmpty &&
+          (initialProduct.variantGroupId == null ||
+              initialProduct.variantGroupId!.isEmpty)) {
+        initialProduct = initialProduct.copyWith(
+          variantGroupId: resolvedGroupId,
+        );
+      }
 
       final videoUrl = extras['video_url']?.toString();
       final videoPath = extras['video_path']?.toString();
@@ -302,215 +332,97 @@ class ProductDetailViewModel extends ChangeNotifier {
         faq: faq ?? initialProduct.faq,
       );
       _syncSelectedVariantsFromStructuredVariants();
-      _loadComplementaryProducts();
-      notifyListeners();
+      await _loadComplementaryProducts(generation);
+      if (generation == _detailLoadGeneration) {
+        notifyListeners();
+      }
     } catch (_) {}
   }
 
-  Future<void> _loadComplementaryProducts() async {
+  Future<void> _loadComplementaryProducts([int? generation]) async {
+    final activeGeneration = generation ?? _detailLoadGeneration;
     loadingComplementary = true;
     notifyListeners();
 
     try {
-      if (initialProduct.accessories != null &&
-          initialProduct.accessories!.isNotEmpty) {
-        final linkedProducts = await SupabaseService.instance.getProductsByIds(
-          initialProduct.accessories!,
-        );
-        complementaryProducts = linkedProducts
-            .map((product) => Product.fromDBProduct(product))
-            .where(
-              (product) =>
-                  product.name != initialProduct.name ||
-                  product.brand != initialProduct.brand,
-            )
-            .take(2)
-            .toList();
+      var accessoryIds = List<String>.from(initialProduct.accessories ?? const []);
+
+      final currentProductId = initialProduct.productId?.trim() ?? '';
+      accessoryIds = accessoryIds
+          .map((id) => id.trim())
+          .where((id) => id.isNotEmpty)
+          .where((id) => currentProductId.isEmpty || id != currentProductId)
+          .toList(growable: false);
+
+      if (accessoryIds.isEmpty) {
+        complementaryProducts = const [];
+        return;
       }
-      if (complementaryProducts.isEmpty) {
-        complementaryProducts = _generateFallbackComplementaryProducts();
-      }
+
+      final linkedProducts = await SupabaseService.instance
+          .getProductsByIds(accessoryIds)
+          .timeout(const Duration(seconds: 12));
+      if (activeGeneration != _detailLoadGeneration) return;
+
+      complementaryProducts = linkedProducts
+          .map((product) => Product.fromDBProduct(product))
+          .where(
+            (product) =>
+                currentProductId.isEmpty || product.productId != currentProductId,
+          )
+          .take(8)
+          .toList(growable: false);
     } catch (e) {
       debugPrint('Error loading complementary products: $e');
+      complementaryProducts = const [];
     } finally {
-      loadingComplementary = false;
-      notifyListeners();
+      if (activeGeneration == _detailLoadGeneration) {
+        loadingComplementary = false;
+        notifyListeners();
+      }
     }
   }
 
-  List<Product> _generateFallbackComplementaryProducts() {
-    final subCategory = (initialProduct.subCategory ?? '').toLowerCase();
-    final category = (initialProduct.category ?? '').toLowerCase();
+  void addCombinationToCart() async {
+    final error = await addToCart();
+    if (error != null) return;
 
-    List<Product> results = [];
-
-    if (subCategory.contains('telefon') || subCategory.contains('phone')) {
-      results.add(
-        Product(
-          name: 'Hızlı Şarj Adaptörü 20W',
-          brand: 'Apple',
-          price: '649.00 TL',
-          rating: 4.8,
-          reviewCount: 1500,
-          tags: ['Orijinal'],
-          images: [
-            'assets/products/iphone15_beyaz_arka.png',
-          ], // Placeholder image
-          category: 'Elektronik',
-          subCategory: 'Aksesuar',
-        ),
-      );
-      results.add(
-        Product(
-          name: 'Magsafe Şeffaf Kılıf',
-          brand: 'Apple',
-          price: '1299.00 TL',
-          rating: 4.6,
-          reviewCount: 800,
-          tags: ['MagSafe'],
-          images: ['assets/products/iphone15_mavi_yan.webp'], // Placeholder
-          category: 'Elektronik',
-          subCategory: 'Aksesuar',
-        ),
-      );
-    } else if (subCategory.contains('bilgisayar') ||
-        subCategory.contains('laptop')) {
-      results.add(
-        Product(
-          name: 'Magic Mouse Siyah',
-          brand: 'Apple',
-          price: '3500.00 TL',
-          rating: 4.5,
-          reviewCount: 300,
-          tags: ['Kablosuz'],
-          images: ['assets/products/macbook_pro_m3.jpeg'], // Placeholder
-          category: 'Elektronik',
-          subCategory: 'Aksesuar',
-        ),
-      );
-      results.add(
-        Product(
-          name: 'USB-C Hub Çoklayıcı',
-          brand: 'Baseus',
-          price: '899.00 TL',
-          rating: 4.7,
-          reviewCount: 1200,
-          tags: ['Çok Satan'],
-          images: ['assets/products/macbook_pro_m3_back.jpg'], // Placeholder
-          category: 'Elektronik',
-          subCategory: 'Aksesuar',
-        ),
-      );
-    } else if (subCategory.contains('saç') || category.contains('kozmetik')) {
-      results.add(
-        Product(
-          name: 'Saç Bakım Yağı',
-          brand: 'Urban Care',
-          price: '189.00 TL',
-          rating: 4.8,
-          reviewCount: 450,
-          tags: ['Besleyici'],
-          images: [
-            'assets/products/Urban Care Argan Oil Şampuan.jpeg',
-          ], // Placeholder
-          category: 'Kişisel Bakım',
-          subCategory: 'Saç Bakımı',
-        ),
-      );
-    }
-
-    return results;
-  }
-
-  void addCombinationToCart() {
-    // Add main product
-    addToCart();
-
-    // Add complementary products
     for (var product in complementaryProducts) {
-      appState.addToCart(product);
+      await appState.addToCart(product);
     }
 
     notifyListeners();
   }
 
-  Future<void> _loadSimilarProducts() async {
+  Future<void> _loadSimilarProducts(int generation) async {
     loadingSimilarProducts = true;
     notifyListeners();
 
     try {
-      final dbHelper = DatabaseHelper.instance;
-      final allProducts = await dbHelper.getAllProducts();
+      final results = await SupabaseService.instance
+          .getSimilarPublicProducts(
+            excludeProductId: initialProduct.productId ?? '',
+            productName: initialProduct.name,
+            brand: initialProduct.brand,
+            mainCategory: initialProduct.category,
+            subCategory: initialProduct.subCategory,
+            limit: 12,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (generation != _detailLoadGeneration) return;
 
-      final currentName = initialProduct.name.toLowerCase();
-      final currentBrand = initialProduct.brand.toLowerCase();
-      final currentCategory = (initialProduct.category ?? '').toLowerCase();
-      final currentSubCategory = (initialProduct.subCategory ?? '')
-          .toLowerCase();
-
-      // Sadece gerçek mağazaya bağlı ve aktif ürünleri göster.
-      final eligibleProducts = allProducts.where((p) {
-        final hasStore = (p.store ?? '').trim().isNotEmpty;
-        if (!hasStore || !p.isActive) return false;
-
-        final isSameNameBrand =
-            p.name.toLowerCase() == currentName &&
-            p.brand.toLowerCase() == currentBrand;
-        return !isSameNameBrand;
-      });
-
-      similarProducts = eligibleProducts
-          .where((p) {
-            final pName = p.name.toLowerCase();
-            if (pName == currentName) return false;
-
-            final pCategory = p.category.toLowerCase();
-            final pSubCategory = (p.subCategory ?? '').toLowerCase();
-
-            final sameCategory = pCategory == currentCategory;
-            final sameSubCategory = pSubCategory == currentSubCategory;
-            final similarName = _isNameSimilar(currentName, pName);
-
-            return sameCategory || sameSubCategory || similarName;
-          })
-          .map((dbP) => _convertToProduct(dbP))
-          .take(10)
-          .toList();
+      similarProducts = results
+          .map((dbProduct) => Product.fromDBProduct(dbProduct))
+          .toList(growable: false);
     } catch (e) {
       debugPrint('Error loading similar products: $e');
-      similarProducts = [];
+      similarProducts = const [];
     } finally {
-      loadingSimilarProducts = false;
-      notifyListeners();
-    }
-  }
-
-  bool _isNameSimilar(String base, String other) {
-    final baseTokens = base
-        .split(RegExp(r'[\s\-_]+'))
-        .map((t) => t.trim())
-        .where((t) => t.length > 2)
-        .toList();
-
-    if (baseTokens.isEmpty) {
-      return false;
-    }
-
-    int matchCount = 0;
-    for (final token in baseTokens) {
-      if (other.contains(token)) {
-        matchCount++;
-        if (matchCount >= 2) {
-          return true;
-        }
+      if (generation == _detailLoadGeneration) {
+        loadingSimilarProducts = false;
+        notifyListeners();
       }
     }
-
-    if (matchCount == 1 && base.startsWith(other.split(' ').first)) {
-      return true;
-    }
-
-    return false;
   }
 
   // Image Navigation Methods
@@ -584,47 +496,45 @@ class ProductDetailViewModel extends ChangeNotifier {
   }
 
   // Variant Logic
-  Future<void> _loadVariantGroupData() async {
+  Future<void> _loadVariantGroupData(int generation) async {
     allAvailableOptions.clear();
     _parseVariantOptionsToAllAvailable();
 
     String? groupId = initialProduct.variantGroupId;
 
-    // Fallback: If groupId is missing, try to find it in DB using exact name match
     if (groupId == null || groupId.isEmpty) {
       try {
-        final dbHelper = DatabaseHelper.instance;
-        final dbProducts = await dbHelper.searchProducts(initialProduct.name);
-
-        // Find exact match
-        for (var p in dbProducts) {
-          if (p.name == initialProduct.name &&
-              p.variantGroupId != null &&
-              p.variantGroupId!.isNotEmpty) {
-            groupId = p.variantGroupId;
-            break;
-          }
-        }
+        groupId = await SupabaseService.instance.lookupVariantGroupIdByNameBrand(
+          name: initialProduct.name,
+          brand: initialProduct.brand,
+        );
       } catch (e) {
         debugPrint('Error finding variantGroupId fallback: $e');
       }
     }
 
     if (groupId == null || groupId.isEmpty) {
-      // If product has variantOptions but no groupId, use fallback variants
       if (allAvailableOptions.isEmpty) {
         _addFallbackVariantOptions();
       }
-      notifyListeners();
+      if (generation == _detailLoadGeneration) {
+        notifyListeners();
+      }
       return;
     }
 
     loadingVariants = true;
-    notifyListeners();
+    if (generation == _detailLoadGeneration) {
+      notifyListeners();
+    }
 
     try {
       final dbHelper = DatabaseHelper.instance;
-      final dbVariants = await dbHelper.getProductVariantsByGroupId(groupId);
+      final dbVariants = await dbHelper
+          .getProductVariantsByGroupId(groupId)
+          .timeout(const Duration(seconds: 12));
+      if (generation != _detailLoadGeneration) return;
+
       groupVariantDbProducts = dbVariants;
       groupVariants = dbVariants.map((p) => Product.fromDBProduct(p)).toList();
 
@@ -658,8 +568,10 @@ class ProductDetailViewModel extends ChangeNotifier {
         _addFallbackVariantOptions();
       }
     } finally {
-      loadingVariants = false;
-      notifyListeners();
+      if (generation == _detailLoadGeneration) {
+        loadingVariants = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -828,271 +740,67 @@ class ProductDetailViewModel extends ChangeNotifier {
   }
 
   // Other Stores Logic
-  Future<void> _loadOtherStoresWithProducts() async {
+  Future<void> _loadOtherStoresWithProducts(int generation) async {
     loadingOtherStores = true;
     notifyListeners();
 
     try {
-      final candidateStores = _getOtherStores();
-      List<Map<String, dynamic>> results = [];
+      final barcode = _matchBarcode ??
+          ProductVisibilityHelper.catalogBarcode({
+            'specifications': initialProduct.specifications,
+          });
+      final modelCode = _matchModelCode ??
+          ProductVisibilityHelper.catalogModelCode({
+            'specifications': initialProduct.specifications,
+          });
 
-      final currentName = initialProduct.name.toLowerCase();
-      final currentBrand = initialProduct.brand.toLowerCase();
-      final currentSubCategory = (initialProduct.subCategory ?? '')
-          .toLowerCase();
-      final currentCategory = (initialProduct.category ?? '').toLowerCase();
+      final rows = await SupabaseService.instance
+          .getOtherSellerOfferRows(
+            productName: initialProduct.name,
+            brand: initialProduct.brand,
+            barcode: barcode,
+            modelCode: modelCode,
+            excludeSellerId: initialProduct.sellerId,
+            excludeProductId: initialProduct.productId,
+            limit: 10,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (generation != _detailLoadGeneration) return;
 
-      for (var storeMap in candidateStores) {
-        final storeName = storeMap['name'] as String;
-        final products = await _getStoreProducts(storeName);
-
-        if (products.isEmpty) continue;
-
-        Product? bestMatch;
-
-        // Priority 1: Exact Name Match
-        try {
-          bestMatch = products.firstWhere(
-            (p) => p.name.toLowerCase() == currentName,
-          );
-        } catch (_) {}
-
-        // Priority 2: Similar Name
-        if (bestMatch == null) {
-          try {
-            bestMatch = products.firstWhere(
-              (p) =>
-                  p.name.toLowerCase().contains(currentName) ||
-                  currentName.contains(p.name.toLowerCase()),
-            );
-          } catch (_) {}
+      otherStoresWithProducts = rows.map((row) {
+        final product = Product.fromDBProduct(row);
+        final stores = row['stores'];
+        String storeName = product.store?.trim() ?? '';
+        String? logoUrl;
+        if (stores is Map) {
+          storeName =
+              stores['business_name']?.toString().trim().isNotEmpty == true
+              ? stores['business_name'].toString()
+              : storeName;
+          final rawLogo = stores['logo_url']?.toString().trim();
+          if (rawLogo != null && rawLogo.isNotEmpty) {
+            logoUrl = rawLogo;
+          }
         }
 
-        // Priority 3: Same Brand & SubCategory
-        if (bestMatch == null) {
-          try {
-            bestMatch = products.firstWhere(
-              (p) =>
-                  p.brand.toLowerCase() == currentBrand &&
-                  (p.subCategory ?? '').toLowerCase() == currentSubCategory,
-            );
-          } catch (_) {}
-        }
-
-        // Priority 4: Same Category
-        if (bestMatch == null) {
-          try {
-            bestMatch = products.firstWhere(
-              (p) => (p.category ?? '').toLowerCase() == currentCategory,
-            );
-          } catch (_) {}
-        }
-
-        // Priority 5: Any product (Fallback)
-        if (bestMatch == null && products.isNotEmpty) {
-          bestMatch = products.first;
-        }
-
-        if (bestMatch != null) {
-          results.add({'store': storeMap, 'product': bestMatch});
-        }
-      }
-
-      otherStoresWithProducts = results;
+        return {
+          'store': {
+            'name': storeName.isNotEmpty ? storeName : product.brand,
+            'logoUrl': logoUrl,
+            'sellerId': row['seller_id']?.toString() ?? product.sellerId,
+          },
+          'product': product,
+        };
+      }).toList(growable: false);
     } catch (e) {
       debugPrint('Error loading other stores products: $e');
+      otherStoresWithProducts = const [];
     } finally {
-      loadingOtherStores = false;
-      notifyListeners();
-    }
-  }
-
-  List<Map<String, dynamic>> _getOtherStores() {
-    final category = (initialProduct.category ?? '').toLowerCase();
-    final subCategory = (initialProduct.subCategory ?? '').toLowerCase();
-    final String currentPrice = initialProduct.price;
-
-    String targetCategory = 'market';
-
-    if (category.contains('teknoloji') ||
-        category.contains('elektronik') ||
-        subCategory.contains('teknoloji') ||
-        subCategory.contains('elektronik')) {
-      targetCategory = 'teknoloji';
-    } else if (category.contains('giyim') ||
-        category.contains('moda') ||
-        subCategory.contains('giyim')) {
-      targetCategory = 'giyim';
-    } else if (category.contains('mobilya') ||
-        category.contains('ev') ||
-        subCategory.contains('mobilya')) {
-      targetCategory = 'mobilya';
-    } else if (category.contains('kozmetik') ||
-        subCategory.contains('kozmetik')) {
-      targetCategory = 'kozmetik';
-    } else if (category.contains('oyuncak') ||
-        subCategory.contains('oyuncak')) {
-      targetCategory = 'oyuncak';
-    } else if (category.contains('kitap') || subCategory.contains('kitap')) {
-      targetCategory = 'kitap';
-    } else if (category.contains('tamir') || subCategory.contains('tamir')) {
-      targetCategory = 'tamir';
-    }
-
-    // Temporary fallback data structure to replace the deleted file
-    final List<Map<String, dynamic>> businessData = [
-      {'name': 'Teknosa', 'category': 'teknoloji'},
-      {'name': 'MediaMarkt', 'category': 'teknoloji'},
-      {'name': 'Vatan Bilgisayar', 'category': 'teknoloji'},
-      {'name': 'Apple Store', 'category': 'teknoloji'},
-      {'name': 'Samsung', 'category': 'teknoloji'},
-      {'name': 'Ikea', 'category': 'mobilya'},
-      {'name': 'Vivense', 'category': 'mobilya'},
-      {'name': 'Koçtaş', 'category': 'mobilya'},
-      {'name': 'LC Waikiki', 'category': 'giyim'},
-      {'name': 'Mavi', 'category': 'giyim'},
-      {'name': 'Zara', 'category': 'giyim'},
-      {'name': 'H&M', 'category': 'giyim'},
-      {'name': 'Gratis', 'category': 'kozmetik'},
-      {'name': 'Watsons', 'category': 'kozmetik'},
-      {'name': 'Rossmann', 'category': 'kozmetik'},
-      {'name': 'D&R', 'category': 'kitap'},
-      {'name': 'Toyzz Shop', 'category': 'oyuncak'},
-      {'name': 'Migros', 'category': 'market'},
-      {'name': 'CarrefourSA', 'category': 'market'},
-      {'name': 'A101', 'category': 'market'},
-      {'name': 'ŞOK', 'category': 'market'},
-      {'name': 'BİM', 'category': 'market'},
-    ];
-
-    List<Map<String, dynamic>> filteredBusinesses = businessData
-        .where((b) => b['category'] == targetCategory)
-        .toList();
-
-    if (filteredBusinesses.isEmpty) {
-      filteredBusinesses = businessData
-          .where((b) => b['category'] == 'market')
-          .toList();
-    }
-
-    return filteredBusinesses.map((store) {
-      final name = store['name'] as String;
-      final hash = name.hashCode;
-      final multiplier = 0.90 + (hash % 20) / 100.0;
-      final rating = 8.5 + (hash % 15) / 10.0;
-
-      Color badgeColor = Colors.black;
-      if (name.contains('Teknosa') || name.contains('Trendyol')) {
-        badgeColor = Colors.orange;
-      } else if (name.contains('MediaMarkt') || name.contains('H&M')) {
-        badgeColor = Colors.red;
-      } else if (name.contains('Ikea') || name.contains('Vatan')) {
-        badgeColor = Colors.blue;
-      } else if (name.contains('Vivense')) {
-        badgeColor = Colors.orange[300]!;
-      } else if (name.contains('ŞOK')) {
-        badgeColor = Colors.yellow[700]!;
-      } else if (name.contains('A101')) {
-        badgeColor = Colors.teal;
+      if (generation == _detailLoadGeneration) {
+        loadingOtherStores = false;
+        notifyListeners();
       }
-
-      return {
-        'name': name,
-        'rating': rating.toStringAsFixed(1),
-        'badgeColor': badgeColor,
-        'price': _calculateStorePrice(currentPrice, multiplier),
-      };
-    }).toList();
-  }
-
-  String _calculateStorePrice(String originalPrice, double multiplier) {
-    try {
-      String clean = originalPrice.replaceAll('TL', '').trim();
-
-      double val = 0;
-      if (clean.contains(',') && clean.contains('.')) {
-        if (clean.lastIndexOf(',') > clean.lastIndexOf('.')) {
-          clean = clean.replaceAll('.', '').replaceAll(',', '.');
-        } else {
-          clean = clean.replaceAll(',', '');
-        }
-      } else if (clean.contains(',')) {
-        clean = clean.replaceAll(',', '.');
-      } else if (clean.contains('.')) {
-        clean = clean.replaceAll('.', '');
-      }
-
-      val = double.tryParse(clean) ?? 0;
-      if (val == 0) return originalPrice;
-
-      double newVal = val * multiplier;
-
-      return '${newVal.toStringAsFixed(2)} TL';
-    } catch (e) {
-      return originalPrice;
     }
-  }
-
-  Future<List<Product>> _getStoreProducts(String storeName) async {
-    try {
-      final dbHelper = DatabaseHelper.instance;
-      final allProducts = await dbHelper.getAllProducts();
-
-      final storeProducts = allProducts.where((product) {
-        return product.store?.toLowerCase() == storeName.toLowerCase();
-      }).toList();
-
-      return storeProducts
-          .map((dbProduct) => _convertToProduct(dbProduct))
-          .toList();
-    } catch (e) {
-      debugPrint('Error loading store products: $e');
-      return [];
-    }
-  }
-
-  Product _convertToProduct(DBProduct dbProduct) {
-    List<String> images = [];
-    if (dbProduct.imageUrls != null && dbProduct.imageUrls!.isNotEmpty) {
-      try {
-        final decoded = json.decode(dbProduct.imageUrls!);
-        if (decoded is List) {
-          images = decoded.map((e) => e.toString()).toList();
-        }
-      } catch (e) {
-        if (dbProduct.imageUrl.isNotEmpty) images.add(dbProduct.imageUrl);
-      }
-    } else if (dbProduct.imageUrl.isNotEmpty) {
-      images.add(dbProduct.imageUrl);
-    }
-
-    List<String> tags = [];
-    if (dbProduct.tags.isNotEmpty) {
-      tags = dbProduct.tags
-          .split('|')
-          .map<String>((e) => e.toString().trim())
-          .toList();
-    }
-
-    return Product(
-      productId: dbProduct.id,
-      name: dbProduct.name,
-      brand: dbProduct.brand,
-      price: dbProduct.price,
-      rating: dbProduct.rating,
-      reviewCount: dbProduct.reviewCount,
-      tags: tags,
-      images: images.isEmpty ? [] : images,
-      store: dbProduct.store,
-      sellerId: dbProduct.sellerId,
-      category: dbProduct.category,
-      subCategory: dbProduct.subCategory,
-      description: dbProduct.description,
-      specifications: dbProduct.specifications,
-      oldPrice: dbProduct.oldPrice,
-      variantOptions: dbProduct.variantOptions,
-      variantGroupId: dbProduct.variantGroupId,
-    );
   }
 
   // Cart Logic
@@ -1102,15 +810,46 @@ class ProductDetailViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addToCart() {
-    appState.addToCart(
-      displayProduct.copyWith(
-        selectedServices: selectedServices,
-        selectedParts: selectedParts,
-      ),
-    );
-    isAddedToCart = true;
+  Future<String?> addToCart() async {
+    if (isAddToCartInProgress) {
+      return null;
+    }
+
+    final variantComplete = allAvailableOptions.isEmpty ||
+        allAvailableOptions.keys.every((key) {
+          final selected = selectedVariants[key]?.trim() ?? '';
+          return selected.isNotEmpty &&
+              (allAvailableOptions[key]?.contains(selected) ?? false);
+        });
+    if (!variantComplete) {
+      return CartValidationService.variantRequiredMessage;
+    }
+    if (!hasInStockVariantForSelection(selectedVariants)) {
+      return CartValidationService.outOfStockMessage;
+    }
+    if (_catalogStock != null && _catalogStock! <= 0) {
+      return CartValidationService.outOfStockMessage;
+    }
+
+    isAddToCartInProgress = true;
     notifyListeners();
+    try {
+      final error = await appState.addToCart(
+        displayProduct.copyWith(
+          selectedServices: selectedServices,
+          selectedParts: selectedParts,
+        ),
+        variantSelectionComplete: variantComplete,
+      );
+      if (error != null) {
+        return error;
+      }
+      isAddedToCart = true;
+      return null;
+    } finally {
+      isAddToCartInProgress = false;
+      notifyListeners();
+    }
   }
 
   void updateReviewSummary({required double rating, required int reviewCount}) {

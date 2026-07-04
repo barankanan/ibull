@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../../../core/constants.dart';
 import '../../../../services/store_follow_service.dart';
 import '../helpers/seller_badge_public_display.dart';
 import '../models/seller_badge_models.dart';
@@ -11,6 +10,8 @@ import '../models/seller_brand_verification_models.dart';
 import '../services/seller_badge_progress_resolver.dart';
 import '../services/seller_brand_verification_service.dart';
 import '../services/seller_featured_badge_repository.dart';
+import '../widgets/seller_achievements_dashboard_widgets.dart';
+import '../widgets/seller_badge_detail_sheet.dart';
 import '../widgets/seller_badge_widgets.dart';
 import '../widgets/seller_brand_verification_card.dart';
 
@@ -391,14 +392,19 @@ class _SellerAchievementsPageState extends State<SellerAchievementsPage> {
 
   Widget _buildPageContent() {
     final badges = _resolveBadges();
-    final earnedCount =
-        badges.where((b) => b.status == SellerBadgeStatus.earned).length;
-    final inProgressCount =
-        badges.where((b) => b.status == SellerBadgeStatus.inProgress).length;
+    final earnedBadges = badges
+        .where((b) => b.status == SellerBadgeStatus.earned)
+        .toList(growable: false);
+    final earnedCount = earnedBadges.length;
+    final inProgressBadges = badges
+        .where((b) => b.status == SellerBadgeStatus.inProgress)
+        .toList(growable: false);
+    final inProgressCount = inProgressBadges.length;
     final featuredCount = _featuredBadgeIds.length;
     final welcomeActive = SellerBadgePublicDisplay.isWelcomeSupportActive(
       _metrics,
     );
+    final filteredTaskBadges = _filteredTaskBadges(badges);
 
     return SingleChildScrollView(
       controller: _scrollController,
@@ -408,85 +414,289 @@ class _SellerAchievementsPageState extends State<SellerAchievementsPage> {
         children: [
           if (_pageError != null) ...[
             _buildInlineErrorBanner(_pageError!),
-            const SizedBox(height: 12),
+            const SizedBox(height: AchievementDashboardTokens.pageGap),
           ],
-          _buildHero(),
-          const SizedBox(height: 16),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final minWidth = constraints.maxWidth > 900 ? 200.0 : 160.0;
-              return Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  SizedBox(
-                    width: minWidth,
-                    child: SellerAchievementsSummaryCard(
-                      title: 'Kazanılan Rozetler',
-                      value: '$earnedCount',
-                      subtitle: 'Gerçek ilerleme',
-                      icon: Icons.emoji_events_outlined,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  SizedBox(
-                    width: minWidth,
-                    child: SellerAchievementsSummaryCard(
-                      title: 'Devam Eden Görevler',
-                      value: '$inProgressCount',
-                      subtitle: 'Aktif hedefler',
-                      icon: Icons.trending_up_rounded,
-                      color: const Color(0xFF0EA5E9),
-                    ),
-                  ),
-                  SizedBox(
-                    width: minWidth,
-                    child: SellerAchievementsSummaryCard(
-                      title: 'Profilde Gösterilen',
-                      value: _loadingFeatured ? '—' : '$featuredCount',
-                      subtitle: 'En fazla 4 rozet',
-                      icon: Icons.star_outline_rounded,
-                      color: const Color(0xFFD97706),
-                    ),
-                  ),
-                  SizedBox(
-                    width: minWidth,
-                    child: const SellerAchievementsSummaryCard(
-                      title: 'Bölge Sıralaması',
-                      value: 'Yakında',
-                      subtitle: 'Veri bekleniyor',
-                      icon: Icons.map_outlined,
-                      color: Color(0xFF64748B),
-                    ),
-                  ),
-                ],
-              );
-            },
+          SellerAchievementsDashboardHeader(
+            earnedCount: earnedCount,
+            inProgressCount: inProgressCount,
+            onRefresh: _handleRetry,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: AchievementDashboardTokens.pageGap),
+          AchievementMetricGrid(
+            metrics: buildAchievementMetrics(
+              earnedCount: earnedCount,
+              inProgressCount: inProgressCount,
+              featuredCount: featuredCount,
+              loadingFeatured: _loadingFeatured,
+              maxFeatured: SellerFeaturedBadgeRepository.maxProfileBadges,
+            ),
+          ),
+          const SizedBox(height: AchievementDashboardTokens.pageGap),
           SellerBrandVerificationCard(
             sellerId: widget.metrics.sellerId,
             isBrandVerified: _isBrandVerified || widget.metrics.isBrandVerified,
             application: _brandVerificationApplication,
             onChanged: _loadBrandVerification,
           ),
-          const SizedBox(height: 20),
-          _buildNewSellerSection(welcomeActive),
-          const SizedBox(height: 20),
-          _buildFeaturedSection(badges),
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.only(bottom: 4),
-            child: SellerBadgeCategoryChipBar(
-              selectedCategory: _selectedCategory,
-              onSelected: _onCategorySelected,
+          const SizedBox(height: AchievementDashboardTokens.pageGap),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stackColumns = constraints.maxWidth < 960;
+              final mainColumn = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildActiveGoalsSection(inProgressBadges),
+                  const SizedBox(height: AchievementDashboardTokens.pageGap),
+                  SellerBadgeCategoryChipBar(
+                    selectedCategory: _selectedCategory,
+                    onSelected: _onCategorySelected,
+                  ),
+                  const SizedBox(height: 10),
+                  KeyedSubtree(
+                    key: _tasksSectionKey,
+                    child: _buildTasksGridSection(filteredTaskBadges),
+                  ),
+                  const SizedBox(height: AchievementDashboardTokens.pageGap),
+                  EarnedBadgesGrid(
+                    badges: earnedBadges,
+                    featuredBadgeIds: _featuredBadgeIds,
+                    onShowDetail: (badge) => showSellerBadgeDetailSheet(
+                      context: context,
+                      progress: badge,
+                      onNavigateToStoreProfile: widget.onNavigateToStoreProfile,
+                      onRetry: widget.onRetryMetrics,
+                    ),
+                  ),
+                ],
+              );
+              final sideColumn = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  BadgeShowcaseCard(
+                    earnedBadges: earnedBadges,
+                    featuredBadgeIds: _featuredBadgeIds,
+                    onToggleFeatured: _toggleFeatured,
+                    animateGlowFor: _shouldAnimateGlow,
+                    glowReplayTokenFor: _glowReplayTokenFor,
+                    onReplayGlow: _replayBadgeGlow,
+                  ),
+                  const SizedBox(height: AchievementDashboardTokens.pageGap),
+                  AchievementProgressSummaryCard(
+                    earnedCount: earnedCount,
+                    totalCount: badges.length,
+                    inProgressCount: inProgressCount,
+                    featuredCount: featuredCount,
+                    maxFeatured: SellerFeaturedBadgeRepository.maxProfileBadges,
+                    welcomeActive: welcomeActive,
+                  ),
+                  const SizedBox(height: AchievementDashboardTokens.pageGap),
+                  _buildNewSellerSectionCompact(welcomeActive),
+                ],
+              );
+
+              if (stackColumns) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    sideColumn,
+                    const SizedBox(height: AchievementDashboardTokens.pageGap),
+                    mainColumn,
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 3, child: mainColumn),
+                  const SizedBox(width: AchievementDashboardTokens.pageGap),
+                  Expanded(flex: 2, child: sideColumn),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<SellerBadgeProgress> _filteredTaskBadges(
+    List<SellerBadgeProgress> badges,
+  ) {
+    return badges
+        .where((badge) {
+          if (badge.status == SellerBadgeStatus.earned) return false;
+          if (_selectedCategory != null &&
+              badge.definition.category != _selectedCategory) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
+  }
+
+  Widget _buildActiveGoalsSection(List<SellerBadgeProgress> inProgressBadges) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Aktif Görevler',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF111827),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          inProgressBadges.isEmpty
+              ? 'Şu an devam eden görev yok.'
+              : '${inProgressBadges.length} görev devam ediyor',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 10),
+        if (inProgressBadges.isEmpty)
+          const AchievementEmptyState(
+            title: 'Aktif görev yok',
+            message: 'Yeni görevler ilerledikçe burada görünecek.',
+            icon: Icons.flag_outlined,
+          )
+        else
+          _buildTaskCardGrid(inProgressBadges),
+      ],
+    );
+  }
+
+  Widget _buildTasksGridSection(List<SellerBadgeProgress> taskBadges) {
+    if (taskBadges.isEmpty) {
+      return AchievementEmptyState(
+        title: _selectedCategory == null
+            ? 'Henüz başarı bulunmuyor'
+            : 'Bu kategoride görev yok',
+        message: _selectedCategory == null
+            ? 'Mağazanı kurdukça rozetler ve görevler burada görünecek.'
+            : 'Farklı bir kategori seçerek diğer görevlere bakabilirsin.',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Görevler ve İlerleme',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF111827),
+          ),
+        ),
+        const SizedBox(height: 10),
+        _buildTaskCardGrid(taskBadges),
+      ],
+    );
+  }
+
+  Widget _buildTaskCardGrid(List<SellerBadgeProgress> badges) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 1100
+            ? 3
+            : constraints.maxWidth >= 640
+            ? 2
+            : 1;
+        const spacing = 8.0;
+        final itemWidth =
+            (constraints.maxWidth - ((columns - 1) * spacing)) / columns;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: badges
+              .map(
+                (badge) => SizedBox(
+                  width: columns == 1 ? constraints.maxWidth : itemWidth,
+                  child: SellerBadgeTaskCard(
+                    progress: badge,
+                    compact: true,
+                    animateGlow: _shouldAnimateGlow(badge),
+                    glowReplayToken:
+                        _glowReplayTokenFor(badge.definition.badgeId),
+                    onNavigateToStoreProfile: widget.onNavigateToStoreProfile,
+                    onRetry: widget.onRetryMetrics,
+                    onReplayGlow: () =>
+                        _replayBadgeGlow(badge.definition.badgeId),
+                  ),
+                ),
+              )
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+
+  Widget _buildNewSellerSectionCompact(bool welcomeActive) {
+    final newSeller = SellerBadgeProgressResolver.resolveById(
+      'new_seller',
+      _metrics,
+    );
+    final support = SellerBadgePublicDisplay.welcomeSupportDefinition;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(AchievementDashboardTokens.cardRadius),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Yeni Satıcı',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF111827),
             ),
           ),
-          const SizedBox(height: 12),
-          KeyedSubtree(
-            key: _tasksSectionKey,
-            child: _buildAllTasksSection(badges),
+          const SizedBox(height: 8),
+          if (newSeller != null)
+            Row(
+              children: [
+                SellerBadgeIcon(progress: newSeller, size: 32),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    newSeller.status == SellerBadgeStatus.earned
+                        ? 'Yeni Satıcı rozeti aktif'
+                        : newSeller.definition.title,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          const SizedBox(height: 8),
+          Text(
+            support.description,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            welcomeActive
+                ? 'Yeni satıcı destek programı aktif'
+                : 'Program yalnızca yeni satıcılar için',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: welcomeActive
+                  ? const Color(0xFF059669)
+                  : Colors.grey.shade500,
+            ),
           ),
         ],
       ),
@@ -520,284 +730,5 @@ class _SellerAchievementsPageState extends State<SellerAchievementsPage> {
         ],
       ),
     );
-  }
-
-  Widget _buildHero() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE8EAF2)),
-        gradient: const LinearGradient(
-          colors: [Color(0xFFFFFFFF), Color(0xFFF8F5FF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Başarılarım',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF111827),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Görevleri tamamla, rozet kazan ve mağaza profilinde en güçlü 4 rozetini sergile.',
-            style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNewSellerSection(bool welcomeActive) {
-    final newSeller = SellerBadgeProgressResolver.resolveById(
-      'new_seller',
-      _metrics,
-    );
-    final support = SellerBadgePublicDisplay.welcomeSupportDefinition;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Yeni Satıcı Alanı',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF111827),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (newSeller != null)
-                SellerBadgeIcon(
-                  progress: newSeller,
-                  animateGlow: false,
-                ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      newSeller?.status == SellerBadgeStatus.earned
-                          ? 'Yeni Satıcı rozeti aktif'
-                          : 'Yeni satıcı başlangıç rozeti',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      newSeller?.definition.description ?? '',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFE8EAF2)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  support.title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  support.description,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  welcomeActive
-                      ? 'Yeni satıcılar için aktif destek programı'
-                      : 'Program yalnızca yeni satıcılar için geçerlidir',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: welcomeActive
-                        ? const Color(0xFF059669)
-                        : Colors.grey.shade500,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFeaturedSection(List<SellerBadgeProgress> badges) {
-    final earned = badges
-        .where((badge) => badge.status == SellerBadgeStatus.earned)
-        .toList(growable: false);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE8EAF2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Rozet Vitrinim',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Kazandığın rozetlerden en fazla 4 tanesini profilinde göster.',
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 14),
-          if (earned.isEmpty)
-            Text(
-              'Henüz vitrine ekleyebileceğin kazanılmış rozet yok.',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-            )
-          else
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: earned.map((badge) {
-                final badgeId = badge.definition.badgeId;
-                final selected = _featuredBadgeIds.contains(badgeId);
-                return SellerFeaturedBadgeTile(
-                  progress: badge,
-                  selected: selected,
-                  onTap: () => _toggleFeatured(badge),
-                  animateGlow: _shouldAnimateGlow(badge),
-                  glowReplayToken: _glowReplayTokenFor(badgeId),
-                  onReplayGlow: () => _replayBadgeGlow(badgeId),
-                );
-              }).toList(growable: false),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAllTasksSection(List<SellerBadgeProgress> badges) {
-    if (badges.isEmpty) {
-      return _buildTasksEmptyFallback();
-    }
-
-    final grouped = <SellerBadgeCategory, List<SellerBadgeProgress>>{};
-    for (final badge in badges) {
-      grouped.putIfAbsent(badge.definition.category, () => []).add(badge);
-    }
-
-    final visibleCategories = SellerBadgeCategory.values
-        .where((category) => (grouped[category] ?? const []).isNotEmpty)
-        .where(
-          (category) =>
-              _selectedCategory == null || _selectedCategory == category,
-        )
-        .toList(growable: false);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Tüm Görevler',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 12),
-        if (visibleCategories.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(
-              'Bu kategoride görev bulunamadı.',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-            ),
-          ),
-        for (final category in visibleCategories) ...[
-          KeyedSubtree(
-            key: _categoryKeys[category],
-            child: Text(
-              sellerBadgeCategoryLabel(category),
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: Colors.grey.shade700,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ...grouped[category]!.map(
-            (badge) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: SellerBadgeTaskCard(
-                progress: badge,
-                animateGlow: _shouldAnimateGlow(badge),
-                glowReplayToken:
-                    _glowReplayTokenFor(badge.definition.badgeId),
-                onNavigateToStoreProfile: widget.onNavigateToStoreProfile,
-                onRetry: widget.onRetryMetrics,
-                onReplayGlow: () =>
-                    _replayBadgeGlow(badge.definition.badgeId),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildTasksEmptyFallback() {
-    final fallbackBadges = SellerBadgeProgressResolver.resolveAll(
-      const SellerBadgeStoreMetrics(),
-    );
-    if (fallbackBadges.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Text(
-          'Görevler şu an yüklenemiyor.',
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-        ),
-      );
-    }
-    return _buildAllTasksSection(fallbackBadges);
   }
 }

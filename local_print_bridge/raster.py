@@ -9,7 +9,7 @@ from typing import Iterable
 from .config import BridgeSettings, default_raster_width_px
 from .models import KitchenItem, KitchenPayload, ReceiptItem, ReceiptPayload, _parse_datetime
 from .pillow_probe import probe_pillow
-from .receipt import _cut, _feed, _init_printer, resolve_receipt_table_label_lines
+from .receipt import append_trailing_feed_and_cut, _init_printer, resolve_receipt_table_label_lines
 
 Image = None  # type: ignore[assignment]
 ImageDraw = None  # type: ignore[assignment]
@@ -321,7 +321,20 @@ class _BitmapRendererBase:
         self.width_px = configured_width or _paper_width_px(settings.paper_width_mm)
         self.margin_x = 12 if self.width_px <= 384 else 16
         self.top_padding = 8
-        self.bottom_padding = 8
+        bottom_padding_raw = getattr(settings, "raster_bottom_padding_px", None)
+        if bottom_padding_raw is None:
+            bottom_padding_raw = getattr(settings, "bottom_padding_px", None)
+        self.bottom_padding = (
+            bottom_padding_raw
+            if bottom_padding_raw is not None
+            else (170 if settings.paper_width_mm <= 58 else 180)
+        )
+        min_height_raw = getattr(settings, "min_receipt_height_px", None)
+        self.min_receipt_height_px = (
+            min_height_raw
+            if min_height_raw is not None
+            else (700 if settings.paper_width_mm <= 58 else 740)
+        )
         self.content_width = self.width_px - (self.margin_x * 2)
 
     def _font(self, size: int, *, bold: bool = False) -> "ImageFont.FreeTypeFont":
@@ -469,6 +482,17 @@ class _BitmapRendererBase:
                 draw.text((x, y), line, font=font, fill=0)
                 y += line_height
             y += block.spacing_after
+        return self._finalize_ticket_image(image)
+
+    def _finalize_ticket_image(self, image: "Image.Image") -> "Image.Image":
+        if image.mode != "L":
+            image = image.convert("L")
+        width, height = image.size
+        min_height = self.min_receipt_height_px
+        if min_height > 0 and height < min_height:
+            padded = Image.new("L", (width, min_height), color=255)
+            padded.paste(image, (0, 0))
+            return padded
         return image
 
     def _format_money(self, value: Decimal, currency: str) -> str:
@@ -684,11 +708,13 @@ class KitchenBitmapRenderer(_BitmapRendererBase):
         if final_table_line.strip() == "Masa:" or final_table_line.strip() == "Masa":
             final_table_line = ""
 
-        blocks.append(_TextBlock("text", f"Sipariş No: {order_label}", size=20, spacing_after=2))
+        blocks.append(_TextBlock("text", f"Sipariş No: {order_label}", size=22, spacing_after=2))
         if final_table_line:
-            blocks.append(_TextBlock("text", final_table_line, size=20, spacing_after=2))
+            blocks.append(_TextBlock("text", final_table_line, size=22, spacing_after=2))
         if payload.waiter_name:
-            blocks.append(_TextBlock("pair", "Garson", right_text=payload.waiter_name, size=20, spacing_after=2))
+            blocks.append(
+                _TextBlock("pair", "Garson", right_text=payload.waiter_name, size=22, spacing_after=2),
+            )
         header_debug = self._debug_header_lines(payload, order_label=order_label, table_label=table_label)
         LOGGER.info(
             "[KITCHEN_RENDER_HEADER] order_no=%s table_label=%s kitchen_datetime=%s time_source=%s render_mode=%s "
@@ -701,7 +727,7 @@ class KitchenBitmapRenderer(_BitmapRendererBase):
             header_debug["final_datetime_line"],
             "yes",
         )
-        blocks.append(_TextBlock("text", header_debug["final_datetime_line"], size=20, spacing_after=4))
+        blocks.append(_TextBlock("text", header_debug["final_datetime_line"], size=22, spacing_after=4))
         blocks.append(_TextBlock("rule", spacing_after=4))
         for item in payload.items:
             blocks.extend(self._item_blocks(item))
@@ -756,18 +782,18 @@ class KitchenBitmapRenderer(_BitmapRendererBase):
         label = f"{item.quantity}x  {item.name}"
         if item.amount_label:
             label += f" {item.amount_label}"
-        blocks = [_TextBlock("text", label, size=22, bold=True, spacing_after=1)]
+        blocks = [_TextBlock("text", label, size=24, bold=True, spacing_after=1)]
         if item.note:
-            blocks.append(_TextBlock("text", f"Not: {item.note}", size=18, spacing_after=1))
+            blocks.append(_TextBlock("text", f"Not: {item.note}", size=20, spacing_after=1))
         for plate in item.plates:
-            blocks.append(_TextBlock("text", plate.label, size=18, bold=True, spacing_after=1))
+            blocks.append(_TextBlock("text", plate.label, size=20, bold=True, spacing_after=1))
             for child in plate.items:
                 child_label = f"- {child.quantity}x {child.name}"
                 if child.amount_label:
                     child_label += f" {child.amount_label}"
-                blocks.append(_TextBlock("text", child_label, size=18, spacing_after=1))
+                blocks.append(_TextBlock("text", child_label, size=20, spacing_after=1))
                 if child.note:
-                    blocks.append(_TextBlock("text", f"  Not: {child.note}", size=16, spacing_after=1))
+                    blocks.append(_TextBlock("text", f"  Not: {child.note}", size=18, spacing_after=1))
         for child in item.service_children:
             child_label = f"- {child.quantity}x {child.name}"
             if child.amount_label:
@@ -816,8 +842,12 @@ class RasterEscPosEncoder:
             )
             chunks.append(command)
             chunk_count += 1
-        chunks.append(_feed(3))
-        chunks.append(_cut(self.settings.cut_mode))
+        append_trailing_feed_and_cut(
+            chunks,
+            cut_mode=self.settings.cut_mode,
+            bottom_feed_lines=self.settings.bottom_feed_lines,
+            cut_feed_lines=self.settings.cut_feed_lines,
+        )
         return RasterizedDocument(
             data=b"".join(chunks),
             width_px=width_px,

@@ -8,6 +8,8 @@ import '../../../../services/admin_service.dart';
 import '../dialogs/category_delete_confirm_dialog.dart';
 import '../dialogs/category_edit_dialog.dart';
 import '../dialogs/system_layout_dialogs.dart';
+import '../widgets/home_card_template_panel.dart';
+import '../widgets/home_feature_sorting_panel.dart';
 import '../widgets/system_layout_editor_card.dart';
 import '../widgets/system_layout_managed_category_widgets.dart';
 
@@ -49,7 +51,7 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _fetchHairCareLayouts();
     _fetchCampaignImages();
     _fetchAppCategories();
@@ -779,7 +781,8 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 isScrollable: true,
                 tabs: const [
-                  Tab(text: 'Kart Yapısı'),
+                  Tab(text: 'Kart Şablonları'),
+                  Tab(text: 'Ana Sayfa Sıralaması'),
                   Tab(text: 'Görseller'),
                   Tab(text: 'Kategoriler'),
                 ],
@@ -791,7 +794,8 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
           child: TabBarView(
             controller: _tabController,
             children: [
-              _buildHairCareTab(),
+              const HomeCardTemplatePanel(),
+              const HomeFeatureSortingPanel(),
               _buildImagesTab(),
               _buildManagedCategoriesTab(),
             ],
@@ -801,6 +805,8 @@ class _SystemLayoutPageState extends State<SystemLayoutPage>
     );
   }
 
+  // Legacy manual kart yönetimi — yeni akış Kart Şablonları sekmesinde.
+  // ignore: unused_element
   Widget _buildHairCareTab() {
     if (_isLoading && _hairCareLayouts.isEmpty) {
       return const Center(

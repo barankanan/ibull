@@ -214,6 +214,55 @@ class PrinterProfile {
     generic80mmEscpos,
   ];
 
+  /// Canonical profile IDs accepted by Supabase `printers_printer_profile_id_check`.
+  static const Set<String> databaseCanonicalProfileIds = {
+    'standard_58mm',
+    'standard_80mm',
+    'usb_pos58',
+    'network_escpos',
+    'receipt_80mm',
+    'kitchen_58mm',
+    'pos58',
+    'pos80',
+    'generic_58mm_escpos',
+    'generic_80mm_escpos',
+  };
+
+  /// Maps UI/profile aliases to the canonical DB value. Never send labels like
+  /// `POS-80` to Supabase — only canonical ids such as `pos80`.
+  static String? canonicalDatabaseId(String? profileId) {
+    if (profileId == null || profileId.trim().isEmpty) return null;
+    final trimmed = profileId.trim();
+    final normalized = trimmed.toLowerCase();
+
+    const aliasToCanonical = <String, String>{
+      'pos-80': 'pos80',
+      'pos-58': 'pos58',
+      'pos80': 'pos80',
+      'pos58': 'pos58',
+      'generic 80mm esc/pos': 'generic_80mm_escpos',
+      'generic_80mm_escpos': 'generic_80mm_escpos',
+      'generic_58mm_escpos': 'generic_58mm_escpos',
+    };
+    final alias = aliasToCanonical[normalized];
+    if (alias != null) return alias;
+
+    final known = byId(trimmed);
+    if (known != null) {
+      if (databaseCanonicalProfileIds.contains(known.id)) {
+        return known.id;
+      }
+      // Safe fallbacks for profiles not yet in DB constraint.
+      if (known.paperWidthMm <= 58) return 'pos58';
+      return 'pos80';
+    }
+
+    if (databaseCanonicalProfileIds.contains(trimmed)) {
+      return trimmed;
+    }
+    return null;
+  }
+
   /// Resolves the active profile for Ethernet setup/test/save payloads.
   /// Explicit selection wins; otherwise derive from paper width without
   /// forcing POS-58 for 80mm printers.
@@ -227,6 +276,9 @@ class PrinterProfile {
   }
 
   /// Bridge payload fields derived from a [PrinterProfile].
+  ///
+  /// Receipt tail length is intentionally excluded — it is stamped per printer
+  /// via [PrinterReceiptLengthSettings] / orchestrator tail policy.
   static Map<String, dynamic> bridgeProfileFields(PrinterProfile profile) {
     return <String, dynamic>{
       'printer_profile': profile.id,
@@ -239,6 +291,155 @@ class PrinterProfile {
       'auto_cut': profile.supportsCut,
       'autoCut': profile.supportsCut,
     };
+  }
+
+  /// Resolves a single consistent profile when DB id, paper width, or display
+  /// name disagree (e.g. `pos58` + `paper_width_mm=80`).
+  static PrinterProfile resolveConsistentProfile({
+    String? profileId,
+    int? paperWidthMm,
+    String? displayName,
+  }) {
+    final canonical = canonicalDatabaseId(profileId) ?? profileId?.trim();
+    final known = canonical == null || canonical.isEmpty ? null : byId(canonical);
+
+    var resolvedWidth = paperWidthMm ?? known?.paperWidthMm ?? 80;
+    final nameHint = (displayName ?? '').toLowerCase();
+    if (nameHint.contains('80mm') || nameHint.contains('80 mm')) {
+      resolvedWidth = 80;
+    } else if (nameHint.contains('58mm') || nameHint.contains('58 mm')) {
+      resolvedWidth = 58;
+    }
+
+    if (known != null) {
+      if (known.paperWidthMm <= 58 && resolvedWidth >= 80) {
+        return pos80;
+      }
+      if (known.paperWidthMm >= 80 && resolvedWidth <= 58) {
+        return pos58;
+      }
+      return known;
+    }
+
+    return resolvedWidth <= 58 ? pos58 : pos80;
+  }
+
+  /// Canonical save metadata — profile id and dimensions always agree.
+  static ({String profileId, int paperWidthMm, int rasterWidthPx})
+  normalizeSaveMetadata({
+    String? profileId,
+    required int paperWidthMm,
+    String? displayName,
+  }) {
+    final profile = resolveConsistentProfile(
+      profileId: profileId,
+      paperWidthMm: paperWidthMm,
+      displayName: displayName,
+    );
+    return (
+      profileId: profile.id,
+      paperWidthMm: profile.paperWidthMm,
+      rasterWidthPx: profile.rasterWidthPx,
+    );
+  }
+
+  /// Operator-facing hint when stored printer metadata would fail bridge validation.
+  static String? inconsistencyMessage({
+    required String? profileId,
+    required int? paperWidthMm,
+    int? rasterWidthPx,
+    String? displayName,
+  }) {
+    if (!needsMetadataRepair(
+      profileId: profileId,
+      paperWidthMm: paperWidthMm,
+      rasterWidthPx: rasterWidthPx,
+      displayName: displayName,
+    )) {
+      return null;
+    }
+    final profile = resolveConsistentProfile(
+      profileId: profileId,
+      paperWidthMm: paperWidthMm,
+      displayName: displayName,
+    );
+    return 'Bu yazıcının profil bilgisi tutarsız. '
+        '${displayName?.trim().isNotEmpty == true ? displayName!.trim() : 'Yazıcı'} '
+        '80mm görünüyor ama ${profileId ?? 'POS-58'} olarak kayıtlı. '
+        'Profili ${profile.label} olarak güncelleyin.';
+  }
+
+  /// True when stored profile id disagrees with paper width / raster metadata.
+  static bool needsMetadataRepair({
+    required String? profileId,
+    required int? paperWidthMm,
+    int? rasterWidthPx,
+    String? displayName,
+  }) {
+    final normalized = normalizeSaveMetadata(
+      profileId: profileId,
+      paperWidthMm: paperWidthMm ?? 80,
+      displayName: displayName,
+    );
+    final canonical = canonicalDatabaseId(profileId) ?? profileId?.trim() ?? '';
+    if (canonical.isNotEmpty && canonical != normalized.profileId) {
+      return true;
+    }
+    if (paperWidthMm != null && paperWidthMm != normalized.paperWidthMm) {
+      return true;
+    }
+    if (rasterWidthPx != null && rasterWidthPx != normalized.rasterWidthPx) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Stamps consistent profile fields onto a bridge payload map (top-level or nested printer).
+  static void stampConsistentProfileOnMap(
+    Map<String, dynamic> payload, {
+    String? profileId,
+    int? paperWidthMm,
+    String? displayName,
+  }) {
+    final resolvedProfileId = profileId ??
+        payload['printer_profile_id']?.toString() ??
+        payload['printer_profile']?.toString();
+    final resolvedWidth = paperWidthMm ??
+        int.tryParse(
+          payload['paper_width_mm']?.toString() ??
+              payload['paperWidthMm']?.toString() ??
+              '',
+        );
+    final resolvedName =
+        displayName ??
+        payload['printer_name']?.toString() ??
+        payload['displayName']?.toString() ??
+        payload['name']?.toString();
+    final profile = resolveConsistentProfile(
+      profileId: resolvedProfileId,
+      paperWidthMm: resolvedWidth,
+      displayName: resolvedName,
+    );
+    payload.addAll(bridgeProfileFields(profile));
+    payload['chars_per_line'] = profile.charsPerLine;
+  }
+
+  /// Normalizes profile id + dimensions on a full /print/test or dispatch body.
+  static Map<String, dynamic> normalizeBridgePayload(
+    Map<String, dynamic> payload,
+  ) {
+    final next = Map<String, dynamic>.from(payload);
+    final embedded = next['printer'];
+    if (embedded is Map) {
+      final printerMap = Map<String, dynamic>.from(embedded);
+      stampConsistentProfileOnMap(printerMap);
+      next['printer'] = printerMap;
+    }
+    stampConsistentProfileOnMap(
+      next,
+      displayName: next['printer_name']?.toString(),
+    );
+    return next;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

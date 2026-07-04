@@ -1,6 +1,7 @@
 import '../constants/ads_defaults.dart';
 import '../enums/ad_enums.dart';
 import '../helpers/ad_campaign_helper.dart';
+import '../helpers/home_feature_ad_helper.dart';
 import '../models/ad_campaign.dart';
 import '../models/ad_campaign_page.dart';
 import '../models/campaign_asset.dart';
@@ -50,6 +51,15 @@ class CampaignService {
   }
 
   List<String> validateCampaign(AdCampaign campaign) {
+    if (campaign.type == AdCampaignType.homeFeature) {
+      return HomeFeatureAdHelper.validateSubmission(
+        cardTemplateId: HomeFeatureAdHelper.cardTemplateId(campaign),
+        bannerImages: HomeFeatureAdHelper.bannerImages(campaign),
+        productIds: HomeFeatureAdHelper.selectedProductIds(campaign),
+        startsAt: campaign.startsAt,
+        endsAt: campaign.endsAt,
+      );
+    }
     final issues = <String>[];
     if (campaign.name.trim().isEmpty) issues.add('Campaign name is required.');
     if (campaign.dailyBudget <= 0) issues.add('Daily budget must be positive.');

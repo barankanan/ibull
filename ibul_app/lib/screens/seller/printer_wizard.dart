@@ -8,8 +8,10 @@ import '../../models/printer_model.dart';
 import '../../models/printer_profile.dart';
 import '../../services/desktop_print_orchestrator.dart';
 import '../../services/local_print_service.dart';
-import '../../services/printer_event_log_service.dart';
+import '../../features/seller/panel/printer_center/widgets/printer_receipt_length_settings_section.dart';
+import '../../services/printer_receipt_length_settings.dart';
 import '../../widgets/bridge_error_dialog.dart';
+import '../../services/printer_event_log_service.dart';
 import '../../services/printer_repository.dart';
 import 'printer_ethernet_dialog.dart';
 
@@ -117,6 +119,11 @@ class _PrinterWizardState extends State<PrinterWizard> {
   _TestState _diagState = _TestState.idle;
   String? _diagError;
 
+  // ── receipt length ──
+  PrinterReceiptLengthSettings _receiptLengthSettings =
+      PrinterReceiptLengthSettings.normal;
+  bool _abTestRunning = false;
+
   // ── saving ──
   bool _saving = false;
 
@@ -154,6 +161,8 @@ class _PrinterWizardState extends State<PrinterWizard> {
       _codePageCtrl.text = p.codePage?.toString() ?? '';
       _selectedRoles.addAll(p.assignedRoles);
       if (p.testPrintStatus == 'ok') _testPassed = true;
+      _receiptLengthSettings =
+          PrinterReceiptLengthSettings.fromPrinterModel(p);
     }
   }
 
@@ -304,6 +313,16 @@ class _PrinterWizardState extends State<PrinterWizard> {
       final sanitizedDevice = rawDevice.contains(' (') && rawDevice.endsWith(')')
           ? rawDevice.split(' (').first.trim()
           : rawDevice;
+      final tailFields = _receiptLengthSettings.toLiveBridgeFields(
+        paperWidthMm: _paperWidth,
+      );
+      debugPrint(
+        '[ReceiptLength][ui_test] '
+        'preset=${_receiptLengthSettings.preset.bridgeValue} '
+        'bottom_feed_lines=${tailFields['bottom_feed_lines']} '
+        'bottom_padding_px=${tailFields['bottom_padding_px']} '
+        'min_receipt_height_px=${tailFields['min_receipt_height_px']}',
+      );
       final result = await _printOrchestrator
           .printBridgeTest(
             restaurantId: widget.restaurantId,
@@ -319,6 +338,7 @@ class _PrinterWizardState extends State<PrinterWizard> {
             encoding: encodingSelection.encoding,
             codePage: encodingSelection.codePage,
             renderMode: 'image',
+            extraBody: tailFields,
           )
           .timeout(const Duration(seconds: 8));
       if (!result.ok) {
@@ -378,6 +398,74 @@ class _PrinterWizardState extends State<PrinterWizard> {
             '${e.toString()}\nselectedPrinterName=$selectedPrinterName\navailableBridgePrinterIds=${available.join(', ')}';
         _testPassed = false;
       });
+    }
+  }
+
+  Future<void> _runReceiptLengthAbTest({required bool maximum}) async {
+    if (kIsWeb) return;
+    setState(() => _abTestRunning = true);
+    try {
+      final encodingSelection = _selectedEncodingSelection;
+      final rawDevice = _deviceCtrl.text.trim();
+      final sanitizedDevice = rawDevice.contains(' (') && rawDevice.endsWith(')')
+          ? rawDevice.split(' (').first.trim()
+          : rawDevice;
+      final result = await _printOrchestrator
+          .printReceiptLengthAbTest(
+            restaurantId: widget.restaurantId,
+            maximum: maximum,
+            printerName: sanitizedDevice.isNotEmpty
+                ? sanitizedDevice
+                : _nameCtrl.text.trim(),
+            targetHost: _connectionType == PrinterModel.networkConnectionType
+                ? _hostCtrl.text.trim()
+                : null,
+            targetPort: _connectionType == PrinterModel.networkConnectionType
+                ? (int.tryParse(_portCtrl.text.trim()) ?? 9100)
+                : null,
+            encoding: encodingSelection.encoding,
+            codePage: encodingSelection.codePage,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (!mounted) return;
+      if (!result.ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.message.isNotEmpty
+                  ? result.message
+                  : 'A/B test baskısı başarısız.',
+            ),
+          ),
+        );
+        return;
+      }
+      final raw = result.raw ?? const <String, dynamic>{};
+      debugPrint(
+        '[ReceiptLength][ab_response] '
+        'variant=${maximum ? 'max' : 'min'} '
+        'final_height_px=${raw['final_height_px']} '
+        'bytes_length=${raw['bytes_length']} '
+        'actual_path=${raw['actual_path']}',
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            maximum
+                ? 'Maksimum uzunluk testi gönderildi '
+                    '(yükseklik: ${raw['final_height_px'] ?? '-'})'
+                : 'Minimum uzunluk testi gönderildi '
+                    '(yükseklik: ${raw['final_height_px'] ?? '-'})',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('A/B test hatası: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _abTestRunning = false);
     }
   }
 
@@ -565,6 +653,7 @@ class _PrinterWizardState extends State<PrinterWizard> {
         codePage: encodingSelection.codePage,
         assignedRoles: _selectedRoles.toList(),
         printerProfileId: _selectedProfileId,
+        receiptLengthSettings: _receiptLengthSettings,
       );
 
       // Record test result in DB if we tested
@@ -725,9 +814,23 @@ class _PrinterWizardState extends State<PrinterWizard> {
           supportsCut: _supportsCut,
           charset: _charset,
           codePageCtrl: _codePageCtrl,
+          receiptLengthSettings: _receiptLengthSettings,
+          onReceiptLengthChanged: (settings) =>
+              setState(() => _receiptLengthSettings = settings),
           onPaperWidthChanged: (v) => setState(() => _paperWidth = v),
           onSupportsCutChanged: (v) => setState(() => _supportsCut = v),
           onCharsetChanged: (v) => setState(() => _charset = v),
+          showReceiptTestButton: !kIsWeb,
+          receiptTestRunning: _testState == _TestState.running,
+          onReceiptTest: kIsWeb ? null : _runTestPrint,
+          showAbTests: !kIsWeb,
+          abTestRunning: _abTestRunning,
+          onAbMinimumTest: kIsWeb
+              ? null
+              : () => _runReceiptLengthAbTest(maximum: false),
+          onAbMaximumTest: kIsWeb
+              ? null
+              : () => _runReceiptLengthAbTest(maximum: true),
         );
       case 5:
         return _Step5Roles(
@@ -1757,18 +1860,36 @@ class _Step4Features extends StatelessWidget {
     required this.supportsCut,
     required this.charset,
     required this.codePageCtrl,
+    required this.receiptLengthSettings,
+    required this.onReceiptLengthChanged,
     required this.onPaperWidthChanged,
     required this.onSupportsCutChanged,
     required this.onCharsetChanged,
+    this.showReceiptTestButton = false,
+    this.receiptTestRunning = false,
+    this.onReceiptTest,
+    this.showAbTests = false,
+    this.abTestRunning = false,
+    this.onAbMinimumTest,
+    this.onAbMaximumTest,
   });
 
   final int paperWidth;
   final bool supportsCut;
   final PrinterCharset charset;
   final TextEditingController codePageCtrl;
+  final PrinterReceiptLengthSettings receiptLengthSettings;
+  final ValueChanged<PrinterReceiptLengthSettings> onReceiptLengthChanged;
   final ValueChanged<int> onPaperWidthChanged;
   final ValueChanged<bool> onSupportsCutChanged;
   final ValueChanged<PrinterCharset> onCharsetChanged;
+  final bool showReceiptTestButton;
+  final bool receiptTestRunning;
+  final VoidCallback? onReceiptTest;
+  final bool showAbTests;
+  final bool abTestRunning;
+  final VoidCallback? onAbMinimumTest;
+  final VoidCallback? onAbMaximumTest;
 
   @override
   Widget build(BuildContext context) {
@@ -1849,6 +1970,19 @@ class _Step4Features extends StatelessWidget {
               style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
             ),
           ),
+        ),
+        const SizedBox(height: 20),
+        PrinterReceiptLengthSettingsSection(
+          paperWidthMm: paperWidth,
+          settings: receiptLengthSettings,
+          onChanged: onReceiptLengthChanged,
+          showTestButton: showReceiptTestButton,
+          testing: receiptTestRunning,
+          onTestReceipt: onReceiptTest,
+          showAbTests: showAbTests,
+          abTesting: abTestRunning,
+          onAbMinimumTest: onAbMinimumTest,
+          onAbMaximumTest: onAbMaximumTest,
         ),
         const SizedBox(height: 20),
         const Text(

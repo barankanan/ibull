@@ -1,23 +1,11 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.">
   <meta name="keywords" content="ibul, online alışveriş, e-ticaret, hızlı teslimat, ihız, satıcı paneli">
   <meta name="robots" content="index, follow">
@@ -30,36 +18,27 @@
   <meta name="twitter:title" content="İbul | Online Alışveriş ve Hızlı Teslimat">
   <meta name="twitter:description" content="İbul ile teknoloji, market ve daha birçok kategoride online alışveriş yapın; hızlı teslimat avantajını yakalayın.">
 
-  <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="İbul">
   <link rel="apple-touch-icon" href="assets/icons/ibul_logo_2.png">
-
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="assets/icons/ibul_logo_2.png"/>
-  
-  <!-- Image Cropper Dependencies — loaded deferred, only used in seller/admin flows -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.css" integrity="sha512-bs9fAcj1st972S+0d0UL3g6a+gXzIV5Tmd3f+mXv39hOtyS+1kU/tG1+mJt6O+GkXzR2tO7sH+M+N/sT+m/k7A==" crossorigin="anonymous" referrerpolicy="no-referrer" media="print" onload="this.media='all'" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js" integrity="sha512-9KkIqDfN7q8Yk9X3v9J+F+XzP+k7O/sT+m/k7A==" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
 
   <title>İbul | Online Alışveriş ve Hızlı Teslimat</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- QR / app preloader — shown immediately while the Flutter engine loads.
-       Dismissed automatically when the Flutter canvas (flt-glass-pane) appears.
-       Keeps the user informed and prevents the blank-white-screen experience. -->
+  <link rel="preload" href="canvaskit/canvaskit.js" as="script">
+  <link rel="preload" href="canvaskit/canvaskit.wasm" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="main.dart.js" as="script">
+
   <style>
+    html, body { margin: 0; padding: 0; background: #ffffff; }
+    @keyframes ibul-spin { to { transform: rotate(360deg); } }
     #ibul-loader {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      position: fixed; inset: 0; z-index: 99999;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
       background: #ffffff;
-      z-index: 9999;
-      transition: opacity 0.3s ease;
+      transition: opacity 0.35s ease;
     }
     #ibul-loader.fade-out { opacity: 0; pointer-events: none; }
     #ibul-loader-logo {
@@ -78,46 +57,250 @@
       animation: ibul-spin 0.8s linear infinite;
       margin-bottom: 16px;
     }
-    @keyframes ibul-spin { to { transform: rotate(360deg); } }
     #ibul-loader-text {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 14px; color: #888; letter-spacing: 0.2px;
+      font-size: 14px; color: #666; letter-spacing: 0.2px;
+      max-width: 420px; text-align: center; line-height: 1.5; padding: 0 16px;
+    }
+    #ibul-boot-error {
+      display: none;
+      position: fixed; inset: 0; z-index: 100000;
+      background: #fff; align-items: center; justify-content: center;
+      padding: 24px; text-align: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    #ibul-boot-error.visible { display: flex; flex-direction: column; }
+    #ibul-boot-error h1 { font-size: 22px; margin: 0 0 12px; color: #111; }
+    #ibul-boot-error p { font-size: 15px; color: #666; max-width: 480px; line-height: 1.5; margin: 0 0 20px; }
+    #ibul-boot-error button {
+      background: #7B2FBE; color: #fff; border: none; border-radius: 10px;
+      padding: 12px 24px; font-size: 14px; font-weight: 600; cursor: pointer;
     }
   </style>
-  <div id="ibul-loader">
+</head>
+<body>
+  <div id="ibul-loader" aria-live="polite" aria-busy="true">
     <div id="ibul-loader-logo">
-      <!-- Store icon fallback while brand assets load -->
-      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <path d="M20 4H4v2l8 5 8-5V4zm0 4.236-8 5-8-5V20h16V8.236z"/>
       </svg>
     </div>
     <div id="ibul-loader-spinner"></div>
     <div id="ibul-loader-text">Yükleniyor…</div>
   </div>
+  <div id="ibul-boot-error" role="alert" aria-live="assertive">
+    <h1>Uygulama başlatılamadı</h1>
+    <p id="ibul-boot-error-msg">Bir yükleme hatası oluştu. Sayfayı yenileyin veya destek ile iletişime geçin.</p>
+    <button type="button" onclick="window.location.reload()">Sayfayı Yenile</button>
+  </div>
+
   <script>
     (function () {
-      // Dismiss the preloader once Flutter inserts its canvas into the DOM.
-      var observer = new MutationObserver(function () {
-        if (document.querySelector('flt-glass-pane')) {
-          observer.disconnect();
-          var el = document.getElementById('ibul-loader');
-          if (el) {
-            el.classList.add('fade-out');
-            setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 350);
+      var bootStartedAt = Date.now();
+      try {
+        localStorage.setItem('ibul_web_perf_trace_v1', JSON.stringify({
+          stage: 'app_script_started',
+          elapsedMs: 0,
+          total_boot_elapsed_ms: 0,
+          timestamp: new Date().toISOString()
+        }));
+      } catch (_) {}
+      var loaderText = document.getElementById('ibul-loader-text');
+
+      function setLoaderMessage(message) {
+        if (loaderText) loaderText.textContent = message;
+      }
+
+      window.__ibulShowBootError = function (message) {
+        var loader = document.getElementById('ibul-loader');
+        if (loader) loader.style.display = 'none';
+        var panel = document.getElementById('ibul-boot-error');
+        var msg = document.getElementById('ibul-boot-error-msg');
+        if (msg && message) msg.textContent = message;
+        if (panel) panel.classList.add('visible');
+      };
+
+      window.__ibulHomeBootStartedAt = bootStartedAt;
+      var bootAttemptId = 'boot_' + bootStartedAt;
+      window.__ibulHomeBootWatchdogId = null;
+
+      try {
+        localStorage.removeItem('ibul_web_boot_trace_v1');
+      } catch (_) {}
+
+      window.__ibulHomeBootTrace = {
+        bootAttemptId: bootAttemptId,
+        module: 'home_screen',
+        stage: 'app_script_started',
+        retryCount: 0,
+        lastError: null,
+        moduleLoaded: false,
+        factoryCompleted: false,
+        firstFrameRendered: false,
+        bootComplete: false
+      };
+
+      window.__ibulCancelHomeBootWatchdog = function () {
+        if (window.__ibulHomeBootWatchdogId != null) {
+          clearInterval(window.__ibulHomeBootWatchdogId);
+          window.__ibulHomeBootWatchdogId = null;
+        }
+      };
+
+      function isBootTerminalStage(stage, patch) {
+        if (patch && patch.bootComplete === true) return true;
+        return (
+          stage === 'completed' ||
+          stage === 'boot_complete' ||
+          stage === 'home_core_first_frame_rendered' ||
+          stage === 'homescreen_first_frame_rendered' ||
+          stage === 'timeout_triggered' ||
+          stage === 'error_caught'
+        );
+      }
+
+      window.__ibulUpdateHomeBootTrace = function (patch) {
+        if (!window.__ibulHomeBootTrace) return;
+        var next = Object.assign({}, window.__ibulHomeBootTrace, patch || {});
+        if (patch && patch.bootAttemptId) {
+          next.bootAttemptId = patch.bootAttemptId;
+        } else if (!next.bootAttemptId) {
+          next.bootAttemptId = bootAttemptId;
+        }
+        window.__ibulHomeBootTrace = next;
+        var elapsed = Math.floor((Date.now() - window.__ibulHomeBootStartedAt) / 1000);
+        var payload = Object.assign({}, next, {
+          elapsedSeconds: elapsed,
+          timestamp: new Date().toISOString(),
+          userAgent: navigator.userAgent
+        });
+        try {
+          localStorage.setItem('ibul_web_boot_trace_v1', JSON.stringify(payload));
+        } catch (_) {}
+        if (isBootTerminalStage(next.stage, patch)) {
+          window.__ibulCancelHomeBootWatchdog();
+        }
+      };
+
+      window.__ibulHomeBootWatchdogId = window.setInterval(function () {
+        if (!window.__ibulHomeBootTrace) return;
+        var stage = window.__ibulHomeBootTrace.stage;
+        if (isBootTerminalStage(stage, window.__ibulHomeBootTrace)) {
+          window.__ibulCancelHomeBootWatchdog();
+          return;
+        }
+        if (document.querySelector('flt-glass-pane') &&
+            !window.__ibulHomeBootTrace.bootComplete &&
+            !isBootTerminalStage(stage, window.__ibulHomeBootTrace)) {
+          window.__ibulUpdateHomeBootTrace({
+            stage: 'flutter_runtime_detected',
+            bootComplete: true,
+            firstFrameRendered: true
+          });
+          return;
+        }
+        window.__ibulUpdateHomeBootTrace({});
+        var elapsed = Math.floor((Date.now() - window.__ibulHomeBootStartedAt) / 1000);
+        if (elapsed >= 90) {
+          if (document.querySelector('flt-glass-pane')) {
+            window.__ibulUpdateHomeBootTrace({
+              stage: 'flutter_runtime_detected',
+              bootComplete: true,
+              firstFrameRendered: true
+            });
+            return;
           }
+          window.__ibulUpdateHomeBootTrace({
+            stage: 'timeout_triggered',
+            globalErrorReason: 'HTML watchdog: home boot exceeded 90s at stage ' + stage,
+            lastError: 'HTML watchdog: home boot exceeded 90s at stage ' + stage
+          });
+          window.__ibulShowBootError(
+            'Ana sayfa modülü yüklenemedi (' + stage + ', ' + elapsed + 's). Sayfayı yenileyin.'
+          );
+        }
+      }, 1000);
+
+      window.addEventListener('error', function (event) {
+        if (!event || !event.message) return;
+        var file = event.filename || '';
+        if (
+          file.indexOf('main.dart.js') >= 0 ||
+          file.indexOf('canvaskit') >= 0 ||
+          file.indexOf('flutter_bootstrap') >= 0 ||
+          file.indexOf('.part.js') >= 0
+        ) {
+          try {
+            localStorage.setItem('ibul_web_boot_error_v1', JSON.stringify({
+              module: file || 'window.onerror',
+              message: event.message,
+              at: new Date().toISOString()
+            }));
+          } catch (_) {}
+          window.__ibulShowBootError(
+            'Uygulama kodu yüklenemedi: ' + event.message
+          );
         }
       });
-      observer.observe(document.documentElement, { childList: true, subtree: true });
-      // Safety net: remove after 15 s in case Flutter never starts
-      setTimeout(function () {
-        observer.disconnect();
-        var el = document.getElementById('ibul-loader');
-        if (el && el.parentNode) el.parentNode.removeChild(el);
-      }, 15000);
+
+      window.addEventListener('unhandledrejection', function (event) {
+        if (!event) return;
+        var reason = event.reason;
+        var text = reason && reason.message ? reason.message : String(reason || 'unknown');
+        if (
+          /sponsoredLists|recentProducts|LazySection|section timeout|HomePerf/i.test(text)
+        ) {
+          if (event.preventDefault) event.preventDefault();
+          return;
+        }
+        try {
+          localStorage.setItem('ibul_web_boot_error_v1', JSON.stringify({
+            module: 'unhandledrejection',
+            message: text,
+            at: new Date().toISOString()
+          }));
+        } catch (_) {}
+        window.__ibulShowBootError(
+          'Uygulama başlatılamadı: ' + text
+        );
+      });
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          regs.forEach(function (reg) {
+            var url = reg.active && reg.active.scriptURL ? reg.active.scriptURL : '';
+            if (url.indexOf('flutter_service_worker') >= 0) {
+              reg.unregister();
+            }
+          });
+        });
+      }
+
+      var progressTimer = window.setInterval(function () {
+        var elapsed = Date.now() - bootStartedAt;
+        if (elapsed > 20000) {
+          setLoaderMessage('Hâlâ yükleniyor… Sayfa donmuş görünebilir, lütfen bekleyin.');
+        } else if (elapsed > 8000) {
+          setLoaderMessage('Uygulama motoru başlatılıyor…');
+        } else if (elapsed > 3000) {
+          setLoaderMessage('Uygulama dosyaları indiriliyor…');
+        }
+      }, 1000);
+
+      window.setTimeout(function () {
+        window.clearInterval(progressTimer);
+        if (document.getElementById('ibul-loader') &&
+            !document.querySelector('flt-glass-pane') &&
+            !(window.__ibulHomeBootTrace && window.__ibulHomeBootTrace.bootComplete)) {
+          window.__ibulShowBootError(
+            'Uygulama yüklenemedi. İnternet bağlantınızı kontrol edip sayfayı yenileyin. ' +
+              '(60 sn içinde başlamadı — önbelleği temizleyip tekrar deneyin.)'
+          );
+        }
+      }, 60000);
     })();
   </script>
-</head>
-<body>
-  <script src="flutter_bootstrap.js" async></script>
+
+  <script src="flutter_bootstrap.js" defer></script>
 </body>
 </html>

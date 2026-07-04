@@ -1,11 +1,11 @@
 import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_image_cdn.dart';
 import '../models/product_model.dart';
-import '../screens/product_detail_page.dart';
-import '../screens/home_screen.dart';
+import '../core/home_navigation.dart';
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
 import '../core/favorite_state.dart';
@@ -14,9 +14,9 @@ import '../core/app_motion.dart';
 import '../core/interaction_feedback.dart';
 import '../core/build_profile.dart';
 import '../core/constants.dart';
-import '../screens/login_page.dart';
-import '../screens/business_detail_page.dart';
+import '../screens/home_lazy_routes.dart';
 import 'optimized_image.dart';
+import 'product_list_thumbnail.dart';
 import 'premium_interactions.dart';
 import 'restaurant_order/product_quick_view_dialog.dart';
 import 'staggered_reveal.dart';
@@ -146,12 +146,7 @@ class _ProductCardState extends State<ProductCard> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.push(
-                context,
-                buildAppPageRoute<void>(
-                  builder: (context) => const LoginPage(),
-                ),
-              );
+              unawaited(HomeLazyRoutes.openLogin(context));
             },
             child: const Text('Giriş Yap'),
           ),
@@ -196,15 +191,13 @@ class _ProductCardState extends State<ProductCard> {
 
   void _onCardTap() {
     InteractionFeedback.lightImpact(channel: 'product_card_open');
-    // Wrap navigation in Future.delayed to avoid MouseTracker crash on Web
-    Future.delayed(Duration.zero, () {
+    Future<void>.delayed(Duration.zero, () {
       if (!mounted) return;
-      Navigator.push(
-        context,
-        buildAppPageRoute<void>(
-          builder: (context) =>
-              ProductDetailPage(product: widget.product, heroTag: _heroTag),
-          transitionStyle: AppRouteTransitionStyle.hero,
+      unawaited(
+        HomeLazyRoutes.openProductDetail(
+          context,
+          widget.product,
+          heroTag: _heroTag,
         ),
       );
     });
@@ -249,42 +242,28 @@ class _ProductCardState extends State<ProductCard> {
       widget.compact ? 320 : 520,
     );
 
-    final imageContent = Container(
-      color: Colors.grey[100],
+    final imageContent = ProductListThumbnail(
+      imageUrlOrPath: imagePath,
       width: double.infinity,
-      alignment: Alignment.center,
-      child: Hero(
-        tag: _heroTag,
-        transitionOnUserGestures: true,
-        child: imagePath != null
-            ? OptimizedImage(
-                imageUrlOrPath: imagePath,
-                width: double.infinity,
-                height: double.infinity,
-                fit: BoxFit.cover,
-                cacheWidth: cacheWidth,
-                cacheHeight: cacheHeight,
-                priority: widget.imagePriority,
-                onFirstFrameReady: () {
-                  // Fire the StaggeredReveal signal so the slide animation
-                  // starts only after this image's GPU texture is ready.
-                  final signal = StaggeredRevealSignal.maybeOf(context);
-                  if (signal != null && signal.value != true) {
-                    signal.value = true;
-                  }
-                },
-                errorWidget: Icon(
-                  Icons.image_not_supported,
-                  color: Colors.grey[400],
-                  size: fallbackIconSize,
-                ),
-              )
-            : Icon(
-                Icons.image_not_supported,
-                color: Colors.grey[400],
-                size: fallbackIconSize,
-              ),
-      ),
+      height: double.infinity,
+      borderRadius: borderRadius,
+      backgroundColor: const Color(0xFFF8FAFC),
+      fallbackIconSize: fallbackIconSize,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+      priority: widget.imagePriority,
+      onFirstFrameReady: () {
+        final signal = StaggeredRevealSignal.maybeOf(context);
+        if (signal != null && signal.value != true) {
+          signal.value = true;
+        }
+      },
+    );
+
+    final framedImage = Hero(
+      tag: _heroTag,
+      transitionOnUserGestures: true,
+      child: imageContent,
     );
 
     return ClipRRect(
@@ -294,9 +273,9 @@ class _ProductCardState extends State<ProductCard> {
             ? SizedBox(
                 height: height,
                 width: double.infinity,
-                child: imageContent,
+                child: framedImage,
               )
-            : AspectRatio(aspectRatio: aspectRatio!, child: imageContent),
+            : AspectRatio(aspectRatio: aspectRatio!, child: framedImage),
       ),
     );
   }
@@ -1116,13 +1095,7 @@ class _ProductCardState extends State<ProductCard> {
                       InteractionFeedbackType.mainCta,
                       channel: 'product_card_open_cart',
                     );
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const HomeScreen(initialIndex: 3),
-                      ),
-                      (route) => false,
-                    );
+                    HomeNavigation.openHome(context, initialIndex: 3);
                   },
                   style: premiumButtonInteractionStyle(
                     ElevatedButton.styleFrom(
@@ -1198,13 +1171,27 @@ class _ProductCardState extends State<ProductCard> {
     _appState.toggleFavorite(widget.product);
   }
 
-  void _handleAddToCartTap(BuildContext context) {
+  Future<void> _handleAddToCartTap(BuildContext context) async {
     if (!_appState.isLoggedIn) {
       _showLoginRequiredDialog(context);
       return;
     }
     InteractionFeedback.forInteraction(InteractionFeedbackType.addToCart);
-    _appState.addToCart(widget.product);
+    final error = await _appState.addToCart(widget.product);
+    if (!context.mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error), duration: const Duration(seconds: 2)),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Ürün sepete eklendi'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 1),
+      ),
+    );
   }
 
   void _showFoodOrderModePopup(BuildContext context) {
@@ -1385,30 +1372,29 @@ class _ProductCardState extends State<ProductCard> {
       'seller_id': widget.product.sellerId ?? '',
     };
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (ctx) => BusinessDetailPage(
-          business: business,
-          storeProducts: [widget.product],
-          forceTableSelection: true,
-        ),
+    unawaited(
+      HomeLazyRoutes.openBusinessDetail(
+        context,
+        business: business,
+        storeProducts: [widget.product],
+        forceTableSelection: true,
       ),
     );
   }
 
-  void _navigateToOnlineCart(BuildContext context) {
+  Future<void> _navigateToOnlineCart(BuildContext context) async {
     if (!_appState.isLoggedIn) {
       _showLoginRequiredDialog(context);
       return;
     }
-    _appState.addToCart(widget.product);
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const HomeScreen(initialIndex: 3),
-      ),
-      (route) => false,
-    );
+    final error = await _appState.addToCart(widget.product);
+    if (!context.mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error), duration: const Duration(seconds: 2)),
+      );
+      return;
+    }
+    HomeNavigation.openHome(context, initialIndex: 3);
   }
 }

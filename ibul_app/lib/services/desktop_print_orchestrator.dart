@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart'
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../models/discovered_printer.dart';
 import '../models/desktop_printer_setup_models.dart';
 import '../models/printer_profile.dart';
 import '../models/windows_printer_classification.dart';
@@ -23,6 +24,10 @@ import 'printer_repository.dart';
 import 'working_printer_store.dart';
 import 'kitchen_print_trace_log.dart';
 import 'kitchen_routing_service.dart';
+import 'restaurant_printer_dispatch_resolver.dart';
+import 'bridge_print_dispatch_verification.dart';
+import 'print_tail_padding_policy.dart';
+import 'printer_receipt_length_settings.dart';
 
 typedef LocalPrintServiceFactory = LocalPrintService Function();
 
@@ -128,11 +133,15 @@ class _PhysicalPrintVerification {
     required this.ok,
     required this.status,
     required this.message,
+    this.countsAsJobCompleted = false,
+    this.logSnapshot = const <String, dynamic>{},
   });
 
   final bool ok;
   final String status;
   final String message;
+  final bool countsAsJobCompleted;
+  final Map<String, dynamic> logSnapshot;
 }
 
 class _KitchenDbRoutingExpectation {
@@ -784,6 +793,57 @@ class DesktopPrintOrchestrator {
         'port=${resolvedPort ?? PrinterModel.ethernetDefaultPort}',
       );
     }
+    final normalizedExtra = extraBody == null
+        ? null
+        : PrinterProfile.normalizeBridgePayload(
+            Map<String, dynamic>.from(extraBody),
+          );
+    if (normalizedExtra != null) {
+      final hasLiveOverride =
+          normalizedExtra['receipt_length_live_override'] == true ||
+          normalizedExtra['receipt_length_source'] == 'live_form';
+      if (printer != null) {
+        PrinterReceiptLengthSettings? liveOverride;
+        if (hasLiveOverride) {
+          final source =
+              normalizedExtra['receipt_length_source']?.toString() ?? '';
+          if (source != 'ab_min_test' && source != 'ab_max_test') {
+            liveOverride =
+                PrinterReceiptLengthSettings.fromMap(normalizedExtra);
+          }
+        }
+        _stampReceiptTailPaddingPolicy(
+          normalizedExtra,
+          printer: printer,
+          liveOverride: liveOverride,
+        );
+      } else {
+        final paperWidth = int.tryParse(
+              normalizedExtra['paper_width_mm']?.toString() ??
+                  normalizedExtra['paperWidthMm']?.toString() ??
+                  '',
+            ) ??
+            80;
+        final policy = PrinterReceiptLengthSettings.resolveForDispatch(
+          paperWidthMm: paperWidth,
+          printerRaw: const <String, dynamic>{},
+          payload: normalizedExtra,
+        );
+        _applyTailPolicyToPayload(normalizedExtra, policy);
+      }
+    }
+    final bridgePrinter = printer == null ? null : _bridgePrinterPayload(printer);
+    if (bridgePrinter != null) {
+      PrinterProfile.stampConsistentProfileOnMap(
+        bridgePrinter,
+        displayName: printer!.displayName,
+      );
+    }
+    _debugProfileMetadataBeforeDispatch(
+      printer: printer,
+      bridgePrinter: bridgePrinter,
+      extraBody: normalizedExtra,
+    );
     return service.printTest(
       targetHost: targetHost,
       targetPort: targetPort,
@@ -791,118 +851,66 @@ class DesktopPrintOrchestrator {
       codePage: codePage,
       printerId: printer?.id ?? printerId,
       printerName: printer?.queueName ?? printerName,
-      printer: printer == null ? null : _bridgePrinterPayload(printer),
-      extraBody: extraBody,
+      printer: bridgePrinter,
+      extraBody: normalizedExtra,
       renderMode: renderMode,
       testMode: testMode,
     );
+  }
+
+  void _debugProfileMetadataBeforeDispatch({
+    required UnifiedPrinterModel? printer,
+    required Map<String, dynamic>? bridgePrinter,
+    required Map<String, dynamic>? extraBody,
+  }) {
+    final embedded = bridgePrinter ?? printer?.raw;
+    final profileId = extraBody?['printer_profile_id'] ??
+        extraBody?['printer_profile'] ??
+        embedded?['printer_profile_id'] ??
+        embedded?['printer_profile'];
+    final paper = extraBody?['paper_width_mm'] ?? embedded?['paper_width_mm'];
+    final raster = extraBody?['raster_width_px'] ?? embedded?['raster_width_px'];
+    final chars = extraBody?['chars_per_line'] ?? embedded?['chars_per_line'];
+    final resolved = PrinterProfile.resolveConsistentProfile(
+      profileId: profileId?.toString(),
+      paperWidthMm: int.tryParse(paper?.toString() ?? ''),
+      displayName: printer?.displayName,
+    );
+    debugPrint('[ProfileMetadata][pre_dispatch]');
+    debugPrint('printerId=${printer?.printerRecordId ?? printer?.id ?? '-'}');
+    debugPrint('displayName=${printer?.displayName ?? '-'}');
+    debugPrint('rawProfileId=${profileId ?? '-'}');
+    debugPrint('resolvedProfileId=${resolved.id}');
+    debugPrint('paper_width_mm=${paper ?? resolved.paperWidthMm}');
+    debugPrint('raster_width_px=${raster ?? resolved.rasterWidthPx}');
+    debugPrint('chars_per_line=${chars ?? resolved.charsPerLine}');
+    debugPrint('backend=${printer?.backend.value ?? '-'}');
+    debugPrint(
+      'host=${printer == null ? '-' : _printerHost(printer)} '
+      'port=${printer == null ? '-' : _printerPort(printer)}',
+    );
+    debugPrint('source=orchestrator_dispatch');
   }
 
   _PhysicalPrintVerification _verifyBridgeTestResult({
     required UnifiedPrinterModel? printer,
     required Map<String, dynamic>? response,
   }) {
-    final bridgeOk = response?['ok'] == true;
-    final queueStatus = _readText(response?['queue_status']).toLowerCase();
-    if (!bridgeOk || queueStatus == 'failed' || queueStatus == 'error') {
-      return _PhysicalPrintVerification(
-        ok: false,
-        status: 'test_failed',
-        message: _friendlyTestFailure(response),
-      );
-    }
-    final usedFallback = response?['used_fallback'] == true;
-    final warningMessage = _readText(response?['warning']);
-    final actualBackend = _readText(
-      response?['actual_backend'] ??
-          response?['selected_backend'] ??
-          response?['transport_type'],
-    ).toLowerCase();
-    if (printer != null &&
-        actualBackend.isNotEmpty &&
-        actualBackend != printer.backend.value.toLowerCase()) {
-      if (usedFallback) {
-        return _PhysicalPrintVerification(
-          ok: true,
-          status: 'ready_warning',
-          message: warningMessage.isNotEmpty
-              ? warningMessage
-              : 'Test işi yedek backend ile gönderildi. Fiziksel baskıyı kontrol edin.',
-        );
-      }
-      if (printer.backend != DesktopPrinterBackend.usbDirect) {
-        return _PhysicalPrintVerification(
-          ok: true,
-          status: 'ready_warning',
-          message: warningMessage.isNotEmpty
-              ? warningMessage
-              : 'Test işi farklı bir backend ile gönderildi. Fiziksel baskıyı kontrol edin.',
-        );
-      }
-      return _PhysicalPrintVerification(
-        ok: false,
-        status: 'test_failed',
-        message:
-            'Seçilen yazıcı backend\'i ${printer.backend.value} ama bridge $actualBackend kullandı. Bu baskı başarısız sayıldı.',
-      );
-    }
-    final physicalConfirmation = response?['physical_confirmation'];
-    final bytesSent = int.tryParse(_readText(response?['bytes_sent'])) ?? 0;
-    if (physicalConfirmation == false && actualBackend == 'cups') {
-      return _PhysicalPrintVerification(
-        ok: true,
-        status: 'ready_unverified',
-        message:
-            'Test işi yazıcı kuyruğuna gönderildi. Fiziksel baskıyı kontrol edin.',
-      );
-    }
-    if (physicalConfirmation == false) {
-      // Do not fail test solely on missing physical confirmation.
-      // Accept if bytes were dispatched and bridge didn't error.
-      if (bytesSent > 0) {
-        return _PhysicalPrintVerification(
-          ok: true,
-          status: 'ready_unverified',
-          message:
-              _readText(response?['physical_confirmation_message']).isNotEmpty
-              ? _readText(response?['physical_confirmation_message'])
-              : 'Test gönderildi ama fiziksel doğrulama yok. Yazıcı çıktısını kontrol edin.',
-        );
-      }
-      return _PhysicalPrintVerification(
-        ok: false,
-        status: 'test_failed',
-        message:
-            _readText(response?['physical_confirmation_message']).isNotEmpty
-            ? _readText(response?['physical_confirmation_message'])
-            : 'Test gönderildi ama bytes gönderilemedi. Yazıcı bağlantısını kontrol edin.',
-      );
-    }
-    if (printer?.backend == DesktopPrinterBackend.usbDirect) {
-      final transportDetails =
-          '${_transportOutput(response)} '
-                  '${_readText(response?['transport_type'] ?? response?['transport'])}'
-              .toLowerCase();
-      if (!transportDetails.contains('usb')) {
-        return const _PhysicalPrintVerification(
-          ok: false,
-          status: 'test_failed',
-          message:
-              'CUPS tamamlandı ama USB termal yazıcı fiziksel çıktı vermedi.',
-        );
-      }
-    }
-    if (warningMessage.isNotEmpty) {
-      return _PhysicalPrintVerification(
-        ok: true,
-        status: 'ready_warning',
-        message: warningMessage,
-      );
-    }
-    return const _PhysicalPrintVerification(
-      ok: true,
-      status: 'ready',
-      message: 'Hazir',
+    final verification = BridgePrintDispatchVerification.verify(
+      response: response,
+      printer: printer,
+      isTestFlow: true,
+    );
+    return _PhysicalPrintVerification(
+      ok: verification.ok,
+      status: verification.ok
+          ? verification.status
+          : (verification.status == 'ready_unverified'
+                ? 'ready_unverified'
+                : 'test_failed'),
+      message: verification.message,
+      countsAsJobCompleted: verification.countsAsJobCompleted,
+      logSnapshot: verification.logSnapshot,
     );
   }
 
@@ -1381,6 +1389,8 @@ class DesktopPrintOrchestrator {
     PrinterSetupRole? role,
     String? printerId,
     UnifiedPrinterModel? explicitLivePrinter,
+    String? stationId,
+    String? stationName,
     String testSource = 'role_test',
     String flowName = 'role_test',
     String source = 'orchestrator',
@@ -1405,9 +1415,7 @@ class DesktopPrintOrchestrator {
       storeId: storeId,
       tableId: tableId,
       printJobId: printJobId,
-      // Role test is a "click => instant dispatch" flow.
-      // Avoid setup/status/prerequisites/queue/discover round-trips here.
-      minimal: testSource == 'role_test' && explicitLivePrinter == null,
+      minimal: false,
     );
     if (!_isPrintSystemEnabledFromSnapshot(snapshot)) {
       return _printSystemDisabledResult();
@@ -1416,71 +1424,74 @@ class DesktopPrintOrchestrator {
       return const PrinterActionResult(
         ok: false,
         status: 'bridge_not_running',
-        message: 'Bridge calismiyor',
+        message: RestaurantPrinterDispatchResolution.bridgeOfflineMessage,
       );
     }
 
-    final allowRoleFallback =
-        testSource != 'wizard_test' && explicitLivePrinter == null;
-    UnifiedPrinterModel? legacyKitchenRoute;
-    final resolvedPrinter =
-        explicitLivePrinter ??
-        await (() async {
-          if (requestedRole == PrinterSetupRole.mutfak &&
-              (printerId?.trim().isEmpty ?? true)) {
-            final dbKitchenPrinter =
-                await _resolveKitchenPrinterForStationOrRole(
-                  restaurantId: restaurantId,
-                  snapshot: snapshot,
-                  flowName: flowName,
-                  source: source,
-                );
-            legacyKitchenRoute = await _resolvePrinterForRole(
-              restaurantId: restaurantId,
-              snapshot: snapshot,
-              role: PrinterSetupRole.mutfak,
-              allowWorkingPrinterFallback: false,
-              preferRemoteFirst: false,
-            );
-            if (dbKitchenPrinter != null &&
-                legacyKitchenRoute != null &&
-                !_sameResolvedPrinterRoute(
-                  dbKitchenPrinter,
-                  legacyKitchenRoute!,
-                )) {
-              _eventLogService
-                  .append(
-                    restaurantId: restaurantId,
-                    event: 'printer_route_mismatch',
-                    message:
-                        'Mutfak test rotası ile eski runtime rotası farklı bulundu.',
-                    level: 'error',
-                    role: PrinterSetupRole.mutfak.value,
-                    printerId:
-                        dbKitchenPrinter.printerRecordId ?? dbKitchenPrinter.id,
-                    queueName: dbKitchenPrinter.queueName,
-                    backend: dbKitchenPrinter.backend.value,
-                    details: <String, dynamic>{
-                      'test_backend': dbKitchenPrinter.backend.value,
-                      'test_host': _printerHost(dbKitchenPrinter),
-                      'test_port': _printerPort(dbKitchenPrinter),
-                      'real_backend': legacyKitchenRoute!.backend.value,
-                      'real_queue': legacyKitchenRoute!.queueName,
-                      'real_printer': legacyKitchenRoute!.displayName,
-                    },
-                  )
-                  .ignore();
-            }
-            return dbKitchenPrinter;
-          }
-          return _resolvePrinterForTest(
-            restaurantId: restaurantId,
-            snapshot: snapshot,
-            role: role,
-            printerId: printerId,
-            allowRoleFallback: allowRoleFallback,
-          );
-        })();
+    final testDocumentType = requestedRole == PrinterSetupRole.mutfak
+        ? 'kitchen_ticket_test'
+        : 'test_receipt';
+    RestaurantPrinterDispatchResolution? productionResolution;
+    UnifiedPrinterModel? resolvedPrinter;
+    var resolutionSource = 'unresolved';
+    if (explicitLivePrinter != null) {
+      productionResolution = RestaurantPrinterDispatchResolver.fromPrinter(
+        printer: _normalizePrinterForPhysicalDispatch(explicitLivePrinter),
+        resolutionSource: 'explicit_live',
+        role: requestedRole,
+        stationId: stationId,
+        stationName: stationName,
+        documentType: testDocumentType,
+      );
+    } else if (requestedRole != null &&
+        (testSource == 'role_test' || testSource == 'station_test')) {
+      productionResolution = await resolveProductionPrinter(
+        restaurantId: restaurantId,
+        role: requestedRole,
+        stationId: stationId,
+        stationName: stationName,
+        explicitPrinterId: printerId,
+        tableId: tableId,
+        printJobId: printJobId,
+        flowName: flowName,
+        source: source,
+        documentType: testDocumentType,
+      );
+    } else {
+      resolvedPrinter = await _resolvePrinterForTest(
+        restaurantId: restaurantId,
+        snapshot: snapshot,
+        role: role,
+        printerId: printerId,
+        allowRoleFallback: testSource != 'wizard_test',
+      );
+      resolutionSource = resolvedPrinter == null ? 'none' : 'legacy_test';
+    }
+    if (productionResolution != null) {
+      if (!productionResolution.ok) {
+        _logRoleTestEvent(
+          restaurantId: restaurantId,
+          role: requestedRole,
+          event: 'physical_print_failure',
+          level: 'error',
+          message: productionResolution.errorMessage ??
+              'Test fişi için yazıcı çözümlenemedi.',
+          details: <String, dynamic>{
+            'resolutionSource': productionResolution.resolutionSource,
+            'stationId': stationId,
+            'stationName': stationName,
+          },
+        );
+        return PrinterActionResult(
+          ok: false,
+          status: 'printer_not_found',
+          message: productionResolution.errorMessage ??
+              RestaurantPrinterDispatchResolution.missingRolePrinterMessage,
+        );
+      }
+      resolvedPrinter = productionResolution.printer;
+      resolutionSource = productionResolution.resolutionSource;
+    }
     final resolvedRole =
         role ??
         _inferRoleForPrinter(snapshot: snapshot, printer: resolvedPrinter);
@@ -1501,7 +1512,7 @@ class DesktopPrintOrchestrator {
             'resolvedRole': resolvedRole?.value,
             'requestedPrinterId': printerId?.trim(),
             'bridgePrinterId': resolvedPrinter?.id,
-            'resolutionSource': resolvedPrinter == null ? 'none' : 'role_test',
+            'resolutionSource': resolutionSource,
             'resolvedPrinter': resolvedPrinter?.toJson(),
           },
         )
@@ -1552,8 +1563,8 @@ class DesktopPrintOrchestrator {
         ok: false,
         status: 'printer_not_found',
         message: role == PrinterSetupRole.mutfak
-            ? 'Mutfak yazicisi secin'
-            : 'Adisyon yazicisi secin',
+            ? RestaurantPrinterDispatchResolution.missingRolePrinterMessage
+            : RestaurantPrinterDispatchResolution.missingRolePrinterMessage,
       );
     }
     // Role tests must dispatch via a canonical DB record id.
@@ -1730,6 +1741,12 @@ class DesktopPrintOrchestrator {
       );
     }
 
+    resolvedPrinter = await _maybeAutoRepairPrinterMetadataForTest(
+      restaurantId: restaurantId,
+      printer: resolvedPrinter,
+      snapshot: snapshot,
+    );
+
     final isTcpOnlyTest = resolvedPrinter.backend == DesktopPrinterBackend.tcp;
     final resolvedTcpHost = isTcpOnlyTest ? _printerHost(resolvedPrinter) : '';
     final resolvedTcpPort = isTcpOnlyTest ? _printerPort(resolvedPrinter) : 0;
@@ -1775,8 +1792,7 @@ class DesktopPrintOrchestrator {
             : '-',
         'resolutionSource': explicitLivePrinter != null
             ? 'explicit_live'
-            : 'resolved',
-        'allowRoleFallback': allowRoleFallback,
+            : resolutionSource,
         'skipSetupSnapshot': isTcpOnlyTest,
         'targetHost': isTcpOnlyTest ? resolvedTcpHost : null,
         'targetPort': isTcpOnlyTest ? resolvedTcpPort : null,
@@ -1814,16 +1830,19 @@ class DesktopPrintOrchestrator {
             : null,
         encoding: encodingSelection?.encoding,
         codePage: encodingSelection?.codePage,
-        extraBody: isTcpOnlyTest
-            ? <String, dynamic>{
-                'document_type':
-                    (resolvedRole ?? requestedRole) == PrinterSetupRole.mutfak
-                    ? 'kitchen'
-                    : 'receipt',
-                'printer_role': (resolvedRole ?? requestedRole)?.value,
-                'test_source': testSource,
-              }
-            : null,
+        extraBody: <String, dynamic>{
+          if (productionResolution != null)
+            ...productionResolution.printerSnapshot,
+          'document_type': testDocumentType,
+          if (requestedRole != null) 'printer_role': requestedRole.value,
+          if (requestedRole != null) 'role': requestedRole.value,
+          if (stationId?.trim().isNotEmpty == true) 'station_id': stationId!.trim(),
+          if (stationName?.trim().isNotEmpty == true)
+            'station_name': stationName!.trim(),
+          'test_source': testSource,
+          if (productionResolution?.backend != null)
+            'backend': productionResolution!.backend!.value,
+        },
         renderMode: isTcpOnlyTest ? 'image' : 'text',
         testMode: isTcpOnlyTest ? 'ethernet_test' : 'escpos_short',
       );
@@ -1845,7 +1864,17 @@ class DesktopPrintOrchestrator {
               ? null
               : (ok ? null : message),
         ),
-        raw: response,
+        raw: <String, dynamic>{
+          ...?response,
+          if (productionResolution != null) ...<String, dynamic>{
+            'resolution_source': productionResolution.resolutionSource,
+            'resolution_warnings': productionResolution.warnings,
+            if (productionResolution.stationId != null)
+              'station_id': productionResolution.stationId,
+            if (productionResolution.stationName != null)
+              'station_name': productionResolution.stationName,
+          },
+        },
       );
       await _persistTestResult(
         restaurantId: restaurantId,
@@ -2383,6 +2412,44 @@ class DesktopPrintOrchestrator {
     }
   }
 
+  /// A/B physical receipt length proof — same Turkish kitchen content, tail only differs.
+  Future<PrinterActionResult> printReceiptLengthAbTest({
+    required String restaurantId,
+    required bool maximum,
+    String? printerId,
+    String? printerName,
+    UnifiedPrinterModel? explicitPrinter,
+    String? targetHost,
+    int? targetPort,
+    String? encoding,
+    int? codePage,
+    String flowName = 'receipt_length_ab_test',
+  }) async {
+    final extraBody = maximum
+        ? PrintTailPaddingPolicy.abMaximumBridgeFields()
+        : PrintTailPaddingPolicy.abMinimumBridgeFields();
+    debugPrint(
+      '[ReceiptLength][ab_test] variant=${maximum ? 'max' : 'min'} '
+      'bottom_feed=${extraBody['bottom_feed_lines']} '
+      'min_height=${extraBody['min_receipt_height_px']}',
+    );
+    return printBridgeTest(
+      restaurantId: restaurantId,
+      printerId: printerId,
+      printerName: printerName,
+      explicitPrinter: explicitPrinter,
+      targetHost: targetHost,
+      targetPort: targetPort,
+      encoding: encoding,
+      codePage: codePage,
+      extraBody: extraBody,
+      renderMode: 'image',
+      testMode: maximum ? 'receipt_length_ab_max' : 'receipt_length_ab_min',
+      flowName: flowName,
+      source: 'receipt_length_ab',
+    );
+  }
+
   UnifiedPrinterModel? _buildDirectTcpPrinterFromTarget({
     required String? targetHost,
     required int? targetPort,
@@ -2782,6 +2849,147 @@ class DesktopPrintOrchestrator {
     );
   }
 
+  Future<RestaurantPrinterDispatchResolution> resolveProductionPrinter({
+    required String restaurantId,
+    required PrinterSetupRole role,
+    String? stationId,
+    String? stationName,
+    String? explicitPrinterId,
+    UnifiedPrinterModel? explicitPrinter,
+    String? orderId,
+    String? printJobId,
+    String? tableId,
+    String flowName = 'production_dispatch',
+    String source = 'orchestrator',
+    bool minimalSnapshot = false,
+    String documentType = 'kitchen',
+  }) async {
+    if (explicitPrinter != null) {
+      return RestaurantPrinterDispatchResolver.fromPrinter(
+        printer: _normalizePrinterForPhysicalDispatch(explicitPrinter),
+        resolutionSource: 'explicit',
+        role: role,
+        stationId: stationId,
+        stationName: stationName,
+        documentType: documentType,
+      );
+    }
+    final snapshot = await loadSetupSnapshot(
+      restaurantId: restaurantId,
+      flowName: '${flowName}_hydrate',
+      source: source,
+      tableId: tableId,
+      printJobId: printJobId,
+      minimal: minimalSnapshot,
+    );
+    UnifiedPrinterModel? resolved;
+    var resolutionSource = 'failed';
+    final directId = explicitPrinterId?.trim() ?? '';
+    if (directId.isNotEmpty) {
+      resolved = await _resolvePrinterForTest(
+        restaurantId: restaurantId,
+        snapshot: snapshot,
+        role: role,
+        printerId: directId,
+        allowRoleFallback: false,
+        allowWorkingPrinterFallback: false,
+      );
+      resolutionSource = resolved != null ? 'explicit_id' : 'failed';
+    } else if (role == PrinterSetupRole.mutfak) {
+      resolved = await _resolveKitchenPrinterForStationOrRole(
+        restaurantId: restaurantId,
+        snapshot: snapshot,
+        stationId: stationId,
+        stationName: stationName,
+        orderId: orderId,
+        printJobId: printJobId,
+        flowName: flowName,
+        source: source,
+      );
+      final normalizedStationId = stationId?.trim() ?? '';
+      if (normalizedStationId.isNotEmpty) {
+        final hasStationMapping = await _stationHasPrimaryPrinterMapping(
+          restaurantId: restaurantId,
+          stationId: normalizedStationId,
+        );
+        if (resolved == null) {
+          return RestaurantPrinterDispatchResolver.failure(
+            resolutionSource: 'failed',
+            errorMessage: hasStationMapping
+                ? RestaurantPrinterDispatchResolution.tcpUnreachableMessage
+                : RestaurantPrinterDispatchResolution.stationMissingPrinterMessage,
+            role: role,
+            stationId: stationId,
+            stationName: stationName,
+          );
+        }
+        resolutionSource = hasStationMapping
+            ? 'station_mapping'
+            : 'mutfak_role_mapping';
+        if (!hasStationMapping) {
+          return RestaurantPrinterDispatchResolver.fromPrinter(
+            printer: _normalizePrinterForPhysicalDispatch(resolved),
+            resolutionSource: resolutionSource,
+            role: role,
+            stationId: stationId,
+            stationName: stationName,
+            documentType: documentType,
+            warnings: <String>[
+              BridgePrintDispatchVerification.kitchenGeneralFallbackWarning(
+                stationName?.trim().isNotEmpty == true
+                    ? stationName!.trim()
+                    : normalizedStationId,
+              ),
+            ],
+          );
+        }
+      } else {
+        resolutionSource = resolved != null ? 'kitchen_db_mapping' : 'failed';
+      }
+    } else {
+      resolved = await _resolvePrinterForRole(
+        restaurantId: restaurantId,
+        snapshot: snapshot,
+        role: role,
+        allowWorkingPrinterFallback: false,
+      );
+      resolutionSource = resolved != null ? 'role_selection' : 'failed';
+    }
+    if (resolved == null) {
+      return RestaurantPrinterDispatchResolver.failure(
+        resolutionSource: resolutionSource,
+        errorMessage:
+            RestaurantPrinterDispatchResolution.missingRolePrinterMessage,
+        role: role,
+        stationId: stationId,
+        stationName: stationName,
+      );
+    }
+    return RestaurantPrinterDispatchResolver.fromPrinter(
+      printer: _normalizePrinterForPhysicalDispatch(resolved),
+      resolutionSource: resolutionSource,
+      role: role,
+      stationId: stationId,
+      stationName: stationName,
+      documentType: documentType,
+    );
+  }
+
+  Future<bool> _stationHasPrimaryPrinterMapping({
+    required String restaurantId,
+    required String stationId,
+  }) async {
+    final mappings = (await _printerRepository.fetchStationPrinterMappings(
+      restaurantId,
+    )).whereType<StationPrinterModel>();
+    for (final mapping in mappings) {
+      if (mapping.stationId == stationId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<PrinterActionResult> savePrinterRoles({
     required String restaurantId,
     required String receiptPrinterId,
@@ -2804,62 +3012,104 @@ class DesktopPrintOrchestrator {
       tableId: tableId,
       printJobId: printJobId,
     );
-    final receiptPrinter = await _resolveSavedPrinterSelection(
-      snapshot: snapshot,
-      requestedId: receiptPrinterId,
-      role: PrinterSetupRole.adisyon,
-    );
-    final kitchenPrinter = await _resolveSavedPrinterSelection(
-      snapshot: snapshot,
-      requestedId: kitchenPrinterId,
-      role: PrinterSetupRole.mutfak,
-    );
-
-    if (!isSelectableLivePrinter(receiptPrinter)) {
-      return PrinterActionResult(
+    final effectiveReceiptId = receiptPrinterId.trim().isNotEmpty
+        ? receiptPrinterId.trim()
+        : (snapshot.selectedReceiptPrinterRecordId ??
+              snapshot.localConfig?.receiptSelection?.printer.printerRecordId ??
+              '')
+            .trim();
+    final effectiveKitchenId = kitchenPrinterId.trim().isNotEmpty
+        ? kitchenPrinterId.trim()
+        : (snapshot.selectedKitchenPrinterRecordId ??
+              snapshot.localConfig?.kitchenSelection?.printer.printerRecordId ??
+              '')
+            .trim();
+    if (effectiveReceiptId.isEmpty && effectiveKitchenId.isEmpty) {
+      return const PrinterActionResult(
         ok: false,
-        status: 'printer_not_live',
-        message:
-            'Adisyon yazıcısı canlı taramada bulunamadı. Önce test fişi ile doğrulayın.',
-        printer: receiptPrinter,
-      );
-    }
-    if (!isSelectableLivePrinter(kitchenPrinter)) {
-      return PrinterActionResult(
-        ok: false,
-        status: 'printer_not_live',
-        message:
-            'Mutfak yazıcısı canlı taramada bulunamadı. Önce test fişi ile doğrulayın.',
-        printer: kitchenPrinter,
-      );
-    }
-    if (!receiptPrinter.canPrint) {
-      return PrinterActionResult(
-        ok: false,
-        status: 'printer_offline',
-        message: 'Adisyon yazicisi hazir degil',
-        printer: receiptPrinter,
-      );
-    }
-    if (!kitchenPrinter.canPrint) {
-      return PrinterActionResult(
-        ok: false,
-        status: 'printer_offline',
-        message: 'Mutfak yazicisi hazir degil',
-        printer: kitchenPrinter,
+        status: 'role_printer_missing',
+        message: 'Kaydetmek için en az bir rol yazıcısı seçin.',
       );
     }
 
-    if (requireSuccessfulRoleTests) {
+    UnifiedPrinterModel? receiptPrinter;
+    UnifiedPrinterModel? kitchenPrinter;
+    if (effectiveReceiptId.isNotEmpty) {
+      receiptPrinter = await _resolveSavedPrinterSelection(
+        snapshot: snapshot,
+        requestedId: effectiveReceiptId,
+        role: PrinterSetupRole.adisyon,
+      );
+      if (!isAssignableRolePrinter(receiptPrinter)) {
+        return PrinterActionResult(
+          ok: false,
+          status: 'printer_not_live',
+          message:
+              'Adisyon yazıcısı atanabilir değil. Ethernet IP veya canlı tarama doğrulaması gerekli.',
+          printer: receiptPrinter,
+        );
+      }
+      if (receiptPrinter.backend != DesktopPrinterBackend.tcp &&
+          !receiptPrinter.canPrint) {
+        return PrinterActionResult(
+          ok: false,
+          status: 'printer_offline',
+          message: 'Adisyon yazicisi hazir degil',
+          printer: receiptPrinter,
+        );
+      }
+    }
+    if (effectiveKitchenId.isNotEmpty) {
+      kitchenPrinter = await _resolveSavedPrinterSelection(
+        snapshot: snapshot,
+        requestedId: effectiveKitchenId,
+        role: PrinterSetupRole.mutfak,
+      );
+      if (!isAssignableRolePrinter(kitchenPrinter)) {
+        return PrinterActionResult(
+          ok: false,
+          status: 'printer_not_live',
+          message:
+              'Mutfak yazıcısı atanabilir değil. Ethernet IP veya canlı tarama doğrulaması gerekli.',
+          printer: kitchenPrinter,
+        );
+      }
+      if (kitchenPrinter.backend != DesktopPrinterBackend.tcp &&
+          !kitchenPrinter.canPrint) {
+        return PrinterActionResult(
+          ok: false,
+          status: 'printer_offline',
+          message: 'Mutfak yazicisi hazir degil',
+          printer: kitchenPrinter,
+        );
+      }
+    }
+
+    final canonicalReceiptPrinter =
+        receiptPrinter ?? snapshot.localConfig?.receiptSelection?.printer;
+    final canonicalKitchenPrinter =
+        kitchenPrinter ?? snapshot.localConfig?.kitchenSelection?.printer;
+    if (canonicalReceiptPrinter == null && canonicalKitchenPrinter == null) {
+      return const PrinterActionResult(
+        ok: false,
+        status: 'role_printer_missing',
+        message: 'Kaydetmek için en az bir rol yazıcısı seçin.',
+      );
+    }
+
+    if (requireSuccessfulRoleTests &&
+        canonicalReceiptPrinter != null &&
+        canonicalKitchenPrinter != null) {
       final samePrinterSelected =
-          receiptPrinter.id.trim() == kitchenPrinter.id.trim();
+          canonicalReceiptPrinter.id.trim() ==
+          canonicalKitchenPrinter.id.trim();
       final receiptTestReady = _latestTestStillMatches(
         snapshot.localConfig?.receiptTest,
-        receiptPrinter,
+        canonicalReceiptPrinter,
       );
       final kitchenTestReady = _latestTestStillMatches(
         snapshot.localConfig?.kitchenTest,
-        kitchenPrinter,
+        canonicalKitchenPrinter,
       );
       final sharedPrinterTestReady =
           samePrinterSelected && (receiptTestReady || kitchenTestReady);
@@ -2868,7 +3118,8 @@ class DesktopPrintOrchestrator {
         debugPrint(
           '[PrinterRoleSave] error '
           'seller_id=$restaurantId store_id=${storeId ?? '-'} '
-          'printer_id=${receiptPrinter.id} printer_name=${receiptPrinter.displayName} '
+          'printer_id=${canonicalReceiptPrinter.id} '
+          'printer_name=${canonicalReceiptPrinter.displayName} '
           'role=receipt+kitchen station_id=- area_id=- '
           'rpc=savePrinterRoles status=test_required '
           'receiptTestReady=$receiptTestReady kitchenTestReady=$kitchenTestReady '
@@ -2886,29 +3137,38 @@ class DesktopPrintOrchestrator {
     debugPrint(
       '[PrinterRoleSave] request '
       'seller_id=$restaurantId store_id=${storeId ?? '-'} '
-      'receipt_printer_id=${receiptPrinter.id} receipt_printer_name=${receiptPrinter.displayName} '
-      'kitchen_printer_id=${kitchenPrinter.id} kitchen_printer_name=${kitchenPrinter.displayName} '
+      'receipt_printer_id=${canonicalReceiptPrinter?.id ?? '-'} '
+      'receipt_printer_name=${canonicalReceiptPrinter?.displayName ?? '-'} '
+      'kitchen_printer_id=${canonicalKitchenPrinter?.id ?? '-'} '
+      'kitchen_printer_name=${canonicalKitchenPrinter?.displayName ?? '-'} '
       'role=receipt+kitchen rpc=savePrinterRoles',
     );
-    await _debugPrinterMappingSaveStart(
-      restaurantId: restaurantId,
-      receiptPrinter: receiptPrinter,
-      kitchenPrinter: kitchenPrinter,
-    );
+    if (canonicalReceiptPrinter != null && canonicalKitchenPrinter != null) {
+      await _debugPrinterMappingSaveStart(
+        restaurantId: restaurantId,
+        receiptPrinter: canonicalReceiptPrinter,
+        kitchenPrinter: canonicalKitchenPrinter,
+      );
+    }
 
-    final canonicalSelections = <PrinterSetupRole, UnifiedPrinterModel>{
-      PrinterSetupRole.adisyon: receiptPrinter,
-      PrinterSetupRole.mutfak: kitchenPrinter,
-    };
+    final canonicalSelections = <PrinterSetupRole, UnifiedPrinterModel>{};
+    if (canonicalReceiptPrinter != null) {
+      canonicalSelections[PrinterSetupRole.adisyon] = canonicalReceiptPrinter;
+    }
+    if (canonicalKitchenPrinter != null) {
+      canonicalSelections[PrinterSetupRole.mutfak] = canonicalKitchenPrinter;
+    }
     var printerRecordSyncSaved = false;
     var stationConfigSaved = false;
     String? cloudWarning;
     try {
-      final syncedSelections = await _syncPrinterRecords(
-        restaurantId: restaurantId,
-        selections: canonicalSelections,
-      );
-      canonicalSelections.addAll(syncedSelections);
+      if (canonicalSelections.isNotEmpty) {
+        final syncedSelections = await _syncPrinterRecords(
+          restaurantId: restaurantId,
+          selections: canonicalSelections,
+        );
+        canonicalSelections.addAll(syncedSelections);
+      }
       printerRecordSyncSaved = true;
     } catch (error, stackTrace) {
       debugPrint(
@@ -2919,25 +3179,33 @@ class DesktopPrintOrchestrator {
       cloudWarning = 'Yerel kayıt yapıldı, bulut senkronu bekliyor.';
     }
 
-    final canonicalReceiptPrinter =
-        canonicalSelections[PrinterSetupRole.adisyon] ?? receiptPrinter;
-    final canonicalKitchenPrinter =
-        canonicalSelections[PrinterSetupRole.mutfak] ?? kitchenPrinter;
+    final syncedReceiptPrinter =
+        canonicalSelections[PrinterSetupRole.adisyon] ?? canonicalReceiptPrinter;
+    final syncedKitchenPrinter =
+        canonicalSelections[PrinterSetupRole.mutfak] ?? canonicalKitchenPrinter;
     final localConfig = PrinterSetupLocalConfig(
       restaurantId: restaurantId,
       os: detectOs(),
-      receiptSelection: PrinterRoleSelection(
-        role: PrinterSetupRole.adisyon,
-        printer: canonicalReceiptPrinter,
-      ),
-      kitchenSelection: PrinterRoleSelection(
-        role: PrinterSetupRole.mutfak,
-        printer: canonicalKitchenPrinter,
-      ),
+      receiptSelection: syncedReceiptPrinter == null
+          ? snapshot.localConfig?.receiptSelection
+          : PrinterRoleSelection(
+              role: PrinterSetupRole.adisyon,
+              printer: syncedReceiptPrinter,
+            ),
+      kitchenSelection: syncedKitchenPrinter == null
+          ? snapshot.localConfig?.kitchenSelection
+          : PrinterRoleSelection(
+              role: PrinterSetupRole.mutfak,
+              printer: syncedKitchenPrinter,
+            ),
       // Clear stale test status when role mapping changes. A previous failed
       // test must not block a newly saved canonical mapping.
-      receiptTest: null,
-      kitchenTest: null,
+      receiptTest: syncedReceiptPrinter == null
+          ? snapshot.localConfig?.receiptTest
+          : null,
+      kitchenTest: syncedKitchenPrinter == null
+          ? snapshot.localConfig?.kitchenTest
+          : null,
       savedAt: DateTime.now(),
       thisDeviceIsPrintStation: markThisDeviceAsPrintStation,
     );
@@ -2952,31 +3220,41 @@ class DesktopPrintOrchestrator {
     if (markThisDeviceAsPrintStation) {
       await _printStationService.setThisDevicePrintStation(true);
     }
-    await saveWorkingPrinter(restaurantId, canonicalReceiptPrinter);
+    if (syncedReceiptPrinter != null) {
+      await saveWorkingPrinter(restaurantId, syncedReceiptPrinter);
+    }
 
     try {
       final normalizedPlatform = _printStationService.normalizeStationPlatform(
         stationPlatform ?? _printStationService.currentPlatformLabel(),
       );
       final roleMappings = _roleMappingsPayload(localConfig);
+      final bridgePresetPrinter =
+          syncedReceiptPrinter ?? syncedKitchenPrinter;
+      if (bridgePresetPrinter == null) {
+        throw StateError('role_printer_missing');
+      }
       final bridgePreset = _buildBridgePreset(
         platformName: normalizedPlatform,
-        printer: canonicalReceiptPrinter,
+        printer: bridgePresetPrinter,
       );
-      if (markThisDeviceAsPrintStation && session != null) {
+      if (markThisDeviceAsPrintStation &&
+          session != null &&
+          syncedReceiptPrinter != null &&
+          syncedKitchenPrinter != null) {
         final queueResponse = await _printStationService
             .configureLocalBridgeAsPrintStation(
               restaurantId: restaurantId,
               session: session,
               deviceName: _printStationService.currentDeviceName(),
               platformName: normalizedPlatform,
-              receiptPrinterId: canonicalReceiptPrinter.id,
+              receiptPrinterId: syncedReceiptPrinter.id,
               receiptPrinterName: _printStationPrinterLabel(
-                canonicalReceiptPrinter,
+                syncedReceiptPrinter,
               ),
-              kitchenPrinterId: canonicalKitchenPrinter.id,
+              kitchenPrinterId: syncedKitchenPrinter.id,
               kitchenPrinterName: _printStationPrinterLabel(
-                canonicalKitchenPrinter,
+                syncedKitchenPrinter,
               ),
               bridgeTransportMode: bridgePreset['bridge_transport_mode'],
               bridgePrinterQueue: bridgePreset['bridge_printer_queue'],
@@ -2989,14 +3267,28 @@ class DesktopPrintOrchestrator {
           );
         }
       }
+      final existingReceiptId =
+          snapshot.remoteConfig?['adisyon_printer_id']?.toString().trim() ?? '';
+      final existingKitchenId =
+          snapshot.remoteConfig?['kitchen_printer_id']?.toString().trim() ?? '';
       await _printStationService.saveStationConfiguration(
         restaurantId: restaurantId,
         deviceName: _printStationService.currentDeviceName(),
         platformName: normalizedPlatform,
-        receiptPrinterId: _storagePrinterId(canonicalReceiptPrinter),
-        receiptPrinterName: _printStationPrinterLabel(canonicalReceiptPrinter),
-        kitchenPrinterId: _storagePrinterId(canonicalKitchenPrinter),
-        kitchenPrinterName: _printStationPrinterLabel(canonicalKitchenPrinter),
+        receiptPrinterId: syncedReceiptPrinter != null
+            ? _storagePrinterId(syncedReceiptPrinter)
+            : existingReceiptId,
+        receiptPrinterName: syncedReceiptPrinter != null
+            ? _printStationPrinterLabel(syncedReceiptPrinter)
+            : (snapshot.remoteConfig?['adisyon_printer_name']?.toString() ??
+                  ''),
+        kitchenPrinterId: syncedKitchenPrinter != null
+            ? _storagePrinterId(syncedKitchenPrinter)
+            : existingKitchenId,
+        kitchenPrinterName: syncedKitchenPrinter != null
+            ? _printStationPrinterLabel(syncedKitchenPrinter)
+            : (snapshot.remoteConfig?['kitchen_printer_name']?.toString() ??
+                  ''),
         roleMappings: roleMappings,
       );
       await _printStationService.invalidateRoleMappingCacheState(
@@ -3022,9 +3314,10 @@ class DesktopPrintOrchestrator {
 
     _log(
       'saveRoles',
-      'restaurantId=$restaurantId receipt=${canonicalReceiptPrinter.id} '
-          'receiptRecord=${canonicalReceiptPrinter.printerRecordId ?? '-'} '
-          'kitchen=${canonicalKitchenPrinter.id} kitchenRecord=${canonicalKitchenPrinter.printerRecordId ?? '-'} '
+      'restaurantId=$restaurantId receipt=${syncedReceiptPrinter?.id ?? '-'} '
+          'receiptRecord=${syncedReceiptPrinter?.printerRecordId ?? '-'} '
+          'kitchen=${syncedKitchenPrinter?.id ?? '-'} '
+          'kitchenRecord=${syncedKitchenPrinter?.printerRecordId ?? '-'} '
           'cloudSaved=$cloudSaved '
           'printStation=$markThisDeviceAsPrintStation',
     );
@@ -3035,7 +3328,7 @@ class DesktopPrintOrchestrator {
       source: source,
       role: 'all',
       documentType: 'role_mapping',
-      printer: canonicalReceiptPrinter,
+      printer: syncedKitchenPrinter ?? syncedReceiptPrinter,
       storeId: storeId,
       tableId: tableId,
       printJobId: printJobId,
@@ -3044,12 +3337,12 @@ class DesktopPrintOrchestrator {
       errorMessage: cloudSaved ? null : cloudWarning,
       level: cloudSaved ? 'info' : 'warning',
       details: <String, dynamic>{
-        'receipt_bridge_printer_id': canonicalReceiptPrinter.id,
+        'receipt_bridge_printer_id': syncedReceiptPrinter?.id ?? '-',
         'receipt_printer_record_id':
-            canonicalReceiptPrinter.printerRecordId ?? '-',
-        'kitchen_bridge_printer_id': canonicalKitchenPrinter.id,
+            syncedReceiptPrinter?.printerRecordId ?? '-',
+        'kitchen_bridge_printer_id': syncedKitchenPrinter?.id ?? '-',
         'kitchen_printer_record_id':
-            canonicalKitchenPrinter.printerRecordId ?? '-',
+            syncedKitchenPrinter?.printerRecordId ?? '-',
         'cloud_saved': cloudSaved,
         'printer_record_sync_saved': printerRecordSyncSaved,
         'station_config_saved': stationConfigSaved,
@@ -3059,8 +3352,8 @@ class DesktopPrintOrchestrator {
     debugPrint(
       '[PrinterRoleSave] ${cloudSaved ? 'success' : 'partial'} '
       'seller_id=$restaurantId store_id=${storeId ?? '-'} '
-      'receipt_printer_id=${canonicalReceiptPrinter.id} '
-      'kitchen_printer_id=${canonicalKitchenPrinter.id} '
+      'receipt_printer_id=${syncedReceiptPrinter?.id ?? '-'} '
+      'kitchen_printer_id=${syncedKitchenPrinter?.id ?? '-'} '
       'cloud_saved=$cloudSaved station_config_saved=$stationConfigSaved',
     );
     final reloadedSnapshot = await loadSetupSnapshot(
@@ -3145,7 +3438,13 @@ class DesktopPrintOrchestrator {
             printer: normalizedPrinter,
           )
         : null;
-    final dispatchPrinter = fallbackPrinter ?? normalizedPrinter;
+    var dispatchPrinter = fallbackPrinter ?? normalizedPrinter;
+    if (restaurantId != null && restaurantId.trim().isNotEmpty) {
+      dispatchPrinter = await _ensureFreshPrinterReceiptSettingsFromDb(
+        restaurantId: restaurantId,
+        printer: dispatchPrinter,
+      );
+    }
     if (!payload.isReceipt &&
         normalizedPrinter.backend == DesktopPrinterBackend.tcp &&
         dispatchPrinter.backend != DesktopPrinterBackend.tcp) {
@@ -3894,6 +4193,7 @@ class DesktopPrintOrchestrator {
         printer: dispatchPrinter,
         response: response,
         documentType: payload.documentType,
+        dispatchUsedFallback: fallbackPrinter != null,
       );
       final ok = verification.ok;
       final message = verification.message;
@@ -3936,6 +4236,12 @@ class DesktopPrintOrchestrator {
                 'documentType': payload.documentType,
                 'bridgeResult': response ?? const <String, dynamic>{},
                 'transport_output': _transportOutput(response),
+                'dispatch_verification':
+                    BridgePrintDispatchVerification.verify(
+                      response: response,
+                      printer: dispatchPrinter,
+                      dispatchUsedFallback: fallbackPrinter != null,
+                    ).logSnapshot,
                 if (!ok) 'error': message,
               },
             )
@@ -4020,6 +4326,8 @@ class DesktopPrintOrchestrator {
         message: message,
         printer: dispatchPrinter,
         raw: _mergePhysicalDispatchDiagnostics(response, resultDiagnostics),
+        countsAsJobCompleted: verification.countsAsJobCompleted,
+        dispatchVerification: verification.logSnapshot,
       );
     } catch (error) {
       if (restaurantId != null && restaurantId.trim().isNotEmpty) {
@@ -4256,13 +4564,39 @@ class DesktopPrintOrchestrator {
         resolutionSource = 'persisted_payload';
         usedPersistedPayload = true;
       } else {
-        resolvedPrinter = await _resolveKitchenLocalFallback(
+        resolvedPrinter = await _resolveKitchenPrinterForStationOrRole(
           restaurantId: restaurantId,
           snapshot: snapshot,
+          stationId: jobStationId,
+          stationName: jobStationName,
+          orderId: jobOrderId,
+          printJobId: printJobId,
+          flowName: 'queued_print_payload',
+          source: 'orchestrator',
         );
         if (resolvedPrinter != null) {
-          resolutionSource = 'local_config';
-          usedLocalConfig = true;
+          resolutionSource = jobStationId.isNotEmpty
+              ? 'station_mapping'
+              : 'mutfak_role_mapping';
+        } else {
+          resolutionSource = 'failed';
+          userMessage ??=
+              RestaurantPrinterDispatchResolution.missingRolePrinterMessage;
+          _eventLogService
+              .append(
+                restaurantId: restaurantId,
+                event: 'kitchen_local_fallback_blocked',
+                message:
+                    'Rol yazıcısı bulunamadı; varsayılan yazıcıya sessiz yönlendirme yapılmadı.',
+                level: 'error',
+                role: 'mutfak',
+                details: <String, dynamic>{
+                  'station_id': jobStationId,
+                  'station_name': jobStationName,
+                  'order_id': jobOrderId,
+                },
+              )
+              .ignore();
         }
       }
       if (resolvedPrinter != null) {
@@ -4297,7 +4631,8 @@ class DesktopPrintOrchestrator {
       }
       if (resolvedPrinter == null) {
         resolutionSource = 'failed';
-        userMessage ??= 'Mutfak fişi yazdırılamadı: yazıcı çözümlenemedi.';
+        userMessage ??=
+            RestaurantPrinterDispatchResolution.missingRolePrinterMessage;
         _eventLogService
             .append(
               restaurantId: restaurantId,
@@ -4382,13 +4717,23 @@ class DesktopPrintOrchestrator {
     }
 
     if (printerRole != PrinterSetupRole.mutfak && resolvedPrinter == null) {
-      resolvedPrinter = await _resolveWorkingPrinter(
-        restaurantId: restaurantId,
-        snapshot: snapshot,
-      );
-      if (_isBridgeReadyPrinter(resolvedPrinter)) {
-        resolutionSource = 'working_printer';
-      }
+      resolutionSource = 'failed';
+      userMessage ??=
+          RestaurantPrinterDispatchResolution.missingRolePrinterMessage;
+      _eventLogService
+          .append(
+            restaurantId: restaurantId,
+            event: 'working_printer_fallback_blocked',
+            message:
+                'Rol yazıcısı bulunamadı; varsayılan yazıcıya sessiz yönlendirme yapılmadı.',
+            level: 'error',
+            role: printerRole?.value,
+            details: <String, dynamic>{
+              'order_id': jobOrderId,
+              'print_job_id': printJobId,
+            },
+          )
+          .ignore();
     }
 
     if (resolvedPrinter != null && printerRole != PrinterSetupRole.mutfak) {
@@ -4512,6 +4857,12 @@ class DesktopPrintOrchestrator {
       enrichedPayload['fallback_reason'] = 'station_mapping_not_found';
     }
     if (resolvedPrinter != null) {
+      resolvedPrinter = await _ensureFreshPrinterReceiptSettingsFromDb(
+        restaurantId: restaurantId,
+        printer: resolvedPrinter,
+      );
+      enrichedPayload['selected_printer'] =
+          Map<String, dynamic>.from(_bridgePrinterPayload(resolvedPrinter));
       _applyPhysicalDispatchDefaults(
         enrichedPayload,
         printer: resolvedPrinter,
@@ -4580,11 +4931,10 @@ class DesktopPrintOrchestrator {
     debugPrint(
       'selectedPrinterName=${enrichedPayload['selected_printer_name'] ?? '-'}',
     );
-    debugPrint('backend=${enrichedPayload['selected_printer_backend'] ?? '-'}');
-    debugPrint('host=${enrichedPayload['selected_printer_host'] ?? '-'}');
-    debugPrint(
-      'port=${enrichedPayload['selected_printer_port']?.toString() ?? '-'}',
-    );
+    debugPrint('orderId=${jobOrderId.isEmpty ? '-' : jobOrderId}');
+    debugPrint('deviceId=${resolvedPrinter?.raw['device_id'] ?? resolvedPrinter?.raw['deviceIdentifier'] ?? '-'}');
+    debugPrint('queueName=${resolvedPrinter?.queueName ?? '-'}');
+    debugPrint('printerProfileId=${enrichedPayload['selected_printer_profile_id'] ?? '-'}');
     _eventLogService
         .append(
           restaurantId: restaurantId,
@@ -5460,6 +5810,13 @@ class DesktopPrintOrchestrator {
         os: os,
       );
       if (resolvedLive != null) {
+        final withReceipt = _withSavedReceiptLength(resolvedLive, savedPrinter);
+        for (var i = 0; i < merged.length; i++) {
+          if (_printersMatch(merged[i], withReceipt)) {
+            merged[i] = withReceipt;
+            break;
+          }
+        }
         continue;
       }
       final fallback = _legacyPrinterToFallbackUnified(savedPrinter, os: os);
@@ -5516,6 +5873,20 @@ class DesktopPrintOrchestrator {
         : looksUsb
         ? DesktopPrinterBackend.usbDirect
         : DesktopPrinterBackend.cups;
+    final raw = <String, dynamic>{
+        'id': printer.id,
+        'name': resolvedName,
+        'queue': queueName,
+        'backend': backend.value,
+        'printerRecordId': printer.id,
+        'printer_record_id': printer.id,
+        'source': 'saved_record',
+        'isSavedOnly': true,
+        'deviceIdentifier': deviceIdentifier,
+        'device_identifier': deviceIdentifier,
+        'paper_width_mm': printer.paperWidthMm,
+      };
+    _mergeReceiptLengthIntoPrinterRaw(raw, printer);
     return UnifiedPrinterModel(
       id: printer.id,
       displayName: resolvedName,
@@ -5529,18 +5900,7 @@ class DesktopPrintOrchestrator {
       printerRecordId: printer.id,
       statusLevel: printer.isActive ? 'saved' : 'inactive',
       statusMessage: printer.isActive ? 'Kayitli' : 'Pasif',
-      raw: <String, dynamic>{
-        'id': printer.id,
-        'name': resolvedName,
-        'queue': queueName,
-        'backend': backend.value,
-        'printerRecordId': printer.id,
-        'printer_record_id': printer.id,
-        'source': 'saved_record',
-        'isSavedOnly': true,
-        'deviceIdentifier': deviceIdentifier,
-        'device_identifier': deviceIdentifier,
-      },
+      raw: raw,
     );
   }
 
@@ -5698,6 +6058,13 @@ class DesktopPrintOrchestrator {
           if (resolved != null) {
             stationResolvedPrinter = _normalizePrinterForPhysicalDispatch(
               resolved.copyWith(printerRecordId: stationMappedPrinter.id),
+            );
+          } else if (stationMappedPrinter.isEthernetConnection) {
+            stationResolvedPrinter = _normalizePrinterForPhysicalDispatch(
+              _buildEthernetUnifiedPrinter(
+                stationMappedPrinter,
+                os: snapshot.os,
+              ),
             );
           }
         }
@@ -6013,6 +6380,8 @@ class DesktopPrintOrchestrator {
     );
   }
 
+  // Debug-only legacy fallback; production dispatch must not call this.
+  // ignore: unused_element
   Future<UnifiedPrinterModel?> _resolveKitchenLocalFallback({
     required String restaurantId,
     required PrinterSetupSnapshot snapshot,
@@ -6085,6 +6454,9 @@ class DesktopPrintOrchestrator {
 
   String _printerHost(UnifiedPrinterModel? printer) {
     if (printer == null) return '';
+    if (printer.backend == DesktopPrinterBackend.tcp) {
+      return DiscoveredPrinter.endpointFromUnifiedPrinter(printer).ip;
+    }
     return (printer.raw['host'] ??
                 printer.raw['ip_address'] ??
                 printer.raw['ipAddress'])
@@ -6095,6 +6467,9 @@ class DesktopPrintOrchestrator {
 
   int _printerPort(UnifiedPrinterModel? printer) {
     if (printer == null) return 0;
+    if (printer.backend == DesktopPrinterBackend.tcp) {
+      return DiscoveredPrinter.endpointFromUnifiedPrinter(printer).port;
+    }
     final rawPort = printer.raw['port'] ?? printer.raw['tcp_port'];
     if (rawPort is int) return rawPort;
     return int.tryParse(rawPort?.toString() ?? '') ?? 0;
@@ -6316,6 +6691,14 @@ class DesktopPrintOrchestrator {
       );
       if (resolved != null) {
         return resolved;
+      }
+      if (legacyPrinter.isEthernetConnection) {
+        return _normalizePrinterForPhysicalDispatch(
+          _buildEthernetUnifiedPrinter(
+            legacyPrinter,
+            os: snapshot.os,
+          ).copyWith(printerRecordId: legacyPrinter.id),
+        );
       }
     }
 
@@ -6766,7 +7149,7 @@ class DesktopPrintOrchestrator {
       return 'Baskı sistemi şu anda kapalı. Yazıcı Ayarları > Baskı Sistemi > Aç butonunu kullanın.';
     }
     if (errorCode == 'duplicate_test_suppressed') {
-      return 'Aynı test kısa süre önce gönderildi. Lütfen birkaç saniye bekleyin.';
+      return 'Test fişi zaten gönderiliyor, lütfen bekleyin.';
     }
     if (errorCode == 'usb_interface_claim_denied') {
       final operatorMessage =
@@ -6873,19 +7256,6 @@ class DesktopPrintOrchestrator {
         'print_system_enabled': false,
       },
     );
-  }
-
-  String _friendlyPhysicalPrintFailure(
-    Map<String, dynamic>? response, {
-    required String documentType,
-  }) {
-    final error = response?['error']?.toString().trim() ?? '';
-    final message = response?['message']?.toString().trim() ?? '';
-    if (error.isNotEmpty) return error;
-    if (message.isNotEmpty) return message;
-    return documentType == 'receipt'
-        ? 'Adisyon yazdirilamadi'
-        : 'Mutfak yazdirilamadi';
   }
 
   String _friendlyPhysicalPrintException(
@@ -7066,7 +7436,10 @@ class DesktopPrintOrchestrator {
     );
     if (matched != null) {
       return _normalizePrinterForPhysicalDispatch(
-        matched.copyWith(printerRecordId: legacyPrinter.id),
+        _withSavedReceiptLength(
+          matched.copyWith(printerRecordId: legacyPrinter.id),
+          legacyPrinter,
+        ),
       );
     }
     final preferredUsb = _preferUsbDirectCandidate(
@@ -7076,7 +7449,10 @@ class DesktopPrintOrchestrator {
     );
     if (preferredUsb != null) {
       return _normalizePrinterForPhysicalDispatch(
-        preferredUsb.copyWith(printerRecordId: legacyPrinter.id),
+        _withSavedReceiptLength(
+          preferredUsb.copyWith(printerRecordId: legacyPrinter.id),
+          legacyPrinter,
+        ),
       );
     }
     return null;
@@ -7086,9 +7462,19 @@ class DesktopPrintOrchestrator {
     PrinterModel legacyPrinter, {
     required DesktopPrinterOs os,
   }) {
-    final host = legacyPrinter.ethernetHost;
-    final port = legacyPrinter.ethernetPort;
-    final id = PrinterModel.ethernetPrinterId(host: host, port: port);
+    final endpoint = DiscoveredPrinter.normalizeEthernetEndpoint(
+      ipAddress: legacyPrinter.ipAddress,
+      port: legacyPrinter.port,
+      deviceIdentifier: legacyPrinter.deviceIdentifier,
+    );
+    final host = endpoint.ip;
+    final port = endpoint.port;
+    final id = DiscoveredPrinter.buildTcpDeviceId(host, port);
+    final profile = PrinterProfile.resolveConsistentProfile(
+      profileId: legacyPrinter.printerProfileId,
+      paperWidthMm: legacyPrinter.paperWidthMm,
+      displayName: legacyPrinter.name,
+    );
     final raw = <String, dynamic>{
       'id': id,
       'name': legacyPrinter.name,
@@ -7101,14 +7487,28 @@ class DesktopPrintOrchestrator {
       'ip_address': host,
       'ipAddress': host,
       'port': port,
-      'paper_width_mm': legacyPrinter.paperWidthMm,
-      'paperWidthMm': legacyPrinter.paperWidthMm,
+      'paper_width_mm': profile.paperWidthMm,
+      'paperWidthMm': profile.paperWidthMm,
+      'printer_profile_id': profile.id,
+      'printer_profile': profile.id,
+      'raster_width_px': profile.rasterWidthPx,
+      'rasterWidthPx': profile.rasterWidthPx,
       'auto_cut': legacyPrinter.supportsCut,
       'autoCut': legacyPrinter.supportsCut,
-      'deviceIdentifier': legacyPrinter.deviceIdentifier ?? id,
-      'device_identifier': legacyPrinter.deviceIdentifier ?? id,
+      'deviceIdentifier': id,
+      'device_identifier': id,
       'source': 'ethernet_saved_record',
+      'discoveredSource': 'saved_registry',
+      'discoveredBackend': 'ethernet_tcp',
+      'deviceId': id,
+      'device_id': id,
+      'configuredIp': host,
+      'isSavedOnly': true,
+      'isStaleSavedMapping': true,
+      'discoveredStatusMessage':
+          'Kayıtlı Ethernet yazıcı — bağlantı test edilmedi',
     };
+    _mergeReceiptLengthIntoPrinterRaw(raw, legacyPrinter);
     return UnifiedPrinterModel(
       id: id,
       displayName: legacyPrinter.name,
@@ -7835,17 +8235,68 @@ class DesktopPrintOrchestrator {
       raw['printer_record_id'] =
           raw['printer_record_id'] ?? printer.printerRecordId;
     }
-    final profileId = _resolvedPrinterProfileId(
-      printer,
-      documentType: _readText(raw['document_type']),
-      role: _readText(raw['printer_role']),
+    final profile = PrinterProfile.resolveConsistentProfile(
+      profileId: raw['printer_profile_id']?.toString() ??
+          raw['printer_profile']?.toString(),
+      paperWidthMm: int.tryParse(
+            raw['paper_width_mm']?.toString() ??
+                raw['paperWidthMm']?.toString() ??
+                '',
+          ) ??
+          _resolvedPaperWidthMm(printer: printer),
+      displayName: printer.displayName,
     );
-    raw['paper_width_mm'] =
-        raw['paper_width_mm'] ?? _resolvedPaperWidthMm(printer: printer);
-    raw['auto_cut'] = raw['auto_cut'] ?? _resolvedAutoCut(printer: printer);
-    raw['printer_profile'] = raw['printer_profile'] ?? profileId;
-    raw['printer_profile_id'] = raw['printer_profile_id'] ?? profileId;
+    raw.addAll(PrinterProfile.bridgeProfileFields(profile));
+    raw['chars_per_line'] = profile.charsPerLine;
+    raw['auto_cut'] =
+        raw['auto_cut'] ?? _resolvedAutoCut(printer: printer, profile: profile);
+    raw['autoCut'] = raw['autoCut'] ?? raw['auto_cut'];
     return raw;
+  }
+
+  /// Safe auto-repair for legacy pos58+80mm rows before station/role test dispatch.
+  Future<UnifiedPrinterModel> _maybeAutoRepairPrinterMetadataForTest({
+    required String restaurantId,
+    required UnifiedPrinterModel printer,
+    required PrinterSetupSnapshot snapshot,
+  }) async {
+    final recordId = printer.printerRecordId?.trim() ?? '';
+    if (recordId.isEmpty) return printer;
+    final row = await _printerRepository.getPrinterByRecordId(recordId);
+    if (row == null) return printer;
+    if (!PrinterProfile.needsMetadataRepair(
+      profileId: row.printerProfileId,
+      paperWidthMm: row.paperWidthMm,
+      displayName: row.name,
+    )) {
+      return printer;
+    }
+    debugPrint(
+      '[ProfileMetadata][auto_repair] recordId=$recordId '
+      'profile=${row.printerProfileId} paper=${row.paperWidthMm} '
+      'name=${row.name}',
+    );
+    final repaired = await _printerRepository.repairPrinterProfileMetadata(
+      recordId,
+    );
+    final resolved = _resolveUnifiedPrinterFromLegacy(
+      repaired,
+      printers: snapshot.printers,
+      os: snapshot.os,
+    );
+    if (resolved != null) {
+      return _normalizePrinterForPhysicalDispatch(
+        resolved.copyWith(printerRecordId: repaired.id),
+      );
+    }
+    if (repaired.isEthernetConnection) {
+      return _normalizePrinterForPhysicalDispatch(
+        _buildEthernetUnifiedPrinter(repaired, os: snapshot.os).copyWith(
+          printerRecordId: repaired.id,
+        ),
+      );
+    }
+    return printer;
   }
 
   Map<String, dynamic> buildDispatchPrinterPayload(
@@ -8093,6 +8544,192 @@ class DesktopPrintOrchestrator {
     if (endpoint != null && endpoint.trim().isNotEmpty) {
       requestPayload['endpoint'] = endpoint.trim();
     }
+    final isProductionFlow = flowType == 'kitchen_ticket' ||
+        flowType == 'waiter_receipt' ||
+        endpoint == '/print/kitchen' ||
+        endpoint == '/print/receipt';
+    _stampReceiptTailPaddingPolicy(
+      requestPayload,
+      printer: printer,
+      productionFinal: isProductionFlow,
+    );
+  }
+
+  /// Forces receipt tail padding on every production/test restaurant ticket.
+  void _stampReceiptTailPaddingPolicy(
+    Map<String, dynamic> payload, {
+    required UnifiedPrinterModel printer,
+    PrinterReceiptLengthSettings? liveOverride,
+    String? uiEditedPrinterId,
+    bool productionFinal = false,
+  }) {
+    final paperWidth = _resolvedPaperWidthMm(printer: printer);
+    final policy = PrinterReceiptLengthSettings.resolveForDispatch(
+      paperWidthMm: paperWidth,
+      printerRaw: printer.raw,
+      payload: payload,
+      liveOverride: liveOverride,
+    );
+    final policySource = PrinterReceiptLengthSettings.resolvePolicySource(
+      printerRaw: printer.raw,
+      payload: payload,
+      liveOverride: liveOverride,
+    );
+    if (liveOverride != null) {
+      payload['receipt_length_source'] = 'live_form';
+    } else if (payload['receipt_length_source']?.toString() != 'ab_min_test' &&
+        payload['receipt_length_source']?.toString() != 'ab_max_test') {
+      payload['receipt_length_source'] = policySource;
+    }
+    payload['policy_source'] = policySource;
+    if (liveOverride != null) {
+      payload['receipt_length_live_override'] = true;
+    }
+    final dispatchId = printer.printerRecordId ?? printer.id;
+    final mismatch = PrinterReceiptLengthSettings.printerIdMismatchDiagnostic(
+      uiEditedPrinterId: uiEditedPrinterId,
+      dispatchPrinterRecordId: dispatchId,
+    );
+    if (mismatch != null) {
+      payload['receipt_length_printer_id_mismatch'] = true;
+      payload['receipt_length_diagnostic_message'] = mismatch;
+    }
+    _debugReceiptLengthPolicy(
+      stage: productionFinal ? 'production_final' : 'dispatch_stamp',
+      documentType: _readText(payload['document_type']),
+      printerId: dispatchId,
+      printerName: printer.displayName,
+      policy: policy,
+      payload: payload,
+      policySource: policySource,
+      uiEditedPrinterId: uiEditedPrinterId,
+    );
+    _applyTailPolicyToPayload(payload, policy);
+    final doc = _readText(payload['document_type']).toLowerCase();
+    if (doc.isEmpty || doc == 'kitchen') {
+      payload['document_type'] = 'kitchen_ticket';
+    }
+  }
+
+  void _applyTailPolicyToPayload(
+    Map<String, dynamic> payload,
+    PrintTailPaddingPolicy policy,
+  ) {
+    final fields = policy.toBridgeFields();
+    payload.addAll(fields);
+    for (final key in <String>['printer', 'selected_printer']) {
+      final nested = payload[key];
+      if (nested is Map) {
+        final printerMap = Map<String, dynamic>.from(nested);
+        printerMap.addAll(fields);
+        payload[key] = printerMap;
+      }
+    }
+  }
+
+  UnifiedPrinterModel _withSavedReceiptLength(
+    UnifiedPrinterModel printer,
+    PrinterModel saved,
+  ) {
+    final raw = Map<String, dynamic>.from(printer.raw);
+    _mergeReceiptLengthIntoPrinterRaw(raw, saved);
+    return UnifiedPrinterModel(
+      id: printer.id,
+      displayName: printer.displayName,
+      queueName: printer.queueName,
+      backend: printer.backend,
+      os: printer.os,
+      isAvailable: printer.isAvailable,
+      canPrint: printer.canPrint,
+      lastTestStatus: printer.lastTestStatus,
+      lastError: printer.lastError,
+      vendorId: printer.vendorId,
+      productId: printer.productId,
+      printerRecordId: printer.printerRecordId,
+      statusLevel: printer.statusLevel,
+      statusMessage: printer.statusMessage,
+      raw: raw,
+    );
+  }
+
+  Future<UnifiedPrinterModel> _ensureFreshPrinterReceiptSettingsFromDb({
+    required String restaurantId,
+    required UnifiedPrinterModel printer,
+  }) async {
+    final recordId = printer.printerRecordId?.trim() ?? '';
+    if (recordId.isEmpty) {
+      final rows = await _printerRepository.fetchPrinters(restaurantId);
+      final matched = _matchExistingPrinter(rows, printer);
+      if (matched == null) return printer;
+      return _withSavedReceiptLength(printer, matched);
+    }
+    final saved = await _printerRepository.fetchPrinterById(recordId);
+    if (saved == null) return printer;
+    return _withSavedReceiptLength(printer, saved);
+  }
+
+  void _debugReceiptLengthPolicy({
+    required String stage,
+    required String documentType,
+    required String printerId,
+    required String printerName,
+    required PrintTailPaddingPolicy policy,
+    required Map<String, dynamic> payload,
+    String? policySource,
+    String? uiEditedPrinterId,
+  }) {
+    debugPrint('[ReceiptLength][$stage]');
+    debugPrint('document_type=$documentType');
+    debugPrint('printer_record_id=$printerId');
+    debugPrint('printer_name=$printerName');
+    if (uiEditedPrinterId != null && uiEditedPrinterId.trim().isNotEmpty) {
+      debugPrint('ui_edited_printer_id=$uiEditedPrinterId');
+    }
+    debugPrint('receipt_length=${policy.preset.bridgeValue}');
+    debugPrint(
+      'policy_source=${policySource ?? payload['policy_source'] ?? payload['receipt_length_source'] ?? '-'}',
+    );
+    debugPrint('print_job_id=${payload['print_job_id'] ?? '-'}');
+    debugPrint('bottom_feed_lines=${policy.bottomFeedLines}');
+    debugPrint('cut_feed_lines=${policy.cutFeedLines}');
+    debugPrint('min_trailing_blank_lines=${policy.minTrailingBlankLines}');
+    debugPrint('bottom_padding_px=${policy.bottomPaddingPx}');
+    debugPrint('min_receipt_height_px=${policy.minReceiptHeightPx}');
+    final nestedPrinter = payload['printer'];
+    if (nestedPrinter is Map) {
+      debugPrint(
+        'printer.bottom_padding_px=${nestedPrinter['bottom_padding_px'] ?? '-'}',
+      );
+      debugPrint(
+        'nested_printer.receipt_length=${nestedPrinter['receipt_length'] ?? '-'}',
+      );
+      debugPrint(
+        'nested_printer.min_receipt_height_px=${nestedPrinter['min_receipt_height_px'] ?? '-'}',
+      );
+    }
+    final selected = payload['selected_printer'];
+    if (selected is Map) {
+      debugPrint(
+        'selected_printer.bottom_padding_px=${selected['bottom_padding_px'] ?? '-'}',
+      );
+      debugPrint(
+        'selected_printer.receipt_length=${selected['receipt_length'] ?? '-'}',
+      );
+    }
+    final diagnostic = payload['receipt_length_diagnostic_message']?.toString();
+    if (diagnostic != null && diagnostic.trim().isNotEmpty) {
+      debugPrint('diagnostic_message=$diagnostic');
+    }
+  }
+
+  void _mergeReceiptLengthIntoPrinterRaw(
+    Map<String, dynamic> raw,
+    PrinterModel saved,
+  ) {
+    raw.addAll(PrinterReceiptLengthSettings.fromPrinterModel(saved).toDbFields());
+    final policy = PrinterReceiptLengthSettings.fromPrinterModel(saved)
+        .resolvePolicy(paperWidthMm: saved.paperWidthMm);
+    raw.addAll(policy.toBridgeFields());
   }
 
   void _applyPrinterProfileMetadata(
@@ -8101,28 +8738,22 @@ class DesktopPrintOrchestrator {
     required String documentType,
     required String role,
   }) {
-    final profileId = _resolvedPrinterProfileId(
+    final rawProfileId = _resolvedPrinterProfileId(
       printer,
       documentType: documentType,
       role: role,
     );
-    final profile = PrinterProfile.byId(profileId);
-    final paperWidthMm =
-        (payload['paper_width_mm'] as num?)?.toInt() ??
-        _resolvedPaperWidthMm(printer: printer, profile: profile);
-    payload['paper_width_mm'] = paperWidthMm;
-    payload['paperWidthMm'] = payload['paperWidthMm'] ?? paperWidthMm;
-    payload['printer_profile'] = profileId;
-    payload['printer_profile_id'] = profileId;
-    payload['auto_cut'] =
-        payload['auto_cut'] ??
-        _resolvedAutoCut(printer: printer, profile: profile);
-    payload['autoCut'] = payload['autoCut'] ?? payload['auto_cut'];
+    final profile = PrinterProfile.resolveConsistentProfile(
+      profileId: rawProfileId,
+      paperWidthMm: _resolvedPaperWidthMm(printer: printer),
+      displayName: printer.displayName,
+    );
+    payload.addAll(PrinterProfile.bridgeProfileFields(profile));
     payload['chars_per_line'] =
-        payload['chars_per_line'] ??
-        (profile?.charsPerLine ?? (paperWidthMm <= 58 ? 32 : 48));
-    payload['raster_width_px'] =
-        payload['raster_width_px'] ?? _rasterWidthPxForPaper(paperWidthMm);
+        payload['chars_per_line'] ?? profile.charsPerLine;
+    payload['auto_cut'] =
+        payload['auto_cut'] ?? _resolvedAutoCut(printer: printer, profile: profile);
+    payload['autoCut'] = payload['autoCut'] ?? payload['auto_cut'];
   }
 
   void _applyRecommendedRenderMetadata(
@@ -8243,9 +8874,6 @@ class DesktopPrintOrchestrator {
     }
     return PrinterProfile.standard80mm.id;
   }
-
-  int _rasterWidthPxForPaper(int paperWidthMm) =>
-      paperWidthMm <= 58 ? 384 : 576;
 
   PrinterDispatchTarget _dispatchTargetFromPrinter({
     required UnifiedPrinterModel? printer,
@@ -8747,50 +9375,36 @@ class DesktopPrintOrchestrator {
     required UnifiedPrinterModel printer,
     required Map<String, dynamic>? response,
     required String documentType,
+    bool dispatchUsedFallback = false,
   }) {
-    final bridgeOk = response?['ok'] == true;
-    if (!bridgeOk) {
-      return _PhysicalPrintVerification(
-        ok: false,
-        status: 'print_failed',
-        message: _friendlyPhysicalPrintFailure(
-          response,
-          documentType: documentType,
-        ),
-      );
-    }
-    if (printer.backend == DesktopPrinterBackend.usbDirect) {
-      final transportOutput = _transportOutput(response);
-      if (!transportOutput.contains('usb')) {
+    final verification = BridgePrintDispatchVerification.verify(
+      response: response,
+      printer: printer,
+      dispatchUsedFallback: dispatchUsedFallback,
+      isTestFlow: false,
+    );
+    if (verification.ok &&
+        printer.backend == DesktopPrinterBackend.usbDirect) {
+      final transportDetails =
+          '${_transportOutput(response)} '
+                  '${_readText(response?['transport_type'] ?? response?['transport'])}'
+              .toLowerCase();
+      if (!transportDetails.contains('usb')) {
         return const _PhysicalPrintVerification(
           ok: false,
           status: 'print_failed',
           message:
               'CUPS tamamlandı ama USB termal yazıcı fiziksel çıktı vermedi.',
+          countsAsJobCompleted: false,
         );
       }
     }
-    final warningMessage = _readText(response?['warning']);
-    if (warningMessage.isNotEmpty) {
-      return _PhysicalPrintVerification(
-        ok: true,
-        status: 'ready_warning',
-        message: warningMessage,
-      );
-    }
-    if (response?['confirmation_status']?.toString() ==
-        'cups_accepted_unverified') {
-      return const _PhysicalPrintVerification(
-        ok: true,
-        status: 'ready_unverified',
-        message:
-            'Test işi yazıcı kuyruğuna gönderildi. Fiziksel baskıyı kontrol edin.',
-      );
-    }
-    return const _PhysicalPrintVerification(
-      ok: true,
-      status: 'ready',
-      message: 'Hazir',
+    return _PhysicalPrintVerification(
+      ok: verification.ok,
+      status: verification.ok ? verification.status : 'print_failed',
+      message: verification.message,
+      countsAsJobCompleted: verification.countsAsJobCompleted,
+      logSnapshot: verification.logSnapshot,
     );
   }
 

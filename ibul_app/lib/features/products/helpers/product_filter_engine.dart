@@ -4,6 +4,7 @@ import '../../../models/product_pricing.dart';
 import '../../../services/category_attribute_service.dart';
 import '../models/product_filter_models.dart';
 import 'product_filter_attribute_extractor.dart';
+import 'category_filter_config.dart';
 
 class ProductFilterEngine {
   const ProductFilterEngine._();
@@ -49,7 +50,7 @@ class ProductFilterEngine {
       groups.add(
         ProductFilterGroup(
           id: 'brand',
-          title: 'Marka',
+          title: CategoryFilterConfig.brandGroupTitle(mainCategory),
           type: ProductFilterGroupType.brand,
           options: brands
               .map((brand) => ProductFilterOption(id: brand, label: brand, value: brand))
@@ -88,7 +89,7 @@ class ProductFilterEngine {
       groups.add(
         ProductFilterGroup(
           id: 'subcategory',
-          title: 'Alt Kategori',
+          title: CategoryFilterConfig.subCategoryGroupTitle(mainCategory),
           type: ProductFilterGroupType.subcategory,
           options: subcategories
               .map(
@@ -111,7 +112,7 @@ class ProductFilterEngine {
       groups.add(
         ProductFilterGroup(
           id: 'seller',
-          title: 'Satıcı / Mağaza',
+          title: CategoryFilterConfig.sellerGroupTitle(mainCategory),
           type: ProductFilterGroupType.seller,
           options: sellers.entries
               .map(

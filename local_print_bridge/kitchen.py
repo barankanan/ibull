@@ -17,9 +17,9 @@ import logging
 # Reuse the low-level ESC/POS helpers from receipt.py so encoding/cut/bold
 # settings stay in one place.
 from .receipt import (
+    append_trailing_feed_and_cut,
+    finalize_text_ticket_bytes,
     _begin_document,
-    _cut,
-    _feed,
     _set_alignment,
     _set_bold,
     _set_text_size,
@@ -130,7 +130,7 @@ class KitchenRenderer:
         for item in payload.items:
             chunks += self._render_item(item)
 
-        chunks += [_feed(3), _cut(self.settings.cut_mode)]
+        finalize_text_ticket_bytes(chunks, self.settings)
         return b"".join(chunks)
 
     # ── Item rendering ───────────────────────────────────────────────────────

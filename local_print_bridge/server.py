@@ -49,6 +49,11 @@ from .printers import (
 )
 from .queue_autoselect import pick_auto_windows_printer_queue
 from .pillow_probe import probe_pillow
+from .print_layout import (
+    resolve_tail_padding_policy,
+    resolve_min_receipt_height_px,
+    resolve_min_trailing_blank_lines,
+)
 from .print_station import (
     PrintStationConsumer,
     build_print_station_queue_status,
@@ -318,15 +323,42 @@ def _request_printer_profile(body: dict[str, object] | None) -> str:
     raw_body = body or {}
     printer = _request_printer_blob(raw_body)
     for candidate in (
-        raw_body.get("printer_profile"),
         raw_body.get("printer_profile_id"),
-        printer.get("printer_profile"),
+        raw_body.get("printer_profile"),
         printer.get("printer_profile_id"),
+        printer.get("printer_profile"),
     ):
         value = str(candidate or "").strip()
         if value:
             return value
     return ""
+
+
+def _tcp_host_port_from_printer(printer: dict[str, object] | None) -> tuple[str, int]:
+    if not printer:
+        return "", 9100
+    host = str(
+        printer.get("host")
+        or printer.get("ipAddress")
+        or printer.get("ip_address")
+        or printer.get("ip")
+        or ""
+    ).strip()
+    port_value = printer.get("port")
+    if port_value is None:
+        port_value = printer.get("tcp_port")
+    port = _parse_port(port_value) or 9100
+    if not host:
+        for key in ("device_identifier", "deviceIdentifier", "device_id", "deviceId", "id"):
+            raw = str(printer.get(key) or "").strip()
+            if raw.lower().startswith("tcp:"):
+                parts = raw.split(":", 2)
+                if len(parts) >= 2 and parts[1].strip():
+                    host = parts[1].strip()
+                if len(parts) >= 3:
+                    port = _parse_port(parts[2]) or port
+                break
+    return host, port
 
 
 _POS58_RECEIPT_PROFILE_IDS = frozenset(
@@ -340,6 +372,31 @@ _POS80_RECEIPT_PROFILE_IDS = frozenset(
 def _request_test_mode(body: dict[str, object] | None) -> str:
     raw_body = body or {}
     return str(raw_body.get("test_mode") or raw_body.get("mode") or "").strip().lower()
+
+
+def _resolve_actual_print_path(
+    *,
+    render_mode: str,
+    transport_type: str,
+    actual_backend: str,
+) -> str:
+    normalized_render = (render_mode or "").strip().lower()
+    if normalized_render in {"image", "raster", "bitmap"}:
+        return "raster"
+    normalized_transport = (transport_type or "").strip().lower()
+    normalized_backend = (actual_backend or "").strip().lower()
+    if normalized_transport in {"tcp", "ethernet", "network-tcp", "network"}:
+        return "ethernet"
+    if normalized_backend == "tcp":
+        return "ethernet"
+    if normalized_transport in {"cups", "spool"} or normalized_backend in {
+        "cups",
+        "windows-spool",
+    }:
+        return "cups"
+    if normalized_transport == "raw" or normalized_backend == "raw":
+        return "raw"
+    return "text"
 
 
 def _is_tcp_ethernet_request(body: dict[str, object] | None) -> bool:
@@ -390,6 +447,9 @@ def _validate_receipt_profile_metadata(request: dict[str, object]) -> None:
 
     if explicit_pos58 or effective_paper == 58:
         if effective_paper != 58 or effective_raster != 384:
+            # Dimension-first: stale pos58 label with 80mm payload is auto-healed.
+            if effective_paper == 80 and effective_raster == 576:
+                return
             raise PayloadError(
                 f"Seçilen profil POS-58, ancak payload paper_width_mm={effective_paper}, "
                 f"raster_width_px={effective_raster} geldi. Profil metadata tutarsız."
@@ -768,18 +828,7 @@ class _SmartTransport:
                 backend in {"tcp", "network-tcp"}
                 or transport_type == "ethernet"
             ):
-                host = str(
-                    selected_printer.get("host")
-                    or selected_printer.get("ipAddress")
-                    or selected_printer.get("ip_address")
-                    or ""
-                ).strip()
-                port_value = (
-                    selected_printer.get("port")
-                    if selected_printer.get("port") is not None
-                    else selected_printer.get("tcp_port")
-                )
-                port = _parse_port(port_value) or 9100
+                host, port = _tcp_host_port_from_printer(selected_printer)
                 if host:
                     return NetworkTcpTransport(host=host, port=port).print_bytes(
                         payload,
@@ -2264,6 +2313,42 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 else "receipt"
             )
         ).strip().lower()
+        if test_mode in {"receipt_length_ab_min", "receipt_length_ab_max"}:
+            from .print_layout import (
+                receipt_length_ab_max_fields,
+                receipt_length_ab_min_fields,
+            )
+
+            raw_body["render_mode"] = "image"
+            raw_body["turkish_guarantee_mode"] = True
+            ab_fields = (
+                receipt_length_ab_max_fields()
+                if test_mode == "receipt_length_ab_max"
+                else receipt_length_ab_min_fields()
+            )
+            raw_body.update(ab_fields)
+            raw_body["receipt_length_debug"] = True
+            raw_body["document_type"] = "kitchen_ticket"
+            self._log_print_test_request(
+                raw_body=raw_body,
+                selected_printer=selected_printer,
+            )
+            simulation_payload = build_kitchen_simulation_payload(
+                station_name=str(
+                    raw_body.get("station_name")
+                    or raw_body.get("stationName")
+                    or "Fiş Uzunluğu AB"
+                ).strip()
+                or "Fiş Uzunluğu AB"
+            )
+            self._handle_direct_kitchen_print(
+                simulation_payload,
+                raw_payload=raw_body,
+                target_host=target_host,
+                target_port=target_port,
+                selected_printer=selected_printer,
+            )
+            return
         if test_mode in {"kitchen_simulation", "kitchen_preview"} or (
             test_mode in {"ethernet", "ethernet_test", "tcp_test"}
             and requested_document_type == "kitchen"
@@ -2369,14 +2454,14 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         now = time.monotonic()
         with self._test_guard_lock:
             last = self._test_guard_last_sent_at.get(guard_key, 0.0)
-            if now - last < 5.0:
+            if now - last < 1.5:
                 self._send_json(
                     HTTPStatus.TOO_MANY_REQUESTS,
                     {
                         "ok": False,
                         "errorCode": "duplicate_test_suppressed",
                         "error": "Test çok sık gönderildi. 5 saniye bekleyip tekrar deneyin.",
-                        "cooldown_seconds": 5,
+                        "cooldown_seconds": 1.5,
                     },
                 )
                 return
@@ -3569,7 +3654,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 rasterized, effective_settings, fallback_reason = self._encode_raster_with_fallback(
                     image,
                     settings=effective_settings,
-                    document_type="kitchen",
+                    document_type="kitchen_ticket",
                 )
                 LOGGER.info(
                     "[PrintRender][image_ready] document=kitchen widthPx=%d heightPx=%d chunkCount=%d",
@@ -3597,6 +3682,8 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     "render_ms": raster_render_ms,
                     "width_px": rasterized.width_px,
                     "height_px": rasterized.height_px,
+                    "rendered_height_px": rasterized.height_px,
+                    "final_height_px": rasterized.height_px,
                     "chunk_count": rasterized.chunk_count,
                     "item_count": item_count,
                     "turkish_print_mode": _request_turkish_print_mode_label(raw_payload),
@@ -3621,7 +3708,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     target_host=target_host,
                     target_port=target_port,
                     selected_printer=selected_printer,
-                    document_type="kitchen",
+                    document_type="kitchen_ticket",
                     extra_response={
                         **extra,
                         "total_request_ms": int((_time.monotonic() - t_start) * 1000),
@@ -3644,13 +3731,22 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             )
             return
         render_ms = int((_time.monotonic() - t_render_start) * 1000)
+        text_line_count = raw_bytes.count(b"\n")
+        est_height_px = max(
+            getattr(effective_settings, "min_receipt_height_px", 0) or 0,
+            text_line_count * 32,
+        )
         LOGGER.info(
-            "kitchen-text: job=%s render_ms=%d bytes=%d items=%d area=%s",
+            "kitchen-text: job=%s render_ms=%d bytes=%d items=%d area=%s "
+            "est_height_px=%d bottom_feed=%d min_trailing=%d",
             job_name,
             render_ms,
             len(raw_bytes),
             item_count,
             payload.area_name or "-",
+            est_height_px,
+            effective_settings.bottom_feed_lines,
+            getattr(effective_settings, "min_trailing_blank_lines", 0),
         )
         self._submit_bytes(
             raw_bytes,
@@ -3661,12 +3757,14 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             target_host=target_host,
             target_port=target_port,
             selected_printer=selected_printer,
-            document_type="kitchen",
+            document_type="kitchen_ticket",
             extra_response={
                 "render_mode": "text",
                 "render_ms": render_ms,
                 "item_count": item_count,
                 "total_request_ms": int((_time.monotonic() - t_start) * 1000),
+                "rendered_height_px": est_height_px,
+                "final_height_px": est_height_px,
             },
         )
 
@@ -3688,10 +3786,23 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         request.setdefault("paper_width_mm", self.settings.receipt_paper_width_mm)
         request.setdefault("raster_width_px", self.settings.receipt_raster_width_px)
         request.setdefault("chars_per_line", self.settings.receipt_chars_per_line)
-        request.setdefault("printer_profile", self.settings.receipt_printer_profile)
+        if not request.get("printer_profile_id") and not request.get("printer_profile"):
+            request.setdefault("printer_profile", self.settings.receipt_printer_profile)
         request.setdefault("auto_cut", True)
 
         if selected_printer:
+            for key in (
+                "printer_profile_id",
+                "printer_profile",
+                "paper_width_mm",
+                "paperWidthMm",
+                "raster_width_px",
+                "rasterWidthPx",
+                "chars_per_line",
+            ):
+                value = selected_printer.get(key)
+                if value is not None and str(value).strip() != "":
+                    request[key] = value
             request.setdefault("printer_id", selected_printer.get("id"))
             request.setdefault(
                 "printer_name",
@@ -3701,6 +3812,11 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 or selected_printer.get("queueName"),
             )
             request.setdefault("backend", selected_printer.get("backend"))
+
+        if request.get("printer_profile_id") and not request.get("printer_profile"):
+            request["printer_profile"] = request["printer_profile_id"]
+        elif request.get("printer_profile") and not request.get("printer_profile_id"):
+            request["printer_profile_id"] = request["printer_profile"]
 
         if "render_mode" not in request:
             request["render_mode"] = self.settings.receipt_render_mode
@@ -4494,6 +4610,44 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 response["spool_snapshot"] = result_metadata.get("spool_snapshot")
         if extra_response:
             response.update(extra_response)
+        response["bottom_feed_lines"] = settings.bottom_feed_lines
+        response["cut_feed_lines"] = settings.cut_feed_lines
+        response["bottom_padding_px"] = settings.raster_bottom_padding_px
+        response["min_receipt_height_px"] = getattr(settings, "min_receipt_height_px", 0)
+        response["min_trailing_blank_lines"] = getattr(
+            settings,
+            "min_trailing_blank_lines",
+            settings.bottom_feed_lines,
+        )
+        response["receipt_length"] = getattr(
+            settings,
+            "receipt_length_preset",
+            "normal",
+        )
+        response["policy_source"] = getattr(settings, "policy_source", "default")
+        response["cut_enabled"] = settings.cut_mode != "none"
+        response["request_id"] = str(
+            (raw_request or {}).get("request_id")
+            or (raw_request or {}).get("print_job_id")
+            or result.job_id
+            or "-"
+        )
+        response["actual_path"] = _resolve_actual_print_path(
+            render_mode=str(
+                response.get("render_mode")
+                or (raw_request or {}).get("render_mode")
+                or ""
+            ),
+            transport_type=transport_type,
+            actual_backend=str(actual_backend or ""),
+        )
+        if (raw_request or {}).get("receipt_length_debug"):
+            response["receipt_length_debug"] = True
+        if extra_response and extra_response.get("height_px") is not None:
+            response["rendered_height_px"] = extra_response.get("height_px")
+            response["final_height_px"] = extra_response.get("height_px")
+        elif extra_response and extra_response.get("final_height_px") is not None:
+            response["final_height_px"] = extra_response.get("final_height_px")
         raster_render_ms = (extra_response or {}).get("raster_render_ms")
         if isinstance(raster_render_ms, (int, float)):
             spool_write_ms = elapsed_ms
@@ -4624,6 +4778,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             else self.settings.cut_mode
         )
         request_queue = _request_printer_queue_name(requested)
+        tail_policy = resolve_tail_padding_policy(paper_width_mm, requested)
         effective_settings = replace(
             self.settings,
             encoding=profile.encoding,
@@ -4638,6 +4793,25 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             raster_mode=requested_raster_mode,
             fallback_raster_mode=requested_fallback_raster_mode,
             raster_width_px=raster_width_px,
+            bottom_feed_lines=tail_policy.bottom_feed_lines,
+            cut_feed_lines=tail_policy.cut_feed_lines,
+            raster_bottom_padding_px=tail_policy.bottom_padding_px,
+            min_receipt_height_px=tail_policy.min_receipt_height_px,
+            min_trailing_blank_lines=tail_policy.min_trailing_blank_lines,
+            receipt_length_preset=tail_policy.receipt_length_preset,
+            policy_source=tail_policy.policy_source,
+        )
+        LOGGER.info(
+            "[PrintRender][tail_policy] job=%s bottom_feed=%d cut_feed=%d "
+            "bottom_padding_px=%d min_height_px=%d min_trailing=%d preset=%s source=%s",
+            job_name,
+            tail_policy.bottom_feed_lines,
+            tail_policy.cut_feed_lines,
+            tail_policy.bottom_padding_px,
+            tail_policy.min_receipt_height_px,
+            tail_policy.min_trailing_blank_lines,
+            tail_policy.receipt_length_preset,
+            tail_policy.policy_source,
         )
         LOGGER.info(
             "[PrintRender][request_profile] job=%s backend=%s printer_profile=%s "

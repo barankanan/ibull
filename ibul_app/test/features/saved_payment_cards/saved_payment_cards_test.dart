@@ -42,6 +42,36 @@ void main() {
       expect(card.expiryLabel, '08/28');
       expect(card.displayAlias, 'Kişisel Kartım');
     });
+
+    test('fromJson parses list payload without provider_card_token', () {
+      final card = SavedPaymentCard.fromJson({
+        'id': 'card-1',
+        'user_id': 'u1',
+        'provider': 'pending',
+        'card_alias': 'Kişisel Kartım',
+        'card_brand': 'Visa',
+        'card_last4': '4242',
+        'exp_month': 8,
+        'exp_year': 2028,
+        'is_default': true,
+        'created_at': '2026-01-01T00:00:00Z',
+      });
+
+      expect(card.providerCardToken, isNull);
+      expect(card.maskedNumber, '**** 4242');
+      expect(card.displayAlias, 'Kişisel Kartım');
+    });
+  });
+
+  group('SavedPaymentCardsService list select', () {
+    test('list select columns exclude provider_card_token', () {
+      expect(
+        kSavedPaymentCardListSelectColumns.contains('provider_card_token'),
+        isFalse,
+      );
+      expect(kSavedPaymentCardListSelectColumns, contains('card_last4'));
+      expect(kSavedPaymentCardListSelectColumns, contains('is_default'));
+    });
   });
 
   group('card brand detector', () {
@@ -62,8 +92,8 @@ void main() {
         alias: 'Kartım',
       );
 
-      final payload =
-          SavedPaymentCardsService.instance.paymentCardPayloadFromRaw(input);
+      final payload = SavedPaymentCardsService.instance
+          .paymentCardPayloadFromRaw(input);
       expect(payload['number'], '**** 1111');
       expect(payload['name'], 'Kartım');
       expect(payload.containsKey('cardNumber'), isFalse);
@@ -110,9 +140,7 @@ void main() {
   testWidgets('empty state renders', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: SavedPaymentCardsEmptyState(onAddCard: () {}),
-        ),
+        home: Scaffold(body: SavedPaymentCardsEmptyState(onAddCard: () {})),
       ),
     );
 
@@ -154,10 +182,8 @@ void main() {
         home: Builder(
           builder: (context) => Scaffold(
             body: ElevatedButton(
-              onPressed: () => showDeleteSavedCardDialog(
-                context,
-                onConfirm: () {},
-              ),
+              onPressed: () =>
+                  showDeleteSavedCardDialog(context, onConfirm: () {}),
               child: const Text('open'),
             ),
           ),
@@ -177,10 +203,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: CheckoutSaveCardCheckbox(
-            value: true,
-            onChanged: (_) {},
-          ),
+          body: CheckoutSaveCardCheckbox(value: true, onChanged: (_) {}),
         ),
       ),
     );
@@ -189,13 +212,12 @@ void main() {
       find.text('Kartımı sonraki alışverişlerim için kaydet'),
       findsOneWidget,
     );
-    expect(
-      find.textContaining('CVV kaydedilmez'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('CVV kaydedilmez'), findsOneWidget);
   });
 
-  testWidgets('account sidebar navigates Kayıtlı Kartlarım entry', (tester) async {
+  testWidgets('account sidebar navigates Kayıtlı Kartlarım entry', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1600, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);

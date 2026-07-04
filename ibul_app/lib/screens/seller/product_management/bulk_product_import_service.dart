@@ -1,10 +1,10 @@
-import 'dart:convert';
-
+import 'package:ibul_app/core/category_pricing_helper.dart';
 import 'package:ibul_app/models/product_pricing.dart';
 import 'package:ibul_app/models/seller_product.dart';
 import 'package:ibul_app/services/store_service.dart';
 
 import 'bulk_product_csv_parser.dart';
+import 'bulk_product_import_mapping.dart';
 import 'bulk_product_import_models.dart';
 import 'bulk_product_import_validator.dart';
 
@@ -50,30 +50,56 @@ class BulkProductImportService {
   Future<BulkProductImportExecutionSummary> importValidRows(
     BulkProductImportPreview preview,
   ) async {
-    final String? mainCategory = await _loadLockedMainCategory();
-    final String resolvedMainCategory = mainCategory ?? '';
-    final String resolvedSubCategory = _resolveDefaultSubCategory(
-      resolvedMainCategory,
-    );
-
+    final String? storeMainCategory = await _loadLockedMainCategory();
     final List<BulkProductImportPreviewRow> validRows = preview.rows
         .where((BulkProductImportPreviewRow row) => row.isValid)
         .toList(growable: false);
 
+    final Set<String> seenSkus = <String>{};
+    final Set<String> seenBarcodes = <String>{};
+    final List<String> duplicateWarnings = <String>[];
     int successfulRows = 0;
     final List<BulkProductImportFailure> failures =
         <BulkProductImportFailure>[];
 
     for (final BulkProductImportPreviewRow row in validRows) {
+      final BulkProductImportCandidate candidate = row.candidate!;
+      final String mainCategory =
+          (candidate.mainCategory?.trim().isNotEmpty ?? false)
+          ? candidate.mainCategory!.trim()
+          : (storeMainCategory ?? '');
+      final String subCategory = candidate.subCategory?.trim().isNotEmpty == true
+          ? candidate.subCategory!.trim()
+          : _resolveDefaultSubCategory(mainCategory);
+
+      final String? sku = candidate.sku?.trim();
+      if (sku != null && sku.isNotEmpty) {
+        final String skuKey = sku.toLowerCase();
+        if (!seenSkus.add(skuKey)) {
+          duplicateWarnings.add('Satır ${row.rowNumber}: SKU tekrarı ($sku)');
+        }
+      }
+      final String? barcode = candidate.barcode?.trim();
+      if (barcode != null && barcode.isNotEmpty) {
+        final String barcodeKey = barcode.toLowerCase();
+        if (!seenBarcodes.add(barcodeKey)) {
+          duplicateWarnings.add(
+            'Satır ${row.rowNumber}: Barkod tekrarı ($barcode)',
+          );
+        }
+      }
+
       try {
+        final SellerProduct product = _buildSellerProduct(
+          candidate,
+          row.rowNumber,
+          mainCategory: mainCategory,
+          subCategory: subCategory,
+        );
         await _storeService.addProduct(
-          _buildSellerProduct(
-            row.candidate!,
-            row.rowNumber,
-            mainCategory: resolvedMainCategory,
-            subCategory: resolvedSubCategory,
-          ),
+          product,
           const [],
+          variants: candidate.variants.isEmpty ? null : candidate.variants,
         );
         successfulRows++;
       } catch (error) {
@@ -87,10 +113,25 @@ class BulkProductImportService {
     }
 
     return BulkProductImportExecutionSummary(
-      totalRows: preview.totalRows,
+      totalRows: validRows.length,
       successfulRows: successfulRows,
-      failedRows: preview.totalRows - successfulRows,
+      failedRows: validRows.length - successfulRows,
       failures: failures,
+      duplicateWarnings: duplicateWarnings,
+    );
+  }
+
+  SellerProduct buildSellerProductForPreview(
+    BulkProductImportCandidate candidate,
+    int rowNumber, {
+    required String mainCategory,
+    required String subCategory,
+  }) {
+    return _buildSellerProduct(
+      candidate,
+      rowNumber,
+      mainCategory: mainCategory,
+      subCategory: subCategory,
     );
   }
 
@@ -100,53 +141,66 @@ class BulkProductImportService {
     required String mainCategory,
     required String subCategory,
   }) {
-    final ProductPricingType pricingType = candidate.priceType == 'kg'
-        ? ProductPricingType.weight
+    final bool food = isFoodPricingCategory(mainCategory, subCategory);
+    final ProductPricingType pricingType = food
+        ? (candidate.priceType == 'kg'
+              ? ProductPricingType.weight
+              : ProductPricingType.portion)
         : ProductPricingType.portion;
+
+    final double basePrice = candidate.price ?? 0;
     final DateTime now = DateTime.now();
-    final List<String> highlightInfos = List<String>.from(
-      candidate.highlightInfos,
-    );
+    final List<String> attributeLines = buildBulkImportAttributeLines(candidate);
+    final List<String> highlightItems = List<String>.from(candidate.highlightInfos);
+
+    final List<String> imageUrls = List<String>.from(candidate.imageUrls);
+    final String? mainImage = candidate.mainImageUrl?.trim().isNotEmpty == true
+        ? candidate.mainImageUrl
+        : (imageUrls.isNotEmpty ? imageUrls.first : null);
 
     return SellerProduct(
       id: '${now.microsecondsSinceEpoch}$rowNumber',
-      name: (candidate.productName?.trim().isNotEmpty ?? false)
+      name: candidate.productName?.trim().isNotEmpty == true
           ? candidate.productName!.trim()
           : 'Adsiz Urun',
       brand: candidate.brand?.trim() ?? '',
       mainCategory: mainCategory,
       subCategory: subCategory,
-      price: candidate.price ?? 0,
+      price: basePrice,
       pricingType: pricingType.storageValue,
-      portionPrice: pricingType == ProductPricingType.portion
-          ? (candidate.price ?? 0)
-          : null,
-      pricePerKg: pricingType == ProductPricingType.weight
-          ? (candidate.price ?? 0)
-          : null,
+      portionPrice: food
+          ? (candidate.portionPrice ?? basePrice)
+          : basePrice,
+      pricePerKg: food ? candidate.kiloPrice : null,
+      minWeightGrams: food ? candidate.minGram : null,
+      defaultWeightGrams: food ? candidate.defaultGram : null,
+      weightStepGrams: food ? candidate.gramStep : null,
+      maxWeightGrams: food ? candidate.maxGram : null,
+      discountPrice: candidate.salePrice,
       stock: candidate.stock ?? 0,
-      sku: candidate.modelCode?.trim().isNotEmpty == true
-          ? candidate.modelCode!.trim()
-          : 'CSV-${now.millisecondsSinceEpoch}-$rowNumber',
-      status: 'Aktif',
-      description: candidate.description?.trim() ?? '',
-      specifications: _buildSpecifications(candidate),
-      preparationTime: '${candidate.preparationTimeMinutes ?? 0} dakika',
+      sku: candidate.sku?.trim().isNotEmpty == true
+          ? candidate.sku!.trim()
+          : (candidate.modelCode?.trim().isNotEmpty == true
+                ? candidate.modelCode!.trim()
+                : 'CSV-${now.millisecondsSinceEpoch}-$rowNumber'),
+      status: bulkProductImportPersistedStatus(candidate.status),
+      description: normalizeBulkImportDescription(candidate.description),
+      specifications: buildBulkImportSpecificationsJson(
+        candidate,
+        food: food,
+      ),
+      preparationTime: food
+          ? '${candidate.preparationTimeMinutes ?? 0} dakika'
+          : null,
       createdAt: now,
-      attributes: List<String>.from(candidate.productAttributes),
-      imageUrls: const <String>[],
-      additionalInfoItems: highlightInfos,
-      additionalInfo: jsonEncode(highlightInfos),
+      attributes: attributeLines,
+      imageUrl: mainImage,
+      imageUrls: imageUrls,
+      videoUrl: candidate.videoUrl,
+      variants: candidate.variants.isEmpty ? null : candidate.variants,
+      additionalInfoItems: highlightItems,
+      additionalInfo: highlightItems.isEmpty ? null : highlightItems.join('\n'),
     );
-  }
-
-  String? _buildSpecifications(BulkProductImportCandidate candidate) {
-    final Map<String, dynamic> specifications = <String, dynamic>{
-      'vatRate': candidate.vatRate ?? 0,
-      'features': List<String>.from(candidate.productAttributes),
-      'additional_info': List<String>.from(candidate.highlightInfos),
-    };
-    return jsonEncode(specifications);
   }
 
   Future<String?> _loadLockedMainCategory() async {
@@ -186,16 +240,10 @@ class BulkProductImportService {
   String _resolveDefaultSubCategory(String mainCategory) {
     final List<String> subCategories =
         bulkProductImportCategoryCatalog[mainCategory] ?? const <String>[];
-    if (subCategories.contains('Diğer')) {
-      return 'Diğer';
-    }
-    if (subCategories.contains('Ana Yemek')) {
-      return 'Ana Yemek';
-    }
-    if (subCategories.isNotEmpty) {
-      return subCategories.first;
-    }
-    return '';
+    if (subCategories.contains('Diğer')) return 'Diğer';
+    if (subCategories.contains('Ana Yemek')) return 'Ana Yemek';
+    if (subCategories.isNotEmpty) return subCategories.first;
+    return 'Diğer';
   }
 
   String _friendlyError(Object error) {
@@ -204,9 +252,7 @@ class BulkProductImportService {
         .replaceFirst('Exception: ', '')
         .replaceFirst('Ürün eklenirken hata oluştu: ', '')
         .trim();
-    if (message.isEmpty) {
-      return 'Kayıt oluşturulamadı.';
-    }
+    if (message.isEmpty) return 'Kayıt oluşturulamadı.';
     return message;
   }
 }

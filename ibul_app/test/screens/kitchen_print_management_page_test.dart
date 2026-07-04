@@ -10,6 +10,7 @@ import 'package:ibul_app/services/desktop_print_orchestrator.dart';
 import 'package:ibul_app/services/order_print_job_service.dart';
 import 'package:ibul_app/services/print_job_repository.dart';
 import 'package:ibul_app/services/print_station_service.dart';
+import 'package:ibul_app/services/printer_receipt_length_settings.dart';
 import 'package:ibul_app/services/printer_repository.dart';
 import 'package:ibul_app/services/station_repository.dart';
 import 'package:ibul_app/services/store_service.dart';
@@ -545,6 +546,7 @@ class _FakeKitchenPrinterRepository extends PrinterRepository {
     int? codePage,
     List<PrinterRole> assignedRoles = const [],
     String? printerProfileId,
+    PrinterReceiptLengthSettings? receiptLengthSettings,
   }) async {
     final id = printerId?.trim().isNotEmpty == true
         ? printerId!.trim()
@@ -624,9 +626,25 @@ class _FakeStationRepository extends StationRepository {
 
 class _FakeStoreService extends StoreService {
   @override
-  Future<List<Map<String, dynamic>>> getMenuProductsBySellerId(
+  Future<Map<String, dynamic>?> getStoreProfileForSellerId(
     String sellerId,
   ) async {
+    return <String, dynamic>{'category': 'Restoran'};
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getMenuProductsBySellerId(
+    String sellerId, {
+    int limit = 300,
+  }) async {
+    return const <Map<String, dynamic>>[];
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getSellerProductsForPrinterMapping(
+    String sellerId, {
+    int limit = 500,
+  }) async {
     return const <Map<String, dynamic>>[];
   }
 

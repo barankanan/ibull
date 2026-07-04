@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
-import '../../screens/home_screen.dart';
+import '../../core/home_navigation.dart';
 import '../../screens/checkout_page.dart';
 import '../../screens/business_detail_page.dart';
 import '../../core/app_state.dart';
@@ -187,7 +187,9 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                         height: 40,
                         width: 120,
                         child: ElevatedButton(
-                          onPressed: () {
+                          onPressed: viewModel.isAddToCartInProgress
+                              ? null
+                              : () async {
                             final appState = AppState();
                             if (!appState.isLoggedIn) {
                               _showLoginRequiredDialog(context);
@@ -209,7 +211,17 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                                 ),
                               );
                             } else {
-                              viewModel.addToCart();
+                              final error = await viewModel.addToCart();
+                              if (!context.mounted) return;
+                              if (error != null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(error),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                                return;
+                              }
                               InteractionFeedback.forInteraction(
                                 InteractionFeedbackType.successState,
                                 channel: 'cart_add_success',
@@ -233,7 +245,16 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                             ),
                             elevation: 0,
                           ),
-                          child: Text(
+                          child: viewModel.isAddToCartInProgress
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
                             viewModel.isAddedToCart ? 'SEPETTE' : 'SEPETE EKLE',
                             style: const TextStyle(
                               fontSize: 11,
@@ -248,7 +269,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                         height: 40,
                         width: 105,
                         child: OutlinedButton(
-                          onPressed: () {
+                          onPressed: () async {
                             final appState = AppState();
                             if (!appState.isLoggedIn) {
                               _showLoginRequiredDialog(context);
@@ -257,7 +278,17 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                             InteractionFeedback.forInteraction(
                               InteractionFeedbackType.mainCta,
                             );
-                            viewModel.addToCart();
+                            final error = await viewModel.addToCart();
+                            if (!context.mounted) return;
+                            if (error != null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(error),
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                              return;
+                            }
                             double price = _parsePrice(viewModel.totalPrice);
                             final selectedProducts = [
                               {
@@ -372,21 +403,28 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
     );
   }
 
-  void _onOnlineOrder(BuildContext context, ProductDetailViewModel viewModel) {
+  Future<void> _onOnlineOrder(
+    BuildContext context,
+    ProductDetailViewModel viewModel,
+  ) async {
     final appState = AppState();
     if (!appState.isLoggedIn) {
       _showLoginRequiredDialog(context);
       return;
     }
     InteractionFeedback.forInteraction(InteractionFeedbackType.mainCta);
-    viewModel.addToCart();
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const HomeScreen(initialIndex: 3),
-      ),
-      (route) => false,
-    );
+    final error = await viewModel.addToCart();
+    if (!context.mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    HomeNavigation.openHome(context, initialIndex: 3);
   }
 
   // Seçili parçaları gösteren popup

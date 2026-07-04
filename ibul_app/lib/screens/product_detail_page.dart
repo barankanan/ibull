@@ -28,8 +28,8 @@ import '../widgets/product_detail/product_qa_card.dart';
 import '../widgets/product_detail/product_reviews_full_section.dart';
 import '../widgets/product_detail/product_qa_full_section.dart';
 import '../widgets/product_detail/product_complementary_set.dart';
-import '../widgets/product_detail/product_category_cards.dart'; // Import
-import 'home_screen.dart';
+import '../widgets/product_detail/product_detail_ads_section.dart';
+import '../core/home_navigation.dart';
 import 'search_results_page.dart';
 
 class ProductDetailPage extends StatelessWidget {
@@ -136,13 +136,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                     );
                   },
                   onCategorySelected: (category) {
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const HomeScreen(),
-                      ),
-                      (route) => false,
-                    );
+                    HomeNavigation.openHome(context);
                   },
                 ),
 
@@ -185,7 +179,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                                   const SizedBox(height: 24),
                                   const ProductFaqSection(),
                                   const SizedBox(height: 24),
-                                  const ProductCategoryCards(), // Add here
+                                  const ProductDetailAdsSection(),
                                   const SizedBox(height: 24),
                                   const ProductOtherSellersFull(),
                                   const SizedBox(height: 32),
@@ -434,7 +428,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                     const SizedBox(height: 16),
                     const ProductFaqSection(),
                     const SizedBox(height: 16),
-                    const ProductCategoryCards(),
+                    const ProductDetailAdsSection(),
                     const SizedBox(height: 16),
                     const ProductComplementarySet(),
                     const SizedBox(height: 16),

@@ -27,7 +27,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ibul_app/app/app_bootstrap.dart';
 import 'package:ibul_app/core/config/runtime_config.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
-import 'package:ibul_app/screens/seller/desktop_printer_setup_page.dart';
+import 'package:ibul_app/screens/seller/restaurant_printer_setup_route.dart';
 import 'package:ibul_app/screens/seller_login_page.dart';
 import 'package:ibul_app/screens/seller_panel_page.dart';
 import 'package:ibul_app/services/auth_service.dart';
@@ -155,7 +155,7 @@ class SellerDesktopApp extends StatelessWidget {
             ModalRoute.of(ctx)?.settings.arguments,
           ),
         ),
-        '/printer-setup': (ctx) => const DesktopPrinterSetupPage(),
+        '/printer-setup': (ctx) => const RestaurantPrinterSetupRoute(),
       },
       // ── Print status bar overlay (bottom-right, desktop only) ───────────
       builder: (context, child) {

@@ -1,12 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
-import '../core/app_motion.dart';
+import '../core/auth/auth_session_guard.dart';
 import '../core/constants.dart';
+import '../core/runtime_diagnostic_logger.dart';
 import 'register_page.dart';
 import '../services/auth_service.dart';
-import 'home_screen.dart';
-import 'seller_panel_page.dart';
+import '../core/home_navigation.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -59,6 +61,8 @@ class _LoginPageState extends State<LoginPage>
   Future<void> _handleLogin() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
+      final loginStartedMs = DateTime.now().millisecondsSinceEpoch;
+      RuntimeDiagnosticLogger.auth('login submitted');
 
       try {
         await _authService.signInWithEmailPassword(
@@ -66,43 +70,53 @@ class _LoginPageState extends State<LoginPage>
           _passwordController.text,
           authArea: 'user',
         );
-
-        final resolution = await _authService.resolveLoginRoute(
-          diagnosticContext: 'user_login',
+        RuntimeDiagnosticLogger.auth(
+          'supabase auth success '
+          'ms=${DateTime.now().millisecondsSinceEpoch - loginStartedMs}',
         );
+
+        // Role resolution needs the profile, but a slow profile fetch must not
+        // trap the user on the login screen. Bound it with a short timeout;
+        // a customer login area defaults to the customer role on timeout.
+        RuntimeDiagnosticLogger.auth('profile load started');
+        LoginRouteResolution resolution;
+        try {
+          resolution = await _authService
+              .resolveLoginRoute(diagnosticContext: 'user_login')
+              .timeout(const Duration(seconds: 4));
+        } on TimeoutException {
+          RuntimeDiagnosticLogger.auth(
+            'profile load timeout, defaulting to customer route',
+          );
+          resolution = const LoginRouteResolution(
+            userId: null,
+            userEmail: null,
+            profile: null,
+            rawRole: 'user',
+            resolvedRole: LoginResolvedRole.user,
+            isSellerApproved: false,
+            storeProfile: null,
+          );
+        }
 
         if (!mounted) return;
 
-        if (resolution.resolvedRole == LoginResolvedRole.seller) {
-          if (resolution.isSellerApproved) {
-            Navigator.of(
-              context,
-            ).pushNamedAndRemoveUntil('/seller', (route) => false);
-            return;
-          } else {
-            // Not approved yet
-            await _authService.signOut(); // Logout
-            throw Exception(
-              'Satıcı hesabınız henüz onaylanmadı. Lütfen yönetici onayını bekleyin.',
-            );
-          }
-        }
-
-        if (resolution.resolvedRole == LoginResolvedRole.waiter) {
-          Navigator.of(context).pushNamedAndRemoveUntil(
-            '/seller',
-            (route) => false,
-            arguments: SellerPanelEntryRole.waiter,
+        if (!AuthSessionGuard.acceptsCustomerLogin(resolution.resolvedRole)) {
+          await _authService.signOutCustomer();
+          throw Exception(
+            AuthSessionGuard.customerLoginRejectionMessage(
+              resolution.resolvedRole,
+            ),
           );
-          return;
         }
 
-        if (resolution.resolvedRole == LoginResolvedRole.unknown) {
-          await _authService.signOut();
-          throw Exception('Rol bilgisi çözümlenemedi. Lütfen tekrar deneyin.');
-        }
+        await _authService.markCustomerLoginSuccess(
+          userId: resolution.userId ?? _authService.currentUser?.id ?? '',
+          role: resolution.rawRole,
+        );
+        if (!mounted) return;
 
-        // Login successful (Regular User)
+        // Login successful (customer context)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Giriş başarılı!'),
@@ -111,18 +125,21 @@ class _LoginPageState extends State<LoginPage>
         );
 
         final appState = Provider.of<AppState>(context, listen: false);
+        // Non-critical side data (cart/favorites/profile) hydrates in the
+        // background via AppState's auth listener; we only wait a short window
+        // for the customer session flag before routing.
         for (int i = 0; i < 20; i++) {
           if (!mounted) return;
           if (appState.isLoggedIn) break;
           await Future.delayed(const Duration(milliseconds: 100));
         }
         if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          buildAppPageRoute<void>(
-            builder: (context) => const HomeScreen(initialIndex: 4),
-          ),
+        RuntimeDiagnosticLogger.auth('non-critical init deferred');
+        RuntimeDiagnosticLogger.auth(
+          'route to home '
+          'ms=${DateTime.now().millisecondsSinceEpoch - loginStartedMs}',
         );
+        HomeNavigation.openHome(context, initialIndex: 4);
       } catch (e) {
         if (!mounted) return;
         final message = _authService.describeSignInError(e);
@@ -213,11 +230,7 @@ class _LoginPageState extends State<LoginPage>
                     if (nav.canPop()) {
                       nav.pop();
                     } else {
-                      nav.pushReplacement(
-                        buildAppPageRoute<void>(
-                          builder: (_) => const HomeScreen(initialIndex: 4),
-                        ),
-                      );
+                      HomeNavigation.openHome(context, initialIndex: 4);
                     }
                   },
                   borderRadius: BorderRadius.circular(10),
@@ -543,7 +556,6 @@ class _LoginPageState extends State<LoginPage>
                                     ? null
                                     : () async {
                                         setState(() => _isLoading = true);
-                                        final navigator = Navigator.of(context);
                                         final messenger = ScaffoldMessenger.of(
                                           context,
                                         );
@@ -554,14 +566,10 @@ class _LoginPageState extends State<LoginPage>
                                                 listen: false,
                                               );
                                           await appState.loginWithGoogle();
-                                          if (!mounted) return;
-                                          navigator.pushReplacement(
-                                            buildAppPageRoute<void>(
-                                              builder: (context) =>
-                                                  const HomeScreen(
-                                                    initialIndex: 4,
-                                                  ),
-                                            ),
+                                          if (!context.mounted) return;
+                                          HomeNavigation.openHome(
+                                            context,
+                                            initialIndex: 4,
                                           );
                                         } catch (e) {
                                           if (!mounted) return;

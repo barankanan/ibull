@@ -7,13 +7,26 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config/runtime_config.dart';
 import '../utils/dynamic_value_helpers.dart';
 import '../utils/order_status_constants.dart';
+import 'cart_validation_service.dart';
 import 'supabase_service.dart';
+
+class _CheckoutValidationResult {
+  const _CheckoutValidationResult({
+    required this.selectedProducts,
+    required this.serverSubtotal,
+  });
+
+  final List<Map<String, dynamic>> selectedProducts;
+  final double serverSubtotal;
+}
 
 class OrderService {
   OrderService._();
   static final OrderService instance = OrderService._();
 
   final SupabaseClient _supabase = Supabase.instance.client;
+  final Map<String, Future<Map<String, dynamic>>> _inflightCheckouts =
+      <String, Future<Map<String, dynamic>>>{};
   static const double _deliveryBaseFee = 28;
   static const double _deliveryPerKmFee = 7;
   static const double _deliveryNightBonus = 12;
@@ -72,6 +85,50 @@ class OrderService {
     required Map<String, dynamic> paymentCard,
     required String deliveryType,
     String? deliverySlot,
+    String? idempotencyKey,
+  }) async {
+    final normalizedKey = idempotencyKey?.trim() ?? '';
+    if (normalizedKey.isNotEmpty) {
+      final inflight = _inflightCheckouts[normalizedKey];
+      if (inflight != null) {
+        return inflight;
+      }
+      final future = _createOrderFromCheckoutImpl(
+        userId: userId,
+        selectedProducts: selectedProducts,
+        totalAmount: totalAmount,
+        deliveryAddress: deliveryAddress,
+        paymentCard: paymentCard,
+        deliveryType: deliveryType,
+        deliverySlot: deliverySlot,
+      );
+      _inflightCheckouts[normalizedKey] = future;
+      try {
+        return await future;
+      } finally {
+        _inflightCheckouts.remove(normalizedKey);
+      }
+    }
+
+    return _createOrderFromCheckoutImpl(
+      userId: userId,
+      selectedProducts: selectedProducts,
+      totalAmount: totalAmount,
+      deliveryAddress: deliveryAddress,
+      paymentCard: paymentCard,
+      deliveryType: deliveryType,
+      deliverySlot: deliverySlot,
+    );
+  }
+
+  Future<Map<String, dynamic>> _createOrderFromCheckoutImpl({
+    required String userId,
+    required List<Map<String, dynamic>> selectedProducts,
+    required double totalAmount,
+    required Map<String, dynamic> deliveryAddress,
+    required Map<String, dynamic> paymentCard,
+    required String deliveryType,
+    String? deliverySlot,
   }) async {
     if (selectedProducts.isEmpty) {
       throw Exception('Sipariş verilecek ürün bulunamadı.');
@@ -96,14 +153,20 @@ class OrderService {
         .toList(growable: false);
     if (itemsNeedingAttention.isNotEmpty) {
       throw Exception(
-        'Bazi sepet urunleri artik kullanilamiyor. Lutfen bu urunleri yeniden ekleyin.',
+        'Sepetinizdeki bazı ürünler artık satışta değil. Lütfen sepeti güncelleyin.',
       );
     }
 
+    final checkoutValidation = await _validateCheckoutItemsAgainstDatabase(
+      selectedProducts: selectedProducts,
+      clientSubtotal: totalAmount,
+    );
+    final validatedProducts = checkoutValidation.selectedProducts;
+    final validatedSubtotal = checkoutValidation.serverSubtotal;
     final productIdsForMetadata = <String>{};
     final explicitSellerIds = <String>{};
     final explicitStoreNames = <String>{};
-    for (final source in selectedProducts) {
+    for (final source in validatedProducts) {
       final productId = source['productId']?.toString().trim();
       if (productId != null && productId.isNotEmpty) {
         productIdsForMetadata.add(productId);
@@ -185,8 +248,8 @@ class OrderService {
 
     final sellerSubtotalMap = <String, double>{};
 
-    for (int i = 0; i < selectedProducts.length; i++) {
-      final source = selectedProducts[i];
+    for (int i = 0; i < validatedProducts.length; i++) {
+      final source = validatedProducts[i];
       final productName = source['name']?.toString() ?? 'Ürün';
       final quantity = _toInt(source['quantity'], fallback: 1);
       final unitPrice = _toDoublePrice(source['price']);
@@ -294,10 +357,10 @@ class OrderService {
       'delivery_type': deliveryType,
       'delivery_slot': deliverySlot,
       'delivery_address': deliveryAddress,
-      'subtotal_amount': totalAmount,
+      'subtotal_amount': validatedSubtotal,
       'shipping_amount': customerDeliveryFee,
       'discount_amount': 0,
-      'total_amount': totalAmount + customerDeliveryFee,
+      'total_amount': validatedSubtotal + customerDeliveryFee,
       'currency': 'TRY',
       'created_at': now.toIso8601String(),
       'updated_at': now.toIso8601String(),
@@ -3708,6 +3771,104 @@ class OrderService {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  Future<_CheckoutValidationResult> _validateCheckoutItemsAgainstDatabase({
+    required List<Map<String, dynamic>> selectedProducts,
+    required double clientSubtotal,
+  }) async {
+    final productIds = <String>[];
+    for (final source in selectedProducts) {
+      final productId = source['productId']?.toString().trim();
+      if (productId == null || productId.isEmpty) {
+        throw Exception(
+          'Sepetinizdeki bazı ürünler artık satışta değil. Lütfen sepeti güncelleyin.',
+        );
+      }
+      productIds.add(productId);
+    }
+
+    final rows = await SupabaseService.instance.getProductRowsForCartValidation(
+      productIds,
+    );
+
+    final validated = <Map<String, dynamic>>[];
+    var serverSubtotal = 0.0;
+    var priceChanged = false;
+
+    for (final source in selectedProducts) {
+      final productId = source['productId']!.toString().trim();
+      final row = rows[productId];
+      if (row == null) {
+        throw Exception(
+          'Sepetinizdeki bazı ürünler artık satışta değil. Lütfen sepeti güncelleyin.',
+        );
+      }
+
+      final visibilityError =
+          CartValidationService.instance.validateProductRowForCart(row);
+      if (visibilityError != null) {
+        throw Exception(visibilityError);
+      }
+
+      final quantity = _toInt(source['quantity'], fallback: 1).clamp(1, 999);
+      final stock = (row['stock'] as num?)?.toInt();
+      if (stock != null && stock < quantity) {
+        throw Exception('Bu ürün şu anda stokta yok.');
+      }
+
+      final serverUnitPrice = _serverUnitPriceFromRow(row);
+      final clientUnitPrice = _toDoublePrice(source['price']);
+      if ((serverUnitPrice - clientUnitPrice).abs() > 0.05) {
+        priceChanged = true;
+      }
+
+      final lineTotal = serverUnitPrice * quantity;
+      serverSubtotal += lineTotal;
+
+      final next = Map<String, dynamic>.from(source);
+      next['quantity'] = quantity;
+      next['price'] = serverUnitPrice;
+      next['sellerId'] = row['seller_id']?.toString() ?? next['sellerId'];
+      next['storeName'] =
+          _storeNameFromRow(row) ?? next['storeName']?.toString();
+      next['category'] = row['main_category']?.toString() ?? next['category'];
+      validated.add(next);
+    }
+
+    if (priceChanged && (serverSubtotal - clientSubtotal).abs() > 0.05) {
+      throw Exception(
+        'Sepetindeki fiyatlar güncellendi. Lütfen tekrar kontrol et.',
+      );
+    }
+
+    return _CheckoutValidationResult(
+      selectedProducts: validated,
+      serverSubtotal: serverSubtotal,
+    );
+  }
+
+  double _serverUnitPriceFromRow(Map<String, dynamic> row) {
+    final discount = row['discount_price'];
+    if (discount is num && discount > 0) {
+      return discount.toDouble();
+    }
+    final price = row['price'];
+    if (price is num) {
+      return price.toDouble();
+    }
+    return _toDoublePrice(price);
+  }
+
+  String? _storeNameFromRow(Map<String, dynamic> row) {
+    final stores = row['stores'];
+    if (stores is Map) {
+      final businessName = stores['business_name']?.toString().trim();
+      if (businessName != null && businessName.isNotEmpty) {
+        return businessName;
+      }
+    }
+    return null;
   }
 
   double _toDoublePrice(dynamic value) {

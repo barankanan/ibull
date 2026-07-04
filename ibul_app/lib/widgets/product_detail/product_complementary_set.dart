@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../../core/constants.dart';
 import '../../models/product_model.dart';
+import '../../utils/product_image_resolver.dart';
+import '../product_list_thumbnail.dart';
 
 class ProductComplementarySet extends StatelessWidget {
   const ProductComplementarySet({super.key});
@@ -187,17 +188,16 @@ class ProductComplementarySet extends StatelessWidget {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: product.images.isNotEmpty
-                      ? (product.images.first.startsWith('http')
-                            ? OptimizedImage(
-                                imageUrlOrPath: product.images.first,
-                                fit: BoxFit.contain,
-                              )
-                            : Image.asset(
-                                product.images.first,
-                                fit: BoxFit.contain,
-                              ))
-                      : Icon(Icons.image, color: Colors.grey[400], size: 30),
+                  child: ProductListThumbnail(
+                    imageUrlOrPath: ProductImageResolver.primaryUrl(
+                      images: product.images,
+                    ),
+                    width: 85,
+                    height: 85,
+                    borderRadius: BorderRadius.circular(8),
+                    padding: const EdgeInsets.all(4),
+                    fallbackIconSize: 24,
+                  ),
                 ),
               ),
               if (isMain)
@@ -401,17 +401,16 @@ class ProductComplementarySet extends StatelessWidget {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: product.images.isNotEmpty
-                      ? (product.images.first.startsWith('http')
-                            ? OptimizedImage(
-                                imageUrlOrPath: product.images.first,
-                                fit: BoxFit.contain,
-                              )
-                            : Image.asset(
-                                product.images.first,
-                                fit: BoxFit.contain,
-                              ))
-                      : const Icon(Icons.image, color: Colors.grey),
+                  child: ProductListThumbnail(
+                    imageUrlOrPath: ProductImageResolver.primaryUrl(
+                      images: product.images,
+                    ),
+                    width: 140,
+                    height: 140,
+                    borderRadius: BorderRadius.circular(12),
+                    padding: const EdgeInsets.all(6),
+                    fallbackIconSize: 28,
+                  ),
                 ),
               ),
               if (isMain)

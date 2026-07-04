@@ -1,15 +1,21 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart'; // Scroll behavior için eklendi
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:convert';
 import 'package:carousel_slider/carousel_slider.dart';
 import '../core/constants.dart';
 import '../features/products/helpers/product_filter_engine.dart';
 import '../features/products/helpers/product_quick_filter_chip_groups.dart';
+import '../features/products/helpers/category_filter_config.dart';
 import '../features/products/models/product_filter_models.dart';
 import '../features/products/widgets/product_filter_bottom_sheet.dart';
 import '../features/products/widgets/product_quick_filter_bottom_sheet.dart';
 import '../features/products/widgets/product_filter_sidebar.dart';
 import '../features/products/widgets/product_sort_bottom_sheet.dart';
 import '../models/product_model.dart';
+import '../models/db_product.dart';
+import '../services/database_helper.dart';
 import '../widgets/product_card.dart';
 import '../widgets/staggered_reveal.dart';
 import '../widgets/custom_header.dart';
@@ -22,6 +28,7 @@ class CategoryProductsPage extends StatefulWidget {
   final String subCategory;
   final List<Product> products;
   final Map<String, ProductFilterMeta>? productMeta;
+  final String? initialNextCursor;
 
   const CategoryProductsPage({
     super.key,
@@ -29,6 +36,7 @@ class CategoryProductsPage extends StatefulWidget {
     required this.subCategory,
     required this.products,
     this.productMeta,
+    this.initialNextCursor,
   });
 
   @override
@@ -37,12 +45,22 @@ class CategoryProductsPage extends StatefulWidget {
 
 class _CategoryProductsPageState extends State<CategoryProductsPage>
     with SingleTickerProviderStateMixin {
+  static const int _remotePageSize = 24;
+
   late TabController _tabController;
   final ScrollController _todayProductsScrollController = ScrollController();
+  final ScrollController _productGridScrollController = ScrollController();
+  final DatabaseHelper _dbHelper = DatabaseHelper.instance;
   List<Product> _baseProducts = [];
   List<Product> _filteredProducts = [];
   String _searchQuery = '';
   bool _isLoadingFilters = false;
+  bool _isLoadingMore = false;
+  bool _remotePaginationEnabled = false;
+  String? _nextCursor;
+  int _remoteLoadRequestId = 0;
+  Map<String, ProductFilterMeta> _productMetaById = {};
+  Timer? _searchDebounce;
   List<ProductFilterGroup> _filterGroups = const <ProductFilterGroup>[];
   ProductFilterState _filterState = const ProductFilterState();
 
@@ -110,13 +128,171 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
 
     _baseProducts = _getDisplayProducts();
     _filteredProducts = List<Product>.from(_baseProducts);
+    _productMetaById = Map<String, ProductFilterMeta>.from(
+      widget.productMeta ?? const {},
+    );
+    _remotePaginationEnabled = !CategoryFilterConfig.isFoodCategory(widget.category);
+    _nextCursor = widget.initialNextCursor;
+    _productGridScrollController.addListener(_onProductGridScroll);
     _filterGroups = ProductFilterEngine.buildFilterGroups(
       products: _baseProducts,
       mainCategory: widget.category,
       subCategory: widget.subCategory,
     );
-    if (widget.subCategory != 'Yemek') {
+    if (CategoryFilterConfig.shouldLoadDbAttributeGroups(
+      mainCategory: widget.category,
+      subCategory: widget.subCategory,
+    )) {
       _loadFilterGroups();
+    }
+  }
+
+  Product _productFromDb(DBProduct dbProduct) {
+    List<String> images = [];
+    if (dbProduct.imageUrls != null && dbProduct.imageUrls!.isNotEmpty) {
+      try {
+        final decoded = json.decode(dbProduct.imageUrls!);
+        if (decoded is List) {
+          images = decoded.map((e) => e.toString()).toList();
+        }
+      } catch (_) {
+        if (dbProduct.imageUrl.isNotEmpty) {
+          images.add(dbProduct.imageUrl);
+        }
+      }
+    } else if (dbProduct.imageUrl.isNotEmpty) {
+      images.add(dbProduct.imageUrl);
+    }
+
+    List<String> tags = [];
+    if (dbProduct.tags.isNotEmpty) {
+      tags = dbProduct.tags
+          .split('|')
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    return Product(
+      productId: dbProduct.id,
+      name: dbProduct.name,
+      brand: dbProduct.brand,
+      price: dbProduct.price,
+      rating: dbProduct.rating,
+      reviewCount: dbProduct.reviewCount,
+      tags: tags,
+      images: images,
+      store: dbProduct.store,
+      sellerId: dbProduct.sellerId,
+      category: dbProduct.category,
+      subCategory: dbProduct.subCategory,
+      description: dbProduct.description,
+      specifications: dbProduct.specifications,
+      oldPrice: dbProduct.oldPrice,
+      variantOptions: dbProduct.variantOptions,
+      attributes: _parseAttributes(dbProduct.attributes),
+    );
+  }
+
+  List<String>? _parseAttributes(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final trimmed = raw.trim();
+    if (trimmed.startsWith('[')) {
+      try {
+        final decoded = json.decode(trimmed);
+        if (decoded is List) {
+          return decoded
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+        }
+      } catch (_) {}
+    }
+    return trimmed
+        .split('|')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  void _onProductGridScroll() {
+    if (!_remotePaginationEnabled || _isLoadingMore || _nextCursor == null) {
+      return;
+    }
+    if (_searchQuery.isNotEmpty || _filterState.hasActiveFilters) {
+      return;
+    }
+    final position = _productGridScrollController.position;
+    if (position.pixels < position.maxScrollExtent - 480) {
+      return;
+    }
+    unawaited(_loadMoreRemoteProducts());
+  }
+
+  Future<void> _loadMoreRemoteProducts() async {
+    final cursor = _nextCursor;
+    if (!_remotePaginationEnabled ||
+        _isLoadingMore ||
+        cursor == null ||
+        _searchQuery.isNotEmpty ||
+        _filterState.hasActiveFilters) {
+      return;
+    }
+
+    final requestId = ++_remoteLoadRequestId;
+    if (!mounted) return;
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final page = await _dbHelper
+          .getCategoryProductsPaged(
+            category: widget.category,
+            subCategory: CategoryProductFilter.isAllSubCategory(
+              widget.subCategory,
+            )
+                ? null
+                : widget.subCategory,
+            limit: _remotePageSize,
+            cursor: cursor,
+          )
+          .timeout(const Duration(seconds: 12));
+
+      if (!mounted || requestId != _remoteLoadRequestId) return;
+
+      final newProducts = page.items
+          .map(_productFromDb)
+          .where(
+            (product) => CategoryProductFilter.productMatchesSelection(
+              mainCategory: widget.category,
+              subCategory: widget.subCategory,
+              productMainCategory: product.category,
+              productSubCategory: product.subCategory,
+              productName: product.name,
+            ),
+          )
+          .toList(growable: false);
+
+      setState(() {
+        _nextCursor = page.nextCursor;
+        _baseProducts = [..._baseProducts, ...newProducts];
+        for (final item in page.items) {
+          final id = item.id?.trim();
+          if (id == null || id.isEmpty) continue;
+          _productMetaById[id] = ProductFilterMeta(stock: item.stock);
+        }
+        _filteredProducts = ProductFilterEngine.resolveProducts(
+          products: _baseProducts,
+          state: _filterState,
+          metaByProductId: _productMetaById,
+          searchQuery: _searchQuery,
+        );
+      });
+    } catch (e) {
+      debugPrint('Kategori sayfalama hatası: $e');
+    } finally {
+      if (mounted && requestId == _remoteLoadRequestId) {
+        setState(() => _isLoadingMore = false);
+      }
     }
   }
 
@@ -135,7 +311,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       return filtered;
     }
 
-    if (widget.subCategory == 'Yemek') {
+    if (widget.subCategory == 'Yemek' && kDebugMode) {
       return _createSampleFoodProducts();
     }
 
@@ -214,13 +390,22 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _tabController.dispose();
     _todayProductsScrollController.dispose();
+    _productGridScrollController.removeListener(_onProductGridScroll);
+    _productGridScrollController.dispose();
     super.dispose();
   }
 
   Future<void> _loadFilterGroups() async {
-    if (!mounted || widget.subCategory == 'Yemek') return;
+    if (!mounted ||
+        !CategoryFilterConfig.shouldLoadDbAttributeGroups(
+          mainCategory: widget.category,
+          subCategory: widget.subCategory,
+        )) {
+      return;
+    }
 
     setState(() => _isLoadingFilters = true);
 
@@ -259,12 +444,12 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
   }
 
   void _refreshProducts() {
-    if (widget.subCategory == 'Yemek') return;
+    if (CategoryFilterConfig.isFoodCategory(widget.category)) return;
     setState(() {
       _filteredProducts = ProductFilterEngine.resolveProducts(
         products: _baseProducts,
         state: _filterState,
-        metaByProductId: widget.productMeta,
+        metaByProductId: _productMetaById,
         searchQuery: _searchQuery,
       );
     });
@@ -298,14 +483,17 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       group: group,
       currentState: _filterState,
       baseProducts: _baseProducts,
-      productMeta: widget.productMeta,
+      productMeta: _productMetaById,
       searchQuery: _searchQuery,
       onApply: _updateFilterState,
     );
   }
 
   List<ProductFilterGroup> _quickChipGroups() {
-    return ProductQuickFilterChipGroups.resolve(_filterGroups);
+    return ProductQuickFilterChipGroups.resolve(
+      _filterGroups,
+      mainCategory: widget.category,
+    );
   }
 
   /// Hızlı chip'ler ekrana basılmadan hemen önce tekilleştirilir.
@@ -345,6 +533,12 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
 
   String _quickChipLabel(ProductFilterGroup group) {
     final baseLabel = ProductQuickFilterChipGroups.quickChipDisplayLabel(group);
+    final foodLabel = CategoryFilterConfig.quickChipLabel(
+      mainCategory: widget.category,
+      group: group,
+      defaultLabel: baseLabel,
+    );
+    if (foodLabel != baseLabel) return foodLabel;
     switch (group.type) {
       case ProductFilterGroupType.dynamicAttribute:
         final count =
@@ -372,7 +566,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
       previewCount: (draft) => ProductFilterEngine.resolveProducts(
         products: _baseProducts,
         state: draft,
-        metaByProductId: widget.productMeta,
+        metaByProductId: _productMetaById,
         searchQuery: _searchQuery,
       ).length,
       onApply: _updateFilterState,
@@ -380,23 +574,27 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
   }
 
   void _onSearch(String query) {
-    _searchQuery = query.trim();
-    if (widget.subCategory == 'Yemek') {
-      setState(() {
-        if (_searchQuery.isEmpty) {
-          _filteredProducts = _getDisplayProducts();
-        } else {
-          final normalized = _searchQuery.toLowerCase();
-          final baseProducts = _getDisplayProducts();
-          _filteredProducts = baseProducts.where((p) {
-            return p.name.toLowerCase().contains(normalized) ||
-                p.brand.toLowerCase().contains(normalized);
-          }).toList();
-        }
-      });
-      return;
-    }
-    _applyAllFilters();
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      _searchQuery = query.trim();
+      if (widget.subCategory == 'Yemek') {
+        setState(() {
+          if (_searchQuery.isEmpty) {
+            _filteredProducts = _getDisplayProducts();
+          } else {
+            final normalized = _searchQuery.toLowerCase();
+            final baseProducts = _getDisplayProducts();
+            _filteredProducts = baseProducts.where((p) {
+              return p.name.toLowerCase().contains(normalized) ||
+                  p.brand.toLowerCase().contains(normalized);
+            }).toList();
+          }
+        });
+        return;
+      }
+      _applyAllFilters();
+    });
   }
 
   void _applyAllFilters() {
@@ -1312,7 +1510,15 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                 if (_filteredProducts.isEmpty) {
                   content = _buildEmptyFilterState();
                 } else {
+                  final showLoadMoreFooter = _remotePaginationEnabled &&
+                      _searchQuery.isEmpty &&
+                      !_filterState.hasActiveFilters &&
+                      (_isLoadingMore || _nextCursor != null);
+                  final itemCount =
+                      _filteredProducts.length + (showLoadMoreFooter ? 1 : 0);
+
                   content = GridView.builder(
+                    controller: _productGridScrollController,
                     padding: const EdgeInsets.all(16),
                     cacheExtent: 900,
                     gridDelegate: isWeb
@@ -1328,8 +1534,20 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,
                           ),
-                    itemCount: _filteredProducts.length,
+                    itemCount: itemCount,
                     itemBuilder: (context, index) {
+                      if (index >= _filteredProducts.length) {
+                        return const Center(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        );
+                      }
                       final product = _filteredProducts[index];
                       return GestureDetector(
                         onTap: () {

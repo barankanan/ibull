@@ -440,7 +440,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1500));
 
       expect(find.text('Başarılarım'), findsOneWidget);
-      expect(find.text('Tüm Görevler'), findsOneWidget);
+      expect(find.text('Görevler ve İlerleme'), findsOneWidget);
       expect(find.text('Detay'), findsWidgets);
     });
 

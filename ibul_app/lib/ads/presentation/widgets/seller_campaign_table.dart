@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../helpers/home_feature_ad_helper.dart';
 import '../../enums/ad_enums.dart';
 import '../../models/ad_campaign.dart';
 import '../../models/ad_health_score.dart';
@@ -215,7 +216,37 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
     AdCampaignType.geoPush => 'Konum Push',
     AdCampaignType.banner => 'Banner',
     AdCampaignType.categorySponsor => 'Kat. Sponsor',
+    AdCampaignType.homeFeature => 'Ana Sayfa Reklamı',
   };
+
+  static Widget _typeCell(AdCampaign campaign) {
+    if (campaign.type == AdCampaignType.homeFeature) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFF7C3AED).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFF7C3AED).withValues(alpha: 0.4)),
+        ),
+        child: const Text(
+          'Ana Sayfa Reklamı',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF6D28D9),
+          ),
+        ),
+      );
+    }
+    return Text(
+      _typeLabel(campaign.type),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 12, color: Color(0xFF334155)),
+    );
+  }
 
   // ─── Column definitions ─────────────────────────────────────────────────────
   //
@@ -291,16 +322,42 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
         width: 180,
         minWidth: 120,
         sortable: true,
-        cellBuilder: (ctx, row, _) => Text(
-          row.campaign.name,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 13,
-            color: Color(0xFF0F172A),
-          ),
-        ),
+        cellBuilder: (ctx, row, _) {
+          if (row.campaign.type == AdCampaignType.homeFeature) {
+            final m = HomeFeatureAdHelper.metrics(row.campaign);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  row.campaign.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'G:${m.impressionsCount} B:${m.bannerClicksCount} P:${m.profileOpensCount}',
+                  style: const TextStyle(fontSize: 10, color: Color(0xFF64748B)),
+                ),
+              ],
+            );
+          }
+          return Text(
+            row.campaign.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+              color: Color(0xFF0F172A),
+            ),
+          );
+        },
       ),
       CampaignTableColumnDef(
         id: 'type',
@@ -309,12 +366,7 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
         width: 116,
         minWidth: 88,
         sortable: true,
-        cellBuilder: (ctx, row, _) => Text(
-          _typeLabel(row.campaign.type),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, color: Color(0xFF334155)),
-        ),
+        cellBuilder: (ctx, row, _) => _typeCell(row.campaign),
       ),
       CampaignTableColumnDef(
         id: 'status',

@@ -96,7 +96,7 @@ extension _AppStateAuthDomain on AppState {
 
   Future<void> _loadUserDataImpl({int? requestVersion}) async {
     await _runBatchedAsync(() async {
-      _clearUserData();
+      _clearUserData(requestVersion: requestVersion);
 
       try {
         final favoritesData = await _authService.getUserDataField('favorites');
@@ -278,11 +278,21 @@ extension _AppStateAuthDomain on AppState {
   }
 
   Future<void> _logoutImpl() async {
-    await _authService.signOut();
-    _currentUser = null;
+    AuthDebugLogger.logoutStart(
+      type: 'customer',
+      userId: _currentUser?['uid']?.toString(),
+    );
+    await _authService.signOutCustomer();
+    _clearCustomerSessionState(notify: false);
     _productLists.clear();
     _communityProductLists.clear();
     notifyListeners();
+    AuthDebugLogger.logoutFinish(
+      type: 'customer',
+      hasSupabaseSession: _authService.currentUser != null,
+      customerState: false,
+      sellerState: IbulAuthContextService.instance.isSellerContext,
+    );
   }
 
   Future<void> _deleteAccountImpl() async {

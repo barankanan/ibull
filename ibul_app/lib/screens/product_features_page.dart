@@ -367,28 +367,36 @@ class _ProductFeaturesPageState extends State<ProductFeaturesPage>
             // Sepete Ekle Button
             Expanded(
               child: ElevatedButton(
-                onPressed: () {
-                  setState(() {
-                    if (!_appState.isLoggedIn) {
-                      _showLoginRequiredDialog(context);
-                      return;
-                    }
-                    if (_isAddedToCart) {
-                      _appState.removeFromCart(widget.product);
-                      _isAddedToCart = false;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Ürün sepetten çıkarıldı'),
-                        ),
-                      );
-                    } else {
-                      _appState.addToCart(widget.product);
-                      _isAddedToCart = true;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Ürün sepete eklendi')),
-                      );
-                    }
-                  });
+                onPressed: () async {
+                  if (!_appState.isLoggedIn) {
+                    _showLoginRequiredDialog(context);
+                    return;
+                  }
+                  if (_isAddedToCart) {
+                    setState(() => _isAddedToCart = false);
+                    _appState.removeFromCart(widget.product);
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Ürün sepetten çıkarıldı'),
+                      ),
+                    );
+                    return;
+                  }
+
+                  final error = await _appState.addToCart(widget.product);
+                  if (!mounted) return;
+                  if (error != null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(error)),
+                    );
+                    return;
+                  }
+                  setState(() => _isAddedToCart = true);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Ürün sepete eklendi')),
+                  );
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary, // Always purple

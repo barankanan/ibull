@@ -11,8 +11,14 @@ import '../models/product_pricing.dart';
 import 'store/store_mapping_helpers.dart';
 import '../utils/text_normalizer.dart';
 import '../utils/category_product_filter.dart';
+import '../utils/product_visibility_helper.dart';
 import 'store_follow_service.dart';
 import '../utils/product_edit_log.dart';
+import '../core/runtime_diagnostic_logger.dart';
+import '../core/config/runtime_config.dart';
+import '../core/product_filter_audit.dart';
+import '../models/home_products_fetch_report.dart';
+import '../models/ad_linked_products_fetch_report.dart';
 
 class SupabaseService {
   // Singleton pattern
@@ -23,13 +29,17 @@ class SupabaseService {
   static const int homePageSize = 24;
   static const int defaultPageSize = 20;
 
+  /// First-paint page size for the mobile home grid. Kept smaller than
+  /// [homePageSize] so the initial Supabase round-trip is lighter/faster on
+  /// mobile; more products load as the user scrolls / on refresh.
+  static const int homeInitialPageSize = 10;
+
   /// Anonim alışveriş vitrininde gösterilen ürün durumları (admin onaylı).
   /// Supabase `products` SELECT RLS politikası bu liste ile uyumlu olmalıdır.
-  static const List<String> publicCatalogProductStatuses = ['Aktif'];
+  static const List<String> publicCatalogProductStatuses = ['Aktif', 'active'];
 
   static bool isPublicCatalogProductStatus(String? status) {
-    final s = status?.trim() ?? '';
-    return s == 'Aktif';
+    return ProductVisibilityHelper.isPublicCatalogProductStatus(status);
   }
 
   String _stripUnsupportedColumnsFromSelect(
@@ -47,6 +57,7 @@ class SupabaseService {
     List<String> filtered = rawTokens.where((token) {
       // Keep embedded selects like stores(business_name) intact.
       if (token.contains('(') && token.contains(')')) return true;
+      if (catalogRequiredProductColumns.contains(token)) return true;
       for (final col in optionalProductColumns) {
         if (message.contains(col) && token == col) return false;
       }
@@ -58,6 +69,7 @@ class SupabaseService {
     if (filtered.length == rawTokens.length) {
       filtered = rawTokens.where((token) {
         if (token.contains('(') && token.contains(')')) return true;
+        if (catalogRequiredProductColumns.contains(token)) return true;
         return !optionalProductColumns.contains(token);
       }).toList();
     }
@@ -77,8 +89,20 @@ class SupabaseService {
     // SELECT works (or we hit a non-column error).
     for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
       try {
+        final sw = kDebugMode ? (Stopwatch()..start()) : null;
         final response = await action(currentSelect);
-        return List<Map<String, dynamic>>.from(response as List);
+        final rows = ProductVisibilityHelper.filterPublicProductMaps(
+          List<Map<String, dynamic>>.from(response as List),
+        );
+        if (sw != null) {
+          sw.stop();
+          if (sw.elapsedMilliseconds > 800) {
+            debugPrint(
+              'SLOW_PRODUCT_QUERY ${sw.elapsedMilliseconds}ms select=$currentSelect',
+            );
+          }
+        }
+        return rows;
       } catch (e) {
         lastError = e;
         final message = e.toString();
@@ -97,58 +121,106 @@ class SupabaseService {
     if (lastError != null) throw lastError;
     throw StateError('Product select fallback ended unexpectedly.');
   }
+
+  /// Cart/checkout doğrulaması — satır döndürür, client-side public filtresi uygulamaz.
+  /// RLS zaten vitrin kuralını uygular; görünürlük kararı CartValidationService'te verilir.
+  Future<List<Map<String, dynamic>>> _runCartValidationSelectWithFallback({
+    required String select,
+    required Future<dynamic> Function(String effectiveSelect) action,
+  }) async {
+    String currentSelect = select;
+    Object? lastError;
+
+    for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
+      try {
+        final response = await action(currentSelect);
+        return List<Map<String, dynamic>>.from(response as List)
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false);
+      } catch (e) {
+        lastError = e;
+        final message = e.toString();
+        if (!isOptionalProductColumnError(message)) rethrow;
+
+        final stripped = _stripUnsupportedColumnsFromSelect(
+          currentSelect,
+          message: message,
+        );
+        if (stripped == currentSelect) break;
+        currentSelect = stripped;
+      }
+    }
+
+    if (lastError != null) throw lastError;
+    throw StateError('Cart validation select fallback ended unexpectedly.');
+  }
   // Full field set — used for product detail, search, category pages
   static const String _productSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
       'portion_price, price_per_kg, size_options, '
       'default_weight_grams, min_weight_grams, weight_step_grams, '
-      'max_weight_grams, discount_price, stock, status, description, '
-      'specifications, attributes, video_url, variants, created_at, '
-      'stores(business_name)';
-  // Lightweight field set — used only for the home page product cards.
-  // Includes description/specifications/attributes for ProductQuickInfoSheet
-  // (eye icon preview). Omits video_url, variants, stock from the full select.
-  static const String _homeProductSelectFields =
-      'id, seller_id, name, brand, image_url, image_urls, main_category, '
+      'max_weight_grams, discount_price, stock, status, approval_status, '
+      'admin_approval_status, description, specifications, attributes, '
+      'video_url, variants, created_at, stores(business_name)';
+  /// Ultra-light first query — vitrin preview only.
+  static const String _homeProductPreviewSelectFields =
+      'id, name, image_url, price, old_price, status, '
+      'approval_status, admin_approval_status, stores(business_name)';
+  static const String _homeProductPreviewSelectFieldsSansStore =
+      'id, name, image_url, price, old_price, status, '
+      'approval_status, admin_approval_status';
+  /// Card-only projection for home first paint — omits heavy arrays/text blobs.
+  static const String _homeProductCardSelectFields =
+      'id, seller_id, name, brand, image_url, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
       'portion_price, price_per_kg, size_options, discount_price, status, '
-      'description, specifications, attributes, created_at, '
+      'approval_status, admin_approval_status, stock, created_at, updated_at, '
       'stores(business_name)';
-  /// Same as [_homeProductSelectFields] but without `stores(...)` embed.
+  static const String _homeProductCardSelectFieldsSansStore =
+      'id, seller_id, name, brand, image_url, main_category, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, discount_price, status, '
+      'approval_status, admin_approval_status, stock, created_at, updated_at';
+  /// Richer home select when quick-view / eye preview needs description fields.
+  /// Same as below but without `stores(...)` embed.
   /// PostgREST can fail on embeds when FK hints are missing or store RLS differs;
   /// we retry with this projection so the home grid still loads.
   static const String _homeProductSelectFieldsSansStore =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
       'portion_price, price_per_kg, size_options, discount_price, status, '
-      'description, specifications, attributes, created_at';
+      'approval_status, admin_approval_status, stock, description, specifications, '
+      'attributes, created_at, updated_at';
   static const String _productSelectFieldsSansStore =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
       'portion_price, price_per_kg, size_options, '
       'default_weight_grams, min_weight_grams, weight_step_grams, '
-      'max_weight_grams, discount_price, stock, status, description, '
-      'specifications, attributes, video_url, variants, created_at';
+      'max_weight_grams, discount_price, stock, status, approval_status, '
+      'admin_approval_status, description, specifications, attributes, '
+      'video_url, variants, created_at';
   static const String _productSuggestionSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
-      'portion_price, price_per_kg, size_options, discount_price, status, created_at, '
+      'portion_price, price_per_kg, size_options, discount_price, status, '
+      'approval_status, admin_approval_status, created_at, '
       'stores(business_name)';
   static const String _productStorePreviewSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, price, '
       'pricing_type, pricing_mode, base_price, portion_price, price_per_kg, '
       'size_options, default_weight_grams, '
       'min_weight_grams, weight_step_grams, max_weight_grams, '
-      'discount_price, description, specifications, status, created_at, '
-      'stores(business_name)';
+      'discount_price, description, specifications, status, approval_status, '
+      'admin_approval_status, created_at, stores(business_name)';
   static const String _categoryProductsSelectFields =
       'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, pricing_type, pricing_mode, base_price, '
       'portion_price, price_per_kg, size_options, '
       'default_weight_grams, min_weight_grams, weight_step_grams, '
-      'max_weight_grams, discount_price, status, description, specifications, '
-      'created_at, stores(business_name)';
+      'max_weight_grams, discount_price, status, approval_status, '
+      'admin_approval_status, stock, description, specifications, created_at, '
+      'updated_at, stores(business_name)';
 
   String _toOrIlikePattern(String value) {
     final sanitized = value.trim().replaceAll('*', '').replaceAll(',', ' ');
@@ -207,58 +279,191 @@ class SupabaseService {
   }
 
   Future<List<DBProduct>> getInitialHomeProducts() async {
+    final report = await fetchInitialHomeProductsReport();
+    if (report.outcome == HomeProductsFetchOutcome.queryError &&
+        report.error != null) {
+      throw report.error!;
+    }
+    return report.products;
+  }
+
+  /// Home grid fetch with filter/parse diagnostics for web production debugging.
+  Future<HomeProductsFetchReport> fetchInitialHomeProductsReport() async {
+    const table = 'products';
+    if (!AppRuntimeConfig.hasSupabaseConfig) {
+      return HomeProductsFetchReport.configMissing();
+    }
+
     final followedStoreIds =
         await StoreFollowService.instance.fetchFollowedStoreIds();
     final fetchLimit = followedStoreIds.isEmpty
-        ? homePageSize
-        : (homePageSize * 3).clamp(homePageSize, 72);
+        ? homeInitialPageSize
+        : (homeInitialPageSize * 3).clamp(homeInitialPageSize, 48);
+    final statusFilter = publicCatalogProductStatuses.join(',');
+    final querySummary =
+        '$table.select(...).inFilter(status,[$statusFilter])'
+        '.order(created_at,desc).range(0,${fetchLimit - 1})';
 
-    Future<List<DBProduct>> runSelect(String fields) async {
-      final rows = await _runProductsSelectWithFallback(
-        select: fields,
-        action: (effectiveSelect) async {
-          return await _supabase
-              .from('products')
-              .select(effectiveSelect)
-              .inFilter('status', publicCatalogProductStatuses)
-              .order('created_at', ascending: false)
-              .range(0, fetchLimit - 1);
-        },
-      );
-      return rows.map(_mapToDBProduct).toList(growable: false);
-    }
+    final selectCandidates = <String>[
+      _homeProductPreviewSelectFields,
+      _homeProductPreviewSelectFieldsSansStore,
+      _homeProductCardSelectFields,
+      _homeProductCardSelectFieldsSansStore,
+      _homeProductSelectFieldsSansStore,
+    ];
 
-    List<DBProduct> products;
-    try {
-      products = await runSelect(_homeProductSelectFields);
-    } catch (e) {
-      debugPrint('Error getting initial home products (with store embed): $e');
+    Object? lastError;
+    StackTrace? lastStack;
+    String lastSelect = selectCandidates.first;
+
+    for (final select in selectCandidates) {
+      lastSelect = select;
       try {
-        products = await runSelect(_homeProductSelectFieldsSansStore);
-      } catch (e2) {
-        debugPrint('Error getting initial home products (sans store embed): $e2');
-        return [];
+        final fetched = await _fetchHomeProductRows(
+          select: select,
+          fetchLimit: fetchLimit,
+        );
+        final parseResult = _parseHomeProductRows(fetched.rows);
+
+        List<DBProduct> products = parseResult.products;
+        if (followedStoreIds.isNotEmpty && products.isNotEmpty) {
+          final scored = products
+              .map(
+                (product) => MapEntry(
+                  product,
+                  _homeFeedScore(product, followedStoreIds),
+                ),
+              )
+              .toList(growable: false)
+            ..sort((a, b) => b.value.compareTo(a.value));
+          products = scored
+              .map((entry) => entry.key)
+              .take(homeInitialPageSize)
+              .toList(growable: false);
+        } else {
+          products = products.take(homeInitialPageSize).toList(growable: false);
+        }
+
+        final outcome = () {
+          if (parseResult.failCount > 0 && products.isEmpty) {
+            return HomeProductsFetchOutcome.parseError;
+          }
+          if (fetched.audit.isEmptyAfterFilter) {
+            return HomeProductsFetchOutcome.filterEmpty;
+          }
+          if (products.isEmpty) {
+            return HomeProductsFetchOutcome.empty;
+          }
+          return HomeProductsFetchOutcome.success;
+        }();
+
+        RuntimeDiagnosticLogger.products(
+          'report outcome=${outcome.name} raw=${fetched.audit.rawCount} '
+          'filtered=${fetched.audit.afterVisibilityFilterCount} '
+          'parsed=${products.length}',
+        );
+
+        return HomeProductsFetchReport(
+          outcome: outcome,
+          products: products,
+          table: table,
+          querySummary: querySummary,
+          selectFields: select,
+          filterAudit: fetched.audit,
+          parseSuccessCount: parseResult.successCount,
+          parseFailCount: parseResult.failCount,
+          lastParseError: parseResult.lastError,
+        );
+      } catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
+        RuntimeDiagnosticLogger.logFailure(
+          'Products',
+          e,
+          stackTrace,
+          context: 'home_fetch_report select=${select.length > 40 ? '${select.substring(0, 40)}...' : select}',
+        );
+        final message = e.toString();
+        if (!isOptionalProductColumnError(message)) {
+          break;
+        }
       }
     }
 
-    if (followedStoreIds.isEmpty) {
-      return products.take(homePageSize).toList(growable: false);
+    return HomeProductsFetchReport(
+      outcome: HomeProductsFetchOutcome.queryError,
+      products: const [],
+      table: table,
+      querySummary: querySummary,
+      selectFields: lastSelect,
+      error: lastError ?? StateError('Home products query failed'),
+      stackTrace: lastStack,
+    );
+  }
+
+  Future<({List<Map<String, dynamic>> rows, ProductFilterAudit audit})>
+  _fetchHomeProductRows({
+    required String select,
+    required int fetchLimit,
+  }) async {
+    String currentSelect = select;
+    Object? lastError;
+
+    for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
+      try {
+        final response = await _supabase
+            .from('products')
+            .select(currentSelect)
+            .inFilter('status', publicCatalogProductStatuses)
+            .order('created_at', ascending: false)
+            .range(0, fetchLimit - 1);
+        final rawRows = List<Map<String, dynamic>>.from(response as List)
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(growable: false);
+        final audit = ProductFilterAudit.fromRows(rawRows);
+        final filtered = ProductVisibilityHelper.filterPublicProductMaps(rawRows);
+        RuntimeDiagnosticLogger.products(
+          'filter audit raw=${audit.rawCount} active=${audit.afterActiveStatusCount} '
+          'approval=${audit.afterApprovalStatusCount} visible=${audit.afterVisibilityFilterCount}',
+        );
+        return (rows: filtered, audit: audit);
+      } catch (e) {
+        lastError = e;
+        final message = e.toString();
+        if (!isOptionalProductColumnError(message)) rethrow;
+        final stripped = _stripUnsupportedColumnsFromSelect(
+          currentSelect,
+          message: message,
+        );
+        if (stripped == currentSelect) break;
+        currentSelect = stripped;
+      }
     }
 
-    final scored = products
-        .map(
-          (product) => MapEntry(
-            product,
-            _homeFeedScore(product, followedStoreIds),
-          ),
-        )
-        .toList(growable: false)
-      ..sort((a, b) => b.value.compareTo(a.value));
+    if (lastError != null) throw lastError;
+    throw StateError('Home product row fetch fallback ended unexpectedly.');
+  }
 
-    return scored
-        .map((entry) => entry.key)
-        .take(homePageSize)
-        .toList(growable: false);
+  ({List<DBProduct> products, int successCount, int failCount, String? lastError})
+  _parseHomeProductRows(List<Map<String, dynamic>> rows) {
+    final parsed = <DBProduct>[];
+    var failCount = 0;
+    String? lastError;
+    for (final row in rows) {
+      try {
+        parsed.add(_mapToDBProduct(row));
+      } catch (e) {
+        failCount++;
+        lastError = e.toString();
+        RuntimeDiagnosticLogger.products('parse failed id=${row['id']} error=$e');
+      }
+    }
+    return (
+      products: parsed,
+      successCount: parsed.length,
+      failCount: failCount,
+      lastError: lastError,
+    );
   }
 
   double _homeFeedScore(DBProduct product, Set<String> followedStoreIds) {
@@ -406,10 +611,73 @@ class SupabaseService {
           .maybeSingle();
 
       if (response == null) return null;
-      return _mapToDBProduct(response);
+      final row = Map<String, dynamic>.from(response as Map);
+      if (!ProductVisibilityHelper.isPublicVisibleProductMap(row)) {
+        return null;
+      }
+      return _mapToDBProduct(row);
     } catch (e) {
       debugPrint('Error getting product: $e');
       return null;
+    }
+  }
+
+  DBProduct mapRowToDBProduct(Map<String, dynamic> row) => _mapToDBProduct(row);
+
+  static const String _cartValidationSelect =
+      'id, seller_id, store_id, name, brand, image_url, image_urls, main_category, '
+      'sub_category, price, discount_price, sale_price, stock, status, '
+      'approval_status, admin_approval_status, variant_group_id, variants, '
+      'updated_at, stores(business_name)';
+  static const String _cartValidationSelectSansStore =
+      'id, seller_id, store_id, name, brand, image_url, image_urls, main_category, '
+      'sub_category, price, discount_price, sale_price, stock, status, '
+      'approval_status, admin_approval_status, variant_group_id, variants, '
+      'updated_at';
+
+  Future<Map<String, Map<String, dynamic>>> getProductRowsForCartValidation(
+    List<String> ids,
+  ) async {
+    final normalizedIds = ids
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalizedIds.isEmpty) {
+      return const <String, Map<String, dynamic>>{};
+    }
+
+    try {
+      List<Map<String, dynamic>> rows;
+      try {
+        rows = await _runCartValidationSelectWithFallback(
+          select: _cartValidationSelect,
+          action: (effectiveSelect) => _supabase
+              .from('products')
+              .select(effectiveSelect)
+              .inFilter('id', normalizedIds),
+        );
+      } catch (e) {
+        debugPrint('Cart validation select (store embed) warn: $e');
+        rows = await _runCartValidationSelectWithFallback(
+          select: _cartValidationSelectSansStore,
+          action: (effectiveSelect) => _supabase
+              .from('products')
+              .select(effectiveSelect)
+              .inFilter('id', normalizedIds),
+        );
+      }
+
+      final byId = <String, Map<String, dynamic>>{};
+      for (final row in rows) {
+        final id = row['id']?.toString().trim();
+        if (id == null || id.isEmpty) continue;
+        byId[id] = row;
+      }
+      return byId;
+    } catch (e) {
+      debugPrint('Error fetching cart validation rows: $e');
+      return const <String, Map<String, dynamic>>{};
     }
   }
 
@@ -424,7 +692,11 @@ class SupabaseService {
           .limit(1)
           .maybeSingle();
       if (response == null) return null;
-      return _mapToDBProduct(response);
+      final row = Map<String, dynamic>.from(response as Map);
+      if (!ProductVisibilityHelper.isPublicVisibleProductMap(row)) {
+        return null;
+      }
+      return _mapToDBProduct(row);
     } catch (e) {
       debugPrint('Error getting product by name: $e');
       return null;
@@ -448,7 +720,11 @@ class SupabaseService {
 
       try {
         return await runSelect(
-          'video_url, video_path, video_public_url, thumbnail_path, thumbnail_public_url, video_duration_seconds, video_size_bytes, thumbnail_size_bytes, video_status, variants, attributes, faq, additional_info, accessories',
+          'video_url, video_path, video_public_url, thumbnail_path, thumbnail_public_url, '
+          'video_duration_seconds, video_size_bytes, thumbnail_size_bytes, video_status, '
+          'variants, attributes, faq, additional_info, accessories, barcode, model_code, '
+          'variant_group_id, stock, status, approval_status, admin_approval_status, '
+          'specifications',
         );
       } catch (e) {
         final msg = e.toString();
@@ -607,7 +883,8 @@ class SupabaseService {
       final data = List<Map<String, dynamic>>.from(response as List);
       final byId = {
         for (final item in data)
-          item['id']?.toString() ?? '': _mapToDBProduct(item),
+          if (ProductVisibilityHelper.isPublicVisibleProductMap(item))
+            item['id']?.toString() ?? '': _mapToDBProduct(item),
       };
       return ids
           .map((id) => byId[id])
@@ -616,6 +893,506 @@ class SupabaseService {
     } catch (e) {
       debugPrint('Error getting products by ids: $e');
       return [];
+    }
+  }
+
+  /// Home feature ad cards — seller-selected SKUs; relaxed approval gate.
+  /// Prefers RPC [get_ad_linked_products_by_ids] to bypass public RLS approval.
+  Future<List<DBProduct>> getAdLinkedProductsByIds(List<String> ids) async {
+    final report = await fetchAdLinkedProductsReport(ids);
+    return report.products;
+  }
+
+  Future<AdLinkedProductsFetchReport> fetchAdLinkedProductsReport(
+    List<String> ids, {
+    AdLinkedProductsFetchContext? context,
+  }) async {
+    final normalized = ids
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (normalized.isEmpty) {
+      return AdLinkedProductsFetchReport.empty();
+    }
+
+    final campaignId = context?.campaignId?.trim();
+    final sellerId = context?.sellerId?.trim();
+
+    final rpcAttempts = <({Map<String, dynamic> params, String label})>[
+      if (campaignId != null &&
+          campaignId.isNotEmpty &&
+          sellerId != null &&
+          sellerId.isNotEmpty)
+        (
+          params: {
+            'p_product_ids': normalized,
+            'p_campaign_id': campaignId,
+            'p_seller_id': sellerId,
+          },
+          label: 'rpc:get_ad_linked_products_by_ids(3-arg)',
+        ),
+      (
+        params: {'p_product_ids': normalized},
+        label: 'rpc:get_ad_linked_products_by_ids(1-arg)',
+      ),
+    ];
+
+    Object? lastRpcError;
+    for (final attempt in rpcAttempts) {
+      try {
+        final response = await _supabase.rpc(
+          'get_ad_linked_products_by_ids',
+          params: attempt.params,
+        );
+        final rows = List<Map<String, dynamic>>.from(response as List);
+        final mapped = _mapAdLinkedProductRows(
+          rows: rows,
+          requestedIds: normalized,
+          fromRpc: true,
+        );
+        var rejections = mapped.rejections;
+        var missingIds = mapped.missingIds;
+        var error = rows.isEmpty && mapped.products.isEmpty
+            ? 'rpc_returned_empty'
+            : null;
+        if (rows.isEmpty && mapped.products.isEmpty) {
+          final enriched = await _enrichAdLinkedDiagnostics(
+            productIds: normalized,
+            campaignId: campaignId,
+            rejections: rejections,
+            missingIds: missingIds,
+          );
+          rejections = enriched.rejections;
+          missingIds = enriched.missingIds;
+          if (enriched.primaryReason != null) {
+            error = 'rpc_returned_empty:${enriched.primaryReason}';
+          }
+        }
+        return AdLinkedProductsFetchReport(
+          products: mapped.products,
+          requestedIdCount: normalized.length,
+          rawRpcCount: rows.length,
+          rawSelectCount: 0,
+          rawDbCount: rows.length,
+          filteredCount: mapped.products.length,
+          query: attempt.label,
+          rejections: rejections,
+          missingIds: missingIds,
+          usedRpc: true,
+          context: context,
+          error: error,
+        );
+      } catch (e) {
+        lastRpcError = e;
+        if (!_isMissingAdLinkedRpcSignature(e)) {
+          break;
+        }
+        if (kDebugMode) {
+          debugPrint(
+            'getAdLinkedProductsByIds rpc signature miss (${attempt.label}): $e',
+          );
+        }
+      }
+    }
+
+    if (lastRpcError != null) {
+      debugPrint('getAdLinkedProductsByIds rpc failed, falling back: $lastRpcError');
+    }
+    return _fetchAdLinkedProductsDirectSelect(
+      normalized,
+      rpcError: lastRpcError?.toString(),
+      context: context,
+    );
+  }
+
+  bool _isMissingAdLinkedRpcSignature(Object error) {
+    final message = error.toString();
+    return message.contains('PGRST202') ||
+        message.contains('Could not find the function') ||
+        message.contains('schema cache');
+  }
+
+  Future<
+      ({
+        Map<String, String> rejections,
+        Map<String, String> missingIds,
+        String? primaryReason,
+      })> _enrichAdLinkedDiagnostics({
+    required List<String> productIds,
+    String? campaignId,
+    required Map<String, String> rejections,
+    required Map<String, String> missingIds,
+  }) async {
+    if (productIds.isEmpty) {
+      return (
+        rejections: rejections,
+        missingIds: missingIds,
+        primaryReason: null,
+      );
+    }
+    try {
+      final params = <String, dynamic>{'p_product_ids': productIds};
+      final trimmedCampaignId = campaignId?.trim();
+      if (trimmedCampaignId != null && trimmedCampaignId.isNotEmpty) {
+        params['p_campaign_id'] = trimmedCampaignId;
+      }
+      final response = await _supabase.rpc(
+        'diagnose_ad_linked_products',
+        params: params,
+      );
+      final rows = List<Map<String, dynamic>>.from(response as List);
+      if (rows.isEmpty) {
+        return (
+          rejections: rejections,
+          missingIds: missingIds,
+          primaryReason: null,
+        );
+      }
+
+      final nextRejections = Map<String, String>.from(rejections);
+      final nextMissingIds = Map<String, String>.from(missingIds);
+      String? primaryReason;
+
+      for (final row in rows) {
+        final productId = row['product_id']?.toString().trim();
+        if (productId == null || productId.isEmpty) continue;
+        final reason = row['reject_reason']?.toString().trim();
+        if (reason == null || reason.isEmpty || reason == 'ok') continue;
+        primaryReason ??= reason;
+        if (reason == 'product_not_found') {
+          nextMissingIds[productId] = reason;
+          nextRejections.remove(productId);
+        } else {
+          nextRejections[productId] = reason;
+          nextMissingIds.remove(productId);
+        }
+      }
+
+      return (
+        rejections: nextRejections,
+        missingIds: nextMissingIds,
+        primaryReason: primaryReason,
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('diagnose_ad_linked_products skipped: $e');
+      }
+      return (
+        rejections: rejections,
+        missingIds: missingIds,
+        primaryReason: null,
+      );
+    }
+  }
+
+  Future<AdLinkedProductsFetchReport> _fetchAdLinkedProductsDirectSelect(
+    List<String> ids, {
+    String? rpcError,
+    AdLinkedProductsFetchContext? context,
+  }) async {
+    const selectCandidates = <String>[
+      _homeProductCardSelectFields,
+      _homeProductCardSelectFieldsSansStore,
+      _productSelectFieldsSansStore,
+    ];
+
+    Object? lastError;
+    for (final select in selectCandidates) {
+      try {
+        final response = await _supabase
+            .from('products')
+            .select(select)
+            .inFilter('id', ids);
+
+        final data = List<Map<String, dynamic>>.from(response as List);
+        final mapped = _mapAdLinkedProductRows(
+          rows: data,
+          requestedIds: ids,
+          fromRpc: false,
+        );
+        return AdLinkedProductsFetchReport(
+          products: mapped.products,
+          requestedIdCount: ids.length,
+          rawRpcCount: 0,
+          rawSelectCount: data.length,
+          rawDbCount: data.length,
+          filteredCount: mapped.products.length,
+          query: 'products.select(...).inFilter(id, ids)',
+          error: rpcError ??
+              (data.isEmpty && ids.isNotEmpty ? 'rls_or_missing_rows' : null),
+          rejections: mapped.rejections,
+          missingIds: mapped.missingIds,
+          usedRpc: false,
+          context: context,
+        );
+      } catch (e, stack) {
+        lastError = e;
+        debugPrint('getAdLinkedProductsByIds select=$select failed: $e');
+        debugPrintStack(stackTrace: stack);
+      }
+    }
+
+    return AdLinkedProductsFetchReport(
+      products: const [],
+      requestedIdCount: ids.length,
+      rawRpcCount: 0,
+      rawSelectCount: 0,
+      rawDbCount: 0,
+      filteredCount: 0,
+      query: 'products.select(...).inFilter(id, ids)',
+      error: lastError?.toString() ?? rpcError ?? 'query_failed',
+      missingIds: {for (final id in ids) id: 'not_fetched'},
+      context: context,
+    );
+  }
+
+  List<DBProduct> orderAdLinkedProducts({
+    required List<String> productIds,
+    required List<DBProduct> products,
+    int maxProducts = 12,
+  }) {
+    if (productIds.isEmpty || products.isEmpty) return const [];
+    final byId = {
+      for (final product in products)
+        if (product.id != null) product.id!: product,
+    };
+    return productIds
+        .map((id) => byId[id.trim()])
+        .whereType<DBProduct>()
+        .take(maxProducts)
+        .toList(growable: false);
+  }
+
+  ({
+    List<DBProduct> products,
+    Map<String, String> rejections,
+    Map<String, String> missingIds,
+  }) _mapAdLinkedProductRows({
+    required List<Map<String, dynamic>> rows,
+    required List<String> requestedIds,
+    required bool fromRpc,
+  }) {
+    final byId = <String, DBProduct>{};
+    final rejections = <String, String>{};
+    for (final item in rows) {
+      final id = item['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      final rejectReason =
+          ProductVisibilityHelper.adLinkedDisplayRejectReason(item);
+      if (rejectReason != null) {
+        rejections[id] = rejectReason;
+        continue;
+      }
+      byId[id] = _mapToDBProduct(item);
+    }
+
+    final missingIds = <String, String>{};
+    for (final id in requestedIds) {
+      if (byId.containsKey(id)) continue;
+      if (rejections.containsKey(id)) continue;
+      missingIds[id] = rows.isEmpty
+          ? (fromRpc ? 'rpc_empty_or_filtered' : 'rls_or_not_found')
+          : 'id_not_in_response';
+    }
+
+    final products = requestedIds
+        .map((id) => byId[id])
+        .whereType<DBProduct>()
+        .toList(growable: false);
+    return (products: products, rejections: rejections, missingIds: missingIds);
+  }
+
+  Future<List<DBProduct>> getSimilarPublicProducts({
+    required String excludeProductId,
+    required String productName,
+    required String brand,
+    String? mainCategory,
+    String? subCategory,
+    int limit = 10,
+  }) async {
+    try {
+      Future<List<Map<String, dynamic>>> runSelect(String fields) async {
+        var query = _supabase
+            .from('products')
+            .select(fields)
+            .inFilter('status', publicCatalogProductStatuses);
+
+        if (excludeProductId.trim().isNotEmpty) {
+          query = query.neq('id', excludeProductId.trim());
+        }
+
+        final normalizedCategory = mainCategory?.trim() ?? '';
+        final normalizedSubCategory = subCategory?.trim() ?? '';
+        if (normalizedSubCategory.isNotEmpty) {
+          query = query.eq('sub_category', normalizedSubCategory);
+        } else if (normalizedCategory.isNotEmpty) {
+          query = query.eq('main_category', normalizedCategory);
+        }
+
+        final response = await query
+            .order('created_at', ascending: false)
+            .limit(limit * 3);
+        return List<Map<String, dynamic>>.from(response as List);
+      }
+
+      List<Map<String, dynamic>> rows;
+      try {
+        rows = await runSelect(_productSuggestionSelectFields);
+      } catch (_) {
+        rows = await runSelect(_productSelectFieldsSansStore);
+      }
+
+      final currentName = productName.trim().toLowerCase();
+      final currentBrand = brand.trim().toLowerCase();
+
+      return ProductVisibilityHelper.filterPublicProductMaps(rows)
+          .where((row) {
+            final name = row['name']?.toString().trim().toLowerCase() ?? '';
+            final rowBrand = row['brand']?.toString().trim().toLowerCase() ?? '';
+            return !(name == currentName && rowBrand == currentBrand);
+          })
+          .take(limit)
+          .map(_mapToDBProduct)
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('Error getting similar public products: $e');
+      return const <DBProduct>[];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getOtherSellerOfferRows({
+    required String productName,
+    required String brand,
+    String? barcode,
+    String? modelCode,
+    String? excludeSellerId,
+    String? excludeProductId,
+    int limit = 10,
+  }) async {
+    final trimmedName = productName.trim();
+    if (trimmedName.isEmpty &&
+        (barcode?.trim().isEmpty ?? true) &&
+        (modelCode?.trim().isEmpty ?? true)) {
+      return const [];
+    }
+
+    try {
+      const offerFields =
+          'id, seller_id, name, brand, barcode, model_code, image_url, image_urls, '
+          'main_category, sub_category, price, discount_price, stock, status, '
+          'approval_status, admin_approval_status, attributes, specifications, '
+          'variant_options, stores(business_name, logo_url)';
+      const offerFieldsSansStore =
+          'id, seller_id, name, brand, barcode, model_code, image_url, image_urls, '
+          'main_category, sub_category, price, discount_price, stock, status, '
+          'approval_status, admin_approval_status, attributes, specifications, '
+          'variant_options';
+
+      Future<List<Map<String, dynamic>>> fetchRows({
+        required Future<dynamic> Function(String fields) request,
+      }) async {
+        List<Map<String, dynamic>> rows;
+        try {
+          rows = List<Map<String, dynamic>>.from(await request(offerFields));
+        } catch (_) {
+          rows = List<Map<String, dynamic>>.from(
+            await request(offerFieldsSansStore),
+          );
+        }
+
+        return ProductVisibilityHelper.dedupeOtherSellerRows(
+          ProductVisibilityHelper.filterPublicProductMaps(rows),
+          excludeSellerId: excludeSellerId,
+          excludeProductId: excludeProductId,
+          limit: limit,
+        );
+      }
+
+      final trimmedBarcode = barcode?.trim() ?? '';
+      if (trimmedBarcode.isNotEmpty) {
+        final byBarcode = await fetchRows(
+          request: (fields) => _supabase
+              .from('products')
+              .select(fields)
+              .eq('barcode', trimmedBarcode)
+              .inFilter('status', publicCatalogProductStatuses)
+              .order('price', ascending: true)
+              .limit(limit * 2),
+        );
+        if (byBarcode.isNotEmpty) {
+          return byBarcode;
+        }
+      }
+
+      final trimmedModelCode = modelCode?.trim() ?? '';
+      if (trimmedModelCode.isNotEmpty) {
+        final byModel = await fetchRows(
+          request: (fields) => _supabase
+              .from('products')
+              .select(fields)
+              .eq('model_code', trimmedModelCode)
+              .inFilter('status', publicCatalogProductStatuses)
+              .order('price', ascending: true)
+              .limit(limit * 2),
+        );
+        if (byModel.isNotEmpty) {
+          return byModel;
+        }
+      }
+
+      if (trimmedName.isEmpty) {
+        return const [];
+      }
+
+      return fetchRows(
+        request: (fields) {
+          var query = _supabase
+              .from('products')
+              .select(fields)
+              .eq('name', trimmedName)
+              .inFilter('status', publicCatalogProductStatuses);
+          final trimmedBrand = brand.trim();
+          if (trimmedBrand.isNotEmpty) {
+            query = query.eq('brand', trimmedBrand);
+          }
+          return query.order('price', ascending: true).limit(limit * 2);
+        },
+      );
+    } catch (e) {
+      debugPrint('Error getting other seller offers: $e');
+      return const <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<String?> lookupVariantGroupIdByNameBrand({
+    required String name,
+    required String brand,
+  }) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) return null;
+
+    try {
+      Future<String?> runSelect(String fields) async {
+        var query = _supabase.from('products').select(fields).eq('name', trimmedName);
+        final trimmedBrand = brand.trim();
+        if (trimmedBrand.isNotEmpty) {
+          query = query.eq('brand', trimmedBrand);
+        }
+        final response = await query.limit(1).maybeSingle();
+        if (response == null) return null;
+        final row = Map<String, dynamic>.from(response as Map);
+        final groupId = row['variant_group_id']?.toString().trim() ?? '';
+        return groupId.isEmpty ? null : groupId;
+      }
+
+      try {
+        return await runSelect('variant_group_id');
+      } catch (_) {
+        return null;
+      }
+    } catch (e) {
+      debugPrint('Error looking up variant group id: $e');
+      return null;
     }
   }
 
@@ -686,7 +1463,9 @@ class SupabaseService {
         rows = await runSearchQuery(useNormalizedFields: false);
       }
 
-      final items = rows.map(_mapToDBProduct).toList(growable: false);
+      final items = ProductVisibilityHelper.filterPublicProductMaps(rows)
+          .map(_mapToDBProduct)
+          .toList(growable: false);
       final nextCursor = items.length < limit
           ? null
           : '${offset + items.length}';
@@ -711,8 +1490,8 @@ class SupabaseService {
           .inFilter('status', publicCatalogProductStatuses)
           .order('created_at', ascending: false)
           .range(offset, offset + limit - 1);
-      final items = List<Map<String, dynamic>>.from(
-        response as List,
+      final items = ProductVisibilityHelper.filterPublicProductMaps(
+        List<Map<String, dynamic>>.from(response as List),
       ).map(_mapToDBProduct).toList(growable: false);
       final nextCursor = items.length < limit
           ? null
@@ -785,8 +1564,8 @@ class SupabaseService {
           .order('created_at', ascending: false)
           .range(offset, offset + limit - 1);
 
-      final items = List<Map<String, dynamic>>.from(
-        response as List,
+      final items = ProductVisibilityHelper.filterPublicProductMaps(
+        List<Map<String, dynamic>>.from(response as List),
       ).map(_mapToDBProduct).toList(growable: false);
       final nextCursor = items.length < limit
           ? null
@@ -822,8 +1601,8 @@ class SupabaseService {
           .order('created_at', ascending: false)
           .limit(limit);
 
-      return List<Map<String, dynamic>>.from(
-        response as List,
+      return ProductVisibilityHelper.filterPublicProductMaps(
+        List<Map<String, dynamic>>.from(response as List),
       ).map(_mapToDBProduct).toList(growable: false);
     } catch (e) {
       debugPrint('Error getting products by store: $e');
@@ -920,6 +1699,9 @@ class SupabaseService {
   }) {
     final previewsBySellerId = <String, List<DBProduct>>{};
     for (final row in List<Map<String, dynamic>>.from(response as List)) {
+      if (!ProductVisibilityHelper.isPublicVisibleProductMap(row)) {
+        continue;
+      }
       final product = _mapToDBProduct(row);
       final sellerId = product.sellerId?.trim() ?? '';
       if (sellerId.isEmpty) continue;
@@ -1263,6 +2045,12 @@ class SupabaseService {
 
   // ==================== MAPPERS ====================
 
+  static DateTime? _parseCatalogUpdatedAt(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    return DateTime.tryParse(value.toString());
+  }
+
   DBProduct _mapToDBProduct(Map<String, dynamic> data) {
     // Map snake_case from Supabase to DBProduct fields
     // Also handle stores(business_name) join
@@ -1326,6 +2114,12 @@ class SupabaseService {
         }
         return visible;
       }(),
+      catalogStatus: data['status']?.toString(),
+      approvalStatus: data['approval_status']?.toString(),
+      adminApprovalStatus: data['admin_approval_status']?.toString(),
+      catalogUpdatedAt: _parseCatalogUpdatedAt(
+        data['updated_at'] ?? data['created_at'],
+      ),
       attributes: data['attributes'] != null
           ? jsonEncode(data['attributes'])
           : null,

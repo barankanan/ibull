@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import '../core/runtime_diagnostic_logger.dart';
 import '../firebase_options.dart';
 
 @pragma('vm:entry-point')
@@ -28,6 +30,7 @@ class PushNotificationService {
   static const String _nearbyStoreChannelName = 'IBUL Nearby Stores';
 
   GlobalKey<NavigatorState>? _navigatorKey;
+  bool _deferredFcmSyncScheduled = false;
   bool _initialized = false;
   bool _localNotificationsInitialized = false;
   bool _timezonesInitialized = false;
@@ -221,9 +224,46 @@ class PushNotificationService {
   }
 
   Future<void> _syncFcmToken() async {
+    // On iOS the FCM token is unavailable until APNS delivers its token.
+    // Calling getToken() before that throws; we must not surface this as an
+    // error or let it block startup/login. Instead we defer and retry in the
+    // background.
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      final apnsToken = await _messagingClient.getAPNSToken();
+      if (apnsToken == null || apnsToken.isEmpty) {
+        RuntimeDiagnosticLogger.fcm('sync deferred, apnsTokenNotReady');
+        unawaited(_scheduleDeferredFcmTokenSync());
+        return;
+      }
+    }
+
     final token = await _messagingClient.getToken();
     if (token == null || token.isEmpty) return;
     await _upsertDeviceToken(token);
+  }
+
+  /// Background retry loop for the FCM token when APNS wasn't ready at startup.
+  /// Never throws; runs entirely off the login/startup critical path.
+  Future<void> _scheduleDeferredFcmTokenSync() async {
+    if (_deferredFcmSyncScheduled) return;
+    _deferredFcmSyncScheduled = true;
+    for (var attempt = 0; attempt < 5; attempt++) {
+      await Future<void>.delayed(const Duration(seconds: 3));
+      try {
+        final apnsToken = await _messagingClient.getAPNSToken();
+        if (apnsToken == null || apnsToken.isEmpty) continue;
+        final token = await _messagingClient.getToken();
+        if (token != null && token.isNotEmpty) {
+          await _upsertDeviceToken(token);
+          RuntimeDiagnosticLogger.fcm('token sync completed (deferred)');
+          _deferredFcmSyncScheduled = false;
+          return;
+        }
+      } catch (error) {
+        debugPrint('Deferred FCM token sync attempt failed: $error');
+      }
+    }
+    _deferredFcmSyncScheduled = false;
   }
 
   Future<void> _upsertDeviceToken(String token) async {

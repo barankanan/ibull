@@ -7,6 +7,8 @@ class ImageCropperWidget extends StatefulWidget {
   final void Function(Uint8List croppedData) onCropped;
   final double? aspectRatio;
   final double? suggestedWidth;
+  final String? title;
+  final String? helpText;
 
   const ImageCropperWidget({
     super.key,
@@ -14,6 +16,8 @@ class ImageCropperWidget extends StatefulWidget {
     required this.onCropped,
     this.aspectRatio,
     this.suggestedWidth,
+    this.title,
+    this.helpText,
   });
 
   @override
@@ -63,7 +67,7 @@ class _ImageCropperWidgetState extends State<ImageCropperWidget> {
         child: Column(
           children: [
             Text(
-              "Gorseli kirpin",
+              widget.title ?? 'Görseli kırpın',
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
             ),
             const SizedBox(height: 12),
@@ -78,10 +82,11 @@ class _ImageCropperWidgetState extends State<ImageCropperWidget> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              "Kare kirpma alani 512x512 px icin uygundur. Resmi iki parmaginizla yakinlastirip konumlandirabilirsiniz.",
+            Text(
+              widget.helpText ??
+                  'Resmi iki parmağınızla yakınlaştırıp konumlandırabilirsiniz.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
+              style: const TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 8),
             // Action buttons

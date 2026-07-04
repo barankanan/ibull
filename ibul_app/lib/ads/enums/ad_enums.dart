@@ -14,7 +14,8 @@ enum AdCampaignType {
   collectionBoost,
   geoPush,
   banner,
-  categorySponsor;
+  categorySponsor,
+  homeFeature;
 
   String get dbValue => switch (this) {
     AdCampaignType.productBoost => 'product_boost',
@@ -23,6 +24,7 @@ enum AdCampaignType {
     AdCampaignType.geoPush => 'geo_push',
     AdCampaignType.banner => 'banner',
     AdCampaignType.categorySponsor => 'category_sponsor',
+    AdCampaignType.homeFeature => 'home_feature',
   };
 }
 
@@ -117,7 +119,8 @@ enum AdPlacement {
   explore,
   pushNotification,
   recommendationCarousel,
-  bannerSlot;
+  bannerSlot,
+  homeCard;
 
   String get dbValue => switch (this) {
     AdPlacement.homeFeed => 'home_feed',
@@ -131,6 +134,35 @@ enum AdPlacement {
     AdPlacement.pushNotification => 'push_notification',
     AdPlacement.recommendationCarousel => 'recommendation_carousel',
     AdPlacement.bannerSlot => 'banner_slot',
+    AdPlacement.homeCard => 'home_card',
+  };
+}
+
+/// Ana sayfa öne çıkarma reklamı event tipleri.
+enum HomeFeatureEventType {
+  impression,
+  bannerClick,
+  storeProfileOpen,
+  productClick,
+  favorite,
+  messageClick;
+
+  String get dbValue => switch (this) {
+    HomeFeatureEventType.impression => 'impression',
+    HomeFeatureEventType.bannerClick => 'banner_click',
+    HomeFeatureEventType.storeProfileOpen => 'store_profile_open',
+    HomeFeatureEventType.productClick => 'product_click',
+    HomeFeatureEventType.favorite => 'favorite',
+    HomeFeatureEventType.messageClick => 'message_click',
+  };
+
+  String get metricKey => switch (this) {
+    HomeFeatureEventType.impression => 'impressions_count',
+    HomeFeatureEventType.bannerClick => 'banner_clicks_count',
+    HomeFeatureEventType.storeProfileOpen => 'profile_opens_count',
+    HomeFeatureEventType.productClick => 'product_clicks_count',
+    HomeFeatureEventType.favorite => 'favorites_count',
+    HomeFeatureEventType.messageClick => 'message_clicks_count',
   };
 }
 

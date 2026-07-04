@@ -1,20 +1,31 @@
 import 'package:flutter/material.dart';
 
+import 'package:ibul_app/services/admin_service.dart';
+import 'package:ibul_app/utils/order_status_constants.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class StoreApplicationDetailDialog extends StatefulWidget {
   final Map<String, dynamic> application;
+  final List<Map<String, dynamic>> priorHistory;
+  final bool allowAdminActions;
+  final Map<String, dynamic>? historyEntry;
+  final bool isSnapshotView;
   final Future<void> Function(
     String id,
     String status, {
     String? rejectionReason,
+    String? adminNote,
   })
   onUpdateStatus;
 
   const StoreApplicationDetailDialog({
     super.key,
     required this.application,
+    this.priorHistory = const [],
+    this.allowAdminActions = true,
+    this.historyEntry,
+    this.isSnapshotView = false,
     required this.onUpdateStatus,
   });
 
@@ -30,11 +41,21 @@ class _StoreApplicationDetailDialogState
 
   Future<void> _handleApprove() async {
     if (_isSubmitting) return;
+    final adminNote = await _showReasonDialog(
+      title: 'Başvuruyu Onayla',
+      hintText: 'Opsiyonel admin notu',
+      initialValue: '',
+      confirmLabel: 'Onayla',
+      optional: true,
+    );
+    if (adminNote == null || _isSubmitting) return;
+
     setState(() => _isSubmitting = true);
     try {
       await widget.onUpdateStatus(
         widget.application['id'].toString(),
         'approved',
+        adminNote: adminNote.trim().isEmpty ? null : adminNote.trim(),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -56,8 +77,8 @@ class _StoreApplicationDetailDialogState
   Future<void> _handleReject() async {
     final reason = await _showReasonDialog(
       title: 'Başvuruyu Reddet',
-      hintText: 'Reddetme gerekçesi',
-      initialValue: 'Admin tarafından reddedildi',
+      hintText: 'Reddetme gerekçesini yazın (ör. belge eksik, kategori uyumsuz)',
+      initialValue: '',
       confirmLabel: 'Reddet',
     );
     if (reason == null || reason.trim().isEmpty || _isSubmitting) return;
@@ -88,9 +109,9 @@ class _StoreApplicationDetailDialogState
 
   Future<void> _handleMissingDocuments() async {
     final note = await _showReasonDialog(
-      title: 'Eksik Belge Bildir',
-      hintText: 'Eksik belge notu',
-      initialValue: 'Eksik belge nedeniyle ek evrak talep edildi',
+      title: 'Eksik Belge İste',
+      hintText: 'Eksik belge / bilgi notunu yazın (ör. vergi levhası eksik)',
+      initialValue: '',
       confirmLabel: 'Bildir',
     );
     if (note == null || note.trim().isEmpty || _isSubmitting) return;
@@ -124,6 +145,7 @@ class _StoreApplicationDetailDialogState
     required String hintText,
     required String initialValue,
     required String confirmLabel,
+    bool optional = false,
   }) async {
     final controller = TextEditingController(text: initialValue);
     final result = await showDialog<String>(
@@ -145,7 +167,11 @@ class _StoreApplicationDetailDialogState
             child: const Text('Vazgeç'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            onPressed: () {
+              final value = controller.text.trim();
+              if (!optional && value.isEmpty) return;
+              Navigator.pop(context, value);
+            },
             child: Text(confirmLabel),
           ),
         ],
@@ -153,6 +179,35 @@ class _StoreApplicationDetailDialogState
     );
     controller.dispose();
     return result;
+  }
+
+  String _formatDateLabel(dynamic value) {
+    if (value == null) return '-';
+    DateTime? date;
+    if (value is DateTime) {
+      date = value;
+    } else {
+      date = DateTime.tryParse(value.toString());
+    }
+    if (date == null) return '-';
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    return '$day.$month.${date.year}';
+  }
+
+  String _historyActionLabel(String action) {
+    switch (action) {
+      case 'approved':
+        return 'Onaylandı';
+      case 'rejected':
+        return 'Reddedildi';
+      case 'changes_requested':
+        return 'Eksik Belge';
+      case 'resubmitted':
+        return 'Tekrar Başvuru';
+      default:
+        return action;
+    }
   }
 
   @override
@@ -183,11 +238,45 @@ class _StoreApplicationDetailDialogState
                 ],
               ),
             ),
-            _buildFooter(),
+            if (widget.allowAdminActions) _buildFooter() else _buildReadOnlyFooter(),
           ],
         ),
       ),
     );
+  }
+
+  String _statusLabel() {
+    final status =
+        (widget.application['status'] ?? AdminApprovalStatusConstants.pending)
+            .toString()
+            .toLowerCase();
+    if (status == AdminService.sellerApplicationMissingDocuments) {
+      return 'Eksik Belge Bekleniyor';
+    }
+    if (status == AdminApprovalStatusConstants.approved) {
+      return 'Onaylandı';
+    }
+    if (status == AdminApprovalStatusConstants.rejected) {
+      return 'Reddedildi';
+    }
+    return 'Başvuru İnceleniyor';
+  }
+
+  Color _statusColor() {
+    final status =
+        (widget.application['status'] ?? AdminApprovalStatusConstants.pending)
+            .toString()
+            .toLowerCase();
+    if (status == AdminService.sellerApplicationMissingDocuments) {
+      return const Color(0xFF4338CA);
+    }
+    if (status == AdminApprovalStatusConstants.approved) {
+      return const Color(0xFF059669);
+    }
+    if (status == AdminApprovalStatusConstants.rejected) {
+      return const Color(0xFFE11D48);
+    }
+    return Colors.orange;
   }
 
   Widget _buildHeader() {
@@ -227,13 +316,13 @@ class _StoreApplicationDetailDialogState
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.1),
+                      color: _statusColor().withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(4),
                     ),
-                    child: const Text(
-                      'Başvuru İnceleniyor',
+                    child: Text(
+                      _statusLabel(),
                       style: TextStyle(
-                        color: Colors.orange,
+                        color: _statusColor(),
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -241,7 +330,7 @@ class _StoreApplicationDetailDialogState
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'Başvuru Tarihi: 14.02.2026', // Mock date
+                    'Başvuru Tarihi: ${_formatDateLabel(widget.application['created_at'])}',
                     style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
                   ),
                 ],
@@ -328,10 +417,117 @@ class _StoreApplicationDetailDialogState
       case 'Yetkili Kişi':
         return _buildAuthorizedPersonTab();
       case 'Geçmiş İşlemler':
-        return const Center(child: Text('Geçmiş işlemler burada listelenecek'));
+        return _buildHistoryTab();
       default:
         return const SizedBox();
     }
+  }
+
+  Widget _buildHistoryTab() {
+    if (widget.priorHistory.isEmpty) {
+      return Center(
+        child: Text(
+          'Bu satıcı için önceki başvuru işlemi kaydı yok.',
+          style: TextStyle(color: Colors.grey.shade600),
+        ),
+      );
+    }
+
+    final hadMissingDocuments = widget.priorHistory.any(
+      (entry) => (entry['action'] ?? '').toString() == 'changes_requested',
+    );
+    final hadRejection = widget.priorHistory.any(
+      (entry) => (entry['action'] ?? '').toString() == 'rejected',
+    );
+
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        if (hadRejection || hadMissingDocuments)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF7ED),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFED7AA)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Tekrar başvuru özeti',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                ),
+                const SizedBox(height: 6),
+                if (hadRejection)
+                  const Text(
+                    'Bu satıcı daha önce reddedildi. Yeni başvuruyu geçmiş kayıtlarla karşılaştırın.',
+                    style: TextStyle(fontSize: 13, height: 1.4),
+                  ),
+                if (hadMissingDocuments)
+                  Text(
+                    hadRejection
+                        ? 'Ayrıca daha önce eksik belge talebi gönderilmişti; satıcı eksikleri giderdi mi kontrol edin.'
+                        : 'Daha önce eksik belge talebi gönderildi. Satıcı eksikleri giderdi mi kontrol edin.',
+                    style: const TextStyle(fontSize: 13, height: 1.4),
+                  ),
+              ],
+            ),
+          ),
+        ...widget.priorHistory.map((entry) {
+          final action = (entry['action'] ?? '').toString();
+          final noteText = AdminService.formatStoreApplicationHistoryNote(entry);
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _historyActionLabel(action),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      _formatDateLabel(entry['acted_at']),
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  noteText,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontSize: 13,
+                    height: 1.4,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
   }
 
   Widget _buildGeneralInfoTab() {
@@ -822,6 +1018,43 @@ class _StoreApplicationDetailDialogState
     );
   }
 
+  Widget _buildReadOnlyFooter() {
+    final historyNote = widget.historyEntry == null
+        ? null
+        : AdminService.formatStoreApplicationHistoryNote(widget.historyEntry!);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: Colors.grey.shade200)),
+        color: const Color(0xFFF8FAFC),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (historyNote != null) ...[
+            Text(
+              historyNote,
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontSize: 13,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Text(
+            widget.isSnapshotView
+                ? 'Bu kayıt salt okunur. Satıcı yeni başvuru gönderdiyse Bekleyenler listesinden onaylayabilirsiniz.'
+                : 'Bu başvuru için işlem yapılamaz.',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildFooter() {
     return Container(
       padding: const EdgeInsets.all(24),
@@ -834,7 +1067,7 @@ class _StoreApplicationDetailDialogState
           OutlinedButton.icon(
             onPressed: _isSubmitting ? null : _handleMissingDocuments,
             icon: const Icon(Icons.mail_outline, size: 18),
-            label: const Text('Eksik Belge Bildir'),
+            label: const Text('Eksik Belge İste'),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               foregroundColor: const Color(0xFF8B5CF6),

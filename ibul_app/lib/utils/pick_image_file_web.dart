@@ -13,7 +13,7 @@ Future<List<PickedImageFile>> pickImageFiles({
   final Completer<List<PickedImageFile>> completer =
       Completer<List<PickedImageFile>>();
   final html.FileUploadInputElement input = html.FileUploadInputElement()
-    ..accept = 'image/jpeg,image/png,image/webp,image/gif,image/*'
+    ..accept = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp'
     ..multiple = allowMultiple
     ..style.display = 'none';
 

@@ -612,6 +612,258 @@ class AdminInvestmentAllocation {
   }
 }
 
+class AdminExpense {
+  const AdminExpense({
+    required this.id,
+    required this.title,
+    required this.category,
+    required this.amount,
+    required this.expenseDate,
+    required this.type,
+    this.recurrence,
+    required this.status,
+    this.paymentMethod,
+    this.vendor,
+    this.invoiceUrl,
+    this.note,
+    this.createdAt,
+    this.updatedAt,
+    this.createdBy,
+  });
+
+  final String id;
+  final String title;
+  final String category;
+  final double amount;
+  final DateTime expenseDate;
+  final String type;
+  final String? recurrence;
+  final String status;
+  final String? paymentMethod;
+  final String? vendor;
+  final String? invoiceUrl;
+  final String? note;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final String? createdBy;
+
+  factory AdminExpense.fromMap(Map<String, dynamic> map) {
+    final rawDate = (map['expense_date'] ?? '').toString();
+    final parsedDate = DateTime.tryParse(rawDate) ??
+        DateTime.tryParse('${rawDate}T00:00:00') ??
+        DateTime.now();
+    return AdminExpense(
+      id: (map['id'] ?? '').toString(),
+      title: (map['title'] ?? '').toString(),
+      category: (map['category'] ?? 'other').toString(),
+      amount: (map['amount'] as num?)?.toDouble() ?? 0,
+      expenseDate: DateTime(parsedDate.year, parsedDate.month, parsedDate.day),
+      type: (map['type'] ?? 'one_time').toString(),
+      recurrence: map['recurrence']?.toString(),
+      status: (map['status'] ?? 'paid').toString(),
+      paymentMethod: map['payment_method']?.toString(),
+      vendor: map['vendor']?.toString(),
+      invoiceUrl: map['invoice_url']?.toString(),
+      note: map['note']?.toString(),
+      createdAt: DateTime.tryParse((map['created_at'] ?? '').toString()),
+      updatedAt: DateTime.tryParse((map['updated_at'] ?? '').toString()),
+      createdBy: map['created_by']?.toString(),
+    );
+  }
+
+  static String formatDate(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  Map<String, dynamic> toInsertMap() {
+    return {
+      'title': title,
+      'category': category,
+      'amount': amount,
+      'expense_date': formatDate(expenseDate),
+      'type': type,
+      'recurrence': type == 'recurring' ? recurrence : null,
+      'status': status,
+      'payment_method': paymentMethod,
+      'vendor': vendor,
+      'invoice_url': invoiceUrl,
+      'note': note,
+    };
+  }
+}
+
+class AdminRevenue {
+  const AdminRevenue({
+    required this.id,
+    required this.title,
+    required this.category,
+    required this.amount,
+    required this.revenueDate,
+    required this.type,
+    this.recurrence,
+    required this.status,
+    this.source,
+    this.paymentMethod,
+    this.referenceNo,
+    this.note,
+    this.createdAt,
+    this.updatedAt,
+    this.createdBy,
+  });
+
+  final String id;
+  final String title;
+  final String category;
+  final double amount;
+  final DateTime revenueDate;
+  final String type;
+  final String? recurrence;
+  final String status;
+  final String? source;
+  final String? paymentMethod;
+  final String? referenceNo;
+  final String? note;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final String? createdBy;
+
+  factory AdminRevenue.fromMap(Map<String, dynamic> map) {
+    final rawDate = (map['revenue_date'] ?? '').toString();
+    final parsedDate = DateTime.tryParse(rawDate) ??
+        DateTime.tryParse('${rawDate}T00:00:00') ??
+        DateTime.now();
+    return AdminRevenue(
+      id: (map['id'] ?? '').toString(),
+      title: (map['title'] ?? '').toString(),
+      category: (map['category'] ?? 'other').toString(),
+      amount: (map['amount'] as num?)?.toDouble() ?? 0,
+      revenueDate: DateTime(parsedDate.year, parsedDate.month, parsedDate.day),
+      type: (map['type'] ?? 'one_time').toString(),
+      recurrence: map['recurrence']?.toString(),
+      status: (map['status'] ?? 'received').toString(),
+      source: map['source']?.toString(),
+      paymentMethod: map['payment_method']?.toString(),
+      referenceNo: map['reference_no']?.toString(),
+      note: map['note']?.toString(),
+      createdAt: DateTime.tryParse((map['created_at'] ?? '').toString()),
+      updatedAt: DateTime.tryParse((map['updated_at'] ?? '').toString()),
+      createdBy: map['created_by']?.toString(),
+    );
+  }
+
+  static String formatDate(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+}
+
+class SellerPayout {
+  const SellerPayout({
+    required this.id,
+    required this.sellerId,
+    this.storeId,
+    this.storeName,
+    required this.periodStart,
+    required this.periodEnd,
+    required this.grossAmount,
+    required this.commissionAmount,
+    required this.refundAmount,
+    required this.deductionsAmount,
+    required this.netPayoutAmount,
+    required this.orderCount,
+    required this.itemCount,
+    required this.status,
+    this.paymentMethod,
+    this.paymentReference,
+    this.paidAt,
+    this.approvedAt,
+    this.approvedBy,
+    this.paidBy,
+    this.note,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String sellerId;
+  final String? storeId;
+  final String? storeName;
+  final DateTime periodStart;
+  final DateTime periodEnd;
+  final double grossAmount;
+  final double commissionAmount;
+  final double refundAmount;
+  final double deductionsAmount;
+  final double netPayoutAmount;
+  final int orderCount;
+  final int itemCount;
+  final String status;
+  final String? paymentMethod;
+  final String? paymentReference;
+  final DateTime? paidAt;
+  final DateTime? approvedAt;
+  final String? approvedBy;
+  final String? paidBy;
+  final String? note;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  factory SellerPayout.fromMap(Map<String, dynamic> map) {
+    DateTime parseDate(String raw) {
+      final parsed = DateTime.tryParse(raw) ??
+          DateTime.tryParse('${raw}T00:00:00') ??
+          DateTime.now();
+      return DateTime(parsed.year, parsed.month, parsed.day);
+    }
+
+    return SellerPayout(
+      id: (map['id'] ?? '').toString(),
+      sellerId: (map['seller_id'] ?? '').toString(),
+      storeId: map['store_id']?.toString(),
+      storeName: map['store_name']?.toString(),
+      periodStart: parseDate((map['period_start'] ?? '').toString()),
+      periodEnd: parseDate((map['period_end'] ?? '').toString()),
+      grossAmount: (map['gross_amount'] as num?)?.toDouble() ?? 0,
+      commissionAmount: (map['commission_amount'] as num?)?.toDouble() ?? 0,
+      refundAmount: (map['refund_amount'] as num?)?.toDouble() ?? 0,
+      deductionsAmount: (map['deductions_amount'] as num?)?.toDouble() ?? 0,
+      netPayoutAmount: (map['net_payout_amount'] as num?)?.toDouble() ?? 0,
+      orderCount: (map['order_count'] as num?)?.toInt() ?? 0,
+      itemCount: (map['item_count'] as num?)?.toInt() ?? 0,
+      status: (map['status'] ?? 'pending').toString(),
+      paymentMethod: map['payment_method']?.toString(),
+      paymentReference: map['payment_reference']?.toString(),
+      paidAt: DateTime.tryParse((map['paid_at'] ?? '').toString()),
+      approvedAt: DateTime.tryParse((map['approved_at'] ?? '').toString()),
+      approvedBy: map['approved_by']?.toString(),
+      paidBy: map['paid_by']?.toString(),
+      note: map['note']?.toString(),
+      createdAt: DateTime.tryParse((map['created_at'] ?? '').toString()),
+      updatedAt: DateTime.tryParse((map['updated_at'] ?? '').toString()),
+    );
+  }
+}
+
+class AdminFinanceStoreEntry {
+  const AdminFinanceStoreEntry({
+    required this.sellerId,
+    required this.storeName,
+    this.isStoreOpen = true,
+  });
+
+  final String sellerId;
+  final String storeName;
+  final bool isStoreOpen;
+
+  factory AdminFinanceStoreEntry.fromMap(Map<String, dynamic> map) {
+    final name = (map['business_name'] ?? map['store_name'] ?? 'Mağaza')
+        .toString()
+        .trim();
+    return AdminFinanceStoreEntry(
+      sellerId: (map['seller_id'] ?? '').toString(),
+      storeName: name.isEmpty ? 'Mağaza' : name,
+      isStoreOpen: map['is_store_open'] == true,
+    );
+  }
+}
+
 class AdminFinanceOrderItem {
   const AdminFinanceOrderItem({
     required this.orderId,
@@ -620,6 +872,8 @@ class AdminFinanceOrderItem {
     required this.status,
     required this.totalPrice,
     required this.createdAt,
+    this.updatedAt,
+    this.categoryName,
   });
 
   final String orderId;
@@ -628,8 +882,11 @@ class AdminFinanceOrderItem {
   final String status;
   final double totalPrice;
   final DateTime createdAt;
+  final DateTime? updatedAt;
+  final String? categoryName;
 
   factory AdminFinanceOrderItem.fromMap(Map<String, dynamic> map) {
+    final categoryRaw = map['category_name'];
     return AdminFinanceOrderItem(
       orderId: (map['order_id'] ?? '').toString(),
       sellerId: (map['seller_id'] ?? '').toString(),
@@ -639,6 +896,10 @@ class AdminFinanceOrderItem {
       createdAt:
           DateTime.tryParse((map['created_at'] ?? '').toString()) ??
           DateTime.now(),
+      updatedAt: DateTime.tryParse((map['updated_at'] ?? '').toString()),
+      categoryName: categoryRaw == null || categoryRaw.toString().trim().isEmpty
+          ? null
+          : categoryRaw.toString().trim(),
     );
   }
 }
@@ -651,6 +912,9 @@ class AdminFinanceOrder {
     required this.shippingAmount,
     required this.deliveryType,
     required this.createdAt,
+    this.customerDeliveryFee = 0,
+    this.sellerDeliveryFee = 0,
+    this.totalDeliveryFee = 0,
   });
 
   final String id;
@@ -659,6 +923,9 @@ class AdminFinanceOrder {
   final double shippingAmount;
   final String deliveryType;
   final DateTime createdAt;
+  final double customerDeliveryFee;
+  final double sellerDeliveryFee;
+  final double totalDeliveryFee;
 
   factory AdminFinanceOrder.fromMap(Map<String, dynamic> map) {
     return AdminFinanceOrder(
@@ -670,6 +937,10 @@ class AdminFinanceOrder {
       createdAt:
           DateTime.tryParse((map['created_at'] ?? '').toString()) ??
           DateTime.now(),
+      customerDeliveryFee:
+          (map['customer_delivery_fee'] as num?)?.toDouble() ?? 0,
+      sellerDeliveryFee: (map['seller_delivery_fee'] as num?)?.toDouble() ?? 0,
+      totalDeliveryFee: (map['total_delivery_fee'] as num?)?.toDouble() ?? 0,
     );
   }
 }
@@ -703,6 +974,9 @@ class AdminService {
   static const String _investmentEntriesTable = 'admin_investment_entries';
   static const String _investmentAllocationsTable =
       'admin_investment_allocations';
+  static const String _adminExpensesTable = 'admin_expenses';
+  static const String _adminRevenuesTable = 'admin_revenues';
+  static const String _sellerPayoutsTable = 'seller_payouts';
   static const String _cleanupSentinelUuid =
       '00000000-0000-0000-0000-000000000000';
 
@@ -768,7 +1042,7 @@ class AdminService {
 
   Exception _friendlyFinanceSchemaException() {
     return Exception(
-      "Finans yatirim tabloları Supabase'te hazir degil. Yeni SQL migration dosyasini uygulamaniz gerekiyor.",
+      "Finans tabloları Supabase'te hazır değil. İlgili SQL migration dosyasını uygulamanız gerekiyor.",
     );
   }
 
@@ -776,14 +1050,164 @@ class AdminService {
     final details = error is PostgrestException ? '${error.details ?? ''}' : '';
     final message = error is PostgrestException ? error.message : '$error';
     if (error is PostgrestException &&
+        (error.code == '42501' || message.toLowerCase().contains('permission denied'))) {
+      return Exception(
+        'Finans kaydı kaydedilemedi. Yetki, RLS veya migration ayarlarını kontrol edin.',
+      );
+    }
+    if (error is PostgrestException && error.code == '23505') {
+      return Exception('Bu satıcı ve dönem için hakediş kaydı zaten mevcut.');
+    }
+    if (error is PostgrestException &&
         (error.code == 'PGRST205' ||
             message.contains(_investmentEntriesTable) ||
             message.contains(_investmentAllocationsTable) ||
+            message.contains(_adminExpensesTable) ||
+            message.contains(_adminRevenuesTable) ||
+            message.contains(_sellerPayoutsTable) ||
             details.contains(_investmentEntriesTable) ||
-            details.contains(_investmentAllocationsTable))) {
+            details.contains(_investmentAllocationsTable) ||
+            details.contains(_adminExpensesTable) ||
+            details.contains(_adminRevenuesTable) ||
+            details.contains(_sellerPayoutsTable))) {
       return _friendlyFinanceSchemaException();
     }
     return error;
+  }
+
+  bool _canSellerPayoutTransition(String from, String to) {
+    if (from == to) return true;
+    const allowed = {
+      'pending': {'approved', 'disputed', 'cancelled'},
+      'approved': {'paid', 'disputed', 'cancelled'},
+      'disputed': {'approved', 'cancelled'},
+    };
+    return allowed[from]?.contains(to) ?? false;
+  }
+
+  String _sellerPayoutTransitionError(String from, String to) {
+    if (from == 'paid') return 'Ödenmiş hakediş durumu değiştirilemez.';
+    if (from == 'cancelled') return 'İptal edilmiş hakediş yenilenemez.';
+    return 'Geçersiz durum geçişi: $from → $to';
+  }
+
+  void _validateAdminExpenseInput({
+    required String title,
+    required String category,
+    required double amount,
+    required String type,
+    required String status,
+    String? recurrence,
+  }) {
+    if (title.trim().isEmpty) {
+      throw Exception('Gider başlığı boş olamaz.');
+    }
+    if (category.trim().isEmpty) {
+      throw Exception('Gider kategorisi seçilmelidir.');
+    }
+    if (amount <= 0 || amount.isNaN || amount.isInfinite) {
+      throw Exception('Gider tutarı 0\'dan büyük olmalıdır.');
+    }
+    const validTypes = {'one_time', 'recurring'};
+    const validStatuses = {'paid', 'pending', 'cancelled'};
+    if (!validTypes.contains(type)) {
+      throw Exception('Geçersiz gider türü.');
+    }
+    if (!validStatuses.contains(status)) {
+      throw Exception('Geçersiz gider durumu.');
+    }
+    if (type == 'recurring' && (recurrence == null || recurrence.trim().isEmpty)) {
+      throw Exception('Tekrarlayan gider için periyot seçilmelidir.');
+    }
+  }
+
+  Future<void> _logFinanceInsertFailure({
+    required String table,
+    required Map<String, dynamic> payload,
+    required Object error,
+  }) async {
+    debugPrint('[FinanceInsert] table=$table');
+    debugPrint('[FinanceInsert] payload_keys=${payload.keys.toList()}');
+    debugPrint(
+      '[FinanceInsert] status=${payload['status']} '
+      'type=${payload['type']} category=${payload['category']}',
+    );
+    if (error is PostgrestException) {
+      debugPrint(
+        '[FinanceInsert] code=${error.code} message=${error.message} '
+        'details=${error.details}',
+      );
+    } else {
+      debugPrint('[FinanceInsert] error=$error');
+    }
+    try {
+      final debug = await _supabase.rpc('debug_admin_finance_access');
+      debugPrint('[FinanceInsert] debug_admin_finance_access=$debug');
+    } catch (rpcError) {
+      debugPrint('[FinanceInsert] debug_admin_finance_access unavailable: $rpcError');
+    }
+  }
+
+  void _validateSellerPayoutAmounts({
+    required double grossAmount,
+    required double commissionAmount,
+    required double refundAmount,
+    required double deductionsAmount,
+    required double netPayoutAmount,
+  }) {
+    for (final value in [
+      grossAmount,
+      commissionAmount,
+      refundAmount,
+      deductionsAmount,
+      netPayoutAmount,
+    ]) {
+      if (value.isNaN || value.isInfinite || value < 0) {
+        throw Exception('Hakediş tutarları geçersiz.');
+      }
+    }
+  }
+
+  Future<SellerPayout?> _findSellerPayoutForPeriod({
+    required String sellerId,
+    String? storeId,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+  }) async {
+    try {
+      dynamic query = _supabase
+          .from(_sellerPayoutsTable)
+          .select()
+          .eq('seller_id', sellerId)
+          .eq('period_start', AdminExpense.formatDate(periodStart))
+          .eq('period_end', AdminExpense.formatDate(periodEnd))
+          .neq('status', 'cancelled');
+      final normalizedStoreId = storeId?.trim();
+      if (normalizedStoreId != null && normalizedStoreId.isNotEmpty) {
+        query = query.eq('store_id', normalizedStoreId);
+      } else {
+        query = query.filter('store_id', 'is', null);
+      }
+      final response = await query.maybeSingle();
+      if (response == null) return null;
+      return SellerPayout.fromMap(Map<String, dynamic>.from(response));
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<SellerPayout?> _fetchSellerPayoutById(String payoutId) async {
+    try {
+      final response = await _supabase
+          .from(_sellerPayoutsTable)
+          .select()
+          .eq('id', payoutId)
+          .maybeSingle();
+      if (response == null) return null;
+      return SellerPayout.fromMap(Map<String, dynamic>.from(response));
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
   }
 
   String? _missingSellerApplicationColumn(Object error) {
@@ -2037,24 +2461,813 @@ class AdminService {
     }
   }
 
+  Future<List<AdminExpense>> fetchAdminExpenses({
+    DateTime? from,
+    DateTime? toExclusive,
+  }) async {
+    try {
+      dynamic query = _supabase.from(_adminExpensesTable).select();
+      if (from != null) {
+        query = query.gte(
+          'expense_date',
+          AdminExpense.formatDate(from),
+        );
+      }
+      if (toExclusive != null) {
+        query = query.lt(
+          'expense_date',
+          AdminExpense.formatDate(toExclusive),
+        );
+      }
+      final response = await query.order('expense_date', ascending: false);
+      return List<Map<String, dynamic>>.from(response)
+          .map(AdminExpense.fromMap)
+          .toList();
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<void> logFinanceExpenseAccessDebug() async {
+    final uid = _supabase.auth.currentUser?.id;
+    debugPrint('[FinanceExpense] auth.uid=$uid');
+    if (uid == null) return;
+    try {
+      final userRow = await _supabase
+          .from('users')
+          .select('role')
+          .eq('id', uid)
+          .maybeSingle();
+      debugPrint('[FinanceExpense] users.role=${userRow?['role']}');
+      final perms = await _supabase
+          .from('admin_user_permissions')
+          .select('role_key,allowed_modules,denied_modules,is_active')
+          .eq('user_id', uid)
+          .maybeSingle();
+      debugPrint('[FinanceExpense] admin_user_permissions=$perms');
+      try {
+        final debug = await _supabase.rpc('debug_admin_finance_access');
+        debugPrint('[FinanceExpense] debug_admin_finance_access=$debug');
+      } catch (rpcError) {
+        debugPrint('[FinanceExpense] debug_admin_finance_access unavailable: $rpcError');
+      }
+    } catch (error) {
+      debugPrint('[FinanceExpense] access probe failed: $error');
+    }
+  }
+
+  Future<String> _financeInsertErrorMessage({
+    required Object error,
+    required String rpcName,
+  }) async {
+    if (error is PostgrestException) {
+      if (error.code == 'PGRST202' ||
+          error.message.toLowerCase().contains('could not find') ||
+          error.message.contains(rpcName)) {
+        return "Supabase'de $rpcName fonksiyonu yok. "
+            'ibul_app/SUPABASE_FINANCE_INSERT_HOTFIX.sql dosyasını SQL Editor\'da çalıştırın.';
+      }
+      if (error.code == '42501' ||
+          error.message.toLowerCase().contains('permission denied')) {
+        try {
+          final debug = await _supabase.rpc('debug_admin_finance_access');
+          final debugMap = Map<String, dynamic>.from(debug as Map);
+          final userRole = (debugMap['user_role'] ?? '').toString();
+          final permissionRole =
+              (debugMap['permission_role_key'] ?? '').toString();
+          final effectiveRole = (debugMap['effective_role'] ?? '').toString();
+          if (userRole == 'postgres' ||
+              userRole == 'user' ||
+              userRole == 'seller') {
+            return 'Finans kaydı kaydedilemedi: users.role="$userRole" geçersiz. '
+                'SUPABASE_FINANCE_INSERT_HOTFIX.sql dosyasını tekrar çalıştırın '
+                '(admin_user_permissions rolünü otomatik düzeltir). '
+                'İzin rolü: ${permissionRole.isEmpty ? "yok" : permissionRole}. '
+                'Debug: $debug';
+          }
+          return 'Finans kaydı kaydedilemedi: yetki reddedildi. '
+              'Etkin rol: ${effectiveRole.isEmpty ? userRole : effectiveRole}. '
+              'Debug: $debug';
+        } catch (_) {
+          return 'Finans kaydı kaydedilemedi: yetki reddedildi (RLS). '
+              'SUPABASE_FINANCE_INSERT_HOTFIX.sql dosyasını uygulayın.';
+        }
+      }
+      if (error.code == 'PGRST205' ||
+          error.message.contains(_adminExpensesTable) ||
+          error.message.contains(_adminRevenuesTable)) {
+        return _friendlyFinanceSchemaException().toString().replaceFirst('Exception: ', '');
+      }
+    }
+    return error.toString().replaceFirst('Exception: ', '');
+  }
+
+  bool _isFinanceRpcOrPermissionError(Object error) {
+    if (error is! PostgrestException) return false;
+    return error.code == '42501' ||
+        error.code == 'PGRST202' ||
+        error.message.toLowerCase().contains('permission denied') ||
+        error.message.toLowerCase().contains('could not find');
+  }
+
+  Future<AdminExpense> createAdminExpense({
+    required String title,
+    required String category,
+    required double amount,
+    required DateTime expenseDate,
+    required String type,
+    String? recurrence,
+    required String status,
+    String? paymentMethod,
+    String? vendor,
+    String? invoiceUrl,
+    String? note,
+  }) async {
+    _validateAdminExpenseInput(
+      title: title,
+      category: category,
+      amount: amount,
+      type: type,
+      status: status,
+      recurrence: recurrence,
+    );
+    final actorId = _supabase.auth.currentUser?.id;
+    final payload = <String, dynamic>{
+      'title': title.trim(),
+      'category': category.trim(),
+      'amount': amount,
+      'expense_date': AdminExpense.formatDate(expenseDate),
+      'type': type,
+      'recurrence': type == 'recurring' ? recurrence : null,
+      'status': status,
+      'payment_method': paymentMethod?.trim(),
+      'vendor': vendor?.trim(),
+      'invoice_url': invoiceUrl?.trim(),
+      'note': note?.trim(),
+      'created_by': ?actorId,
+    };
+    try {
+      final rpcResponse = await _supabase.rpc(
+        'admin_insert_expense',
+        params: {
+          'p_title': payload['title'],
+          'p_category': payload['category'],
+          'p_amount': payload['amount'],
+          'p_expense_date': payload['expense_date'],
+          'p_type': payload['type'],
+          'p_recurrence': payload['recurrence'],
+          'p_status': payload['status'],
+          'p_payment_method': payload['payment_method'],
+          'p_vendor': payload['vendor'],
+          'p_invoice_url': payload['invoice_url'],
+          'p_note': payload['note'],
+        },
+      );
+      return AdminExpense.fromMap(Map<String, dynamic>.from(rpcResponse as Map));
+    } catch (rpcError) {
+      debugPrint('[FinanceExpense] RPC failed: $rpcError');
+      if (_isFinanceRpcOrPermissionError(rpcError)) {
+        await _logFinanceInsertFailure(
+          table: _adminExpensesTable,
+          payload: payload,
+          error: rpcError,
+        );
+        throw Exception(
+          await _financeInsertErrorMessage(
+            error: rpcError,
+            rpcName: 'admin_insert_expense',
+          ),
+        );
+      }
+      try {
+        final response = await _supabase
+            .from(_adminExpensesTable)
+            .insert(payload)
+            .select()
+            .single();
+        return AdminExpense.fromMap(Map<String, dynamic>.from(response));
+      } catch (error) {
+        await _logFinanceInsertFailure(
+          table: _adminExpensesTable,
+          payload: payload,
+          error: error,
+        );
+        throw Exception(
+          await _financeInsertErrorMessage(
+            error: error,
+            rpcName: 'admin_insert_expense',
+          ),
+        );
+      }
+    }
+  }
+
+  Future<AdminExpense> updateAdminExpense({
+    required String id,
+    required String title,
+    required String category,
+    required double amount,
+    required DateTime expenseDate,
+    required String type,
+    String? recurrence,
+    required String status,
+    String? paymentMethod,
+    String? vendor,
+    String? invoiceUrl,
+    String? note,
+  }) async {
+    _validateAdminExpenseInput(
+      title: title,
+      category: category,
+      amount: amount,
+      type: type,
+      status: status,
+      recurrence: recurrence,
+    );
+    try {
+      final response = await _supabase
+          .from(_adminExpensesTable)
+          .update({
+            'title': title.trim(),
+            'category': category.trim(),
+            'amount': amount,
+            'expense_date': AdminExpense.formatDate(expenseDate),
+            'type': type,
+            'recurrence': type == 'recurring' ? recurrence : null,
+            'status': status,
+            'payment_method': paymentMethod?.trim(),
+            'vendor': vendor?.trim(),
+            'invoice_url': invoiceUrl?.trim(),
+            'note': note?.trim(),
+          })
+          .eq('id', id)
+          .select()
+          .single();
+      return AdminExpense.fromMap(Map<String, dynamic>.from(response));
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<void> cancelAdminExpense(String expenseId) async {
+    try {
+      await _supabase
+          .from(_adminExpensesTable)
+          .update({'status': 'cancelled'})
+          .eq('id', expenseId);
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<void> deleteAdminExpense(String expenseId) async {
+    try {
+      await _supabase.from(_adminExpensesTable).delete().eq('id', expenseId);
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  void _validateAdminRevenueInput({
+    required String title,
+    required String category,
+    required double amount,
+    required String type,
+    required String status,
+    String? recurrence,
+  }) {
+    if (title.trim().isEmpty) {
+      throw Exception('Gelir adı zorunludur.');
+    }
+    if (category.trim().isEmpty) {
+      throw Exception('Kategori zorunludur.');
+    }
+    if (amount <= 0 || amount.isNaN || amount.isInfinite) {
+      throw Exception('Tutar 0\'dan büyük olmalıdır.');
+    }
+    const validTypes = {'one_time', 'recurring'};
+    const validStatuses = {'received', 'pending', 'cancelled'};
+    if (!validTypes.contains(type)) {
+      throw Exception('Geçersiz gelir türü.');
+    }
+    if (!validStatuses.contains(status)) {
+      throw Exception('Geçersiz gelir durumu.');
+    }
+    if (type == 'recurring' && (recurrence == null || recurrence.isEmpty)) {
+      throw Exception('Tekrarlayan gelir için periyot seçin.');
+    }
+  }
+
+  Future<List<AdminRevenue>> fetchAdminRevenues({
+    DateTime? from,
+    DateTime? toExclusive,
+  }) async {
+    try {
+      dynamic query = _supabase.from(_adminRevenuesTable).select();
+      if (from != null) {
+        query = query.gte('revenue_date', AdminRevenue.formatDate(from));
+      }
+      if (toExclusive != null) {
+        query = query.lt('revenue_date', AdminRevenue.formatDate(toExclusive));
+      }
+      final response = await query.order('revenue_date', ascending: false);
+      return List<Map<String, dynamic>>.from(response)
+          .map(AdminRevenue.fromMap)
+          .toList();
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<AdminRevenue> createAdminRevenue({
+    required String title,
+    required String category,
+    required double amount,
+    required DateTime revenueDate,
+    required String type,
+    String? recurrence,
+    required String status,
+    String? source,
+    String? paymentMethod,
+    String? referenceNo,
+    String? note,
+  }) async {
+    _validateAdminRevenueInput(
+      title: title,
+      category: category,
+      amount: amount,
+      type: type,
+      status: status,
+      recurrence: recurrence,
+    );
+    final actorId = _supabase.auth.currentUser?.id;
+    final payload = <String, dynamic>{
+      'title': title.trim(),
+      'category': category.trim(),
+      'amount': amount,
+      'revenue_date': AdminRevenue.formatDate(revenueDate),
+      'type': type,
+      'recurrence': type == 'recurring' ? recurrence : null,
+      'status': status,
+      'source': source?.trim(),
+      'payment_method': paymentMethod?.trim(),
+      'reference_no': referenceNo?.trim(),
+      'note': note?.trim(),
+      'created_by': ?actorId,
+    };
+    try {
+      final rpcResponse = await _supabase.rpc(
+        'admin_insert_revenue',
+        params: {
+          'p_title': payload['title'],
+          'p_category': payload['category'],
+          'p_amount': payload['amount'],
+          'p_revenue_date': payload['revenue_date'],
+          'p_type': payload['type'],
+          'p_recurrence': payload['recurrence'],
+          'p_status': payload['status'],
+          'p_source': payload['source'],
+          'p_payment_method': payload['payment_method'],
+          'p_reference_no': payload['reference_no'],
+          'p_note': payload['note'],
+        },
+      );
+      return AdminRevenue.fromMap(Map<String, dynamic>.from(rpcResponse as Map));
+    } catch (rpcError) {
+      debugPrint('[FinanceRevenue] RPC failed: $rpcError');
+      if (_isFinanceRpcOrPermissionError(rpcError)) {
+        await _logFinanceInsertFailure(
+          table: _adminRevenuesTable,
+          payload: payload,
+          error: rpcError,
+        );
+        throw Exception(
+          await _financeInsertErrorMessage(
+            error: rpcError,
+            rpcName: 'admin_insert_revenue',
+          ),
+        );
+      }
+      try {
+        final response = await _supabase
+            .from(_adminRevenuesTable)
+            .insert(payload)
+            .select()
+            .single();
+        return AdminRevenue.fromMap(Map<String, dynamic>.from(response));
+      } catch (error) {
+        await _logFinanceInsertFailure(
+          table: _adminRevenuesTable,
+          payload: payload,
+          error: error,
+        );
+        throw Exception(
+          await _financeInsertErrorMessage(
+            error: error,
+            rpcName: 'admin_insert_revenue',
+          ),
+        );
+      }
+    }
+  }
+
+  Future<AdminRevenue> updateAdminRevenue({
+    required String id,
+    required String title,
+    required String category,
+    required double amount,
+    required DateTime revenueDate,
+    required String type,
+    String? recurrence,
+    required String status,
+    String? source,
+    String? paymentMethod,
+    String? referenceNo,
+    String? note,
+  }) async {
+    _validateAdminRevenueInput(
+      title: title,
+      category: category,
+      amount: amount,
+      type: type,
+      status: status,
+      recurrence: recurrence,
+    );
+    try {
+      final response = await _supabase
+          .from(_adminRevenuesTable)
+          .update({
+            'title': title.trim(),
+            'category': category.trim(),
+            'amount': amount,
+            'revenue_date': AdminRevenue.formatDate(revenueDate),
+            'type': type,
+            'recurrence': type == 'recurring' ? recurrence : null,
+            'status': status,
+            'source': source?.trim(),
+            'payment_method': paymentMethod?.trim(),
+            'reference_no': referenceNo?.trim(),
+            'note': note?.trim(),
+          })
+          .eq('id', id)
+          .select()
+          .single();
+      return AdminRevenue.fromMap(Map<String, dynamic>.from(response));
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<AdminRevenue> cancelAdminRevenue(String id) async {
+    try {
+      final response = await _supabase
+          .from(_adminRevenuesTable)
+          .update({'status': 'cancelled'})
+          .eq('id', id)
+          .select()
+          .single();
+      return AdminRevenue.fromMap(Map<String, dynamic>.from(response));
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<void> deleteAdminRevenue(String id) async {
+    try {
+      await _supabase.from(_adminRevenuesTable).delete().eq('id', id);
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<List<SellerPayout>> fetchSellerPayouts({
+    DateTime? from,
+    DateTime? toExclusive,
+    String? status,
+  }) async {
+    try {
+      dynamic query = _supabase.from(_sellerPayoutsTable).select();
+      if (from != null) {
+        query = query.gte('period_end', AdminExpense.formatDate(from));
+      }
+      if (toExclusive != null) {
+        query = query.lte(
+          'period_start',
+          AdminExpense.formatDate(
+            toExclusive.subtract(const Duration(days: 1)),
+          ),
+        );
+      }
+      if (status != null && status.isNotEmpty) {
+        query = query.eq('status', status);
+      }
+      final response = await query.order('period_start', ascending: false);
+      return List<Map<String, dynamic>>.from(response)
+          .map(SellerPayout.fromMap)
+          .toList();
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<SellerPayout> createOrRefreshSellerPayout({
+    required String sellerId,
+    String? storeId,
+    required String storeName,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+    required double grossAmount,
+    required double commissionAmount,
+    required double refundAmount,
+    required double deductionsAmount,
+    required double netPayoutAmount,
+    required int orderCount,
+    required int itemCount,
+    required String status,
+    String? note,
+    String? existingId,
+  }) async {
+    _validateSellerPayoutAmounts(
+      grossAmount: grossAmount,
+      commissionAmount: commissionAmount,
+      refundAmount: refundAmount,
+      deductionsAmount: deductionsAmount,
+      netPayoutAmount: netPayoutAmount,
+    );
+
+    final actorId = _supabase.auth.currentUser?.id;
+    final normalizedStoreId =
+        storeId != null && storeId.trim().isNotEmpty ? storeId.trim() : null;
+
+    SellerPayout? existing;
+    if (existingId != null && existingId.isNotEmpty) {
+      existing = await _fetchSellerPayoutById(existingId);
+    }
+    existing ??= await _findSellerPayoutForPeriod(
+      sellerId: sellerId,
+      storeId: normalizedStoreId,
+      periodStart: periodStart,
+      periodEnd: periodEnd,
+    );
+
+    final amountPayload = <String, dynamic>{
+      'seller_id': sellerId,
+      'store_id': normalizedStoreId,
+      'store_name': storeName.trim(),
+      'period_start': AdminExpense.formatDate(periodStart),
+      'period_end': AdminExpense.formatDate(periodEnd),
+      'gross_amount': grossAmount,
+      'commission_amount': commissionAmount,
+      'refund_amount': refundAmount,
+      'deductions_amount': deductionsAmount,
+      'net_payout_amount': netPayoutAmount,
+      'order_count': orderCount,
+      'item_count': itemCount,
+      if (note != null) 'note': note.trim(),
+    };
+
+    try {
+      if (existing != null) {
+        if (existing.status == 'cancelled') {
+          throw Exception(_sellerPayoutTransitionError('cancelled', status));
+        }
+        if (existing.status == 'paid') {
+          final response = await _supabase
+              .from(_sellerPayoutsTable)
+              .update(amountPayload)
+              .eq('id', existing.id)
+              .select()
+              .single();
+          return SellerPayout.fromMap(Map<String, dynamic>.from(response));
+        }
+        if (!_canSellerPayoutTransition(existing.status, status)) {
+          throw Exception(
+            _sellerPayoutTransitionError(existing.status, status),
+          );
+        }
+        final payload = Map<String, dynamic>.from(amountPayload)
+          ..['status'] = status;
+        if (status == 'approved') {
+          payload['approved_at'] = DateTime.now().toUtc().toIso8601String();
+          if (actorId != null) payload['approved_by'] = actorId;
+        }
+        final response = await _supabase
+            .from(_sellerPayoutsTable)
+            .update(payload)
+            .eq('id', existing.id)
+            .select()
+            .single();
+        return SellerPayout.fromMap(Map<String, dynamic>.from(response));
+      }
+
+      final initialStatus = status;
+      if (initialStatus != 'pending' &&
+          !_canSellerPayoutTransition('pending', initialStatus)) {
+        throw Exception(_sellerPayoutTransitionError('pending', initialStatus));
+      }
+      final payload = Map<String, dynamic>.from(amountPayload)
+        ..['status'] = initialStatus;
+      if (initialStatus == 'approved') {
+        payload['approved_at'] = DateTime.now().toUtc().toIso8601String();
+        if (actorId != null) payload['approved_by'] = actorId;
+      }
+      final response = await _supabase
+          .from(_sellerPayoutsTable)
+          .insert(payload)
+          .select()
+          .single();
+      return SellerPayout.fromMap(Map<String, dynamic>.from(response));
+    } catch (error) {
+      if (error is PostgrestException && error.code == '23505') {
+        final duplicate = await _findSellerPayoutForPeriod(
+          sellerId: sellerId,
+          storeId: normalizedStoreId,
+          periodStart: periodStart,
+          periodEnd: periodEnd,
+        );
+        if (duplicate != null) {
+          return createOrRefreshSellerPayout(
+            sellerId: sellerId,
+            storeId: normalizedStoreId,
+            storeName: storeName,
+            periodStart: periodStart,
+            periodEnd: periodEnd,
+            grossAmount: grossAmount,
+            commissionAmount: commissionAmount,
+            refundAmount: refundAmount,
+            deductionsAmount: deductionsAmount,
+            netPayoutAmount: netPayoutAmount,
+            orderCount: orderCount,
+            itemCount: itemCount,
+            status: status,
+            note: note,
+            existingId: duplicate.id,
+          );
+        }
+      }
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<SellerPayout> updateSellerPayoutStatus({
+    required String payoutId,
+    required String status,
+    String? note,
+  }) async {
+    final existing = await _fetchSellerPayoutById(payoutId);
+    if (existing == null) {
+      throw Exception('Hakediş kaydı bulunamadı.');
+    }
+    if (!_canSellerPayoutTransition(existing.status, status)) {
+      throw Exception(_sellerPayoutTransitionError(existing.status, status));
+    }
+    final actorId = _supabase.auth.currentUser?.id;
+    final updates = <String, dynamic>{
+      'status': status,
+      if (note != null) 'note': note.trim(),
+    };
+    if (status == 'approved') {
+      updates['approved_at'] = DateTime.now().toUtc().toIso8601String();
+      if (actorId != null) updates['approved_by'] = actorId;
+    }
+    try {
+      final response = await _supabase
+          .from(_sellerPayoutsTable)
+          .update(updates)
+          .eq('id', payoutId)
+          .select()
+          .single();
+      return SellerPayout.fromMap(Map<String, dynamic>.from(response));
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
+  Future<SellerPayout> markSellerPayoutPaid({
+    required String payoutId,
+    required String paymentMethod,
+    String? paymentReference,
+    required DateTime paidAt,
+    String? note,
+  }) async {
+    final existing = await _fetchSellerPayoutById(payoutId);
+    if (existing == null) {
+      throw Exception('Hakediş kaydı bulunamadı.');
+    }
+    if (existing.status == 'paid') {
+      return existing;
+    }
+    if (!_canSellerPayoutTransition(existing.status, 'paid')) {
+      throw Exception(_sellerPayoutTransitionError(existing.status, 'paid'));
+    }
+    final actorId = _supabase.auth.currentUser?.id;
+    try {
+      final response = await _supabase
+          .from(_sellerPayoutsTable)
+          .update({
+            'status': 'paid',
+            'payment_method': paymentMethod.trim(),
+            'payment_reference': paymentReference?.trim(),
+            'paid_at': paidAt.toUtc().toIso8601String(),
+            'paid_by': actorId,
+            if (note != null) 'note': note.trim(),
+          })
+          .eq('id', payoutId)
+          .select()
+          .single();
+      return SellerPayout.fromMap(Map<String, dynamic>.from(response));
+    } catch (error) {
+      throw _mapFinanceSchemaError(error);
+    }
+  }
+
   Future<List<AdminFinanceOrderItem>> getFinanceOrderItems({
     DateTime? from,
   }) async {
     try {
-      dynamic query = _supabase
-          .from('order_items')
-          .select(
-            'order_id,seller_id,store_name,status,total_price,created_at',
-          );
-      if (from != null) {
-        query = query.gte('created_at', from.toIso8601String());
-      }
-      final response = await query.order('created_at', ascending: true);
-      return List<Map<String, dynamic>>.from(
-        response,
-      ).map(AdminFinanceOrderItem.fromMap).toList();
+      final response = await _supabase.rpc(
+        'admin_finance_order_items_snapshot',
+        params: {
+          'p_from': from?.toIso8601String(),
+        },
+      );
+      return List<Map<String, dynamic>>.from(response)
+          .map(AdminFinanceOrderItem.fromMap)
+          .toList();
     } catch (error) {
-      throw Exception('Finans siparis kalemleri alinamadi: $error');
+      try {
+        dynamic query = _supabase
+            .from('order_items')
+            .select(
+              'order_id,seller_id,store_name,status,total_price,created_at,updated_at',
+            );
+        if (from != null) {
+          query = query.gte('created_at', from.toIso8601String());
+        }
+        final response = await query.order('created_at', ascending: true);
+        return List<Map<String, dynamic>>.from(
+          response,
+        ).map(AdminFinanceOrderItem.fromMap).toList();
+      } catch (fallbackError) {
+        throw Exception(
+          'Finans siparis kalemleri alinamadi: $fallbackError',
+        );
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> fetchFinanceCommissionConfigRaw() async {
+    try {
+      final response = await _supabase
+          .from('admin_finance_settings')
+          .select('setting_value')
+          .eq('setting_key', 'commission_config')
+          .maybeSingle();
+      if (response == null) return {};
+      final value = response['setting_value'];
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return {};
+    } catch (error) {
+      debugPrint('[FinanceCommission] config load failed: $error');
+      return {};
+    }
+  }
+
+  Future<Map<String, dynamic>> saveFinanceCommissionConfig(
+    Map<String, dynamic> config,
+  ) async {
+    try {
+      final response = await _supabase.rpc(
+        'admin_save_finance_commission_config',
+        params: {'p_config': config},
+      );
+      if (response is Map) return Map<String, dynamic>.from(response);
+      return config;
+    } catch (error) {
+      try {
+        await _supabase.from('admin_finance_settings').upsert({
+          'setting_key': 'commission_config',
+          'setting_value': config,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        });
+        return config;
+      } catch (fallbackError) {
+        throw Exception('Komisyon ayarlari kaydedilemedi: $fallbackError');
+      }
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchFinanceCategoryOptions() async {
+    try {
+      final response = await _supabase
+          .from('categories')
+          .select('id,name,parent_id,is_active')
+          .eq('is_active', true)
+          .order('order_index', ascending: true);
+      return List<Map<String, dynamic>>.from(response);
+    } catch (error) {
+      debugPrint('[FinanceCommission] categories load failed: $error');
+      return const [];
     }
   }
 
@@ -2063,7 +3276,8 @@ class AdminService {
       dynamic query = _supabase
           .from('orders')
           .select(
-            'id,status,total_amount,shipping_amount,delivery_type,created_at',
+            'id,status,total_amount,shipping_amount,delivery_type,created_at,'
+            'customer_delivery_fee,seller_delivery_fee,total_delivery_fee',
           );
       if (from != null) {
         query = query.gte('created_at', from.toIso8601String());
@@ -2085,6 +3299,89 @@ class AdminService {
           .eq('is_store_open', true);
     } catch (error) {
       throw Exception('Acik magaza sayisi alinamadi: $error');
+    }
+  }
+
+  Future<List<AdminFinanceStoreEntry>> getFinanceStoreDirectory() async {
+    try {
+      final response = await _supabase
+          .from('stores')
+          .select('seller_id,business_name,is_store_open')
+          .order('business_name', ascending: true);
+      return List<Map<String, dynamic>>.from(response)
+          .map(AdminFinanceStoreEntry.fromMap)
+          .where((store) => store.sellerId.trim().isNotEmpty)
+          .toList(growable: false);
+    } catch (error) {
+      debugPrint('[FinanceStores] directory load failed: $error');
+      return const [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getFinanceAdCampaignRows({
+    DateTime? from,
+  }) async {
+    try {
+      dynamic query = _supabase.from('campaigns').select(
+            'id,seller_id,name,type,objective,status,billing_model,'
+            'daily_budget,total_budget,spent_amount,remaining_balance,'
+            'starts_at,ends_at,metadata,created_at,approved_at',
+          );
+      if (from != null) {
+        query = query.gte('created_at', from.toIso8601String());
+      }
+      final response = await query.order('created_at', ascending: true);
+      return List<Map<String, dynamic>>.from(response);
+    } catch (error) {
+      throw Exception('Finans reklam kampanyalari alinamadi: $error');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getFinanceAdMetricsRows({
+    DateTime? from,
+  }) async {
+    try {
+      dynamic query = _supabase.from('ad_metrics_daily').select();
+      if (from != null) {
+        query = query.gte(
+          'metric_date',
+          from.toIso8601String().split('T').first,
+        );
+      }
+      final response = await query.order('metric_date', ascending: true);
+      return List<Map<String, dynamic>>.from(response);
+    } catch (error) {
+      throw Exception('Finans reklam metrikleri alinamadi: $error');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getFinanceAdRevenueLogRows({
+    DateTime? from,
+  }) async {
+    try {
+      dynamic query = _supabase.from('ad_revenue_logs').select();
+      if (from != null) {
+        query = query.gte('recorded_at', from.toIso8601String());
+      }
+      final response = await query.order('recorded_at', ascending: true);
+      return List<Map<String, dynamic>>.from(response);
+    } catch (error) {
+      throw Exception('Finans reklam gelir kayitlari alinamadi: $error');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getFinanceAdWalletTransactionRows({
+    DateTime? from,
+  }) async {
+    try {
+      dynamic query = _supabase.from('ad_wallet_transactions').select();
+      if (from != null) {
+        query = query.gte('created_at', from.toIso8601String());
+      }
+      final response = await query.order('created_at', ascending: true);
+      return List<Map<String, dynamic>>.from(response);
+    } catch (error) {
+      throw Exception('Finans reklam cuzdan hareketleri alinamadi: $error');
     }
   }
 
@@ -2955,12 +4252,280 @@ class AdminService {
 
   // --- Seller Applications ---
 
+  static const String sellerApplicationMissingDocuments = 'missing_documents';
+
+  static const String storeHistoryApproved = 'approved';
+  static const String storeHistoryRejected = 'rejected';
+  static const String storeHistoryChangesRequested = 'changes_requested';
+  static const String storeHistoryResubmitted = 'resubmitted';
+
   Stream<List<Map<String, dynamic>>> getSellerApplicationsStream() {
     return _supabase
         .from('seller_applications')
         .stream(primaryKey: ['id'])
-        .eq('status', 'pending')
         .order('created_at', ascending: false);
+  }
+
+  static bool canAdminActOnApplication(Map<String, dynamic> application) {
+    final status = (application['status'] ?? '').toString().toLowerCase();
+    return status == AdminApprovalStatusConstants.pending ||
+        status == sellerApplicationMissingDocuments;
+  }
+
+  Future<Map<String, dynamic>?> fetchSellerApplicationById(String id) async {
+    if (id.trim().isEmpty) return null;
+    try {
+      final raw = await _supabase
+          .from('seller_applications')
+          .select()
+          .eq('id', id.trim())
+          .maybeSingle();
+      if (raw == null) return null;
+      return Map<String, dynamic>.from(raw);
+    } on PostgrestException catch (error) {
+      debugPrint('Seller application fetch skipped: $error');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> fetchLatestActionableApplicationForSeller(
+    String sellerId,
+  ) async {
+    if (sellerId.trim().isEmpty) return null;
+    try {
+      final raw = await _supabase
+          .from('seller_applications')
+          .select()
+          .eq('user_id', sellerId.trim())
+          .inFilter('status', [
+            AdminApprovalStatusConstants.pending,
+            sellerApplicationMissingDocuments,
+          ])
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (raw == null) return null;
+      return Map<String, dynamic>.from(raw);
+    } on PostgrestException catch (error) {
+      debugPrint('Actionable seller application fetch skipped: $error');
+      return null;
+    }
+  }
+
+  Future<SellerApplicationHistoryResolution> resolveApplicationFromHistoryEntry(
+    Map<String, dynamic> entry,
+  ) async {
+    final applicationId = (entry['application_id'] ?? '').toString();
+    final sellerId = (entry['seller_id'] ?? entry['store_id'] ?? '').toString();
+
+    if (applicationId.isNotEmpty) {
+      final byId = await fetchSellerApplicationById(applicationId);
+      if (byId != null && canAdminActOnApplication(byId)) {
+        return SellerApplicationHistoryResolution(
+          application: byId,
+          allowAdminActions: true,
+        );
+      }
+    }
+
+    if (sellerId.isNotEmpty) {
+      final latest = await fetchLatestActionableApplicationForSeller(sellerId);
+      if (latest != null) {
+        return SellerApplicationHistoryResolution(
+          application: latest,
+          allowAdminActions: true,
+          linkedFromHistory: true,
+        );
+      }
+    }
+
+    final metadata = entry['metadata'];
+    if (metadata is Map) {
+      final snapshot = metadata['snapshot'];
+      if (snapshot is Map) {
+        return SellerApplicationHistoryResolution(
+          application: Map<String, dynamic>.from(snapshot),
+          allowAdminActions: false,
+          isSnapshot: true,
+        );
+      }
+    }
+
+    return SellerApplicationHistoryResolution(
+      application: {
+        'id': applicationId.isEmpty ? null : applicationId,
+        'user_id': sellerId.isEmpty ? null : sellerId,
+        'business_name': entry['store_name'],
+        'created_at': entry['application_created_at'],
+        'status': entry['new_status'],
+      },
+      allowAdminActions: false,
+      isSnapshot: true,
+    );
+  }
+
+  Map<String, dynamic> _applicationHistorySnapshot(
+    Map<String, dynamic> application,
+  ) {
+    return {
+      'id': application['id'],
+      'user_id': application['user_id'],
+      'business_name': application['business_name'],
+      'category': application['category'],
+      'email': application['email'] ?? application['user_email'],
+      'phone': application['phone'],
+      'contact_name': application['contact_name'] ?? application['full_name'],
+      'full_name': application['full_name'] ?? application['contact_name'],
+      'address': application['address'],
+      'city': application['city'],
+      'district': application['district'],
+      'tax_number': application['tax_number'],
+      'documents': application['documents'],
+      'logo_url': application['logo_url'],
+      'created_at': application['created_at'],
+      'status': application['status'],
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> fetchStoreApplicationHistory({
+    String? actionFilter,
+    int? lastDays,
+    int limit = 150,
+    int offset = 0,
+  }) async {
+    try {
+      var query = _supabase.from('store_application_history').select();
+
+      if (actionFilter != null &&
+          actionFilter.isNotEmpty &&
+          actionFilter != 'all') {
+        query = query.eq('action', actionFilter);
+      }
+      if (lastDays != null && lastDays > 0) {
+        final since = DateTime.now()
+            .toUtc()
+            .subtract(Duration(days: lastDays))
+            .toIso8601String();
+        query = query.gte('acted_at', since);
+      }
+
+      final raw = await query
+          .order('acted_at', ascending: false)
+          .range(offset, offset + limit - 1);
+      return List<Map<String, dynamic>>.from(raw as List);
+    } on PostgrestException catch (error) {
+      debugPrint('Store application history fetch skipped: $error');
+      return const [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchSellerApplicationHistoryForSeller(
+    String sellerId,
+  ) async {
+    if (sellerId.trim().isEmpty) return const [];
+    try {
+      final raw = await _supabase
+          .from('store_application_history')
+          .select()
+          .eq('seller_id', sellerId.trim())
+          .order('acted_at', ascending: false)
+          .limit(50);
+      return List<Map<String, dynamic>>.from(raw as List);
+    } on PostgrestException catch (error) {
+      debugPrint('Seller application history fetch skipped: $error');
+      return const [];
+    }
+  }
+
+  static String resolveStoreApplicationHistoryNoteBody(
+    Map<String, dynamic> entry,
+  ) {
+    final reason = (entry['reason'] ?? '').toString().trim();
+    final adminNote = (entry['admin_note'] ?? '').toString().trim();
+    if (reason.isNotEmpty) return reason;
+    if (adminNote.isNotEmpty) return adminNote;
+    return '';
+  }
+
+  static String formatStoreApplicationHistoryNote(Map<String, dynamic> entry) {
+    final action = (entry['action'] ?? '').toString();
+    final body = resolveStoreApplicationHistoryNoteBody(entry);
+    switch (action) {
+      case storeHistoryRejected:
+        return body.isEmpty ? 'Red nedeni girilmemiş.' : 'Red nedeni: $body';
+      case storeHistoryChangesRequested:
+        return body.isEmpty
+            ? 'Eksik belge nedeni girilmemiş.'
+            : 'Eksik belge nedeni: $body';
+      case storeHistoryApproved:
+        return body.isEmpty ? 'Başvuru onaylandı.' : 'Onay notu: $body';
+      default:
+        return body.isEmpty ? '-' : body;
+    }
+  }
+
+  Future<void> _recordStoreApplicationHistory({
+    required Map<String, dynamic> application,
+    required String action,
+    String? reason,
+    String? adminNote,
+    String? previousStatus,
+    String? newStatus,
+  }) async {
+    try {
+      final actorId = _supabase.auth.currentUser?.id;
+      final trimmedReason = reason?.trim();
+      final trimmedAdminNote = adminNote?.trim();
+      await _supabase.from('store_application_history').insert({
+        'store_id': application['user_id'],
+        'seller_id': application['user_id'],
+        'application_id': application['id'],
+        'store_name': application['business_name'],
+        'action': action,
+        'reason': (trimmedReason == null || trimmedReason.isEmpty)
+            ? null
+            : trimmedReason,
+        'admin_note': (trimmedAdminNote == null || trimmedAdminNote.isEmpty)
+            ? null
+            : trimmedAdminNote,
+        'previous_status': previousStatus,
+        'new_status': newStatus,
+        'acted_by': actorId,
+        'acted_at': DateTime.now().toUtc().toIso8601String(),
+        'application_created_at': application['created_at'],
+        'metadata': {
+          'snapshot': _applicationHistorySnapshot(application),
+        },
+      });
+    } on PostgrestException catch (error) {
+      debugPrint('Store application history insert skipped: $error');
+    }
+  }
+
+  String _historyActionForStatus(String status) {
+    switch (status) {
+      case AdminApprovalStatusConstants.approved:
+        return storeHistoryApproved;
+      case AdminApprovalStatusConstants.rejected:
+        return storeHistoryRejected;
+      case sellerApplicationMissingDocuments:
+        return storeHistoryChangesRequested;
+      default:
+        return storeHistoryChangesRequested;
+    }
+  }
+
+  String? _historyReasonForStatus(
+    String status, {
+    String? rejectionReason,
+  }) {
+    final trimmed = rejectionReason?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    if (status == AdminApprovalStatusConstants.rejected ||
+        status == sellerApplicationMissingDocuments) {
+      return trimmed;
+    }
+    return null;
   }
 
   Future<void> deleteDemoStores() async {
@@ -3113,7 +4678,32 @@ class AdminService {
     String id,
     String status, {
     String? rejectionReason,
+    String? adminNote,
   }) async {
+    final applicationRaw = await _supabase
+        .from('seller_applications')
+        .select()
+        .eq('id', id)
+        .maybeSingle();
+    if (applicationRaw == null) {
+      throw Exception('Başvuru bulunamadı');
+    }
+    final application = Map<String, dynamic>.from(applicationRaw);
+    final previousStatus =
+        (application['status'] ?? AdminApprovalStatusConstants.pending)
+            .toString();
+
+    await _recordStoreApplicationHistory(
+      application: application,
+      action: _historyActionForStatus(status),
+      reason: _historyReasonForStatus(status, rejectionReason: rejectionReason),
+      adminNote: status == AdminApprovalStatusConstants.approved
+          ? adminNote
+          : null,
+      previousStatus: previousStatus,
+      newStatus: status,
+    );
+
     final updates = {'status': status};
     if (rejectionReason != null && rejectionReason.trim().isNotEmpty) {
       updates['rejection_reason'] = rejectionReason.trim();
@@ -3123,11 +4713,7 @@ class AdminService {
 
       // Onaylandığında, satıcı için 'stores' tablosunda otomatik bir kayıt oluşturmalıyız
       // Önce başvuru detaylarını çekelim
-      final application = await _supabase
-          .from('seller_applications')
-          .select()
-          .eq('id', id)
-          .single();
+      final applicationDetails = application;
 
       // Eğer store zaten varsa tekrar oluşturma (seller_id kontrolü)
       final existingStore = await _supabase
@@ -3139,20 +4725,20 @@ class AdminService {
       if (existingStore == null) {
         // Yeni mağaza kaydı oluştur
         await _supabase.from('stores').insert({
-          'seller_id': application['user_id'],
-          'business_name': application['business_name'],
-          'category': application['category'],
-          'email': application['email'] ?? application['user_email'],
-          'phone': application['phone'],
-          'address': application['address'],
-          'city': application['city'],
-          'district': application['district'],
-          'postal_code': application['postal_code'],
-          'tax_number': application['tax_number'],
-          'contact_name': application['contact_name'],
-          'logo_url': application['logo_url'],
-          'store_lat': application['store_lat'],
-          'store_lng': application['store_lng'],
+          'seller_id': applicationDetails['user_id'],
+          'business_name': applicationDetails['business_name'],
+          'category': applicationDetails['category'],
+          'email': applicationDetails['email'] ?? applicationDetails['user_email'],
+          'phone': applicationDetails['phone'],
+          'address': applicationDetails['address'],
+          'city': applicationDetails['city'],
+          'district': applicationDetails['district'],
+          'postal_code': applicationDetails['postal_code'],
+          'tax_number': applicationDetails['tax_number'],
+          'contact_name': applicationDetails['contact_name'],
+          'logo_url': applicationDetails['logo_url'],
+          'store_lat': applicationDetails['store_lat'],
+          'store_lng': applicationDetails['store_lng'],
           'is_store_open': true,
           'accept_new_orders': true,
           'is_verified': true,
@@ -3165,45 +4751,43 @@ class AdminService {
         await _supabase
             .from('stores')
             .update({
-              'business_name': application['business_name'],
-              'category': application['category'],
-              'email': application['email'] ?? application['user_email'],
-              'phone': application['phone'],
-              'address': application['address'],
-              'city': application['city'],
-              'district': application['district'],
-              'postal_code': application['postal_code'],
-              'tax_number': application['tax_number'],
-              'contact_name': application['contact_name'],
-              'logo_url': application['logo_url'],
-              'store_lat': application['store_lat'],
-              'store_lng': application['store_lng'],
+              'business_name': applicationDetails['business_name'],
+              'category': applicationDetails['category'],
+              'email':
+                  applicationDetails['email'] ?? applicationDetails['user_email'],
+              'phone': applicationDetails['phone'],
+              'address': applicationDetails['address'],
+              'city': applicationDetails['city'],
+              'district': applicationDetails['district'],
+              'postal_code': applicationDetails['postal_code'],
+              'tax_number': applicationDetails['tax_number'],
+              'contact_name': applicationDetails['contact_name'],
+              'logo_url': applicationDetails['logo_url'],
+              'store_lat': applicationDetails['store_lat'],
+              'store_lng': applicationDetails['store_lng'],
               'accept_new_orders': true,
               'is_verified': true,
               'updated_at': DateTime.now().toIso8601String(),
             })
-            .eq('seller_id', application['user_id']);
+            .eq('seller_id', applicationDetails['user_id']);
       }
 
       // Satıcı girişinin çalışması için users tablosunda rol/onay durumunu güncelle
       await _supabase.from('users').upsert({
-        'id': application['user_id'],
-        'email': application['email'] ?? application['user_email'],
+        'id': applicationDetails['user_id'],
+        'email': applicationDetails['email'] ?? applicationDetails['user_email'],
         'display_name':
-            application['contact_name'] ?? application['business_name'],
-        'phone': application['phone'],
-        'address': application['address'],
+            applicationDetails['contact_name'] ??
+            applicationDetails['business_name'],
+        'phone': applicationDetails['phone'],
+        'address': applicationDetails['address'],
         'role': 'seller',
         'is_seller_approved': true,
         'updated_at': DateTime.now().toIso8601String(),
       }, onConflict: 'id');
     } else if (status == AdminApprovalStatusConstants.rejected) {
-      final app = await _supabase
-          .from('seller_applications')
-          .select('user_id, email')
-          .eq('id', id)
-          .maybeSingle();
-      if (app != null && app['user_id'] != null) {
+      final app = application;
+      if (app['user_id'] != null) {
         await _supabase
             .from('users')
             .update({
@@ -3656,6 +5240,19 @@ class AdminService {
         .order('sort_order', ascending: true);
   }
 
+  /// Ana sayfa hero banner için dar kolon seçimi.
+  Future<List<Map<String, dynamic>>> getHomeCampaignImages() async {
+    return List<Map<String, dynamic>>.from(
+      await _supabase
+          .from('campaign_images')
+          .select(
+            'id, image_path, mobile_image_path, is_active, sort_order',
+          )
+          .eq('is_active', true)
+          .order('sort_order', ascending: true),
+    );
+  }
+
   Future<void> saveCampaignImage(Map<String, dynamic> image) async {
     final now = DateTime.now().toIso8601String();
 
@@ -3696,6 +5293,17 @@ class AdminService {
         .from('app_categories')
         .select()
         .order('id', ascending: true);
+  }
+
+  /// Ana sayfa feature menüsü için dar kolon seçimi.
+  Future<List<Map<String, dynamic>>> getHomeAppCategories() async {
+    return List<Map<String, dynamic>>.from(
+      await _supabase
+          .from('app_categories')
+          .select('id, category_key, display_name, image_url, is_active')
+          .eq('is_active', true)
+          .order('id', ascending: true),
+    );
   }
 
   Future<List<CategoryWithSubcategories>> getManagedCategoriesWithSubs() async {
@@ -3899,4 +5507,18 @@ class AdminService {
       rethrow;
     }
   }
+}
+
+class SellerApplicationHistoryResolution {
+  const SellerApplicationHistoryResolution({
+    required this.application,
+    required this.allowAdminActions,
+    this.isSnapshot = false,
+    this.linkedFromHistory = false,
+  });
+
+  final Map<String, dynamic> application;
+  final bool allowAdminActions;
+  final bool isSnapshot;
+  final bool linkedFromHistory;
 }

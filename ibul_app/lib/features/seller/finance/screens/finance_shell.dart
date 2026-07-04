@@ -2,8 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../finance_quick_actions.dart';
+import '../helpers/seller_finance_density.dart';
 import '../models/finance_models.dart';
 import '../providers/finance_provider.dart';
+import '../widgets/dashboard/finance_dashboard_layout.dart';
+import '../widgets/dashboard/finance_metric_card.dart';
+import '../widgets/dashboard/finance_metric_grid.dart';
+import '../widgets/dashboard/finance_payment_calendar_card.dart';
+import '../widgets/dashboard/finance_payment_summary_card.dart';
+import '../widgets/dashboard/finance_secondary_nav.dart';
+import '../widgets/dashboard/seller_finance_page_header.dart';
 import '../widgets/finance_performance_section.dart';
 import '../widgets/finance_widgets.dart';
 import '../widgets/today_income_detail_sheet.dart';
@@ -63,6 +71,8 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
 
   int _selectedIndex = 0;
   bool _loadingExtras = false;
+  bool _refreshing = false;
+  DateTime? _lastUpdatedAt;
   String? _extrasWarning;
   List<Map<String, dynamic>> _recentActivities = const [];
   List<Map<String, dynamic>> _paymentSchedule = const [];
@@ -84,9 +94,17 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
   }
 
   Future<void> _refreshAll() async {
-    await context.read<FinanceProvider>().refresh();
-    if (!mounted) return;
-    await _loadDashboardExtras();
+    setState(() => _refreshing = true);
+    try {
+      await context.read<FinanceProvider>().refresh();
+      if (!mounted) return;
+      await _loadDashboardExtras();
+      if (mounted) {
+        setState(() => _lastUpdatedAt = DateTime.now());
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   Future<void> _loadDashboardExtras() async {
@@ -182,6 +200,7 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
               ? sum + amount
               : sum;
         });
+        _lastUpdatedAt ??= DateTime.now();
       });
     } catch (error) {
       setState(() {
@@ -197,136 +216,211 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    final isDesktop = width >= 1180;
+    final density = SellerFinanceDensity.fromWidth(width);
     final provider = context.watch<FinanceProvider>();
     final overview = provider.overview;
 
     return Container(
-      color: const Color(0xFFF8FAFC),
+      color: kFinanceSurface,
       child: RefreshIndicator(
         color: kFinancePrimary,
         onRefresh: _refreshAll,
         child: ListView(
-          padding: EdgeInsets.all(isDesktop ? 16 : 12),
+          padding: EdgeInsets.all(density.pagePadding),
           children: [
-            _buildHeader(isDesktop),
-            const SizedBox(height: 12),
+            SellerFinancePageHeader(
+              density: density,
+              onRefresh: _refreshAll,
+              isRefreshing: _refreshing || provider.loadingOverview,
+              lastUpdatedAt: _lastUpdatedAt,
+            ),
+            SizedBox(height: density.sectionGap),
+            if (provider.overviewError != null) ...[
+              FinErrorCard(
+                message: 'Finans özeti yüklenemedi.',
+                onRetry: _refreshAll,
+              ),
+              SizedBox(height: density.sectionGap),
+            ],
             if (_extrasWarning != null) ...[
               _buildTopWarning(_extrasWarning!),
-              const SizedBox(height: 12),
+              SizedBox(height: density.sectionGap),
             ],
-            _buildKpiGrid(overview),
-            const SizedBox(height: 12),
-            if (isDesktop)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            FinanceMetricGrid(
+              density: density,
+              loading: provider.loadingOverview,
+              items: _metricItems(overview),
+            ),
+            SizedBox(height: density.sectionGap),
+            FinanceDashboardLayout(
+              density: density,
+              mainColumn: Column(
                 children: [
-                  Expanded(
-                    flex: 8,
-                    child: Column(
-                      children: [
-                        FinancePerformanceSection(
-                          loadTrend: (from, to) =>
-                              provider.repo.getDailyFinanceTrend(from: from, to: to),
-                          monthIncome: overview.monthIncome,
-                          monthExpense: overview.monthExpense,
-                          monthSalaryLoad: overview.monthSalaryLoad,
-                          totalLiquidity: overview.totalLiquidity,
-                        ),
-                        const SizedBox(height: 12),
-                        _buildRecentActivityCard(),
-                      ],
-                    ),
+                  FinancePerformanceSection(
+                    density: density,
+                    loadTrend: (from, to) =>
+                        provider.repo.getDailyFinanceTrend(from: from, to: to),
+                    monthIncome: overview.monthIncome,
+                    monthExpense: overview.monthExpense,
+                    monthSalaryLoad: overview.monthSalaryLoad,
+                    totalLiquidity: overview.totalLiquidity,
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 4,
-                    child: Column(
-                      children: [
-                        _buildPaymentSummaryPanel(overview),
-                        const SizedBox(height: 12),
-                        _buildSchedulePanel(),
-                        const SizedBox(height: 12),
-                        _buildCompanyPanel(),
-                        const SizedBox(height: 12),
-                        _buildHealthPanel(overview),
-                      ],
-                    ),
-                  ),
+                  SizedBox(height: density.sectionGap),
+                  _buildRecentActivityCard(density),
                 ],
-              )
-            else ...[
-              FinancePerformanceSection(
-                loadTrend: (from, to) =>
-                    provider.repo.getDailyFinanceTrend(from: from, to: to),
-                monthIncome: overview.monthIncome,
-                monthExpense: overview.monthExpense,
-                monthSalaryLoad: overview.monthSalaryLoad,
-                totalLiquidity: overview.totalLiquidity,
               ),
-              const SizedBox(height: 12),
-              _buildPaymentSummaryPanel(overview),
-              const SizedBox(height: 12),
-              _buildSchedulePanel(),
-              const SizedBox(height: 12),
-              _buildHealthPanel(overview),
-              const SizedBox(height: 12),
-              _buildCompanyPanel(),
-              const SizedBox(height: 12),
-              _buildRecentActivityCard(),
-            ],
-            const SizedBox(height: 14),
-            _buildSectionSwitcher(),
-            const SizedBox(height: 12),
-            _buildSectionContent(isDesktop),
+              sideColumn: Column(
+                children: [
+                  FinancePaymentSummaryCard(
+                    density: density,
+                    onViewDetails: () => setState(() => _selectedIndex = 6),
+                    rows: [
+                      FinancePaymentSummaryRow(
+                        label: 'Bekleyen ödeme toplamı',
+                        value: fmtCurrency(overview.pendingPayments),
+                        icon: Icons.pending_actions_rounded,
+                        accent: const Color(0xFFEF4444),
+                        isCritical: overview.pendingPayments > 0,
+                      ),
+                      FinancePaymentSummaryRow(
+                        label: 'Toplam kalan borç',
+                        value: fmtCurrency(overview.totalDebt),
+                        icon: Icons.credit_card_rounded,
+                        accent: const Color(0xFFF59E0B),
+                        isCritical: overview.totalDebt > 0,
+                      ),
+                      FinancePaymentSummaryRow(
+                        label: 'Bu hafta yaklaşan',
+                        value: '${overview.upcomingPayments} kayıt',
+                        icon: Icons.event_available_rounded,
+                        accent: const Color(0xFF3B82F6),
+                      ),
+                      FinancePaymentSummaryRow(
+                        label: 'Gecikmiş kalemler',
+                        value:
+                            '${overview.overduePayments + overview.overdueDebts} kayıt',
+                        icon: Icons.warning_amber_rounded,
+                        accent: const Color(0xFFDC2626),
+                        isCritical:
+                            overview.overduePayments + overview.overdueDebts > 0,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: density.sectionGap),
+                  FinancePaymentCalendarCard(
+                    density: density,
+                    loading: _loadingExtras,
+                    scheduleItems: _paymentSchedule,
+                    rowBuilder: _scheduleRow,
+                  ),
+                  SizedBox(height: density.sectionGap),
+                  _buildHealthPanel(overview, density),
+                  SizedBox(height: density.sectionGap),
+                  _buildCompanyPanel(density),
+                ],
+              ),
+            ),
+            SizedBox(height: density.sectionGap + 2),
+            FinanceSecondaryNav(
+              density: density,
+              tabs: _tabs
+                  .map(
+                    (t) => FinanceSecondaryNavTab(
+                      label: t.label,
+                      icon: t.icon,
+                    ),
+                  )
+                  .toList(growable: false),
+              selectedIndex: _selectedIndex,
+              onSelected: (index) => setState(() => _selectedIndex = index),
+              quickActions: _buildGlobalQuickActions(),
+            ),
+            SizedBox(height: density.sectionGap),
+            _buildSectionContent(density.dashboardSideBySide),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildHeader(bool isDesktop) {
-    return FinSurfaceCard(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Finans Merkezi',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Dashboard-first görünüm korunuyor. Muhasebe modülleri aşağıdaki secondary navigation ile erişilebilir.',
-                  style: TextStyle(
-                    fontSize: isDesktop ? 13 : 12,
-                    color: const Color(0xFF64748B),
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          FilledButton.icon(
-            onPressed: _refreshAll,
-            style: FilledButton.styleFrom(
-              backgroundColor: kFinancePrimary,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            ),
-            icon: const Icon(Icons.refresh_rounded, size: 16),
-            label: const Text('Yenile'),
-          ),
-        ],
+  List<FinanceMetricItem> _metricItems(FinanceOverview overview) {
+    return [
+      FinanceMetricItem(
+        title: 'Bugünkü Gelir',
+        value: fmtCurrency(_todayIncome),
+        subtitle: 'Detay için dokunun',
+        icon: Icons.today_rounded,
+        accent: const Color(0xFF0EA5E9),
+        onTap: _openTodayIncomeDetail,
       ),
-    );
+      FinanceMetricItem(
+        title: 'Bu Ay Gelir',
+        value: fmtCurrency(overview.monthIncome),
+        subtitle: 'Ay içindeki toplam gelir',
+        icon: Icons.trending_up_rounded,
+        accent: const Color(0xFF10B981),
+      ),
+      FinanceMetricItem(
+        title: 'Bu Ay Gider',
+        value: fmtCurrency(overview.monthExpense),
+        subtitle: 'Ay içindeki toplam gider',
+        icon: Icons.trending_down_rounded,
+        accent: const Color(0xFFEF4444),
+      ),
+      FinanceMetricItem(
+        title: 'Net Durum',
+        value: fmtCurrency(overview.monthNetPosition),
+        subtitle: 'Gelir - gider - maaş yükü',
+        icon: overview.monthNetPosition >= 0
+            ? Icons.show_chart_rounded
+            : Icons.trending_down_rounded,
+        accent: overview.monthNetPosition >= 0
+            ? const Color(0xFF16A34A)
+            : const Color(0xFFDC2626),
+      ),
+      FinanceMetricItem(
+        title: 'Bekleyen Tahsilat',
+        value: fmtCurrency(overview.pendingCollections),
+        subtitle: 'Henüz toplanmamış gelir',
+        icon: Icons.schedule_send_rounded,
+        accent: const Color(0xFFF59E0B),
+      ),
+      FinanceMetricItem(
+        title: 'Toplam Borç',
+        value: fmtCurrency(overview.totalDebt),
+        subtitle: 'Kalan aktif borç bakiyesi',
+        icon: Icons.credit_card_rounded,
+        accent: const Color(0xFFF97316),
+      ),
+      FinanceMetricItem(
+        title: 'Nakit Kasa',
+        value: fmtCurrency(overview.totalCashBalance),
+        subtitle: 'Kasa hesapları',
+        icon: Icons.account_balance_wallet_rounded,
+        accent: const Color(0xFF3B82F6),
+      ),
+      FinanceMetricItem(
+        title: 'Banka / POS',
+        value: fmtCurrency(overview.totalBankBalance),
+        subtitle: 'Banka ve POS hesapları',
+        icon: Icons.account_balance_rounded,
+        accent: const Color(0xFF7C3AED),
+      ),
+      FinanceMetricItem(
+        title: 'Maaş Yükü',
+        value: fmtCurrency(overview.monthSalaryLoad),
+        subtitle: 'Aylık maaş yükümlülüğü',
+        icon: Icons.badge_rounded,
+        accent: const Color(0xFF8B5CF6),
+      ),
+      FinanceMetricItem(
+        title: 'Yaklaşan Ödemeler',
+        value: fmtCurrency(_upcomingPaymentAmount),
+        subtitle: '${overview.upcomingPayments} kayıt yakın vadede',
+        icon: Icons.event_note_rounded,
+        accent: const Color(0xFF6366F1),
+      ),
+    ];
   }
 
   Widget _buildTopWarning(String message) {
@@ -383,180 +477,6 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
         error: error.toString(),
       );
     }
-  }
-
-  Widget _buildKpiGrid(FinanceOverview overview) {
-    final cards = [
-      (
-        title: 'Bugünkü Gelir',
-        value: fmtCurrency(_todayIncome),
-        subtitle: 'Detay için dokunun',
-        icon: Icons.today_rounded,
-        accent: const Color(0xFF0EA5E9),
-        onTap: _openTodayIncomeDetail,
-      ),
-      (
-        title: 'Bu Ay Gelir',
-        value: fmtCurrency(overview.monthIncome),
-        subtitle: 'Ay içindeki toplam gelir',
-        icon: Icons.trending_up_rounded,
-        accent: const Color(0xFF10B981),
-        onTap: null,
-      ),
-      (
-        title: 'Bu Ay Gider',
-        value: fmtCurrency(overview.monthExpense),
-        subtitle: 'Ay içindeki toplam gider',
-        icon: Icons.trending_down_rounded,
-        accent: const Color(0xFFEF4444),
-        onTap: null,
-      ),
-      (
-        title: 'Net Durum',
-        value: fmtCurrency(overview.monthNetPosition),
-        subtitle: 'Gelir - gider - maaş yükü',
-        icon: overview.monthNetPosition >= 0
-            ? Icons.show_chart_rounded
-            : Icons.trending_down_rounded,
-        accent: overview.monthNetPosition >= 0
-            ? const Color(0xFF16A34A)
-            : const Color(0xFFDC2626),
-        onTap: null,
-      ),
-      (
-        title: 'Bekleyen Tahsilat',
-        value: fmtCurrency(overview.pendingCollections),
-        subtitle: 'Henüz toplanmamış gelir',
-        icon: Icons.schedule_send_rounded,
-        accent: const Color(0xFFF59E0B),
-        onTap: null,
-      ),
-      (
-        title: 'Toplam Borç',
-        value: fmtCurrency(overview.totalDebt),
-        subtitle: 'Kalan aktif borç bakiyesi',
-        icon: Icons.credit_card_rounded,
-        accent: const Color(0xFFF97316),
-        onTap: null,
-      ),
-      (
-        title: 'Nakit Kasa',
-        value: fmtCurrency(overview.totalCashBalance),
-        subtitle: 'Kasa hesapları',
-        icon: Icons.account_balance_wallet_rounded,
-        accent: const Color(0xFF3B82F6),
-        onTap: null,
-      ),
-      (
-        title: 'Banka / POS',
-        value: fmtCurrency(overview.totalBankBalance),
-        subtitle: 'Banka ve POS hesapları',
-        icon: Icons.account_balance_rounded,
-        accent: const Color(0xFF7C3AED),
-        onTap: null,
-      ),
-      (
-        title: 'Maaş Yükü',
-        value: fmtCurrency(overview.monthSalaryLoad),
-        subtitle: 'Aylık maaş yükümlülüğü',
-        icon: Icons.badge_rounded,
-        accent: const Color(0xFF8B5CF6),
-        onTap: null,
-      ),
-      (
-        title: 'Yaklaşan Ödemeler',
-        value: fmtCurrency(_upcomingPaymentAmount),
-        subtitle: '${overview.upcomingPayments} kayıt yakın vadede',
-        icon: Icons.event_note_rounded,
-        accent: const Color(0xFF6366F1),
-        onTap: null,
-      ),
-    ];
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: cards.length,
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 320,
-        childAspectRatio: 1.95,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-      ),
-      itemBuilder: (_, index) {
-        final item = cards[index];
-        return FinKpiCard(
-          label: item.title,
-          value: item.value,
-          subtitle: item.subtitle,
-          icon: item.icon,
-          color: item.accent,
-          onTap: item.onTap,
-        );
-      },
-    );
-  }
-
-  Widget _buildPaymentSummaryPanel(FinanceOverview overview) {
-    return FinSurfaceCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Ödeme Özeti',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 12),
-          FinMetricRow(
-            label: 'Bekleyen ödeme toplamı',
-            value: fmtCurrency(overview.pendingPayments),
-            valueColor: const Color(0xFFEF4444),
-          ),
-          FinMetricRow(
-            label: 'Toplam kalan borç',
-            value: fmtCurrency(overview.totalDebt),
-            valueColor: const Color(0xFFF59E0B),
-          ),
-          FinMetricRow(
-            label: 'Bu hafta yaklaşan',
-            value: '${overview.upcomingPayments} kayıt',
-            valueColor: const Color(0xFF3B82F6),
-          ),
-          FinMetricRow(
-            label: 'Gecikmiş kalemler',
-            value: '${overview.overduePayments + overview.overdueDebts} kayıt',
-            valueColor: const Color(0xFFDC2626),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSchedulePanel() {
-    return FinSurfaceCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Ödeme Takvimi',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 12),
-          if (_loadingExtras && _paymentSchedule.isEmpty)
-            const SizedBox(
-              height: 110,
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_paymentSchedule.isEmpty)
-            const Text(
-              'Yakın vade bulunmuyor.',
-              style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-            )
-          else
-            ..._paymentSchedule.map(_scheduleRow),
-        ],
-      ),
-    );
   }
 
   Widget _scheduleRow(Map<String, dynamic> item) {
@@ -623,15 +543,28 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
     );
   }
 
-  Widget _buildCompanyPanel() {
+  Widget _buildCompanyPanel(SellerFinanceDensity density) {
     final settings = _companySettings;
     return FinSurfaceCard(
+      padding: EdgeInsets.all(density.isCompact ? 12 : 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Banka / Kurumsal Bilgi',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+            style: TextStyle(
+              fontSize: density.sectionTitleFontSize,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF111827),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Şirket ve vergi bilgileri',
+            style: TextStyle(
+              fontSize: density.sectionSubtitleFontSize,
+              color: const Color(0xFF94A3B8),
+            ),
           ),
           const SizedBox(height: 12),
           FinMetricRow(label: 'Şirket', value: settings?.companyName ?? '-'),
@@ -655,14 +588,19 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
     );
   }
 
-  Widget _buildHealthPanel(FinanceOverview overview) {
+  Widget _buildHealthPanel(FinanceOverview overview, SellerFinanceDensity density) {
     return FinSurfaceCard(
+      padding: EdgeInsets.all(density.isCompact ? 12 : 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Finans Sağlığı',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+            style: TextStyle(
+              fontSize: density.sectionTitleFontSize,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF111827),
+            ),
           ),
           const SizedBox(height: 12),
           Center(
@@ -690,24 +628,42 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
     );
   }
 
-  Widget _buildRecentActivityCard() {
+  Widget _buildRecentActivityCard(SellerFinanceDensity density) {
     return FinSurfaceCard(
+      padding: EdgeInsets.all(density.isCompact ? 12 : 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'İşlem Geçmişi / Rapor Alanı',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+          Text(
+            'Son İşlemler',
+            style: TextStyle(
+              fontSize: density.sectionTitleFontSize,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF111827),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Kasa, gelir ve gider hareketleri',
+            style: TextStyle(
+              fontSize: density.sectionSubtitleFontSize,
+              color: const Color(0xFF94A3B8),
+            ),
           ),
           const SizedBox(height: 12),
           if (_loadingExtras && _recentActivities.isEmpty)
             const SizedBox(
-              height: 160,
-              child: Center(child: CircularProgressIndicator()),
+              height: 140,
+              child: Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: kFinancePrimary,
+                ),
+              ),
             )
           else if (_recentActivities.isEmpty)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
+              padding: EdgeInsets.symmetric(vertical: 20),
               child: Center(
                 child: Text(
                   'Henüz işlem kaydı bulunmuyor.',
@@ -859,55 +815,6 @@ class _FinanceShellContentState extends State<_FinanceShellContent> {
           );
         })
         .toList(growable: false);
-  }
-
-  Widget _buildSectionSwitcher() {
-    return FinSurfaceCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Muhasebe Modülleri',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-              ),
-              Text(
-                'Hızlı İşlemler',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _buildGlobalQuickActions(),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: List.generate(_tabs.length, (index) {
-              final tab = _tabs[index];
-              return FinSectionSwitchChip(
-                label: tab.label,
-                icon: tab.icon,
-                selected: _selectedIndex == index,
-                onTap: () => setState(() => _selectedIndex = index),
-              );
-            }),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildGlobalQuickActions() {

@@ -1,3 +1,7 @@
+import 'package:flutter/foundation.dart';
+
+import '../ibul_boot_stage.dart';
+
 const String _kIbulSupabaseUrl = String.fromEnvironment('IBUL_SUPABASE_URL');
 const String _kIbulSupabaseAnonKey = String.fromEnvironment(
   'IBUL_SUPABASE_ANON_KEY',
@@ -23,11 +27,41 @@ const String _kIbulSellerDesktopMacosDownloadUrl = String.fromEnvironment(
   defaultValue:
       'https://github.com/barankanan/ibull/releases/latest/download/IbulSellerDesktop.dmg',
 );
+const bool _kIbulSafeBoot = bool.fromEnvironment(
+  'IBUL_SAFE_BOOT',
+  defaultValue: false,
+);
+const String _kIbulBootStage = String.fromEnvironment(
+  'IBUL_BOOT_STAGE',
+  defaultValue: 'normal',
+);
 
 class AppRuntimeConfig {
+  static bool? _safeBootOverride;
+  static IbulBootStage? _bootStageOverride;
+
+  @visibleForTesting
+  static void setSafeBootOverrideForTest(bool? value) {
+    _safeBootOverride = value;
+  }
+
+  @visibleForTesting
+  static void setBootStageOverrideForTest(IbulBootStage? value) {
+    _bootStageOverride = value;
+  }
+
+  @visibleForTesting
+  static bool parseSafeBootFlag(String? raw) {
+    if (raw == null) return false;
+    final normalized = raw.trim().toLowerCase();
+    return normalized == 'true' || normalized == '1';
+  }
   static String get rawSupabaseUrl => _kIbulSupabaseUrl;
 
   static String get rawSupabaseAnonKey => _kIbulSupabaseAnonKey;
+
+  static bool get hasSupabaseConfig =>
+      rawSupabaseUrl.trim().isNotEmpty && rawSupabaseAnonKey.trim().isNotEmpty;
 
   static String get supabaseUrl =>
       _requireEnv('IBUL_SUPABASE_URL', _kIbulSupabaseUrl);
@@ -66,6 +100,14 @@ class AppRuntimeConfig {
       _normalize(_kIbulDistributionChannel) == 'microsoft_store';
 
   static bool get isFullInstallerDistribution => !isMicrosoftStoreDistribution;
+
+  /// Minimal web boot: bypass provider tree and heavy init.
+  static bool get safeBootMode => _safeBootOverride ?? _kIbulSafeBoot;
+
+  static IbulBootStage get bootStage =>
+      _bootStageOverride ?? parseIbulBootStage(_kIbulBootStage);
+
+  static bool get skipHomeCacheLoad => bootStage == IbulBootStage.homeNoCache;
 
   static String _requireEnv(String name, String value) {
     final normalized = _normalize(value);

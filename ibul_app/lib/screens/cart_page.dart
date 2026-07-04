@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 import 'dart:ui';
 import '../core/constants.dart';
 import '../core/app_state.dart';
@@ -969,6 +970,60 @@ class _CartPageState extends State<CartPage>
       initialIndex: _activeTabIndex,
     );
     _tabController.addListener(_onCartTabInteraction);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_revalidateCartOnOpen());
+    });
+  }
+
+  Future<void> _revalidateCartOnOpen() async {
+    final result = await _appState.revalidateCart();
+    if (!mounted || result == null) return;
+    if ((result.summaryMessage ?? '').isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.summaryMessage!),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+    setState(() {});
+  }
+
+  Future<void> _openCheckout({
+    required double payableTotal,
+    required List<Map<String, dynamic>> selectedProducts,
+  }) async {
+    if (_appState.isCartRevalidating) return;
+    final result = await _appState.revalidateCart();
+    if (!mounted) return;
+    if (_appState.cart.isEmpty || (result?.hasBlockingIssues ?? false)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sepetinizde satışta olmayan ürünler var. Lütfen sepeti güncelleyin.',
+          ),
+        ),
+      );
+      setState(() {});
+      return;
+    }
+    if ((result?.summaryMessage ?? '').isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result!.summaryMessage!)),
+      );
+    }
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CheckoutPage(
+          totalPrice: payableTotal,
+          selectedProducts: selectedProducts,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {});
   }
 
   @override
@@ -1366,6 +1421,7 @@ class _CartPageState extends State<CartPage>
 
     return Column(
       children: [
+        _buildCartAttentionBanner(),
         // Header
         Padding(
           padding: EdgeInsets.symmetric(
@@ -2806,18 +2862,12 @@ class _CartPageState extends State<CartPage>
                   width: isNarrow ? 156 : 172,
                   height: isNarrow ? 46 : 48,
                   child: ElevatedButton(
-                    onPressed: selectedProducts.isNotEmpty
-                        ? () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => CheckoutPage(
-                                  totalPrice: payableTotal,
-                                  selectedProducts: selectedProducts,
-                                ),
-                              ),
-                            );
-                          }
+                    onPressed: selectedProducts.isNotEmpty &&
+                            !_appState.isCartCheckoutBlocked
+                        ? () => _openCheckout(
+                              payableTotal: payableTotal,
+                              selectedProducts: selectedProducts,
+                            )
                         : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
@@ -2894,6 +2944,7 @@ class _CartPageState extends State<CartPage>
                 ),
               ),
               const SizedBox(height: 24),
+              _buildCartAttentionBanner(),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -3982,6 +4033,40 @@ class _CartPageState extends State<CartPage>
     );
   }
 
+  Widget _buildCartAttentionBanner() {
+    final message = _appState.cartAttentionMessage;
+    if (message == null || message.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange.shade200),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, color: Colors.orange.shade800, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: Colors.orange.shade900,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildWebSummaryCard() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -4077,18 +4162,12 @@ class _CartPageState extends State<CartPage>
           ),
           const SizedBox(height: 12),
           ElevatedButton(
-            onPressed: totalPrice > 0
-                ? () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => CheckoutPage(
-                          totalPrice: totalPrice,
-                          selectedProducts: selectedProducts,
-                        ),
-                      ),
-                    );
-                  }
+            onPressed: selectedProducts.isNotEmpty &&
+                    !_appState.isCartCheckoutBlocked
+                ? () => _openCheckout(
+                      payableTotal: payableTotal,
+                      selectedProducts: selectedProducts,
+                    )
                 : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,

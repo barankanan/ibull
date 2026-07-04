@@ -204,9 +204,29 @@ class CategoryAttributeService {
       final values = <String, String>{};
       for (final entry in decoded.entries) {
         final key = entry.key.toString().trim();
-        final value = entry.value?.toString().trim() ?? '';
-        if (key.isEmpty || value.isEmpty) continue;
-        values[key] = value;
+        final value = entry.value;
+        if (key.isEmpty || value == null) continue;
+
+        if (value is Map) {
+          if (key == 'cargo' || key == 'attributes') {
+            value.forEach((dynamic nestedKey, dynamic nestedValue) {
+              final nestedLabel = nestedKey.toString().trim();
+              final nestedText = nestedValue?.toString().trim() ?? '';
+              if (nestedLabel.isNotEmpty && nestedText.isNotEmpty) {
+                values[nestedLabel] = nestedText;
+              }
+            });
+          }
+          continue;
+        }
+
+        if (value is List) {
+          continue;
+        }
+
+        final text = value.toString().trim();
+        if (text.isEmpty) continue;
+        values[key] = text;
       }
       return values;
     } catch (error, stackTrace) {

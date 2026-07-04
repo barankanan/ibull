@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'discovered_printer.dart';
 import 'windows_printer_classification.dart';
 
 enum DesktopPrinterBackend {
@@ -162,7 +163,18 @@ class UnifiedPrinterModel {
   bool get isLiveDiscovery => raw['source']?.toString() != 'saved_record';
 
   /// Saved DB mapping with no matching live bridge printer on this machine.
-  bool get isStaleSavedMapping => !isLiveDiscovery;
+  bool get isStaleSavedMapping {
+    if (raw['isStaleSavedMapping'] == true || raw['isSavedOnly'] == true) {
+      return true;
+    }
+    final discoveredSource =
+        raw['discoveredSource']?.toString().trim().toLowerCase() ?? '';
+    if (discoveredSource == 'saved_registry' ||
+        discoveredSource == 'manual') {
+      return true;
+    }
+    return !isLiveDiscovery;
+  }
 
   UnifiedPrinterModel copyWith({
     String? lastTestStatus,
@@ -254,7 +266,7 @@ class UnifiedPrinterModel {
   }) {
     final normalizedRaw = <String, dynamic>{
       ...printer,
-      'source': printer['source']?.toString() ?? 'usb_scan',
+      'source': printer['source']?.toString() ?? 'bridge',
     };
     final backend = DesktopPrinterBackend.fromValue(
       normalizedRaw['backend']?.toString(),
@@ -694,6 +706,17 @@ bool isSelectableLivePrinter(UnifiedPrinterModel printer) {
   return printer.canPrint;
 }
 
+/// Saved Ethernet DB records and live USB/CUPS printers eligible for role save.
+bool isAssignableRolePrinter(UnifiedPrinterModel printer) {
+  if (printer.backend == DesktopPrinterBackend.tcp) {
+    final recordId = printer.printerRecordId?.trim() ?? '';
+    if (recordId.isEmpty) return false;
+    final endpoint = DiscoveredPrinter.endpointFromUnifiedPrinter(printer);
+    return endpoint.ip.isNotEmpty && endpoint.port > 0;
+  }
+  return isSelectableLivePrinter(printer);
+}
+
 String bridgeOperatorSetupMessage({
   required bool bridgeReachable,
   required bool bridgeHealthy,
@@ -791,6 +814,8 @@ class PrinterActionResult {
     this.raw,
     this.localSaved = false,
     this.cloudSaved = false,
+    this.countsAsJobCompleted = false,
+    this.dispatchVerification,
   });
 
   final bool ok;
@@ -801,4 +826,6 @@ class PrinterActionResult {
   final Map<String, dynamic>? raw;
   final bool localSaved;
   final bool cloudSaved;
+  final bool countsAsJobCompleted;
+  final Map<String, dynamic>? dispatchVerification;
 }

@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:intl/date_symbol_data_local.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:ibul_app/app/app_bootstrap.dart';
-import 'package:ibul_app/core/app_ready.dart';
-import 'package:ibul_app/core/qr_initial_params.dart';
-import 'package:ibul_app/core/review_state.dart';
+import 'package:ibul_app/app/ibul_app_boot.dart';
+import 'package:ibul_app/app/ibul_boot_controller.dart';
+import 'package:ibul_app/app/ibul_boot_shell_app.dart';
+import 'package:ibul_app/app/ibul_safe_boot_app.dart';
+import 'package:ibul_app/core/config/runtime_config.dart';
+import 'package:ibul_app/core/ibul_boot_stage.dart';
+import 'package:ibul_app/core/web_boot.dart';
+import 'package:ibul_app/core/web_boot_step_profiler.dart';
 import 'package:ibul_app/core/route_observer.dart';
+import 'package:ibul_app/core/qr_initial_params.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
 import 'package:ibul_app/screens/qr_entry_screen.dart';
 
@@ -26,79 +32,78 @@ import 'package:ibul_app/screens/become_seller_page.dart' deferred as become_sel
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
-  final bootWatch = Stopwatch()..start();
   WidgetsFlutterBinding.ensureInitialized();
+  WebBootLogger.log('main', detail: 'entered');
+  WebBootStepProfiler.done('widgets_binding');
 
-  // CRITICAL: Capture QR params before any routing or Supabase auth can
-  // overwrite window.location.href. addPostFrameCallback fires too late.
-  QrInitialParams.captureFromUri();
-  debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — QR params captured. isQrPath=${QrInitialParams.isQrPath}');
-
-  configureAppDiagnostics(
-    startupMessage: 'Starting IBUL App. Platform: ${kIsWeb ? "web" : "native"}',
-    includeErrorStackTrace: true,
-  );
-
-  // ── QR web fast-path ───────────────────────────────────────────────────────
-  // For /qr URLs: call runApp immediately (removes blank-screen delay of
-  // 100–500 ms) and let Supabase initialise in the background. QrEntryScreen
-  // awaits [appServicesReady] before making any API calls.
-  //
-  // IMPORTANT: use buildAppProviders() (full set) even for QR — not the minimal
-  // buildQrProviders(). All providers are singletons so the cost is zero, but
-  // any page that the QR user navigates to (HomeScreen, SellerPanel, etc.) that
-  // reads AppState/ReviewState/FavoriteState via context.read will throw a
-  // ProviderNotFoundException if those providers are absent from the tree.
-  if (kIsWeb && QrInitialParams.isQrPath) {
-    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — QR fast-path: runApp immediately');
-    _initServicesBackground(bootWatch); // fire-and-forget
-    runApp(MultiProvider(providers: buildAppProviders(), child: const MyApp()));
-    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — runApp returned (first frame scheduled)');
+  if (AppRuntimeConfig.safeBootMode) {
+    runIbulSafeBootApp();
     return;
   }
 
-  // ── Normal path ────────────────────────────────────────────────────────────
-  try {
-    Intl.defaultLocale = 'tr_TR';
-    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — initializeDateFormatting');
-    await initializeDateFormatting('tr_TR');
+  WebBootLogger.log('safe_boot', detail: 'enabled=false');
 
-    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — initializeAppSupabase');
-    await initializeAppSupabase();
-
-    ReviewState().initialize(); // fire-and-forget; memoized, safe to call again
-    if (!appServicesReadyCompleter.isCompleted) appServicesReadyCompleter.complete();
-
-    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — runApp');
-    runApp(MultiProvider(providers: buildAppProviders(), child: const MyApp()));
-    debugPrint('[Boot] ${bootWatch.elapsedMilliseconds}ms — runApp returned');
-  } catch (error, stackTrace) {
-    debugPrint('Fatal startup error in root main(): $error');
-    debugPrintStack(stackTrace: stackTrace);
-    rethrow;
+  if (kIsWeb) {
+    _runWebProgressiveBoot();
+    return;
   }
+
+  final bootWatch = Stopwatch()..start();
+  await runIbulAppBootstrap(
+    bootWatch: bootWatch,
+    initServicesBackground: initIbulServicesBackground,
+    runAppWidget: () {
+      WebBootStepProfiler.start('provider_tree');
+      runApp(_buildReadyAppTree());
+      WebBootStepProfiler.done('provider_tree');
+    },
+  );
 }
 
-/// Initialises Supabase and locale in the background without blocking [runApp].
-/// Resolves [appServicesReadyCompleter] on success so [QrEntryScreen] can proceed.
-Future<void> _initServicesBackground(Stopwatch sw) async {
-  try {
-    debugPrint('[Boot] ${sw.elapsedMilliseconds}ms — background init: start');
-    Intl.defaultLocale = 'tr_TR';
-    await Future.wait<void>([
-      initializeDateFormatting('tr_TR'),
-      initializeAppSupabase(),
-    ]);
-    ReviewState().initialize(); // fire-and-forget
-    debugPrint('[Boot] ${sw.elapsedMilliseconds}ms — background init: done');
-    if (!appServicesReadyCompleter.isCompleted) appServicesReadyCompleter.complete();
-  } catch (error, stackTrace) {
-    debugPrint('[Boot] ${sw.elapsedMilliseconds}ms — background init error: $error');
-    debugPrintStack(stackTrace: stackTrace);
-    if (!appServicesReadyCompleter.isCompleted) {
-      appServicesReadyCompleter.completeError(error, stackTrace);
-    }
+void _runWebProgressiveBoot() {
+  QrInitialParams.captureFromUri();
+  configureAppDiagnostics(
+    startupMessage: 'Starting IBUL App on Web (root entry)',
+    includeErrorStackTrace: true,
+  );
+
+  final bootWatch = Stopwatch()..start();
+  final controller = IbulBootController();
+
+  WebBootStepProfiler.start('runApp_normal_shell');
+  runApp(
+    IbulProgressiveBootApp(
+      controller: controller,
+      bootStage: AppRuntimeConfig.bootStage,
+      readyBuilder: (_) => _buildReadyAppTree(),
+    ),
+  );
+  WebBootStepProfiler.done('runApp_normal_shell');
+
+  unawaited(controller.initialize(bootWatch: bootWatch));
+}
+
+Widget _buildReadyAppTree() {
+  WebBootStepProfiler.start('provider_tree');
+  final stage = AppRuntimeConfig.bootStage;
+  if (stage == IbulBootStage.providers) {
+    final tree = MultiProvider(
+      providers: buildAppProviders(),
+      child: const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: IbulBootDiagnosticProvidersPage(),
+      ),
+    );
+    WebBootStepProfiler.done('provider_tree', detail: 'diagnostic');
+    return tree;
   }
+
+  final tree = MultiProvider(
+    providers: buildAppProviders(),
+    child: const MyApp(),
+  );
+  WebBootStepProfiler.done('provider_tree');
+  return tree;
 }
 
 class MyApp extends StatelessWidget {

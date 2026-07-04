@@ -275,6 +275,15 @@ class _FakePrinterRepo implements PrinterRepositoryPort {
   Future<List<PrinterModel>> fetchPrinters(String restaurantId) async => saved;
 
   @override
+  Future<PrinterModel> repairPrinterProfileMetadata(String printerId) async {
+    final printer = await fetchPrinterById(printerId);
+    if (printer == null) {
+      throw StateError('missing printer $printerId');
+    }
+    return printer;
+  }
+
+  @override
   Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
     required String restaurantId,
     String? stationId,

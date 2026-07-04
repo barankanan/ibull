@@ -103,6 +103,13 @@ const List<AdminPanelMenuDefinition> ibulAdminMenuDefinitions = [
     moduleKey: AdminModules.permissionSystem,
   ),
   AdminPanelMenuDefinition(
+    icon: Icons.groups_outlined,
+    title: 'Ekip & Görevler',
+    groupLabel: 'Yönetim',
+    groupIcon: Icons.admin_panel_settings_outlined,
+    moduleKey: AdminModules.teamTasks,
+  ),
+  AdminPanelMenuDefinition(
     icon: Icons.security,
     title: 'Log & Güvenlik',
     groupLabel: 'Yönetim',

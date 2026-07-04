@@ -313,6 +313,13 @@ class BridgeSettings:
     receipt_paper_width_mm: int = 58
     receipt_raster_width_px: int = 384
     receipt_chars_per_line: int = 32
+    bottom_feed_lines: int = 8
+    cut_feed_lines: int = 6
+    raster_bottom_padding_px: int = 180
+    min_receipt_height_px: int = 740
+    min_trailing_blank_lines: int = 8
+    receipt_length_preset: str = "normal"
+    policy_source: str = "default"
 
     @classmethod
     def from_env(cls) -> "BridgeSettings":
@@ -364,6 +371,11 @@ class BridgeSettings:
         receipt_paper_width_mm = _parse_int(os.getenv("PRINT_BRIDGE_RECEIPT_PAPER_WIDTH_MM")) or 58
         receipt_raster_width_px = _parse_int(os.getenv("PRINT_BRIDGE_RECEIPT_RASTER_WIDTH_PX")) or 384
         receipt_chars_per_line = _parse_int(os.getenv("PRINT_BRIDGE_RECEIPT_CHARS_PER_LINE")) or 32
+        layout_bottom_feed = 10 if paper_width_mm <= 58 else 8
+        layout_cut_feed = 8 if paper_width_mm <= 58 else 6
+        layout_raster_pad = 170 if paper_width_mm <= 58 else 180
+        layout_min_height = 700 if paper_width_mm <= 58 else 740
+        layout_min_trailing = layout_bottom_feed
         return cls(
             host=os.getenv("PRINT_BRIDGE_HOST", "127.0.0.1").strip() or "127.0.0.1",
             port=int(os.getenv("PRINT_BRIDGE_PORT", "3001")),
@@ -401,6 +413,11 @@ class BridgeSettings:
             receipt_paper_width_mm=receipt_paper_width_mm,
             receipt_raster_width_px=receipt_raster_width_px,
             receipt_chars_per_line=receipt_chars_per_line,
+            bottom_feed_lines=layout_bottom_feed,
+            cut_feed_lines=layout_cut_feed,
+            raster_bottom_padding_px=layout_raster_pad,
+            min_receipt_height_px=layout_min_height,
+            min_trailing_blank_lines=layout_min_trailing,
         )
 
     def as_dict(self) -> dict[str, object]:

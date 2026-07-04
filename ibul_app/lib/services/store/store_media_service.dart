@@ -305,6 +305,29 @@ class StoreMediaService {
     return _supabase.storage.from('product-images').getPublicUrl(path);
   }
 
+  Future<String> uploadProductDescriptionImage(
+    String productId,
+    Uint8List bytes,
+    String originalName,
+  ) async {
+    final currentUserId = _currentUserId;
+    final String ext = _fileExt;
+    final String fileName =
+        'desc_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    final String path =
+        '$currentUserId/$productId/product-description-images/$fileName';
+
+    final Uint8List data = await compressBytes(bytes);
+
+    await _supabase.storage.from('product-images').uploadBinary(
+          path,
+          data,
+          fileOptions: FileOptions(contentType: _contentType, upsert: true),
+        );
+
+    return _supabase.storage.from('product-images').getPublicUrl(path);
+  }
+
   Future<Uint8List> compressImage(XFile file) async {
     try {
       final Uint8List input = await file.readAsBytes();

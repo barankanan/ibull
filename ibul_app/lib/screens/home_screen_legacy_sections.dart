@@ -1,17 +1,52 @@
-part of 'home_screen.dart';
+part of 'home_screen_legacy_full.dart';
 
 extension _HomeScreenSections on _HomeScreenState {
   Widget _buildHomeViewImpl() {
-    if (_errorMessage != null) {
-      return CustomErrorView(message: _errorMessage, onRetry: _loadProducts);
-    }
-
     // Breakpoint increased to 1100 to prevent WebHeader overflow on smaller screens (tablets, small laptops)
     final isWeb = MediaQuery.of(context).size.width >= 1100;
 
-    return SafeArea(
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        SafeArea(
       child: Column(
         children: [
+          if (_productLoadNotice != null && _productLoadIsError)
+            MaterialBanner(
+              backgroundColor: const Color(0xFFFFF3F3),
+              content: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_productLoadNotice!),
+                  if (_productLoadDebugDetail != null &&
+                      _productLoadDebugDetail!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        _productLoadDebugDetail!,
+                        style: TextStyle(
+                          fontSize: 11,
+                          height: 1.35,
+                          color: Colors.grey.shade700,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              leading: const Icon(Icons.error_outline, color: Color(0xFFB71C1C)),
+              actions: [
+                TextButton(
+                  onPressed: _handleHomeProductRetry,
+                  child: const Text('Tekrar dene'),
+                ),
+                IconButton(
+                  onPressed: _dismissProductLoadNotice,
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
           // Header: Web için WebHeader, Mobil için CustomHeader
           isWeb
               ? WebHeader(
@@ -31,95 +66,167 @@ extension _HomeScreenSections on _HomeScreenState {
           ),
         ],
       ),
+        ),
+        ListenableBuilder(
+          listenable: _productLoadTrace,
+          builder: (context, _) => WebPerfDebugPanel(
+            productSnapshot: _productLoadTrace.snapshot,
+            visible: perfDebugPanelEnabled,
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildMobileHomeContentImpl() {
-    final mobileBannerImages = _resolvedBannerImages(preferMobile: true);
-    final featuredProducts = _featuredHomeProducts();
-    final fastDeliveryProducts = _getFastDeliveryProducts(limit: 10);
-    final opportunityProducts = _getOpportunityProducts(limit: 10);
-    final recentProducts = _recentHomeProducts();
+    final mobileBannerImages = _showHeroBannerSection
+        ? _resolvedBannerImages(preferMobile: true)
+        : const <String>[];
+    final featuredProducts = _limitHomeProducts(_featuredHomeProducts());
+    final fastDeliveryProducts = _showFastDeliveryRail
+        ? _getFastDeliveryProducts(limit: 10)
+        : const <DBProduct>[];
+    final recentProducts = _limitHomeProducts(_recentHomeProducts());
 
-    _scheduleAboveFoldImagePrecache(
-      isWeb: false,
-      bannerImages: mobileBannerImages,
-      firstRailProducts: featuredProducts,
-    );
+    if (_showHeroBannerSection || _showPersonalizedRail) {
+      _scheduleAboveFoldImagePrecache(
+        isWeb: false,
+        bannerImages: mobileBannerImages,
+        firstRailProducts: featuredProducts,
+      );
+    }
 
     return CustomScrollView(
+      controller: _mobileHomeScrollController,
       physics: const BouncingScrollPhysics(
         parent: AlwaysScrollableScrollPhysics(),
       ),
       slivers: [
         const _MobileAddressBarSliver(),
         SliverToBoxAdapter(
-          child: FeatureMenu(remoteCategories: _appFeatureCategories),
+          child: _showCategoryShortcutContent
+              ? FeatureMenu(
+                  remoteCategories: _appFeatureCategories,
+                  onShortcutTap: _handleMobileShortcutTap,
+                )
+              : const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: SkeletonLoading(width: double.infinity, height: 72, borderRadius: 12),
+                ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 8)),
-        _MobileBannerSliver(
-          isLoadingHeroContent: _isLoadingHeroContent,
-          mobileBannerImages: mobileBannerImages,
-          buildHomeBannerSkeleton: _buildHomeBannerSkeleton,
-          buildScaledHomeBannerImage: _buildScaledHomeBannerImage,
-        ),
-        if (_isLoadingHeroContent || mobileBannerImages.isNotEmpty)
-          const SliverToBoxAdapter(child: SizedBox(height: 12)),
-        const SliverToBoxAdapter(
-          child: SponsoredProductListsSection(
-            title: 'Öne Çıkan Listeler',
-            subtitle: 'Ana sayfada sponsorlu olarak gösterilen ürün listeleri',
-            placement: AdPlacement.homeFeed,
-          ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 20)),
-        SliverToBoxAdapter(
-          child: _HomeProductRailSection(
-            title: const _PersonalizedProductsTitle(),
-            isLoadingProducts: _isLoadingProducts,
-            hasProducts: _dbProducts.isNotEmpty,
-            products: featuredProducts,
-            convertToProduct: _convertToProduct,
-          ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        SliverToBoxAdapter(
-          child: _FastDeliverySection(
-            isLoading: _isLoadingProducts || _isLoadingHomeSections,
-            products: fastDeliveryProducts,
-            convertToProduct: _convertToProduct,
-          ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        if (_hairCareLayoutsForHome.isNotEmpty)
+        if (_showHeroBannerSection)
+          _MobileBannerSliver(
+            isLoadingHeroContentListenable: _isLoadingHeroContentNotifier,
+            mobileBannerImages: mobileBannerImages,
+            buildHomeBannerSkeleton: _buildHomeBannerSkeleton,
+            buildScaledHomeBannerImage: _buildScaledHomeBannerImage,
+          )
+        else
           SliverToBoxAdapter(
-            child: _DynamicBrandLayoutsSection(
-              layouts: _hairCareLayoutsForHome,
-              allProducts: _dbProducts,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: _buildHomeBannerSkeleton(isWeb: false),
             ),
           ),
-        SliverToBoxAdapter(
-          child: _OpportunityProductsSection(
-            isLoadingProducts: _isLoadingProducts,
-            products: opportunityProducts,
-            convertToProduct: _convertToProduct,
+        if (_showHeroBannerSection)
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+        if (_showSponsoredRails)
+          const SliverToBoxAdapter(
+            child: SponsoredProductListsSection(
+              title: 'Öne Çıkan Listeler',
+              subtitle: 'Ana sayfada sponsorlu olarak gösterilen ürün listeleri',
+              placement: AdPlacement.homeFeed,
+            ),
           ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        if (_showSponsoredRails)
+          const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        if (_showPersonalizedRail)
+          SliverToBoxAdapter(
+            key: _personalizedSectionKey,
+            child: _HomeProductRailSection(
+              title: const _PersonalizedProductsTitle(),
+              isLoadingProducts: shouldShowPersonalizedProductsSkeleton(
+                isLoading: _isLoadingPersonalizedProducts,
+                productCount: featuredProducts.length,
+              ),
+              hasProducts: featuredProducts.isNotEmpty,
+              products: featuredProducts,
+              convertToProduct: _convertToProduct,
+              lazyImagePriority: OptimizedImagePriority.high,
+              emptyPlaceholder: _buildHomeProductSectionPlaceholder(),
+            ),
+          ),
+        if (_showPersonalizedRail)
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        if (_showFastDeliveryRail)
+          SliverToBoxAdapter(
+            child: _FastDeliverySection(
+              isLoading: _isLoadingProducts && fastDeliveryProducts.isEmpty,
+              products: fastDeliveryProducts,
+              convertToProduct: _convertToProduct,
+            ),
+          ),
+        if (_showFastDeliveryRail)
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        if (_showCategoryCardRails)
+          SliverToBoxAdapter(
+            child: ValueListenableBuilder<bool>(
+              valueListenable: _isLoadingHomeSectionsNotifier,
+              builder: (context, isLoadingHomeSections, _) {
+                return HomeCategoryCardSections(
+                  groups: _homeCategoryCardGroups,
+                  isLoading: isLoadingHomeSections,
+                  convertToProduct: _convertToProduct,
+                );
+              },
+            ),
+          ),
+        if (_showCategoryCardRails)
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
         SliverToBoxAdapter(
-          child: _HomeProductRailSection(
-            title: Text(
-              'Daha Önce Gezdiklerin',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[800],
+          child: LazySectionLoader(
+            sectionName: 'recentProducts',
+            scrollController: _mobileHomeScrollController,
+            skeleton: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 12.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SkeletonLoading(width: 180, height: 18, borderRadius: 6),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 312,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      itemCount: 3,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(width: 12),
+                      itemBuilder: (context, index) =>
+                          const SizedBox(width: 198, child: ProductCardSkeleton()),
+                    ),
+                  ),
+                ],
               ),
             ),
-            isLoadingProducts: _isLoadingProducts,
-            hasProducts: _dbProducts.isNotEmpty,
-            products: recentProducts,
-            convertToProduct: _convertToProduct,
+            loader: () async {},
+            builder: (_) => _HomeProductRailSection(
+              title: Text(
+                'Daha Önce Gezdiklerin',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+              ),
+              isLoadingProducts: _isLoadingProducts,
+              hasProducts: _dbProducts.isNotEmpty,
+              products: recentProducts,
+              convertToProduct: _convertToProduct,
+              emptyPlaceholder: _buildHomeProductSectionPlaceholder(),
+            ),
           ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 96)),
@@ -360,38 +467,106 @@ extension _HomeScreenSections on _HomeScreenState {
   }
 
   Widget _buildWebCategoryEmptyState() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.category_outlined, size: 48, color: Colors.grey[300]),
-        const SizedBox(height: 16),
-        Text(
-          'Bu kategoride henüz ürün bulunamadı',
-          style: TextStyle(color: Colors.grey[600]),
+    return _buildHomeProductSectionPlaceholder(compact: true);
+  }
+
+  Widget _buildHomeProductSectionPlaceholder({bool compact = false}) {
+    if (_isLoadingProducts) {
+      return compact
+          ? const SizedBox.shrink()
+          : const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            );
+    }
+
+    if (_productLoadIsError && _productLoadNotice != null) {
+      return Padding(
+        padding: EdgeInsets.all(compact ? 24 : 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off, size: compact ? 40 : 48, color: Colors.grey[400]),
+            const SizedBox(height: 12),
+            Text(
+              _productLoadNotice!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[700], fontSize: 14),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: _handleHomeProductRetry,
+              child: const Text('Tekrar Dene'),
+            ),
+          ],
         ),
-      ],
+      );
+    }
+
+    final snap = _productLoadTrace.snapshot;
+    final rawCount = snap.rawCount ?? 0;
+    final emptyMessage = rawCount == 0
+        ? 'Henüz ürün bulunmuyor.'
+        : productFilterEmptyUserMessage(
+            rawCount: rawCount,
+            afterActiveCount: _parseTraceCount(snap.detail, 'afterActive') ??
+                rawCount,
+            afterApprovalCount:
+                _parseTraceCount(snap.detail, 'afterApproval') ?? 0,
+          );
+
+    return Padding(
+      padding: EdgeInsets.all(compact ? 24 : 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.inventory_2_outlined, size: compact ? 40 : 48, color: Colors.grey[300]),
+          const SizedBox(height: 12),
+          Text(
+            emptyMessage,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey[600], fontSize: 14),
+          ),
+          if (snap.detail != null && snap.detail!.isNotEmpty && kDebugMode) ...[
+            const SizedBox(height: 8),
+            Text(
+              snap.detail!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[500], fontSize: 10, fontFamily: 'monospace'),
+            ),
+          ],
+        ],
+      ),
     );
+  }
+
+  int? _parseTraceCount(String? detail, String key) {
+    if (detail == null) return null;
+    final match = RegExp('$key: (\\d+)').firstMatch(detail);
+    return match == null ? null : int.tryParse(match.group(1)!);
   }
 
   Widget _buildWebHomeContentImpl() {
     final isElectronics = _selectedCategory == 'Elektronik';
     final isHomePage = _selectedCategory == 'Ana Sayfa';
     final isCategorySelected = !isHomePage; // Herhangi bir kategori seçili mi?
-    final popularProducts = _popularProductsForSelectedCategory();
+    final popularProducts = _limitHomeProducts(
+      _popularProductsForSelectedCategory(),
+    );
     final subCategoryProducts = _selectedSubCategory != null
         ? _getProductsForCurrentSubCategory()
         : const <DBProduct>[];
-    final fastDeliveryProducts = isHomePage
+    final fastDeliveryProducts = isHomePage && _showFastDeliveryRail
         ? _getFastDeliveryProducts(limit: 10)
         : <DBProduct>[];
-    final opportunityProducts = isHomePage
-        ? _getOpportunityProducts(limit: 10)
+    final recentProducts = isHomePage
+        ? _limitHomeProducts(_recentHomeProducts())
         : <DBProduct>[];
-    final recentProducts = isHomePage ? _recentHomeProducts() : <DBProduct>[];
-    final bannerImages = _resolvedBannerImages(preferMobile: false);
+    final bannerImages = _showHeroBannerSection
+        ? _resolvedBannerImages(preferMobile: false)
+        : const <String>[];
 
-    if (isHomePage) {
+    if (isHomePage && (_showHeroBannerSection || _showPersonalizedRail)) {
       _scheduleAboveFoldImagePrecache(
         isWeb: true,
         bannerImages: bannerImages,
@@ -468,7 +643,10 @@ extension _HomeScreenSections on _HomeScreenState {
                   _wrapWebCategoryMainSlot(
                     expandWhenShort:
                         _isLoadingProducts || popularProducts.isEmpty,
-                    child: _isLoadingProducts
+                    child: shouldShowPopularProductsSkeleton(
+                          isLoading: _isLoadingProducts,
+                          productCount: popularProducts.length,
+                        )
                         ? GridView.builder(
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
@@ -601,11 +779,13 @@ extension _HomeScreenSections on _HomeScreenState {
                 ),
 
                 // 1. Kategoriler / Fırsat İkonları
-                _buildOpportunityCards(),
+                if (_showCategoryShortcutContent) _buildOpportunityCards(),
 
-                const SizedBox(height: 24),
+                if (_showCategoryShortcutContent)
+                  const SizedBox(height: 24),
 
                 // 2. İkili Büyük Banner Alanı
+                if (_showHeroBannerSection)
                 SizedBox(
                   height: 412,
                   child: Row(
@@ -622,95 +802,104 @@ extension _HomeScreenSections on _HomeScreenState {
                               // has no dependency on stores or hair-care layouts, and those
                               // deferred queries finish 300-600 ms later — holding the
                               // biggest above-fold element as a skeleton for no reason.
-                              if (_isLoadingHeroContent)
-                                _buildHomeBannerSkeleton(isWeb: true)
-                              else if (bannerImages.isNotEmpty)
-                                CarouselSlider(
-                                  options: CarouselOptions(
-                                    aspectRatio:
-                                        1920 /
-                                        600, // Correct aspect ratio for web banners
-                                    height:
-                                        412, // Reduced height to align with right column (250 + 12 + 150)
-                                    viewportFraction: 1.0,
-                                    autoPlay: true,
-                                    autoPlayInterval: const Duration(
-                                      seconds: 6,
-                                    ),
-                                    autoPlayAnimationDuration: const Duration(
-                                      milliseconds: 1000,
-                                    ),
-                                  ),
-                                  items: bannerImages.map((i) {
-                                    return Builder(
-                                      builder: (BuildContext context) {
-                                        return Container(
-                                          width: MediaQuery.of(
-                                            context,
-                                          ).size.width,
-                                          decoration: const BoxDecoration(
-                                            color: Color(0xFFF0F0F0),
-                                          ),
-                                          child: _buildScaledHomeBannerImage(
-                                            i,
-                                            errorWidget: Container(
-                                              color: Colors.grey.shade200,
-                                              child: Center(
-                                                child: Column(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.center,
-                                                  children: [
-                                                    Icon(
-                                                      Icons.image_not_supported,
-                                                      size: 64,
-                                                      color:
-                                                          Colors.grey.shade400,
+                              ValueListenableBuilder<bool>(
+                                valueListenable: _isLoadingHeroContentNotifier,
+                                builder: (context, isLoadingHeroContent, _) {
+                                  if (isLoadingHeroContent) {
+                                    return _buildHomeBannerSkeleton(isWeb: true);
+                                  }
+                                  if (bannerImages.isNotEmpty) {
+                                    return CarouselSlider(
+                                      options: CarouselOptions(
+                                        aspectRatio: 1920 / 600,
+                                        height: 412,
+                                        viewportFraction: 1.0,
+                                        autoPlay: true,
+                                        autoPlayInterval: const Duration(
+                                          seconds: 6,
+                                        ),
+                                        autoPlayAnimationDuration:
+                                            const Duration(
+                                          milliseconds: 1000,
+                                        ),
+                                      ),
+                                      items: bannerImages.map((i) {
+                                        return Builder(
+                                          builder: (BuildContext context) {
+                                            return Container(
+                                              width: MediaQuery.of(
+                                                context,
+                                              ).size.width,
+                                              decoration: const BoxDecoration(
+                                                color: Color(0xFFF0F0F0),
+                                              ),
+                                              child: _buildScaledHomeBannerImage(
+                                                i,
+                                                errorWidget: Container(
+                                                  color: Colors.grey.shade200,
+                                                  child: Center(
+                                                    child: Column(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Icon(
+                                                          Icons
+                                                              .image_not_supported,
+                                                          size: 64,
+                                                          color: Colors
+                                                              .grey
+                                                              .shade400,
+                                                        ),
+                                                        const SizedBox(
+                                                          height: 16,
+                                                        ),
+                                                        Text(
+                                                          'Kampanya Görseli',
+                                                          style: TextStyle(
+                                                            fontSize: 18,
+                                                            color: Colors
+                                                                .grey
+                                                                .shade500,
+                                                          ),
+                                                        ),
+                                                      ],
                                                     ),
-                                                    const SizedBox(height: 16),
-                                                    Text(
-                                                      'Kampanya Görseli',
-                                                      style: TextStyle(
-                                                        fontSize: 18,
-                                                        color: Colors
-                                                            .grey
-                                                            .shade500,
-                                                      ),
-                                                    ),
-                                                  ],
+                                                  ),
                                                 ),
                                               ),
+                                            );
+                                          },
+                                        );
+                                      }).toList(),
+                                    );
+                                  }
+                                  return Container(
+                                    color: Colors.grey.shade100,
+                                    child: Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.campaign_outlined,
+                                            size: 64,
+                                            color: Colors.grey.shade300,
+                                          ),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            'Henüz kampanya bulunmuyor',
+                                            style: TextStyle(
+                                              fontSize: 16,
+                                              color: Colors.grey.shade500,
                                             ),
                                           ),
-                                        );
-                                      },
-                                    );
-                                  }).toList(),
-                                )
-                              else
-                                Container(
-                                  color: Colors.grey.shade100,
-                                  child: Center(
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.campaign_outlined,
-                                          size: 64,
-                                          color: Colors.grey.shade300,
-                                        ),
-                                        const SizedBox(height: 16),
-                                        Text(
-                                          'Henüz kampanya bulunmuyor',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            color: Colors.grey.shade500,
-                                          ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                ),
+                                  );
+                                },
+                              ),
                             ],
                           ),
                         ),
@@ -755,7 +944,10 @@ extension _HomeScreenSections on _HomeScreenState {
                                 child: Stack(
                                   children: [
                                     Center(
-                                      child: _isLoadingProducts
+                                      child: shouldShowPopularProductsSkeleton(
+                                            isLoading: _isLoadingProducts,
+                                            productCount: popularProducts.length,
+                                          )
                                           ? _buildDealOfTheDaySkeleton()
                                           : popularProducts.isNotEmpty
                                           ? DealOfTheDaySlider(
@@ -822,8 +1014,8 @@ extension _HomeScreenSections on _HomeScreenState {
                             // Kuponlar
                             SizedBox(
                               height: 150, // Reduced height as requested
-                              child: CouponSlider(
-                                isLoading: _isLoadingHomeSections,
+                              child: const CouponSlider(
+                                isLoading: false,
                               ),
                             ),
                           ],
@@ -833,9 +1025,16 @@ extension _HomeScreenSections on _HomeScreenState {
                   ),
                 ),
 
+                if (!_showHeroBannerSection)
+                  SizedBox(
+                    height: 412,
+                    child: _buildHomeBannerSkeleton(isWeb: true),
+                  ),
+
                 const SizedBox(height: 32),
 
                 // 2.5 Yakın Lokasyon Alanı
+                if (_showFastDeliveryRail)
                 Container(
                   padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
                   decoration: BoxDecoration(
@@ -906,7 +1105,7 @@ extension _HomeScreenSections on _HomeScreenState {
                       ),
                       const SizedBox(height: 18),
                       // Yatay Liste
-                      (_isLoadingProducts || _isLoadingHomeSections)
+                      (_isLoadingProducts && fastDeliveryProducts.isEmpty)
                           ? _buildHorizontalProductSkeletons(
                               height: 312,
                               itemWidth: 198,
@@ -999,17 +1198,21 @@ extension _HomeScreenSections on _HomeScreenState {
                   ),
                 ),
 
-                const SizedBox(height: 32),
+                if (_showFastDeliveryRail)
+                  const SizedBox(height: 32),
 
-                const SponsoredProductListsSection(
-                  title: 'Ana Sayfada Öne Çıkan Listeler',
-                  subtitle:
-                      'Liste reklamı verilen koleksiyonlar burada sponsorlu gösterilir.',
-                  placement: AdPlacement.homeFeed,
-                ),
+                if (_showSponsoredRails)
+                  const SponsoredProductListsSection(
+                    title: 'Ana Sayfada Öne Çıkan Listeler',
+                    subtitle:
+                        'Liste reklamı verilen koleksiyonlar burada sponsorlu gösterilir.',
+                    placement: AdPlacement.homeFeed,
+                  ),
 
-                const SizedBox(height: 32),
+                if (_showSponsoredRails)
+                  const SizedBox(height: 32),
 
+                if (_showPersonalizedRail) ...[
                 // 3. Popüler Ürünler Başlığı
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1043,7 +1246,10 @@ extension _HomeScreenSections on _HomeScreenState {
                 const SizedBox(height: 16),
 
                 // 4. Popüler Ürünler Listesi (Yatay Kaydırılabilir)
-                _isLoadingProducts
+                shouldShowPopularProductsSkeleton(
+                  isLoading: _isLoadingProducts,
+                  productCount: popularProducts.length,
+                )
                     ? _buildHorizontalProductSkeletons(
                         height: 312,
                         itemWidth: 198,
@@ -1104,6 +1310,9 @@ extension _HomeScreenSections on _HomeScreenState {
                                       ),
                                       child: ProductCard(
                                         product: _convertToProduct(dbProduct),
+                                        imagePriority: index == 0
+                                            ? OptimizedImagePriority.high
+                                            : OptimizedImagePriority.lazy,
                                       ),
                                     ),
                                   );
@@ -1146,196 +1355,9 @@ extension _HomeScreenSections on _HomeScreenState {
                         ),
                       ),
 
-                const SizedBox(height: 40),
+                ],
 
-                // 4.5 Flaş Ürünler - Grid Bölümü
-                Container(
-                  padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        const Color(0xFFFFF0EE),
-                        const Color(0xFFFFF8F7),
-                        const Color(0xFFFFF0EE),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: const Color(0xFFF4D2CE)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.red.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Icon(
-                              Icons.flash_on,
-                              color: Colors.red,
-                              size: 22,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Flaş Ürünler',
-                                style: TextStyle(
-                                  fontSize: 21,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF333333),
-                                ),
-                              ),
-                              Text(
-                                'Kaçırılmayacak fırsatlar',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const Spacer(),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.red.withValues(alpha: 0.3),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.timer_outlined,
-                                  color: Colors.white,
-                                  size: 16,
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Sınırlı Süre',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      // Grid yerine Yatay Liste
-                      _isLoadingProducts
-                          ? _buildHorizontalProductSkeletons(
-                              height: 312,
-                              itemWidth: 198,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                            )
-                          : opportunityProducts.isNotEmpty
-                          ? SizedBox(
-                              height: 312,
-                              child: Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  ScrollConfiguration(
-                                    behavior: ScrollConfiguration.of(context)
-                                        .copyWith(
-                                          dragDevices: {
-                                            PointerDeviceKind.touch,
-                                            PointerDeviceKind.mouse,
-                                          },
-                                        ),
-                                    child: ListView.separated(
-                                      controller:
-                                          _flashProductsScrollController,
-                                      scrollDirection: Axis.horizontal,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                      ),
-                                      itemCount: opportunityProducts.length,
-                                      separatorBuilder: (context, index) =>
-                                          const SizedBox(width: 20),
-                                      itemBuilder: (context, index) {
-                                        final dbProduct =
-                                            opportunityProducts[index];
-                                        return SizedBox(
-                                          width: 198,
-                                          child: _wrapProductReveal(
-                                            scope: 'home-web-opportunities',
-                                            index: index,
-                                            token: _productRevealTokenFromDb(
-                                              dbProduct,
-                                            ),
-                                            child: ProductCard(
-                                              product: _convertToProduct(
-                                                dbProduct,
-                                              ),
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                  // Sol Ok
-                                  Positioned(
-                                    left: -6,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Center(
-                                      child: _buildCarouselArrowButton(
-                                        icon: Icons.arrow_back_ios_new,
-                                        color: AppColors.primary,
-                                        onTap: () => _scrollCarousel(
-                                          _flashProductsScrollController,
-                                          -300,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  // Sağ Ok
-                                  Positioned(
-                                    right: -6,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Center(
-                                      child: _buildCarouselArrowButton(
-                                        icon: Icons.arrow_forward_ios,
-                                        color: AppColors.primary,
-                                        onTap: () => _scrollCarousel(
-                                          _flashProductsScrollController,
-                                          300,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : const SizedBox.shrink(),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 40),
 
                 // Neden iBul? Bölümü
                 _buildWhyIbulSection(),
@@ -1347,24 +1369,19 @@ extension _HomeScreenSections on _HomeScreenState {
                   ),
                 ],
 
-                // Sistem Düzeni kartları: Neden iBul'un altında alt alta
-                if (_hairCareLayoutsForHome.isNotEmpty) ...[
-                  const SizedBox(height: 40),
-                  Column(
-                    children: _hairCareLayoutsForHome
-                        .map(
-                          (layout) => Padding(
-                            padding: const EdgeInsets.only(bottom: 40),
-                            child: DynamicBrandSection(
-                              layout: layout,
-                              allProducts: _dbProducts,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ] else ...[
-                  const SizedBox(height: 40),
+                // Sistem Düzeni / Ana sayfa kategori kartları
+                if (_showCategoryCardRails) ...[
+                const SizedBox(height: 40),
+                ValueListenableBuilder<bool>(
+                  valueListenable: _isLoadingHomeSectionsNotifier,
+                  builder: (context, isLoadingHomeSections, _) {
+                    return HomeCategoryCardSections(
+                      groups: _homeCategoryCardGroups,
+                      isLoading: isLoadingHomeSections,
+                      convertToProduct: _convertToProduct,
+                    );
+                  },
+                ),
                 ],
 
                 // Avantaj Çubuğu (En Alta Taşındı)
@@ -1511,86 +1528,112 @@ class _MobileAddressBarSliver extends StatelessWidget {
 
 class _MobileBannerSliver extends StatelessWidget {
   const _MobileBannerSliver({
-    required this.isLoadingHeroContent,
+    required this.isLoadingHeroContentListenable,
     required this.mobileBannerImages,
     required this.buildHomeBannerSkeleton,
     required this.buildScaledHomeBannerImage,
   });
 
-  final bool isLoadingHeroContent;
+  final ValueListenable<bool> isLoadingHeroContentListenable;
   final List<String> mobileBannerImages;
   final _HomeBannerSkeletonBuilder buildHomeBannerSkeleton;
   final _HomeBannerImageBuilder buildScaledHomeBannerImage;
 
+  static const double _bannerHeight =
+      HomeSponsoredBannerDimensions.mobileHeroBannerHeight;
+
   @override
   Widget build(BuildContext context) {
-    if (isLoadingHeroContent) {
-      return SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12.0),
-          child: SizedBox(
-            height: 130,
-            child: RepaintBoundary(
-              child: buildHomeBannerSkeleton(isWeb: false),
+    return SliverToBoxAdapter(
+      child: ValueListenableBuilder<bool>(
+        valueListenable: isLoadingHeroContentListenable,
+        builder: (context, isLoadingHeroContent, _) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12.0),
+            child: SizedBox(
+              height: _bannerHeight,
+              child: RepaintBoundary(
+                child: _buildBannerContent(
+                  context,
+                  isLoadingHeroContent: isLoadingHeroContent,
+                ),
+              ),
             ),
-          ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildBannerContent(
+    BuildContext context, {
+    required bool isLoadingHeroContent,
+  }) {
+    if (isLoadingHeroContent) {
+      return buildHomeBannerSkeleton(isWeb: false);
+    }
+
+    if (mobileBannerImages.isEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(
+          HomeSponsoredBannerDimensions.borderRadius,
+        ),
+        child: ColoredBox(
+          color: Colors.grey.shade50,
+          child: const SizedBox.expand(),
         ),
       );
     }
 
-    if (mobileBannerImages.isEmpty) {
-      return const SliverToBoxAdapter(child: SizedBox.shrink());
-    }
-
-    return SliverToBoxAdapter(
-      child: RepaintBoundary(
-        child: CarouselSlider(
-          options: CarouselOptions(
-            aspectRatio: 1920 / 600,
-            autoPlay: true,
-            autoPlayInterval: const Duration(seconds: 4),
-            autoPlayAnimationDuration: const Duration(milliseconds: 800),
-            enlargeCenterPage: true,
-            viewportFraction: 0.95,
-          ),
-          items: mobileBannerImages.map((imagePath) {
-            return Builder(
-              builder: (BuildContext context) {
-                return Container(
-                  width: MediaQuery.of(context).size.width,
-                  margin: const EdgeInsets.symmetric(horizontal: 5.0),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.grey.withValues(alpha: 0.2),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
+    return CarouselSlider(
+      options: CarouselOptions(
+        height: _bannerHeight,
+        viewportFraction: 0.95,
+        autoPlay: true,
+        autoPlayInterval: const Duration(seconds: 4),
+        autoPlayAnimationDuration: const Duration(milliseconds: 800),
+        enlargeCenterPage: true,
+      ),
+      items: mobileBannerImages.map((imagePath) {
+        return Builder(
+          builder: (BuildContext context) {
+            return Container(
+              width: MediaQuery.of(context).size.width,
+              margin: const EdgeInsets.symmetric(horizontal: 5.0),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(
+                  HomeSponsoredBannerDimensions.borderRadius,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withValues(alpha: 0.2),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: buildScaledHomeBannerImage(
-                      imagePath,
-                      errorWidget: Container(
-                        color: Colors.grey.shade200,
-                        child: const Center(
-                          child: Icon(
-                            Icons.image_not_supported,
-                            color: Colors.grey,
-                            size: 40,
-                          ),
-                        ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(
+                  HomeSponsoredBannerDimensions.borderRadius,
+                ),
+                child: buildScaledHomeBannerImage(
+                  imagePath,
+                  errorWidget: Container(
+                    color: Colors.grey.shade200,
+                    child: const Center(
+                      child: Icon(
+                        Icons.image_not_supported,
+                        color: Colors.grey,
+                        size: 40,
                       ),
                     ),
                   ),
-                );
-              },
+                ),
+              ),
             );
-          }).toList(),
-        ),
-      ),
+          },
+        );
+      }).toList(),
     );
   }
 }
@@ -1661,6 +1704,8 @@ class _HomeProductRailSection extends StatelessWidget {
     required this.hasProducts,
     required this.products,
     required this.convertToProduct,
+    this.lazyImagePriority = OptimizedImagePriority.lazy,
+    this.emptyPlaceholder,
   });
 
   final Widget title;
@@ -1668,6 +1713,8 @@ class _HomeProductRailSection extends StatelessWidget {
   final bool hasProducts;
   final List<DBProduct> products;
   final _DbProductConverter convertToProduct;
+  final OptimizedImagePriority lazyImagePriority;
+  final Widget? emptyPlaceholder;
 
   @override
   Widget build(BuildContext context) {
@@ -1678,18 +1725,19 @@ class _HomeProductRailSection extends StatelessWidget {
         children: [
           title,
           const SizedBox(height: 10),
-          if (isLoadingProducts)
+          if (isLoadingProducts && products.isEmpty)
             _buildHorizontalProductRailSkeleton()
-          else if (!hasProducts)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: Text(
-                  'Henüz ürün yok',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 14),
-                ),
-              ),
-            )
+          else if (products.isEmpty)
+            emptyPlaceholder ??
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32.0),
+                    child: Text(
+                      productEmptyStateMessage(),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                    ),
+                  ),
+                )
           else
             RepaintBoundary(
               child: SizedBox(
@@ -1704,6 +1752,37 @@ class _HomeProductRailSection extends StatelessWidget {
                       const SizedBox(width: 12),
                   itemBuilder: (context, index) {
                     final dbProduct = products[index];
+                    if (kIsWeb &&
+                        index < _HomeScreenState.kHomeInitialProductRenderLimit) {
+                      final preview = HomeProductPreview.fromDbProduct(dbProduct);
+                      return SizedBox(
+                        width: 198,
+                        child: HomeProductPreviewCard(
+                          preview: preview,
+                          onTap: () => unawaited(
+                            HomeLazyRoutes.openProductDetail(
+                              context,
+                              convertToProduct(dbProduct),
+                            ),
+                          ),
+                          onFirstPaint: index == 0
+                              ? () {
+                                  WebPerfTrace.instance
+                                      .markProductGridFirstBatch(
+                                    count: products.length.clamp(
+                                      0,
+                                      _HomeScreenState
+                                          .kHomeInitialProductRenderLimit,
+                                    ),
+                                  );
+                                }
+                              : null,
+                        ),
+                      );
+                    }
+                    final imagePriority = index == 0
+                        ? OptimizedImagePriority.high
+                        : lazyImagePriority;
                     return SizedBox(
                       width: 198,
                       child: _wrapHomeProductReveal(
@@ -1713,6 +1792,7 @@ class _HomeProductRailSection extends StatelessWidget {
                         child: ProductCard(
                           product: convertToProduct(dbProduct),
                           margin: EdgeInsets.zero,
+                          imagePriority: imagePriority,
                         ),
                       ),
                     );
@@ -1834,144 +1914,6 @@ class _FastDeliverySection extends StatelessWidget {
                           width: 198,
                           child: _wrapHomeProductReveal(
                             scope: 'home-mobile-fast-delivery',
-                            index: index,
-                            token: _homeProductRevealTokenFromDb(dbProduct),
-                            child: ProductCard(
-                              product: convertToProduct(dbProduct),
-                              margin: EdgeInsets.zero,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DynamicBrandLayoutsSection extends StatelessWidget {
-  const _DynamicBrandLayoutsSection({
-    required this.layouts,
-    required this.allProducts,
-  });
-
-  final List<Map<String, dynamic>> layouts;
-  final List<DBProduct> allProducts;
-
-  @override
-  Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: Column(
-        children: layouts
-            .map(
-              (layout) => Padding(
-                padding: const EdgeInsets.only(bottom: 24),
-                child: DynamicBrandSection(
-                  layout: layout,
-                  allProducts: allProducts,
-                ),
-              ),
-            )
-            .toList(),
-      ),
-    );
-  }
-}
-
-class _OpportunityProductsSection extends StatelessWidget {
-  const _OpportunityProductsSection({
-    required this.isLoadingProducts,
-    required this.products,
-    required this.convertToProduct,
-  });
-
-  final bool isLoadingProducts;
-  final List<DBProduct> products;
-  final _DbProductConverter convertToProduct;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFFFFEBEE),
-      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Fırsat Ürünler',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF333333),
-                    ),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Kaçırılmayacak fırsatlar',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFF9800), Color(0xFFFF5722)],
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.local_offer, color: Colors.white, size: 14),
-                    SizedBox(width: 4),
-                    Text(
-                      'Fırsat',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 312,
-            child: isLoadingProducts
-                ? const _HorizontalProductCardSkeletonList()
-                : products.isEmpty
-                ? const Center(child: Text('Fırsat ürünü bulunamadı'))
-                : RepaintBoundary(
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                      cacheExtent: 500,
-                      itemCount: products.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(width: 12),
-                      itemBuilder: (context, index) {
-                        final dbProduct = products[index];
-                        return SizedBox(
-                          width: 198,
-                          child: _wrapHomeProductReveal(
-                            scope: 'home-mobile-opportunities',
                             index: index,
                             token: _homeProductRevealTokenFromDb(dbProduct),
                             child: ProductCard(

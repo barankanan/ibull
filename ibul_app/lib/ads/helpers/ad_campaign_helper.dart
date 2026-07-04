@@ -80,8 +80,13 @@ class AdCampaignHelper {
         return const [AdPlacement.bannerSlot];
       case AdCampaignType.categorySponsor:
         return const [AdPlacement.explore, AdPlacement.bannerSlot];
+      case AdCampaignType.homeFeature:
+        return const [AdPlacement.homeCard];
     }
   }
+
+  static bool isHomeFeatureCampaign(AdCampaignType type) =>
+      type == AdCampaignType.homeFeature;
 
   static BillingModel defaultBillingModelForObjective(
     CampaignObjective objective,

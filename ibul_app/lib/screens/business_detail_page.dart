@@ -20,6 +20,7 @@ import '../models/store_follow_state.dart';
 import '../widgets/store_notifications_sheet.dart';
 import '../screens/login_page.dart';
 import '../utils/text_normalizer.dart';
+import '../utils/product_visibility_helper.dart';
 import '../widgets/product_card.dart';
 import '../widgets/filter_sidebar.dart';
 import '../services/coupon_service.dart';
@@ -81,6 +82,8 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   int _unreadNotificationCount = 0;
   bool _followActionLoading = false;
   String _searchQuery = '';
+  String _debouncedStoreSearchQuery = '';
+  Timer? _storeSearchDebounce;
   bool _isLoadingProducts = false;
   int _activeSellerReviewTab = 0;
 
@@ -246,7 +249,9 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
             sellerId,
           );
           if (supaProducts.isNotEmpty) {
-            storeProducts = supaProducts.map<Product>((map) {
+            storeProducts = supaProducts
+                .where(ProductVisibilityHelper.isPublicVisibleProductMap)
+                .map<Product>((map) {
               final data = Map<String, dynamic>.from(map);
               final product = Product.fromDBProduct({
                 ...data,
@@ -276,7 +281,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
             .getProductsByStoreNamePaged(storeName: storeName, limit: 60);
         storeProducts = paged.items.map(_convertToProduct).toList();
 
-        if (storeProducts.isEmpty) {
+        if (storeProducts.isEmpty && kDebugMode) {
           debugPrint('⚠️ DB\'de ürün bulunamadı, JSON\'dan manuel aranıyor...');
           try {
             if (!mounted) return;
@@ -373,12 +378,25 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
   }
 
   List<Product> get _filteredProducts {
-    if (_searchQuery.isEmpty) return _allProducts;
-    final query = _searchQuery.toLowerCase();
+    if (_debouncedStoreSearchQuery.isEmpty) return _allProducts;
+    final query = _debouncedStoreSearchQuery.toLowerCase();
     return _allProducts.where((product) {
       return product.name.toLowerCase().contains(query) ||
           product.brand.toLowerCase().contains(query);
     }).toList();
+  }
+
+  void _scheduleStoreSearch(String value) {
+    _storeSearchDebounce?.cancel();
+    _storeSearchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      setState(() => _debouncedStoreSearchQuery = value.trim().toLowerCase());
+    });
+  }
+
+  void _handleStoreSearchChanged(String value) {
+    _searchQuery = value;
+    _scheduleStoreSearch(value);
   }
 
   @override
@@ -403,6 +421,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     _appState.addListener(_handleAppStateChanged);
     _tabController.addListener(_handleTabChanged);
     _searchQuery = widget.initialProductQuery?.trim().toLowerCase() ?? '';
+    _debouncedStoreSearchQuery = _searchQuery;
 
     // Duyuru banner controller - initState'te viewportFraction belirtmeden başlat
     _announcementPageController = PageController();
@@ -1708,6 +1727,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
     _tabController.dispose();
     _webScrollController.dispose();
     _announcementTimer?.cancel();
+    _storeSearchDebounce?.cancel();
     _announcementPageController?.dispose();
     super.dispose();
   }
@@ -1955,9 +1975,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: TextField(
-                                  onChanged: (value) => setState(
-                                    () => _searchQuery = value.toLowerCase(),
-                                  ),
+                                  onChanged: _handleStoreSearchChanged,
                                   decoration: InputDecoration(
                                     hintText: 'Mağazada Ara',
                                     hintStyle: TextStyle(
@@ -2337,11 +2355,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
                             border: InputBorder.none,
                             contentPadding: EdgeInsets.symmetric(vertical: 8),
                           ),
-                          onChanged: (val) {
-                            setState(() {
-                              _searchQuery = val;
-                            });
-                          },
+                          onChanged: _handleStoreSearchChanged,
                         ),
                       ),
                     ],

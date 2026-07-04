@@ -5,6 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'auth/user_identity.dart';
+import 'auth/ibul_auth_context.dart';
+import 'auth/auth_listener_guard.dart';
+import 'auth/auth_debug_logger.dart';
 import 'cart_state.dart';
 import 'favorite_state.dart';
 import 'review_state.dart';
@@ -14,10 +17,13 @@ import '../services/product_list_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/store_follow_service.dart';
 import '../services/supabase_service.dart';
+import '../services/cart_validation_service.dart';
 import '../models/product_model.dart';
 import '../models/product_list_model.dart';
 import '../models/product_list_price_change.dart';
 import '../utils/dynamic_value_helpers.dart';
+import 'app_ready.dart';
+import 'web_boot_step_profiler.dart';
 
 /// Global uygulama state'i - favoriler ve sepet
 /// Provider pattern ile yönetilmektedir.
@@ -37,6 +43,7 @@ class AppState extends ChangeNotifier {
   bool _pendingNotifyAfterBatch = false;
   int _batchedMutationDepth = 0;
   bool _startupHydrationScheduled = false;
+  final AuthListenerGuard _authListenerGuard = AuthListenerGuard();
 
   AppState._internal() {
     _initAuth();
@@ -49,6 +56,7 @@ class AppState extends ChangeNotifier {
 
   final AuthService _authService = AuthService();
   int _authStateVersion = 0;
+  int? _lastUserDataClearVersion;
   static const String _deviceFavoritesKey = 'device_cache_favorites_v1';
   static const String _deviceCartKey = 'device_cache_cart_v1';
   static const String _deviceAddressesKey = 'device_cache_addresses_v1';
@@ -120,8 +128,12 @@ class AppState extends ChangeNotifier {
     });
   }
 
-  Map<String, dynamic>? get currentUser => _currentUser;
-  bool get isLoggedIn => _currentUser != null;
+  Map<String, dynamic>? get currentUser =>
+      isCustomerLoggedIn ? _currentUser : null;
+  bool get isCustomerLoggedIn =>
+      _currentUser != null &&
+      IbulAuthContextService.instance.isCustomerContext;
+  bool get isLoggedIn => isCustomerLoggedIn;
 
   // Search History Persistence
   Future<void> _loadSearchHistory() async {
@@ -152,37 +164,147 @@ class AppState extends ChangeNotifier {
   }
 
   void _initAuth() {
-    _authService.authStateChanges.listen((authState) async {
-      final requestVersion = ++_authStateVersion;
-      final user = authState.session?.user;
-      if (user != null) {
-        final profile = await _authService.getUserProfile();
-        if (_isStaleAuthRequest(requestVersion)) return;
-        _currentUser = UserIdentity.buildAuthUserMap(
-          uid: user.id,
-          email: user.email,
-          profile: profile,
-          userMetadata: Map<String, dynamic>.from(
-            user.userMetadata ?? const {},
-          ),
-        );
+    unawaited(IbulAuthContextService.instance.ensureLoaded());
+    unawaited(_startAuthListenerWhenReady());
+  }
 
-        if (UserIdentity.isGuest(_currentUser)) {
-          await _loadGuestData(requestVersion: requestVersion);
-        } else {
-          // Normal kullanıcı için verileri Firestore'dan yükle
-          await _loadUserData(requestVersion: requestVersion);
-          if (_isStaleAuthRequest(requestVersion)) return;
-          _syncPushInterests();
-        }
-      } else {
-        _currentUser = null;
-        _clearUserData(); // Çıkış yapınca temizle
-        await _loadGuestData(requestVersion: requestVersion);
+  Future<void> _startAuthListenerWhenReady() async {
+    WebBootStepProfiler.start('app_state_init');
+    WebBootStepProfiler.start('auth_listener_start');
+    try {
+      await appServicesReady.timeout(const Duration(seconds: 8));
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('AppState auth init skipped (services not ready): $error');
       }
-      if (_isStaleAuthRequest(requestVersion)) return;
-      notifyListeners();
+      WebBootStepProfiler.error('app_state_init', error);
+      WebBootStepProfiler.error('auth_listener_start', error);
+      return;
+    }
+
+    try {
+      _authService.authStateChanges.listen((authState) async {
+      final requestVersion = ++_authStateVersion;
+      try {
+        await IbulAuthContextService.instance.ensureLoaded();
+        final user = authState.session?.user;
+        final authContext = IbulAuthContextService.instance;
+        final userId = user?.id;
+        final activeContext = authContext.activeContext;
+
+        if (!_authListenerGuard.enter(
+          userId: userId,
+          context: activeContext,
+        )) {
+          return;
+        }
+
+        var stateChanged = false;
+        final previousUserId = _currentUser?['uid']?.toString();
+
+        try {
+          Map<String, dynamic>? profile;
+          if (user != null) {
+            profile = await _authService.getUserProfile();
+            if (_isStaleAuthRequest(requestVersion)) return;
+          }
+
+          if (user != null && !authContext.hasExplicitContext) {
+            final rawRole = (profile?['role'] ?? user.userMetadata?['role'])
+                ?.toString()
+                .trim();
+            final resolvedRole = AuthService.normalizeLoginRole(rawRole);
+            if (resolvedRole == LoginResolvedRole.user) {
+              final beforeContext = authContext.activeContext;
+              await authContext.setActiveContext(
+                IbulAuthContext.customer,
+                notify: false,
+              );
+              if (beforeContext != IbulAuthContext.customer) {
+                stateChanged = true;
+              }
+            } else {
+              _clearCustomerSessionState(notify: false);
+              stateChanged = previousUserId != null;
+              if (_isStaleAuthRequest(requestVersion)) return;
+              if (stateChanged) notifyListeners();
+              return;
+            }
+          }
+
+          if (user != null && !authContext.isCustomerContext) {
+            _clearCustomerSessionState(notify: false);
+            stateChanged = previousUserId != null;
+            if (_isStaleAuthRequest(requestVersion)) return;
+            if (stateChanged) notifyListeners();
+            return;
+          }
+
+          if (user != null) {
+            final nextUser = UserIdentity.buildAuthUserMap(
+              uid: user.id,
+              email: user.email,
+              profile: profile,
+              userMetadata: Map<String, dynamic>.from(
+                user.userMetadata ?? const {},
+              ),
+            );
+            if (previousUserId != nextUser['uid']?.toString()) {
+              stateChanged = true;
+            }
+            _currentUser = nextUser;
+
+            if (UserIdentity.isGuest(_currentUser)) {
+              await _loadGuestData(requestVersion: requestVersion);
+            } else {
+              await _loadUserData(requestVersion: requestVersion);
+              if (_isStaleAuthRequest(requestVersion)) return;
+              _syncPushInterests();
+            }
+          } else {
+            if (previousUserId != null) {
+              stateChanged = true;
+            }
+            _clearCustomerSessionState(notify: false);
+            await _loadGuestData(requestVersion: requestVersion);
+          }
+          if (_isStaleAuthRequest(requestVersion)) return;
+          if (stateChanged) {
+            notifyListeners();
+          }
+        } finally {
+          _authListenerGuard.leave(
+            userId: userId,
+            context: authContext.activeContext,
+            stateChanged: stateChanged,
+          );
+        }
+      } catch (error, stackTrace) {
+        if (kDebugMode) {
+          debugPrint('AppState auth listener error: $error');
+          debugPrintStack(stackTrace: stackTrace);
+        }
+      }
     });
+      WebBootStepProfiler.done('auth_listener_start');
+      WebBootStepProfiler.done('app_state_init');
+    } catch (error) {
+      WebBootStepProfiler.error('auth_listener_start', error);
+      WebBootStepProfiler.error('app_state_init', error);
+    }
+  }
+
+  void _clearCustomerSessionState({bool notify = true}) {
+    _currentUser = null;
+    _clearUserData();
+    if (notify) {
+      notifyListeners();
+    }
+  }
+
+  /// Seller logout / context switch: drop cached customer representation.
+  void clearCustomerSessionView() {
+    _clearCustomerSessionState();
   }
 
   bool _isStaleAuthRequest(int requestVersion) {
@@ -473,6 +595,9 @@ class AppState extends ChangeNotifier {
 
   final Set<String> _cartAttentionKeys = <String>{};
   String? _cartAttentionMessage;
+  final Set<String> _cartAddInFlightKeys = <String>{};
+  int _cartRevalidationRequestId = 0;
+  bool _isCartRevalidating = false;
 
   final List<Map<String, dynamic>> _foodOrders = [];
 
@@ -679,14 +804,24 @@ class AppState extends ChangeNotifier {
 
   // Misafir kullanıcı için varsayılan verileri yükle
   Future<void> _loadGuestData({int? requestVersion}) async {
-    _clearUserData();
+    _clearUserData(requestVersion: requestVersion);
     await _loadLocalCollections(requestVersion: requestVersion);
     await _loadPersistedProductLists();
     if (requestVersion != null && _isStaleAuthRequest(requestVersion)) return;
   }
 
   // Normal kullanıcı için verileri temizle
-  void _clearUserData() {
+  void _clearUserData({int? requestVersion}) {
+    if (requestVersion != null && requestVersion == _lastUserDataClearVersion) {
+      debugPrint(
+        '[AppState] _clearUserData skipped duplicate '
+        'requestVersion=$requestVersion',
+      );
+      return;
+    }
+    if (requestVersion != null) {
+      _lastUserDataClearVersion = requestVersion;
+    }
     _currentDeliveryAddress = null;
     _deliveryAddresses.clear();
     _savedCards.clear();
@@ -1222,6 +1357,9 @@ class AppState extends ChangeNotifier {
   int cartCountForTab(int tabIndex) => _cartState.countForTabIndex(tabIndex);
   bool get cartNeedsAttention => _cartAttentionKeys.isNotEmpty;
   String? get cartAttentionMessage => _cartAttentionMessage;
+  bool get isCartRevalidating => _isCartRevalidating;
+  bool get isCartCheckoutBlocked =>
+      cart.isEmpty || cartNeedsAttention || _isCartRevalidating;
   List<Product> get cartAttentionProducts => cart
       .where(
         (product) => _cartAttentionKeys.contains(_productIdentity(product)),
@@ -1282,6 +1420,41 @@ class AppState extends ChangeNotifier {
   Future<void> ensureCartProductIdsResolved() async {
     await _resolveLegacyCartProductIds();
     notifyListeners();
+  }
+
+  Future<CartRevalidationResult?> revalidateCart() async {
+    final requestId = ++_cartRevalidationRequestId;
+    _isCartRevalidating = true;
+    notifyListeners();
+
+    try {
+      await _resolveLegacyCartProductIds();
+      if (requestId != _cartRevalidationRequestId) return null;
+
+      final result = await CartValidationService.instance.revalidate(
+        cart.toList(growable: false),
+      );
+      if (requestId != _cartRevalidationRequestId) return null;
+
+      _cartState.replaceCart(result.updatedProducts, notify: false);
+      _cartAttentionKeys
+        ..clear()
+        ..addAll(result.removedProducts.map(_productIdentity));
+      _cartAttentionMessage = result.summaryMessage;
+
+      for (final product in result.removedProducts) {
+        _fastDelivery.remove(product.hashCode);
+      }
+
+      await _persistCartState();
+      notifyListeners();
+      return result;
+    } finally {
+      if (requestId == _cartRevalidationRequestId) {
+        _isCartRevalidating = false;
+        notifyListeners();
+      }
+    }
   }
 
   // Adres İşlemleri
@@ -1497,7 +1670,15 @@ class AppState extends ChangeNotifier {
     return _cartState.isInCart(product);
   }
 
-  void addToCart(Product product) => _addToCartImpl(product);
+  Future<String?> addToCart(
+    Product product, {
+    bool variantSelectionComplete = true,
+  }) {
+    return addToCartValidated(
+      product,
+      variantSelectionComplete: variantSelectionComplete,
+    );
+  }
 
   void setSelectedCartTabIndex(int index) {
     final next = index.clamp(0, 2);

@@ -60,6 +60,7 @@ class PlanCapabilityHelper {
         AdCampaignType.geoPush => AdFeature.geoFence,
         AdCampaignType.banner => AdFeature.wideReach,
         AdCampaignType.categorySponsor => AdFeature.advancedBidding,
+        AdCampaignType.homeFeature => AdFeature.premiumPlacement,
       },
       if (campaign.abTestEnabled) AdFeature.abTesting,
       if (campaign.isPremiumPlacementEnabled) AdFeature.premiumPlacement,

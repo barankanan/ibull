@@ -1,5 +1,4 @@
-import 'dart:ui' show PlatformDispatcher;
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:provider/single_child_widget.dart';
@@ -11,15 +10,26 @@ import '../core/cart_state.dart';
 import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/favorite_state.dart';
+import '../core/ibul_app_mode.dart';
 import '../core/providers/cart_provider.dart';
 import '../core/providers/connectivity_provider.dart';
 import '../core/review_state.dart';
-import '../screens/home_screen.dart';
-import '../services/desktop_print_hub.dart';
+import '../core/web_boot_error_store.dart';
+import '../core/web_boot.dart';
+import '../screens/home_screen_gate.dart';
+import 'app_providers.dart';
+
+export 'route_args.dart';
 
 Future<void> initializeAppSupabase() async {
   final rawUrl = AppRuntimeConfig.rawSupabaseUrl.trim();
   final rawAnonKey = AppRuntimeConfig.rawSupabaseAnonKey.trim();
+
+  WebBootLogger.supabaseConfig(
+    hasUrl: rawUrl.isNotEmpty,
+    hasAnonKey: rawAnonKey.isNotEmpty,
+  );
+  WebBootLogger.log('auth_init_start');
 
   debugPrint('IBUL_SUPABASE_URL=${rawUrl.isEmpty ? 'EMPTY' : rawUrl}');
   debugPrint(
@@ -33,7 +43,9 @@ Future<void> initializeAppSupabase() async {
       anonKey: AppRuntimeConfig.supabaseAnonKey,
     );
     debugPrint('Supabase bootstrap: initialize completed.');
+    WebBootLogger.log('auth_init_success');
   } catch (error, stackTrace) {
+    WebBootLogger.log('auth_init_error', detail: error.toString());
     debugPrint('Supabase bootstrap failed before runApp: $error');
     debugPrintStack(stackTrace: stackTrace);
     rethrow;
@@ -55,6 +67,11 @@ void configureAppDiagnostics({
   };
 
   PlatformDispatcher.instance.onError = (Object error, StackTrace stackTrace) {
+    saveWebBootError(
+      module: 'platform_dispatcher',
+      message: error.toString(),
+      detail: stackTrace.toString(),
+    );
     debugPrint('Unhandled platform error: $error');
     if (includeErrorStackTrace) {
       debugPrintStack(stackTrace: stackTrace);
@@ -70,17 +87,8 @@ void configureAppDiagnostics({
   }());
 }
 
-List<SingleChildWidget> buildAppProviders() {
-  return [
-    ChangeNotifierProvider.value(value: CartState()),
-    ChangeNotifierProvider.value(value: FavoriteState()),
-    ChangeNotifierProvider.value(value: ReviewState()),
-    ChangeNotifierProvider(create: (_) => AppState()),
-    ChangeNotifierProvider(create: (_) => CartProvider()),
-    ChangeNotifierProvider(create: (_) => ConnectivityProvider()),
-    ChangeNotifierProvider(create: (_) => DesktopPrintHub()),
-  ];
-}
+List<SingleChildWidget> buildAppProviders() =>
+    buildProvidersForMode(IbulAppModeRegistry.current);
 
 /// Minimal provider set for the /qr fast-path.
 ///
@@ -137,36 +145,11 @@ ThemeData buildAppTheme() {
   );
 }
 
-MapRouteArguments parseMapRouteArguments(dynamic args) {
-  String? targetStoreName;
-  String? initialStoreProductQuery;
-
-  if (args is Map && args['targetStoreName'] != null) {
-    targetStoreName = args['targetStoreName'].toString();
-  }
-
-  if (args is Map && args['initialStoreProductQuery'] != null) {
-    initialStoreProductQuery = args['initialStoreProductQuery'].toString();
-  }
-
-  return MapRouteArguments(
-    targetStoreName: targetStoreName,
-    initialStoreProductQuery: initialStoreProductQuery,
-  );
-}
-
-class MapRouteArguments {
-  const MapRouteArguments({
-    this.targetStoreName,
-    this.initialStoreProductQuery,
-  });
-
-  final String? targetStoreName;
-  final String? initialStoreProductQuery;
-}
-
 class HomeWrapper extends StatefulWidget {
-  const HomeWrapper({super.key});
+  const HomeWrapper({super.key, this.initialIndex = 0, this.initialCategory});
+
+  final int initialIndex;
+  final String? initialCategory;
 
   @override
   State<HomeWrapper> createState() => _HomeWrapperState();
@@ -183,6 +166,9 @@ class _HomeWrapperState extends State<HomeWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    return const HomeScreen();
+    return HomeScreenGate(
+      initialIndex: widget.initialIndex,
+      initialCategory: widget.initialCategory,
+    );
   }
 }

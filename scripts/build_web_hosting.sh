@@ -11,6 +11,23 @@ if [[ -f "$PROJECT_DIR/.env" ]]; then
   set +a
 fi
 
+normalize_firebase_aliases() {
+  if [[ -z "${IBUL_FIREBASE_WEB_API_KEY:-}" && -n "${IBUL_FIREBASE_API_KEY:-}" ]]; then
+    export IBUL_FIREBASE_WEB_API_KEY="$IBUL_FIREBASE_API_KEY"
+  fi
+  if [[ -z "${IBUL_FIREBASE_WEB_APP_ID:-}" && -n "${IBUL_FIREBASE_APP_ID:-}" ]]; then
+    export IBUL_FIREBASE_WEB_APP_ID="$IBUL_FIREBASE_APP_ID"
+  fi
+  if [[ -z "${IBUL_FIREBASE_WEB_MEASUREMENT_ID:-}" && -n "${IBUL_FIREBASE_MEASUREMENT_ID:-}" ]]; then
+    export IBUL_FIREBASE_WEB_MEASUREMENT_ID="$IBUL_FIREBASE_MEASUREMENT_ID"
+  fi
+  if [[ -z "${IBUL_FIREBASE_WEB_MEASUREMENT_ID:-}" && -n "${IBUL_FIREBASE_EB_MEASUREMENT_ID:-}" ]]; then
+    export IBUL_FIREBASE_WEB_MEASUREMENT_ID="$IBUL_FIREBASE_EB_MEASUREMENT_ID"
+  fi
+}
+
+normalize_firebase_aliases
+
 append_define() {
   local name="$1"
   local value="${!name:-}"
@@ -54,10 +71,14 @@ if [[ ${#MISSING_DEFINES[@]} -gt 0 ]]; then
   exit 1
 fi
 
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR/ibul_app"
 
-echo "Web build başlıyor..."
+echo "Web build başlıyor (ibul_app, target=lib/main.dart)..."
 echo "✓ IBUL_SUPABASE_URL = ${IBUL_SUPABASE_URL:0:40}..."
 echo "✓ IBUL_SUPABASE_ANON_KEY = ${IBUL_SUPABASE_ANON_KEY:0:20}..."
 
-flutter build web --release "${DART_DEFINES[@]}"
+flutter build web --release \
+  --target lib/main.dart \
+  --pwa-strategy=none \
+  --no-web-resources-cdn \
+  "${DART_DEFINES[@]}"

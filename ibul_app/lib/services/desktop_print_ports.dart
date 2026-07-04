@@ -83,6 +83,8 @@ abstract class PrinterRepositoryPort {
     String? error,
   });
 
+  Future<PrinterModel> repairPrinterProfileMetadata(String printerId);
+
   Future<ExpectedKitchenPrinterResolution?> resolveExpectedKitchenPrinter({
     required String restaurantId,
     String? stationId,

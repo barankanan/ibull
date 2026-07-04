@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../helpers/ad_display_labels.dart';
+import '../../helpers/ad_reviewer_helper.dart';
 import '../../enums/ad_enums.dart';
 import '../../helpers/ad_metrics_helper.dart';
 import '../../models/ad_campaign.dart';
@@ -16,24 +18,26 @@ import '../widgets/admin_ad_credit_codes_panel.dart';
 import '../widgets/revenue_card.dart';
 import '../widgets/status_chip.dart';
 import '../widgets/summary_stat_card.dart';
+import '../../helpers/home_feature_ad_helper.dart';
+import '../../../features/admin/panel/helpers/admin_panel_density.dart';
 
 final List<DropdownMenuItem<String>> _kStatusItems = [
-  DropdownMenuItem(value: 'Tum', child: Text('Tum')),
-  DropdownMenuItem(value: 'active', child: Text('active')),
-  DropdownMenuItem<String>(value: CampaignStatus.approved.dbValue, child: Text('approved')),
-  DropdownMenuItem(value: 'pending_review', child: Text('pending_review')),
-  DropdownMenuItem(value: 'paused', child: Text('paused')),
-  DropdownMenuItem<String>(value: CampaignStatus.rejected.dbValue, child: Text('rejected')),
+  const DropdownMenuItem(value: 'Tum', child: Text('Tüm')),
+  DropdownMenuItem(value: CampaignStatus.active.dbValue, child: Text(AdDisplayLabels.campaignStatusLabel(CampaignStatus.active.dbValue))),
+  DropdownMenuItem(value: CampaignStatus.approved.dbValue, child: Text(AdDisplayLabels.campaignStatusLabel(CampaignStatus.approved.dbValue))),
+  DropdownMenuItem(value: CampaignStatus.pendingReview.dbValue, child: Text(AdDisplayLabels.campaignStatusLabel(CampaignStatus.pendingReview.dbValue))),
+  DropdownMenuItem(value: CampaignStatus.paused.dbValue, child: Text(AdDisplayLabels.campaignStatusLabel(CampaignStatus.paused.dbValue))),
+  DropdownMenuItem(value: CampaignStatus.rejected.dbValue, child: Text(AdDisplayLabels.campaignStatusLabel(CampaignStatus.rejected.dbValue))),
 ];
 
 final List<DropdownMenuItem<String>> _kReviewItems = [
-  DropdownMenuItem(value: 'Tum', child: Text('Tum')),
-  DropdownMenuItem<String>(value: CampaignReviewStatus.pending.dbValue, child: Text('pending')),
-  DropdownMenuItem<String>(value: CampaignStatus.approved.dbValue, child: Text('approved')),
-  DropdownMenuItem<String>(value: CampaignStatus.rejected.dbValue, child: Text('rejected')),
+  const DropdownMenuItem(value: 'Tum', child: Text('Tüm')),
+  DropdownMenuItem(value: CampaignReviewStatus.pending.dbValue, child: Text(AdDisplayLabels.reviewStatusLabel(CampaignReviewStatus.pending.dbValue))),
+  DropdownMenuItem(value: CampaignReviewStatus.approved.dbValue, child: Text(AdDisplayLabels.reviewStatusLabel(CampaignReviewStatus.approved.dbValue))),
+  DropdownMenuItem(value: CampaignReviewStatus.rejected.dbValue, child: Text(AdDisplayLabels.reviewStatusLabel(CampaignReviewStatus.rejected.dbValue))),
   DropdownMenuItem(
-    value: 'changes_requested',
-    child: Text('changes_requested'),
+    value: CampaignReviewStatus.changesRequested.dbValue,
+    child: Text(AdDisplayLabels.reviewStatusLabel(CampaignReviewStatus.changesRequested.dbValue)),
   ),
 ];
 
@@ -447,33 +451,38 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
         final filtered = _filteredCampaigns(data.snapshot);
         final revenue = data.snapshot.revenueOverview;
         final pendingCount = _pendingReviewCount(data.snapshot);
-        return ListView(
-          physics: const ClampingScrollPhysics(),
-          padding: EdgeInsets.all(widget.embedded ? 0 : 20),
-          children: [
-            _buildSafeSection(
-              label: 'HERO',
-              builder: () => _buildHero(pendingCount),
-            ),
-            const SizedBox(height: 18),
-            _buildSafeSection(
-              label: 'REVENUE',
-              builder: () => _buildRevenueOverview(revenue),
-            ),
-            const SizedBox(height: 12),
-            _buildSafeSection(
-              label: 'OPERATIONS',
-              builder: () =>
-                  _buildOperationsOverview(data, revenue, pendingCount),
-            ),
-            const SizedBox(height: 18),
-            _buildSafeSection(label: 'FILTER', builder: _buildFilterBar),
-            const SizedBox(height: 18),
-            _buildSafeSection(
-              label: 'TABLE',
-              builder: () => _buildTable(data, filtered),
-            ),
-          ],
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final density = AdminPanelDensity.fromWidth(constraints.maxWidth);
+            return ListView(
+              physics: const ClampingScrollPhysics(),
+              padding: EdgeInsets.all(widget.embedded ? 0 : density.pagePadding),
+              children: [
+                _buildSafeSection(
+                  label: 'HERO',
+                  builder: () => _buildHero(pendingCount, density),
+                ),
+                SizedBox(height: density.sectionGap),
+                _buildSafeSection(
+                  label: 'REVENUE',
+                  builder: () => _buildRevenueOverview(revenue, density),
+                ),
+                SizedBox(height: density.gridSpacing),
+                _buildSafeSection(
+                  label: 'OPERATIONS',
+                  builder: () =>
+                      _buildOperationsOverview(data, revenue, pendingCount, density),
+                ),
+                SizedBox(height: density.sectionGap),
+                _buildSafeSection(label: 'FILTER', builder: _buildFilterBar),
+                SizedBox(height: density.sectionGap),
+                _buildSafeSection(
+                  label: 'TABLE',
+                  builder: () => _buildTable(data, filtered),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -505,67 +514,72 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
     );
   }
 
-  Widget _buildHero(int pendingCount) {
+  Widget _buildHero(int pendingCount, AdminPanelDensity density) {
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: density.heroPadding,
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF0F172A), Color(0xFF0F766E)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(density.heroBorderRadius),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
+      child: density.heroSideBySide
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(child: _buildHeroCopy(pendingCount, density)),
+                _buildHeroActionBar(compact: density.isCompact),
+              ],
+            )
+          : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Reklam Yonetimi',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Kampanya onaylarini, gelir takibini ve seller performansini tek merkezden yonetin.',
-                  style: TextStyle(
-                    color: Color(0xFFE2E8F0),
-                    fontSize: 14,
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    _heroPill(
-                      icon: Icons.rule_folder_outlined,
-                      label: '$pendingCount onay bekliyor',
-                    ),
-                    _heroPill(
-                      icon: Icons.view_column_outlined,
-                      label: 'Kompakt tablo gorunumu',
-                    ),
-                  ],
-                ),
+                _buildHeroCopy(pendingCount, density),
+                SizedBox(height: density.gridSpacing),
+                _buildHeroActionBar(compact: density.isCompact),
               ],
             ),
-          ),
-          const SizedBox(width: 16),
-          _buildHeroActionBar(),
-        ],
-      ),
     );
   }
 
-  Widget _buildHeroActionBar() {
+  Widget _buildHeroCopy(int pendingCount, AdminPanelDensity density) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Reklam Yönetimi',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: density.heroTitleFontSize,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        SizedBox(height: density.isCompact ? 2 : 4),
+        Text(
+          'Onay, gelir ve kampanya performansı.',
+          maxLines: density.heroSubtitleMaxLines,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.78),
+            fontSize: density.heroSubtitleFontSize,
+            height: 1.35,
+          ),
+        ),
+        if (pendingCount > 0) ...[
+          SizedBox(height: density.isCompact ? 6 : 8),
+          _heroPill(
+            icon: Icons.rule_folder_outlined,
+            label: '$pendingCount onay bekliyor',
+            compact: density.isCompact,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildHeroActionBar({bool compact = false}) {
     debugPrint('[AdCredit][Admin] build action bar started');
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -574,8 +588,15 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
         const SizedBox(width: 12),
         FilledButton.icon(
           onPressed: _refresh,
-          icon: const Icon(Icons.refresh_rounded),
+          icon: Icon(Icons.refresh_rounded, size: compact ? 16 : 18),
           label: const Text('Yenile'),
+          style: FilledButton.styleFrom(
+            visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 10 : 14,
+              vertical: compact ? 8 : 10,
+            ),
+          ),
         ),
       ],
     );
@@ -606,9 +627,16 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
     );
   }
 
-  Widget _heroPill({required IconData icon, required String label}) {
+  Widget _heroPill({
+    required IconData icon,
+    required String label,
+    bool compact = false,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 10,
+        vertical: compact ? 5 : 6,
+      ),
       decoration: BoxDecoration(
         color: const Color(0x14FFFFFF),
         borderRadius: BorderRadius.circular(999),
@@ -691,50 +719,66 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
     );
   }
 
-  Widget _buildRevenueOverview(AdRevenueOverview revenue) {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
+  Widget _buildCompactKpiGrid({
+    required AdminPanelDensity density,
+    required List<Widget> children,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final columns = AdminPanelDensity.fromWidth(width).kpiColumns;
+        final spacing = density.gridSpacing;
+        final itemWidth = (width - (columns - 1) * spacing) / columns;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: children
+              .map((child) => SizedBox(width: itemWidth, child: child))
+              .toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildRevenueOverview(
+    AdRevenueOverview revenue,
+    AdminPanelDensity density,
+  ) {
+    final compact = density.isCompact;
+    return _buildCompactKpiGrid(
+      density: density,
       children: [
-        SizedBox(
-          width: 248,
-          child: RevenueCard(
-            title: 'Toplam reklam geliri',
-            amountLabel:
-                '${revenue.totalRevenue.toStringAsFixed(0)} ${revenue.currency}',
-            subtitle: 'Tum kampanya gelirleri',
-            accent: const Color(0xFF16A34A),
-          ),
+        RevenueCard(
+          compact: compact,
+          title: 'Toplam reklam geliri',
+          amountLabel:
+              '${revenue.totalRevenue.toStringAsFixed(0)} ${revenue.currency}',
+          subtitle: 'Tüm kampanyalar',
+          accent: const Color(0xFF16A34A),
         ),
-        SizedBox(
-          width: 248,
-          child: RevenueCard(
-            title: 'Bugun',
-            amountLabel:
-                '${revenue.todayRevenue.toStringAsFixed(0)} ${revenue.currency}',
-            subtitle: 'Gunluk reklam geliri',
-            accent: const Color(0xFF0EA5E9),
-          ),
+        RevenueCard(
+          compact: compact,
+          title: 'Bugün',
+          amountLabel:
+              '${revenue.todayRevenue.toStringAsFixed(0)} ${revenue.currency}',
+          subtitle: 'Günlük gelir',
+          accent: const Color(0xFF0EA5E9),
         ),
-        SizedBox(
-          width: 248,
-          child: RevenueCard(
-            title: 'Bu hafta',
-            amountLabel:
-                '${revenue.weekRevenue.toStringAsFixed(0)} ${revenue.currency}',
-            subtitle: 'Haftalik reklam geliri',
-            accent: const Color(0xFF2563EB),
-          ),
+        RevenueCard(
+          compact: compact,
+          title: 'Bu hafta',
+          amountLabel:
+              '${revenue.weekRevenue.toStringAsFixed(0)} ${revenue.currency}',
+          subtitle: 'Haftalık gelir',
+          accent: const Color(0xFF2563EB),
         ),
-        SizedBox(
-          width: 248,
-          child: RevenueCard(
-            title: 'Bu ay',
-            amountLabel:
-                '${revenue.monthRevenue.toStringAsFixed(0)} ${revenue.currency}',
-            subtitle: 'Aylik reklam geliri',
-            accent: const Color(0xFF7C3AED),
-          ),
+        RevenueCard(
+          compact: compact,
+          title: 'Bu ay',
+          amountLabel:
+              '${revenue.monthRevenue.toStringAsFixed(0)} ${revenue.currency}',
+          subtitle: 'Aylık gelir',
+          accent: const Color(0xFF7C3AED),
         ),
       ],
     );
@@ -744,51 +788,44 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
     _AdminAdsViewData data,
     AdRevenueOverview revenue,
     int pendingCount,
+    AdminPanelDensity density,
   ) {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
+    final compact = density.isCompact;
+    return _buildCompactKpiGrid(
+      density: density,
       children: [
-        SizedBox(
-          width: 248,
-          child: SummaryStatCard(
-            title: 'Bekleyen reklam odemeleri',
-            value:
-                '${revenue.pendingPayments.toStringAsFixed(0)} ${revenue.currency}',
-            subtitle: 'Odeme bekleyen hareketler',
-            icon: Icons.pending_actions_outlined,
-            accent: const Color(0xFFF59E0B),
-          ),
+        SummaryStatCard(
+          compact: compact,
+          title: 'Bekleyen ödeme',
+          value:
+              '${revenue.pendingPayments.toStringAsFixed(0)} ${revenue.currency}',
+          subtitle: 'Ödeme bekleyen',
+          icon: Icons.pending_actions_outlined,
+          accent: const Color(0xFFF59E0B),
         ),
-        SizedBox(
-          width: 248,
-          child: SummaryStatCard(
-            title: 'Onay bekleyen kampanya',
-            value: pendingCount.toString(),
-            subtitle: 'Inceleme kuyrugu',
-            icon: Icons.rule_folder_outlined,
-            accent: const Color(0xFFEA580C),
-          ),
+        SummaryStatCard(
+          compact: compact,
+          title: 'Onay bekleyen kampanya',
+          value: pendingCount.toString(),
+          subtitle: 'İnceleme kuyruğu',
+          icon: Icons.rule_folder_outlined,
+          accent: const Color(0xFFEA580C),
         ),
-        SizedBox(
-          width: 248,
-          child: SummaryStatCard(
-            title: 'En cok harcayan satici',
-            value: data.topSeller,
-            subtitle: 'Seller bazli spend',
-            icon: Icons.person_outline_rounded,
-            accent: const Color(0xFF0F766E),
-          ),
+        SummaryStatCard(
+          compact: compact,
+          title: 'En çok harcayan satıcı',
+          value: _prettyName(data.topSeller),
+          subtitle: 'Satıcı bazlı harcama',
+          icon: Icons.person_outline_rounded,
+          accent: const Color(0xFF0F766E),
         ),
-        SizedBox(
-          width: 248,
-          child: SummaryStatCard(
-            title: 'En cok gelir getiren tur',
-            value: data.topRevenueType,
-            subtitle: 'Tur bazli gelir',
-            icon: Icons.auto_graph_rounded,
-            accent: const Color(0xFF9333EA),
-          ),
+        SummaryStatCard(
+          compact: compact,
+          title: 'En çok gelir getiren tür',
+          value: AdDisplayLabels.campaignTypeLabel(data.topRevenueType),
+          subtitle: 'Tür bazlı gelir',
+          icon: Icons.auto_graph_rounded,
+          accent: const Color(0xFF9333EA),
         ),
       ],
     );
@@ -898,18 +935,18 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
                     const Text(
                       'Kampanya tablosu',
                       style: TextStyle(
-                        fontSize: 22,
+                        fontSize: 16,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF0F172A),
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                     Text(
-                      '${rows.length} kampanya goruntuleniyor. Onay bekleyen kampanyalar icin hizli aksiyonlar sag tarafta acik tutulur.',
+                      '${rows.length} kampanya • Onay bekleyenler için hızlı aksiyonlar.',
                       style: const TextStyle(
                         color: Color(0xFF64748B),
-                        fontSize: 13,
-                        height: 1.5,
+                        fontSize: 12,
+                        height: 1.4,
                       ),
                     ),
                   ],
@@ -1195,26 +1232,58 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
   }
 
   Widget _buildTypeObjectiveCell(_AdminCampaignRow row) {
+    final isHomeFeature = row.campaign.type == AdCampaignType.homeFeature;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(
-          _humanizeToken(row.campaign.type.dbValue),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Color(0xFF0F172A),
-            fontWeight: FontWeight.w700,
+        if (isHomeFeature)
+          Container(
+            margin: const EdgeInsets.only(bottom: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEA580C).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: const Color(0xFFEA580C).withValues(alpha: 0.45),
+              ),
+            ),
+            child: const Text(
+              'Ana Sayfa Reklamı',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFFC2410C),
+              ),
+            ),
+          )
+        else
+          Text(
+            AdDisplayLabels.campaignTypeLabel(row.campaign.type.dbValue),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontWeight: FontWeight.w700,
+            ),
           ),
-        ),
         const SizedBox(height: 4),
         Text(
-          _humanizeToken(row.campaign.objective.dbValue),
+          AdDisplayLabels.campaignGoalLabel(row.campaign.objective.dbValue),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
         ),
+        if (isHomeFeature) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${HomeFeatureAdHelper.bannerImages(row.campaign).length} banner • '
+            '${HomeFeatureAdHelper.selectedProductIds(row.campaign).length} ürün',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+          ),
+        ],
       ],
     );
   }
@@ -1333,18 +1402,6 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
     return CampaignReviewStatus.approved.dbValue;
   }
 
-  String _humanizeToken(String value) {
-    if (value.trim().isEmpty) return '-';
-    return value
-        .split('_')
-        .map(
-          (part) => part.isEmpty
-              ? part
-              : '${part[0].toUpperCase()}${part.substring(1)}',
-        )
-        .join(' ');
-  }
-
   Future<void> _openDetail(AdCampaign campaign) async {
     await showDialog<void>(
       context: context,
@@ -1363,7 +1420,7 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
       action: () => _reviewService.approveCampaign(
         campaignId: campaign.id,
         sellerId: campaign.sellerId,
-        reviewerId: 'admin-panel',
+        reviewerId: AdReviewerHelper.resolveReviewerId(),
       ),
     );
   }
@@ -1375,7 +1432,7 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
       action: () => _reviewService.rejectCampaign(
         campaignId: campaign.id,
         sellerId: campaign.sellerId,
-        reviewerId: 'admin-panel',
+        reviewerId: AdReviewerHelper.resolveReviewerId(),
         reasons: const ['Admin tarafinda reddedildi'],
       ),
     );
@@ -1396,7 +1453,7 @@ class _AdminAdsManagerContentState extends State<AdminAdsManagerContent> {
       action: () => _reviewService.requestChanges(
         campaignId: campaign.id,
         sellerId: campaign.sellerId,
-        reviewerId: 'admin-panel',
+        reviewerId: AdReviewerHelper.resolveReviewerId(),
         reasons: const ['Tekrar incelemeye alindi'],
       ),
     );

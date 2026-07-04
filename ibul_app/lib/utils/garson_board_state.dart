@@ -369,9 +369,15 @@ bool shouldClearStaleGarsonTableRoute({
   required bool selectedTableValid,
   required int boardSectionsCount,
   required int boardTablesCount,
+  Set<int>? closingTableNumbers,
 }) {
   if (!isGarsonModule) return false;
   if (boardSectionsCount == 0 && boardTablesCount == 0) return false;
+  if (closingTableNumbers != null &&
+      selectedTableNumber != null &&
+      closingTableNumbers.contains(selectedTableNumber)) {
+    return false;
+  }
   if (!isTableRouteOpen && selectedTableNumber != null) return true;
   if (isTableRouteOpen &&
       selectedTableNumber != null &&

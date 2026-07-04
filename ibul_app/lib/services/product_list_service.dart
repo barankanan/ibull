@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/product_list_schema_helpers.dart';
 import '../models/product_list_model.dart';
 import '../models/product_list_price_change.dart';
 import '../models/product_model.dart';
@@ -40,6 +41,15 @@ class ProductListService {
 
   static const Duration _opTimeout = Duration(seconds: 12);
 
+  static const String _listHeaderSelect =
+      'id, name, description, cover_image_url, category, sub_category, '
+      'follower_count, seller_id, store_name, owner_display_name, '
+      'owner_user_id, owner_photo_url, visibility, share_code, created_at, '
+      'updated_at';
+
+  static const String _listItemHydrateSelect =
+      'id, list_id, product_id, product_payload, seller_id, created_at';
+
   String? get currentUserId => _supabase.auth.currentUser?.id;
 
   Future<List<ProductList>> getOwnedLists() async {
@@ -48,7 +58,7 @@ class ProductListService {
 
     final rows = await _supabase
         .from('product_lists')
-        .select()
+        .select(_listHeaderSelect)
         .eq('owner_user_id', userId)
         .order('updated_at', ascending: false);
 
@@ -58,7 +68,7 @@ class ProductListService {
   Future<List<ProductList>> getPublicLists({int limit = 40}) async {
     final rows = await _supabase
         .from('product_lists')
-        .select()
+        .select(_listHeaderSelect)
         .eq('visibility', ProductListVisibility.public.dbValue)
         .order('follower_count', ascending: false)
         .order('updated_at', ascending: false)
@@ -76,7 +86,7 @@ class ProductListService {
 
     final rows = await _supabase
         .from('product_lists')
-        .select()
+        .select(_listHeaderSelect)
         .eq('owner_user_id', normalizedOwnerId)
         .eq('visibility', ProductListVisibility.public.dbValue)
         .order('updated_at', ascending: false)
@@ -95,10 +105,42 @@ class ProductListService {
 
     final rows = await _supabase
         .from('product_lists')
-        .select()
+        .select(_listHeaderSelect)
         .inFilter('id', normalizedIds);
 
     final hydrated = await _hydrateLists(
+      List<Map<String, dynamic>>.from(rows as List),
+    );
+    final byId = {for (final list in hydrated) list.id: list};
+    return normalizedIds
+        .map((id) => byId[id])
+        .whereType<ProductList>()
+        .toList(growable: false);
+  }
+
+  static const String _homePreviewListSelect =
+      'id, name, description, cover_image_url, category, sub_category, '
+      'follower_count, seller_id, store_name, owner_display_name, '
+      'owner_user_id, owner_photo_url, visibility, share_code, created_at, '
+      'updated_at';
+
+  /// Ana sayfa sponsorlu liste kartları için dar kolon seçimi.
+  Future<List<ProductList>> getHomePreviewListsByIds(List<String> listIds) async {
+    final normalizedIds = <String>[];
+    final seen = <String>{};
+    for (final raw in listIds) {
+      final id = raw.trim();
+      if (id.isEmpty || !seen.add(id)) continue;
+      normalizedIds.add(id);
+    }
+    if (normalizedIds.isEmpty) return const [];
+
+    final rows = await _supabase
+        .from('product_lists')
+        .select(_homePreviewListSelect)
+        .inFilter('id', normalizedIds);
+
+    final hydrated = await _hydrateHomePreviewLists(
       List<Map<String, dynamic>>.from(rows as List),
     );
     final byId = {for (final list in hydrated) list.id: list};
@@ -141,37 +183,9 @@ class ProductListService {
       'updated_at': list.updatedAt.toUtc().toIso8601String(),
     };
 
-    // ── Step 1: upsert list header ────────────────────────────────────────────
-    try {
-      await _supabase
-          .from('product_lists')
-          .upsert(payload, onConflict: 'id')
-          .timeout(_opTimeout);
-    } on PostgrestException catch (error) {
-      final message = error.message.toLowerCase();
-      if (message.contains('seller_id') || message.contains('store_name')) {
-        // Legacy schema fallback: columns not yet added on this deployment.
-        final legacyPayload = Map<String, dynamic>.from(payload)
-          ..remove('seller_id')
-          ..remove('store_name');
-        await _supabase
-            .from('product_lists')
-            .upsert(legacyPayload, onConflict: 'id')
-            .timeout(_opTimeout);
-      } else {
-        debugPrint(
-          '[PRODUCT_LIST_SYNC_FAILED] phase=header_upsert '
-          'listId=${list.id} pgCode=${error.code} message=${error.message}',
-        );
-        rethrow;
-      }
-    } catch (error) {
-      debugPrint(
-        '[PRODUCT_LIST_SYNC_FAILED] phase=header_upsert '
-        'listId=${list.id} error=$error',
-      );
-      rethrow;
-    }
+    // ── Step 1: upsert list header (schema-safe — strips missing DB columns) ─
+    final headerSynced = await _upsertListHeaderSafe(payload, listId: list.id);
+    if (!headerSynced) return;
 
     // ── Step 2: snapshot existing items before touching them ─────────────────
     List<Map<String, dynamic>> existingItemsSnapshot = const [];
@@ -272,6 +286,67 @@ class ProductListService {
         '(${insertErr.toString().length > 120 ? insertErr.toString().substring(0, 120) : insertErr})',
       );
     }
+  }
+
+  /// Upserts list header; strips columns missing on this deployment (PGRST204).
+  /// Returns false when sync should abort quietly (unrecoverable schema error).
+  Future<bool> _upsertListHeaderSafe(
+    Map<String, dynamic> payload, {
+    required String listId,
+  }) async {
+    var current = Map<String, dynamic>.from(payload);
+    var strippedAny = false;
+
+    for (var attempt = 0; attempt < productListHeaderOptionalColumns.length + 2;
+        attempt++) {
+      try {
+        await _supabase
+            .from('product_lists')
+            .upsert(current, onConflict: 'id')
+            .timeout(_opTimeout);
+        if (strippedAny && kDebugMode) {
+          debugPrint(
+            '[ProductListService] header_upsert ok after stripping optional columns '
+            'listId=$listId',
+          );
+        }
+        return true;
+      } on PostgrestException catch (error) {
+        if (!isProductListMissingColumnError(error)) {
+          debugPrint(
+            '[PRODUCT_LIST_SYNC_FAILED] phase=header_upsert '
+            'listId=$listId pgCode=${error.code} message=${error.message}',
+          );
+          return false;
+        }
+
+        final missing = extractMissingProductListColumn(error);
+        if (missing == null || !current.containsKey(missing)) {
+          debugPrint(
+            '[PRODUCT_LIST_SYNC_FAILED] phase=header_upsert '
+            'listId=$listId pgCode=${error.code} message=${error.message}',
+          );
+          return false;
+        }
+
+        current = stripProductListHeaderColumn(current, missing);
+        strippedAny = true;
+        if (kDebugMode) {
+          debugPrint(
+            '[ProductListService] header_upsert stripped missing column=$missing '
+            'listId=$listId — retrying',
+          );
+        }
+      } catch (error) {
+        debugPrint(
+          '[PRODUCT_LIST_SYNC_FAILED] phase=header_upsert '
+          'listId=$listId error=$error',
+        );
+        return false;
+      }
+    }
+
+    return false;
   }
 
   Future<SellerProfilePublicListsFetchResult> getPublicListsForSellerProfile({
@@ -495,7 +570,7 @@ class ProductListService {
 
     final itemRowsRaw = await _supabase
         .from('product_list_items')
-        .select()
+        .select(_listItemHydrateSelect)
         .inFilter('list_id', listIds)
         .order('created_at', ascending: true);
     final itemRows = List<Map<String, dynamic>>.from(itemRowsRaw as List);
@@ -560,6 +635,84 @@ class ProductListService {
             isFollowing: followRow != null,
             followNotificationsEnabled:
                 followRow?['notifications_enabled'] != false,
+            productIds: itemRowsForList
+                .map((item) => item['product_key']?.toString() ?? '')
+                .where((value) => value.isNotEmpty)
+                .toList(growable: false),
+            products: products,
+            createdAt:
+                DateTime.tryParse(row['created_at']?.toString() ?? '') ??
+                DateTime.now(),
+            updatedAt:
+                DateTime.tryParse(row['updated_at']?.toString() ?? '') ??
+                DateTime.now(),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  Future<List<ProductList>> _hydrateHomePreviewLists(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    if (rows.isEmpty) return const [];
+
+    final listIds = rows
+        .map((row) => row['id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+
+    final itemRowsRaw = await _supabase
+        .from('product_list_items')
+        .select('list_id, product_key, product_payload, created_at')
+        .inFilter('list_id', listIds)
+        .order('created_at', ascending: true);
+    final itemRows = List<Map<String, dynamic>>.from(itemRowsRaw as List);
+
+    final itemsByListId = <String, List<Map<String, dynamic>>>{};
+    for (final row in itemRows) {
+      final listId = row['list_id']?.toString() ?? '';
+      if (listId.isEmpty) continue;
+      final bucket = itemsByListId.putIfAbsent(
+        listId,
+        () => <Map<String, dynamic>>[],
+      );
+      if (bucket.length < 3) {
+        bucket.add(row);
+      }
+    }
+
+    return rows
+        .map((row) {
+          final listId = row['id']?.toString() ?? '';
+          final itemRowsForList = itemsByListId[listId] ?? const [];
+          final products = itemRowsForList
+              .map((item) {
+                final payload = item['product_payload'];
+                if (payload is Map) {
+                  return Product.fromJson(Map<String, dynamic>.from(payload));
+                }
+                return null;
+              })
+              .whereType<Product>()
+              .toList(growable: false);
+
+          return ProductList(
+            id: listId,
+            name: row['name']?.toString() ?? 'Listem',
+            description: row['description']?.toString(),
+            iconUrl: row['cover_image_url']?.toString(),
+            category: row['category']?.toString(),
+            subCategory: row['sub_category']?.toString(),
+            visibility: ProductListVisibilityX.fromValue(
+              row['visibility']?.toString(),
+            ),
+            shareCode: row['share_code']?.toString() ?? buildShareCode(listId),
+            sellerId: row['seller_id']?.toString(),
+            storeName: row['store_name']?.toString(),
+            ownerUserId: row['owner_user_id']?.toString(),
+            ownerDisplayName: row['owner_display_name']?.toString(),
+            ownerPhotoUrl: row['owner_photo_url']?.toString(),
+            followerCount: (row['follower_count'] as num?)?.toInt() ?? 0,
             productIds: itemRowsForList
                 .map((item) => item['product_key']?.toString() ?? '')
                 .where((value) => value.isNotEmpty)
@@ -710,7 +863,7 @@ class ProductListService {
 
     final rows = await _supabase
         .from('product_lists')
-        .select()
+        .select(_listHeaderSelect)
         .eq('visibility', ProductListVisibility.public.dbValue)
         .inFilter('id', normalizedIds)
         .order('updated_at', ascending: false)

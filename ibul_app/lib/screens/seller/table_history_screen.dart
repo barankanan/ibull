@@ -8,8 +8,9 @@ import '../../services/store_service.dart';
 import '../../services/store/table_order_history_utils.dart';
 import '../../widgets/garson/garson_closed_tables_strip.dart';
 import '../../widgets/garson/garson_history_detail_sheet.dart';
+import '../../widgets/garson/past_tables_history_layout.dart';
 
-/// Garson "Geçmiş Masalar" listesi — kompakt kart görünümü.
+/// Garson "Geçmiş Masalar" listesi — tarih gruplu responsive grid.
 ///
 /// Veri kaynağı: [StoreService.getTableOrderHistory] (değişmedi).
 /// Detay / yazdır / tekrar aç: [showGarsonHistoryDetailSheet].
@@ -205,6 +206,25 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
     }
   }
 
+  Widget _buildHistoryCard(TableOrderHistoryRecord record) {
+    return GarsonClosedTableCard(
+      layout: GarsonClosedTableCardLayout.grid,
+      record: record,
+      dateFmt: _dateFmt,
+      formatMoney: _formatMoney,
+      onTap: () => _openDetail(record),
+      onPrintAdisyon: widget.onPrintAdisyon != null
+          ? () => widget.onPrintAdisyon!(record)
+          : null,
+      onPrintKitchen: widget.onReprint != null
+          ? () => widget.onReprint!(record)
+          : null,
+      onDelete: widget.onDeleteHistory == null
+          ? null
+          : () => unawaited(_confirmDelete(record)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -243,8 +263,11 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
 
   Widget _buildFilterBar() {
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+      ),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -252,8 +275,8 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
             for (final period in GarsonHistoryPeriod.values)
               if (period != GarsonHistoryPeriod.custom)
                 Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: _PeriodChip(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: PastTablesPeriodChip(
                     label: period.label,
                     selected: _period == period,
                     onTap: () {
@@ -263,7 +286,7 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
                     },
                   ),
                 ),
-            _PeriodChip(
+            PastTablesPeriodChip(
               label: _period == GarsonHistoryPeriod.custom &&
                       _customRange != null
                   ? '${DateFormat('d MMM').format(_customRange!.start)} – ${DateFormat('d MMM').format(_customRange!.end)}'
@@ -330,97 +353,31 @@ class _TableHistoryScreenState extends State<TableHistoryScreen> {
       );
     }
 
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
-      itemCount: _records.length + (_hasMore ? 1 : 0),
-      separatorBuilder: (context, index) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        if (index >= _records.length) {
-          return Align(
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      children: [
+        PastTablesGroupedSections(
+          records: _records,
+          cardBuilder: _buildHistoryCard,
+        ),
+        if (_hasMore) ...[
+          const SizedBox(height: 16),
+          Align(
             alignment: Alignment.centerLeft,
-            child: OutlinedButton(
+            child: OutlinedButton.icon(
               onPressed: _isLoading ? null : () => _loadHistory(reset: false),
-              child: _isLoading
+              icon: _isLoading
                   ? const SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('Daha Fazla Yükle'),
+                  : const Icon(Icons.expand_more_rounded, size: 18),
+              label: Text(_isLoading ? 'Yükleniyor…' : 'Daha Fazla Yükle'),
             ),
-          );
-        }
-        final record = _records[index];
-        return Align(
-          alignment: Alignment.centerLeft,
-          child: GarsonClosedTableCard(
-            width: 220,
-            record: record,
-            dateFmt: _dateFmt,
-            formatMoney: _formatMoney,
-            onTap: () => _openDetail(record),
-            onPrintAdisyon: widget.onPrintAdisyon != null
-                ? () => widget.onPrintAdisyon!(record)
-                : null,
-            onPrintKitchen: widget.onReprint != null
-                ? () => widget.onReprint!(record)
-                : null,
-            onDelete: widget.onDeleteHistory == null
-                ? null
-                : () => unawaited(_confirmDelete(record)),
           ),
-        );
-      },
-    );
-  }
-}
-
-class _PeriodChip extends StatelessWidget {
-  const _PeriodChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.icon,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final IconData? icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF2563EB) : const Color(0xFFF1F5F9),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(
-                icon,
-                size: 12,
-                color: selected ? Colors.white : const Color(0xFF374151),
-              ),
-              const SizedBox(width: 4),
-            ],
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: selected ? Colors.white : const Color(0xFF374151),
-              ),
-            ),
-          ],
-        ),
-      ),
+        ],
+      ],
     );
   }
 }

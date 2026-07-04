@@ -13,7 +13,8 @@ class BulkProductCsvParser {
 
   BulkProductCsvDocument parseString(String input) {
     final String sanitized = input.replaceFirst('\uFEFF', '');
-    final List<List<String>> matrix = _parseMatrix(sanitized);
+    final String delimiter = _detectDelimiter(sanitized);
+    final List<List<String>> matrix = _parseMatrix(sanitized, delimiter);
     if (matrix.isEmpty) {
       return const BulkProductCsvDocument(
         headers: <String>[],
@@ -53,7 +54,16 @@ class BulkProductCsvParser {
     return bulkProductImportHeaderAliases[normalizedKey] ?? trimmed;
   }
 
-  List<List<String>> _parseMatrix(String input) {
+  String _detectDelimiter(String input) {
+    final int newline = input.indexOf('\n');
+    final String headerLine =
+        newline >= 0 ? input.substring(0, newline) : input;
+    final int commas = ','.allMatches(headerLine).length;
+    final int semicolons = ';'.allMatches(headerLine).length;
+    return semicolons > commas ? ';' : ',';
+  }
+
+  List<List<String>> _parseMatrix(String input, String delimiter) {
     final List<List<String>> rows = <List<String>>[];
     final StringBuffer cell = StringBuffer();
     final List<String> currentRow = <String>[];
@@ -84,7 +94,7 @@ class BulkProductCsvParser {
         continue;
       }
 
-      if (!inQuotes && char == ',') {
+      if (!inQuotes && char == delimiter) {
         flushCell();
         continue;
       }

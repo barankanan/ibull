@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'dart:async';
 import '../../services/auth_service.dart';
 import '../../models/product_model.dart';
 import '../app_state.dart';
@@ -22,25 +23,31 @@ class CartProvider extends ChangeNotifier {
     return _cart.any((p) => p.name == product.name && p.brand == product.brand);
   }
 
-  void addToCart(Product product) {
+  Future<String?> addToCart(Product product) async {
+    final error = await _appState.addToCart(product);
+    if (error != null) {
+      return error;
+    }
+
     if (!isInCart(product)) {
       _cart.add(product);
       _updateCartNotifiers();
     } else {
-      // If already in cart, update it (e.g. for services)
-      int index = _cart.indexWhere((p) => p.name == product.name && p.brand == product.brand);
+      final index = _cart.indexWhere(
+        (p) => p.name == product.name && p.brand == product.brand,
+      );
       if (index != -1) {
-        // Merge services if needed, or just replace
         _cart[index] = product;
         _updateCartNotifiers();
       }
     }
-    // Firestore'a kaydet
-    _authService.updateUserDataField('cart', _cart.map((p) => p.toJson()).toList());
-
-    // Keep legacy/global AppState cart in sync so screens that read AppState.cart
-    // (e.g. CartPage) don't show an empty cart.
-    _appState.addToCart(product);
+    unawaited(
+      _authService.updateUserDataField(
+        'cart',
+        _cart.map((p) => p.toJson()).toList(),
+      ),
+    );
+    return null;
   }
 
   void updateProductServices(Product product, List<String> services) {

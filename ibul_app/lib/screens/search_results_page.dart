@@ -44,6 +44,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
   final ScrollController _scrollController = ScrollController();
   final AuthService _authService = AuthService();
 
+  int _searchRequestId = 0;
   bool _isLoading = true;
   bool _isLoadingMore = false;
   String? _errorMessage;
@@ -372,6 +373,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
 
   Future<void> _loadAndSearch({bool loadMore = false}) async {
     final appState = context.read<AppState>();
+    final requestId = loadMore ? _searchRequestId : ++_searchRequestId;
     if (loadMore) {
       if (_nextCursor == null) return;
       setState(() => _isLoadingMore = true);
@@ -394,19 +396,25 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     final rawQuery = widget.query.trim();
     final normalizedQuery = _normalize(rawQuery);
     if (normalizedQuery.replaceAll(' ', '').length < 3) {
+      if (!mounted || requestId != _searchRequestId) return;
       setState(() {
         _isLoading = false;
+        _isLoadingMore = false;
         _errorMessage = 'Aramak için en az 3 karakter girin.';
       });
       return;
     }
 
     try {
-      final page = await SupabaseService.instance.searchProductsPaged(
-        query: rawQuery,
-        limit: 30,
-        cursor: loadMore ? _nextCursor : null,
-      );
+      final page = await SupabaseService.instance
+          .searchProductsPaged(
+            query: rawQuery,
+            limit: 30,
+            cursor: loadMore ? _nextCursor : null,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (!mounted || requestId != _searchRequestId) return;
+
       final matched = page.items
           .map(Product.fromDBProduct)
           .toList(growable: false);
@@ -447,6 +455,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
         _scheduleInitialImageWarmup();
       }
     } catch (e) {
+      if (!mounted || requestId != _searchRequestId) return;
       setState(() {
         _isLoading = false;
         _isLoadingMore = false;
@@ -941,7 +950,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
           Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
           const SizedBox(height: 16),
           Text(
-            'Sonuç bulunamadı',
+            'Aramana uygun ürün bulunamadı.',
             style: TextStyle(color: Colors.grey[600], fontSize: 16),
           ),
           if (_activeFilters.isNotEmpty)
@@ -1058,7 +1067,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                   Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
                   const SizedBox(height: 16),
                   Text(
-                    'Sonuç bulunamadı',
+                    'Aramana uygun ürün bulunamadı.',
                     style: TextStyle(color: Colors.grey[600], fontSize: 16),
                   ),
                   if (_activeFilters.isNotEmpty)

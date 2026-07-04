@@ -22,6 +22,13 @@ void main() {
       );
     });
 
+    test('mapStoreSelectMinimal uses only real stores columns', () {
+      expect(mapStoreSelectMinimal, isNot(contains('latitude')));
+      expect(mapStoreSelectMinimal, isNot(contains('location_lat')));
+      expect(mapStoreSelectMinimal, contains('store_lat'));
+      expect(mapStoreSelectMinimal, contains('business_name'));
+    });
+
     test('fallback select omits is_brand_verified column', () {
       expect(
         mapStoreSelect(includeBrandVerified: false),

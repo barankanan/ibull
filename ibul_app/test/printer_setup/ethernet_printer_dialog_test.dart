@@ -53,9 +53,9 @@ void main() {
     expect(ipField.controller?.text, '');
     expect(portField.controller?.text, '9100');
     expect(nameField.controller?.text, '');
-    expect(find.text('Değer giriniz'), findsOneWidget);
-    expect(find.text('Örn: 192.168.1.100'), findsOneWidget);
-    expect(find.text('NETUM ZJ-8360 Ethernet'), findsOneWidget);
+    expect(find.text('IP adresi giriniz'), findsOneWidget);
+    expect(find.text('Yazıcı adı giriniz'), findsOneWidget);
+    expect(portField.decoration?.hintText, 'Port');
     expect(find.byKey(const Key('ethernet_auto_scan_button')), findsOneWidget);
     expect(find.text('Otomatik Tara'), findsOneWidget);
   });
@@ -131,7 +131,7 @@ void main() {
 
     expect(find.text('Yazıcıya ulaşılamadı'), findsOneWidget);
     expect(find.textContaining('192.168.1.100:9100'), findsOneWidget);
-    expect(find.text('Kayıt durumu: Bağlantı doğrulanmadı'), findsOneWidget);
+    expect(find.text('Kayıt durumu: Bağlantı bekleniyor'), findsOneWidget);
     expect(find.textContaining('LocalPrintServiceException'), findsNothing);
   });
 
@@ -522,7 +522,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.textContaining('Ağ uyumsuzluğu — bağlantı doğrulanmadı'),
+      find.textContaining('Bağlantı bekleniyor'),
       findsOneWidget,
     );
     final saveButton = tester.widget<FilledButton>(
@@ -733,6 +733,15 @@ class _TestPrinterRepository implements PrinterRepositoryPort {
     required bool success,
     String? error,
   }) async {}
+
+  @override
+  Future<PrinterModel> repairPrinterProfileMetadata(String printerId) async {
+    final printer = await fetchPrinterById(printerId);
+    if (printer == null) {
+      throw StateError('missing printer $printerId');
+    }
+    return printer;
+  }
 
   @override
   Future<void> updateAssignedRoles(

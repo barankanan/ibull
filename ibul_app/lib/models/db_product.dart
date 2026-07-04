@@ -46,6 +46,10 @@ class DBProduct {
   variantOptions; // Varyant seçenekleri (pipe ayrılmış) - "Renk:Siyah|Depolama:512GB"
   final int? stock; // Stok miktarı
   final bool isActive; // Ürün aktif mi?
+  final String? catalogStatus;
+  final String? approvalStatus;
+  final String? adminApprovalStatus;
+  final DateTime? catalogUpdatedAt;
   final String? attributes;
   final String? videoUrl; // Video URL (Supabase video_url)
   final String? videoPath;
@@ -98,6 +102,10 @@ class DBProduct {
     this.variantOptions,
     this.stock,
     this.isActive = true,
+    this.catalogStatus,
+    this.approvalStatus,
+    this.adminApprovalStatus,
+    this.catalogUpdatedAt,
     this.attributes,
     this.videoUrl,
     this.videoPath,
@@ -153,6 +161,10 @@ class DBProduct {
       'variantOptions': variantOptions,
       'stock': stock,
       'isActive': isActive ? 1 : 0,
+      'catalogStatus': catalogStatus,
+      'approvalStatus': approvalStatus,
+      'adminApprovalStatus': adminApprovalStatus,
+      'catalogUpdatedAt': catalogUpdatedAt?.toIso8601String(),
       'attributes': attributes,
       'videoUrl': videoUrl,
       'video_path': videoPath,
@@ -259,6 +271,17 @@ class DBProduct {
       variantOptions: map['variantOptions'] as String?,
       stock: (map['stock'] as num?)?.toInt(),
       isActive: isActiveRaw is bool ? isActiveRaw : isActiveRaw == 1,
+      catalogStatus:
+          map['catalogStatus']?.toString() ?? map['status']?.toString(),
+      approvalStatus:
+          map['approvalStatus']?.toString() ??
+          map['approval_status']?.toString(),
+      adminApprovalStatus:
+          map['adminApprovalStatus']?.toString() ??
+          map['admin_approval_status']?.toString(),
+      catalogUpdatedAt: _parseCatalogUpdatedAt(
+        map['catalogUpdatedAt'] ?? map['updated_at'] ?? map['created_at'],
+      ),
       attributes: map['attributes'] as String?,
       videoUrl:
           map['video_public_url'] as String? ??
@@ -317,6 +340,10 @@ class DBProduct {
     String? variantOptions,
     int? stock,
     bool? isActive,
+    String? catalogStatus,
+    String? approvalStatus,
+    String? adminApprovalStatus,
+    DateTime? catalogUpdatedAt,
     String? attributes,
     String? videoUrl,
     String? videoPath,
@@ -369,6 +396,10 @@ class DBProduct {
       variantOptions: variantOptions ?? this.variantOptions,
       stock: stock ?? this.stock,
       isActive: isActive ?? this.isActive,
+      catalogStatus: catalogStatus ?? this.catalogStatus,
+      approvalStatus: approvalStatus ?? this.approvalStatus,
+      adminApprovalStatus: adminApprovalStatus ?? this.adminApprovalStatus,
+      catalogUpdatedAt: catalogUpdatedAt ?? this.catalogUpdatedAt,
       attributes: attributes ?? this.attributes,
       videoUrl: videoUrl ?? this.videoUrl,
       videoPath: videoPath ?? this.videoPath,
@@ -402,6 +433,12 @@ class DBProduct {
     } catch (e) {
       return {};
     }
+  }
+
+  static DateTime? _parseCatalogUpdatedAt(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    return DateTime.tryParse(value.toString());
   }
 
   @override

@@ -23,10 +23,20 @@ class _DynamicCategoryAttributeFormState
     extends State<DynamicCategoryAttributeForm> {
   final Map<String, TextEditingController> _controllers =
       <String, TextEditingController>{};
+  final Map<String, TextEditingController> _customKeyControllers =
+      <String, TextEditingController>{};
+  final Map<String, TextEditingController> _customValueControllers =
+      <String, TextEditingController>{};
 
   @override
   void dispose() {
     for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _customKeyControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _customValueControllers.values) {
       controller.dispose();
     }
     super.dispose();
@@ -50,7 +60,7 @@ class _DynamicCategoryAttributeFormState
           return _buildShell(
             context,
             child: Text(
-              'Hazir ozellikler yuklenemedi. Manuel alanlara gecebilirsiniz.',
+              'Hazır özellikler yüklenemedi. Manuel alanlara geçebilirsiniz.',
               style: TextStyle(fontSize: 13, color: Colors.orange.shade900),
             ),
           );
@@ -60,7 +70,7 @@ class _DynamicCategoryAttributeFormState
           return _buildShell(
             context,
             child: Text(
-              'Bu alt kategori icin hazir attribute bulunamadi.',
+              'Bu alt kategori için hazır attribute bulunamadı.',
               style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
             ),
           );
@@ -69,12 +79,17 @@ class _DynamicCategoryAttributeFormState
         return _buildShell(
           context,
           child: Column(
-            children: provider.definitions.map((definition) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: _buildField(context, provider, definition),
-              );
-            }).toList(),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...provider.definitions.map((definition) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _buildField(context, provider, definition),
+                );
+              }),
+              const SizedBox(height: 8),
+              _buildCustomAttributeRows(context, provider),
+            ],
           ),
         );
       },
@@ -99,7 +114,7 @@ class _DynamicCategoryAttributeFormState
           const SizedBox(height: 8),
           Text(
             widget.subtitle ??
-                'Alt kategoriye gore hazirlanan alanlar otomatik gelir. Satici sadece deger girer.',
+                'Alt kategoriye göre hazırlanan alanlar otomatik gelir. Değerleri seçebilir veya elle yazabilirsiniz.',
             style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
           ),
           const SizedBox(height: 18),
@@ -114,32 +129,13 @@ class _DynamicCategoryAttributeFormState
     CategoryAttributeFormProvider provider,
     CategoryAttributeDefinition definition,
   ) {
-    if (definition.isSelect) {
-      final dropdownValue = (provider.valuesByAttributeId[definition.id] ?? '')
-          .trim();
-      return DropdownButtonFormField<String>(
-        initialValue: definition.options.contains(dropdownValue)
-            ? dropdownValue
-            : null,
-        decoration: _inputDecoration(
-          label: definition.name,
-          filterable: definition.filterable,
-        ),
-        items: definition.options
-            .map(
-              (option) =>
-                  DropdownMenuItem<String>(value: option, child: Text(option)),
-            )
-            .toList(),
-        onChanged: (value) =>
-            provider.setValue(definition.id, value ?? '', notify: true),
-      );
-    }
+    final rawValue = provider.valuesByAttributeId[definition.id] ?? '';
+    final displayValue =
+        CategoryAttributeFormProvider.isPlaceholderValue(rawValue)
+        ? ''
+        : rawValue;
+    final controller = _controllerFor(definition.id, displayValue);
 
-    final controller = _controllerFor(
-      definition.id,
-      provider.valuesByAttributeId[definition.id] ?? '',
-    );
     return TextFormField(
       controller: controller,
       keyboardType: definition.isNumber
@@ -148,16 +144,184 @@ class _DynamicCategoryAttributeFormState
       decoration: _inputDecoration(
         label: definition.name,
         filterable: definition.filterable,
-        hint: definition.isNumber ? 'Sayisal deger girin' : null,
+        hint: _hintForDefinition(definition),
+        suffixIcon: definition.isSelect && definition.options.isNotEmpty
+            ? IconButton(
+                tooltip: 'Önerilen değerler',
+                icon: const Icon(Icons.arrow_drop_down),
+                onPressed: () => _showOptionPicker(
+                  context,
+                  definition,
+                  controller,
+                  provider,
+                ),
+              )
+            : null,
       ),
       onChanged: (value) => provider.setValue(definition.id, value),
     );
+  }
+
+  Widget _buildCustomAttributeRows(
+    BuildContext context,
+    CategoryAttributeFormProvider provider,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (provider.customAttributeRows.isNotEmpty) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Özellik Başlığı',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.blue.shade900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Açıklama / Değer',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.blue.shade900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 36),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...provider.customAttributeRows.asMap().entries.map((entry) {
+            final index = entry.key;
+            final row = entry.value;
+            final rowId = row['id'] ?? 'custom-$index';
+            final keyController = _customControllerFor(
+              _customKeyControllers,
+              '$rowId-key',
+              row['key'] ?? '',
+            );
+            final valueController = _customControllerFor(
+              _customValueControllers,
+              '$rowId-value',
+              row['value'] ?? '',
+            );
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: keyController,
+                      decoration: InputDecoration(
+                        hintText: 'Örn: Kasa Durumu',
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        isDense: true,
+                      ),
+                      onChanged: (value) =>
+                          provider.setCustomAttributeKey(index, value),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: valueController,
+                      decoration: InputDecoration(
+                        hintText: 'Örn: Çiziksiz',
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        isDense: true,
+                      ),
+                      onChanged: (value) =>
+                          provider.setCustomAttributeValue(index, value),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () {
+                      final id = row['id'] ?? 'custom-$index';
+                      _customKeyControllers.remove('$id-key')?.dispose();
+                      _customValueControllers.remove('$id-value')?.dispose();
+                      provider.removeCustomAttributeRow(index);
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    color: Colors.red.shade400,
+                  ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 8),
+        ],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: provider.addCustomAttributeRow,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('+ Ek Özellik Ekle'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showOptionPicker(
+    BuildContext context,
+    CategoryAttributeDefinition definition,
+    TextEditingController controller,
+    CategoryAttributeFormProvider provider,
+  ) async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: definition.options
+                .map(
+                  (option) => ListTile(
+                    title: Text(option),
+                    onTap: () => Navigator.pop(sheetContext, option),
+                  ),
+                )
+                .toList(),
+          ),
+        );
+      },
+    );
+    if (selected == null || !context.mounted) return;
+    controller.text = selected;
+    provider.setValue(definition.id, selected, notify: true);
+  }
+
+  String? _hintForDefinition(CategoryAttributeDefinition definition) {
+    final nameLower = definition.name.trim().toLowerCase();
+    if (nameLower == 'marka') return 'Marka seçin veya yazın';
+    if (nameLower == 'model') return 'Model giriniz';
+    if (definition.isNumber) return 'Sayısal değer girin';
+    if (definition.isSelect && definition.options.isNotEmpty) {
+      return 'Değer seçin veya yazın';
+    }
+    return null;
   }
 
   InputDecoration _inputDecoration({
     required String label,
     required bool filterable,
     String? hint,
+    Widget? suffixIcon,
   }) {
     return InputDecoration(
       labelText: filterable ? '$label • Filtrelenebilir' : label,
@@ -165,6 +329,7 @@ class _DynamicCategoryAttributeFormState
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
       filled: true,
       fillColor: Colors.white,
+      suffixIcon: suffixIcon,
     );
   }
 
@@ -184,6 +349,26 @@ class _DynamicCategoryAttributeFormState
     }
     final controller = TextEditingController(text: initialValue);
     _controllers[attributeId] = controller;
+    return controller;
+  }
+
+  TextEditingController _customControllerFor(
+    Map<String, TextEditingController> store,
+    String key,
+    String initialValue,
+  ) {
+    final existing = store[key];
+    if (existing != null) {
+      if (existing.text != initialValue) {
+        existing.text = initialValue;
+        existing.selection = TextSelection.fromPosition(
+          TextPosition(offset: existing.text.length),
+        );
+      }
+      return existing;
+    }
+    final controller = TextEditingController(text: initialValue);
+    store[key] = controller;
     return controller;
   }
 }

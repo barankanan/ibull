@@ -3,11 +3,11 @@ import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/app_state.dart';
+import '../../features/seller/panel/widgets/seller_lists_dashboard_widgets.dart';
 import '../../models/product_model.dart';
 import '../../models/product_list_model.dart';
 import '../../models/seller_product.dart';
 import '../../services/store_service.dart';
-import '../../utils/xfile_image_provider.dart';
 import '../../ads/enums/ad_enums.dart';
 import '../../ads/presentation/pages/campaign_wizard_page.dart';
 
@@ -26,7 +26,6 @@ class _SellerCollectionsManagementContentState
   final AppState _appState = AppState();
   final StoreService _storeService = StoreService();
   final ImagePicker _picker = ImagePicker();
-  bool _isCreating = false;
   bool _isLoadingProducts = false;
   String? _sellerProductsError;
   List<SellerProduct> _sellerProducts = const <SellerProduct>[];
@@ -79,203 +78,40 @@ class _SellerCollectionsManagementContentState
   }
 
   Future<void> _showCreateCollectionDialog([ProductList? existingList]) async {
-    final nameController = TextEditingController();
-    final descriptionController = TextEditingController();
-    nameController.text = existingList?.name ?? '';
-    descriptionController.text = existingList?.description ?? '';
-    var visibility = existingList?.visibility ?? ProductListVisibility.private;
-    XFile? selectedCover;
-    var coverImageUrl = existingList?.iconUrl;
-
     final created = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            Future<void> pickCover() async {
-              final picked = await _picker.pickImage(
-                source: ImageSource.gallery,
-                imageQuality: 88,
-              );
-              if (picked == null || !dialogContext.mounted) return;
-              setModalState(() => selectedCover = picked);
-            }
-
-            Future<void> submit() async {
-              final name = nameController.text.trim();
-              if (name.isEmpty) {
-                ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  const SnackBar(content: Text('Liste adi girmelisiniz.')),
-                );
-                return;
-              }
-
-              setModalState(() => _isCreating = true);
-              try {
-                String? resolvedCoverUrl = coverImageUrl;
-                if (selectedCover != null) {
-                  resolvedCoverUrl = await _storeService.uploadStoreImage(
-                    selectedCover!,
-                    'product-list-covers',
-                  );
-                }
-
-                if (existingList == null) {
+        return SellerListEditDialog(
+          existingList: existingList,
+          storeService: _storeService,
+          picker: _picker,
+          onPersist:
+              ({
+                required String name,
+                required String description,
+                required ProductListVisibility visibility,
+                required String? coverUrl,
+                required bool isCreate,
+                String? listId,
+              }) async {
+                if (isCreate) {
                   _appState.createProductList(
                     name,
-                    description: descriptionController.text.trim(),
+                    description: description,
                     visibility: visibility,
-                    coverImageUrl: resolvedCoverUrl,
+                    coverImageUrl: coverUrl,
                   );
-                } else {
+                } else if (listId != null) {
                   await _appState.updateProductListDetails(
-                    existingList.id,
+                    listId,
                     name: name,
-                    description: descriptionController.text.trim(),
-                    iconUrl: resolvedCoverUrl,
+                    description: description,
+                    iconUrl: coverUrl,
                   );
-                  _appState.updateProductListVisibility(
-                    existingList.id,
-                    visibility,
-                  );
+                  _appState.updateProductListVisibility(listId, visibility);
                 }
-                if (!dialogContext.mounted) return;
-                Navigator.of(dialogContext).pop(true);
-              } catch (error) {
-                if (!dialogContext.mounted) return;
-                ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      existingList == null
-                          ? 'Liste olusturulamadi: $error'
-                          : 'Liste guncellenemedi: $error',
-                    ),
-                  ),
-                );
-              } finally {
-                if (dialogContext.mounted) {
-                  setModalState(() => _isCreating = false);
-                }
-              }
-            }
-
-            return AlertDialog(
-              title: Text(
-                existingList == null ? 'Yeni liste' : 'Listeyi duzenle',
-              ),
-              content: SizedBox(
-                width: 440,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    InkWell(
-                      onTap: _isCreating ? null : pickCover,
-                      borderRadius: BorderRadius.circular(18),
-                      child: Container(
-                        height: 132,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(18),
-                          child: selectedCover != null
-                              ? Image(
-                                  image: xFileImageProvider(selectedCover!),
-                                  fit: BoxFit.cover,
-                                )
-                              : (coverImageUrl ?? '').trim().isNotEmpty
-                              ? OptimizedImage(
-                                  imageUrlOrPath: coverImageUrl!,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) {
-                                    return _buildCoverPlaceholder();
-                                  },
-                                )
-                              : _buildCoverPlaceholder(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextButton.icon(
-                      onPressed: _isCreating ? null : pickCover,
-                      icon: const Icon(Icons.image_outlined, size: 18),
-                      label: Text(
-                        existingList == null
-                            ? 'Liste gorseli ekle'
-                            : 'Liste gorselini degistir',
-                      ),
-                    ),
-                    TextField(
-                      controller: nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Liste adi',
-                        hintText: 'Ornek: Yaz Firsatlari',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: descriptionController,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Aciklama',
-                        hintText: 'Listenizi kisaca anlatin',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<ProductListVisibility>(
-                      initialValue: visibility,
-                      decoration: const InputDecoration(
-                        labelText: 'Gorunurluk',
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: ProductListVisibility.private,
-                          child: Text('Ozel'),
-                        ),
-                        DropdownMenuItem(
-                          value: ProductListVisibility.public,
-                          child: Text('Herkese acik'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setModalState(() => visibility = value);
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: _isCreating
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Vazgec'),
-                ),
-                FilledButton.icon(
-                  onPressed: _isCreating ? null : submit,
-                  icon: _isCreating
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add_rounded, size: 18),
-                  label: Text(
-                    _isCreating
-                        ? (existingList == null
-                              ? 'Olusturuluyor...'
-                              : 'Guncelleniyor...')
-                        : (existingList == null ? 'Liste olustur' : 'Kaydet'),
-                  ),
-                ),
-              ],
-            );
-          },
+              },
         );
       },
     );
@@ -285,33 +121,12 @@ class _SellerCollectionsManagementContentState
         SnackBar(
           content: Text(
             existingList == null
-                ? 'Liste olusturuldu. Artik reklamlarda secilebilir.'
-                : 'Liste guncellendi.',
+                ? 'Liste oluşturuldu. Artık reklamlarda seçilebilir.'
+                : 'Liste güncellendi.',
           ),
         ),
       );
     }
-  }
-
-  Widget _buildCoverPlaceholder() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: const [
-        Icon(
-          Icons.collections_bookmark_outlined,
-          color: Color(0xFF64748B),
-          size: 34,
-        ),
-        SizedBox(height: 8),
-        Text(
-          'Kapak gorseli secin',
-          style: TextStyle(
-            color: Color(0xFF64748B),
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
   }
 
   Future<void> _openBoostWizard(ProductList list) async {
@@ -383,129 +198,63 @@ class _SellerCollectionsManagementContentState
   @override
   Widget build(BuildContext context) {
     final lists = _appState.productLists;
+    final publicLists = lists.where((list) => list.isPublic).length;
+    final campaignReady = lists.where((list) => list.productCount > 0).length;
+    final productsSubtitle = _isLoadingProducts
+        ? 'Ürünler yükleniyor...'
+        : _sellerProductsError != null
+        ? 'Ürünler yüklenemedi'
+        : 'Mağaza ürünleri';
+
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            runSpacing: 12,
-            spacing: 12,
-            children: [
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Listeler',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Urunlerinizi listeler halinde gruplayin. Olusturdugunuz listeler reklam kampanyalarinda secilebilir.',
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 12.5,
-                        height: 1.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              FilledButton.icon(
-                onPressed: _showCreateCollectionDialog,
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(0, 38),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  textStyle: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                icon: const Icon(Icons.collections_bookmark_outlined),
-                label: const Text('Liste olustur'),
-              ),
-            ],
-          ),
+        SellerListsHeader(
+          totalLists: lists.length,
+          onCreateList: _showCreateCollectionDialog,
+          onRefresh: _loadSellerProducts,
         ),
-        const SizedBox(height: 16),
-        _buildProductsSummaryCard(),
-        const SizedBox(height: 16),
-        if (lists.isEmpty)
+        const SizedBox(height: SellerListsDashboardTokens.pageGap),
+        if (_sellerProductsError != null)
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(22),
+            margin: const EdgeInsets.only(bottom: SellerListsDashboardTokens.pageGap),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFECACA)),
             ),
-            child: Column(
+            child: Row(
               children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEEF2FF),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Icon(
-                    Icons.collections_bookmark_outlined,
-                    color: Color(0xFF4F46E5),
-                    size: 26,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  'Henuz listeniz yok',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Ilk listenizi olusturun, sonra reklam verirken dogrudan secin.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey.shade600, height: 1.5),
-                ),
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: _showCreateCollectionDialog,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, 38),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    textStyle: const TextStyle(
+                const Icon(Icons.error_outline, size: 18, color: Color(0xFFDC2626)),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Listeler yüklenemedi. Ürün verisi alınamadı.',
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
+                      color: Color(0xFF991B1B),
                     ),
                   ),
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Ilk listeyi olustur'),
                 ),
+                TextButton(onPressed: _loadSellerProducts, child: const Text('Yeniden dene')),
               ],
             ),
-          )
+          ),
+        SellerListMetricGrid(
+          metrics: buildSellerListMetrics(
+            totalLists: lists.length,
+            addableProducts: _sellerProducts.length,
+            publicLists: publicLists,
+            campaignReadyLists: campaignReady,
+            productsSubtitle: productsSubtitle,
+          ),
+        ),
+        const SizedBox(height: SellerListsDashboardTokens.pageGap),
+        if (lists.isEmpty)
+          ListsEmptyState(onCreateList: _showCreateCollectionDialog)
         else
           LayoutBuilder(
             builder: (context, constraints) {
@@ -514,7 +263,7 @@ class _SellerCollectionsManagementContentState
                   : constraints.maxWidth >= 760
                   ? 2
                   : 1;
-              final spacing = 16.0;
+              const spacing = 12.0;
               final itemWidth =
                   (constraints.maxWidth - (spacing * (crossAxisCount - 1))) /
                   crossAxisCount;
@@ -525,7 +274,15 @@ class _SellerCollectionsManagementContentState
                     .map(
                       (list) => SizedBox(
                         width: itemWidth,
-                        child: _buildCollectionCard(list),
+                        child: SellerListCard(
+                          list: list,
+                          onAddProducts: () => _showManageProductsDialog(list),
+                          onEdit: () => _showCreateCollectionDialog(list),
+                          onDelete: () => _deleteCollection(list),
+                          onBoost: () => _openBoostWizard(list),
+                          onRemoveProduct: (product) =>
+                              _removeProductFromList(list, product),
+                        ),
                       ),
                     )
                     .toList(growable: false),
@@ -548,286 +305,6 @@ class _SellerCollectionsManagementContentState
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: body,
-      ),
-    );
-  }
-
-  Widget _buildProductsSummaryCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEEF2FF),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.inventory_2_outlined,
-              color: Color(0xFF4F46E5),
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Listeye eklenebilir urunler',
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _isLoadingProducts
-                      ? 'Urunler yukleniyor...'
-                      : _sellerProductsError != null
-                      ? 'Urunler yuklenemedi, tekrar deneyin.'
-                      : '${_sellerProducts.length} urun listelere eklenmeye hazir.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ),
-          OutlinedButton.icon(
-            onPressed: _isLoadingProducts ? null : _loadSellerProducts,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 36),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              textStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            icon: const Icon(Icons.refresh_rounded, size: 16),
-            label: const Text('Yenile'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCollectionCard(ProductList list) {
-    final productCount = list.productIds.isNotEmpty
-        ? list.productIds.length
-        : list.products.length;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Stack(
-            children: [
-              Container(
-                height: 104,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  color: const Color(0xFFF8FAFC),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: (list.iconUrl ?? '').trim().isNotEmpty
-                    ? OptimizedImage(
-                        imageUrlOrPath: list.iconUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) {
-                          return _buildCoverPlaceholder();
-                        },
-                      )
-                    : _buildCoverPlaceholder(),
-              ),
-              Positioned(
-                top: 10,
-                right: 10,
-                child: FilledButton.icon(
-                  onPressed: productCount == 0
-                      ? null
-                      : () => _openBoostWizard(list),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF0F172A),
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(0, 36),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  icon: const Icon(Icons.campaign_outlined, size: 16),
-                  label: const Text('ÖNE ÇIKAR'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  list.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: list.isPublic
-                      ? const Color(0xFFDCFCE7)
-                      : const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  list.isPublic ? 'Acik' : 'Ozel',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w700,
-                    color: list.isPublic
-                        ? const Color(0xFF166534)
-                        : const Color(0xFF475569),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            (list.description ?? '').trim().isEmpty
-                ? 'Aciklama eklenmedi.'
-                : list.description!,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.grey.shade600,
-              fontSize: 12,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _CollectionMetaChip(
-                icon: Icons.inventory_2_outlined,
-                label: '$productCount urun',
-              ),
-              if ((list.category ?? '').trim().isNotEmpty)
-                _CollectionMetaChip(
-                  icon: Icons.category_outlined,
-                  label: list.category!,
-                ),
-              _CollectionMetaChip(
-                icon: Icons.schedule_outlined,
-                label:
-                    'Guncel: ${list.updatedAt.day.toString().padLeft(2, '0')}.${list.updatedAt.month.toString().padLeft(2, '0')}.${list.updatedAt.year}',
-              ),
-            ],
-          ),
-          if (list.products.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: list.products
-                  .take(4)
-                  .map(
-                    (product) => _RemovableProductChip(
-                      label: product.name,
-                      onRemove: () => _removeProductFromList(list, product),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              SizedBox(
-                height: 36,
-                child: FilledButton.icon(
-                  onPressed: () => _showManageProductsDialog(list),
-                  icon: const Icon(Icons.add_shopping_cart_rounded, size: 16),
-                  label: const Text('Urun ekle'),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(
-                height: 36,
-                child: OutlinedButton.icon(
-                  onPressed: () => _showCreateCollectionDialog(list),
-                  icon: const Icon(Icons.edit_outlined, size: 16),
-                  label: const Text('Duzenle'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(
-                height: 36,
-                child: OutlinedButton.icon(
-                  onPressed: () => _deleteCollection(list),
-                  icon: const Icon(Icons.delete_outline, size: 16),
-                  label: const Text('Sil'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }
@@ -1166,85 +643,6 @@ class _SellerCollectionsManagementContentState
           ),
         );
       },
-    );
-  }
-}
-
-class _CollectionMetaChip extends StatelessWidget {
-  const _CollectionMetaChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: const Color(0xFF64748B)),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF475569),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RemovableProductChip extends StatelessWidget {
-  const _RemovableProductChip({required this.label, required this.onRemove});
-
-  final String label;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF334155),
-              ),
-            ),
-          ),
-          const SizedBox(width: 5),
-          InkWell(
-            onTap: onRemove,
-            borderRadius: BorderRadius.circular(999),
-            child: const Icon(
-              Icons.close_rounded,
-              size: 14,
-              color: Color(0xFF64748B),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

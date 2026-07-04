@@ -556,7 +556,7 @@ class OrderDetailPage extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: () => _buyAgain(item),
+                  onPressed: () => _buyAgain(context, item),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
                     foregroundColor: Colors.white,
@@ -1676,8 +1676,18 @@ class OrderDetailPage extends StatelessWidget {
     );
   }
 
-  void _buyAgain(Map<String, dynamic> item) {
-    AppState().addToCart(_snapshotProduct(item));
+  Future<void> _buyAgain(BuildContext context, Map<String, dynamic> item) async {
+    final error = await AppState().addToCart(_snapshotProduct(item));
+    if (!context.mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Ürün sepete eklendi')),
+    );
   }
 
   Future<void> _openTrackingPage(

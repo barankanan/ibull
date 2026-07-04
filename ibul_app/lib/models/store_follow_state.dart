@@ -53,7 +53,7 @@ class StoreFollowState {
     }
     if (count >= 1000) {
       final thousands = count / 1000;
-      return '${thousands >= 10 ? thousands.toStringAsFixed(0) : thousands.toStringAsFixed(1)}B Takipçi';
+      return '${thousands >= 10 ? thousands.toStringAsFixed(0) : thousands.toStringAsFixed(1)} Bin Takipçi';
     }
     if (count <= 0) return '0 Takipçi';
     return '$count Takipçi';

@@ -11,12 +11,16 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
+import '../core/map_store_marker.dart';
+import '../core/map_loading_helpers.dart';
+import '../core/map_store_filter_helpers.dart';
+import '../core/runtime_diagnostic_logger.dart';
+import '../services/map_store_emergency_pipeline.dart';
 import '../core/app_state.dart';
 import '../core/store_logo_helper.dart';
 import '../models/product_model.dart';
 import '../services/location_access_service.dart';
 import '../services/push_notification_service.dart';
-import '../services/store_service.dart';
 import '../services/store/store_mapping_helpers.dart';
 import '../services/supabase_service.dart';
 import '../utils/external_navigation.dart';
@@ -51,7 +55,6 @@ class MapPage extends StatefulWidget {
 
 class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   final MapController _mapController = MapController();
-  final StoreService _storeService = StoreService();
   final TextEditingController _searchController = TextEditingController();
   int? _selectedBusinessIndex;
   static const LatLng _initialPosition = LatLng(
@@ -61,6 +64,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   LatLng? _userLocation;
   List<int> _filteredBusinessIndices = [];
   String _searchQuery = '';
+  List<int>? _searchCandidateIndices;
+  List<MapStoreMarker> _mapStores = [];
   List<Map<String, dynamic>> _businesses = [];
 
   // Animation controller for smooth map movement
@@ -71,6 +76,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   double _filterDistance = 10.0;
   List<String> _filterCategories = [];
   bool _filterOpenNow = false;
+  bool _userAppliedDistanceFilter = false;
   bool _isBusinessSheetOpen = false;
 
   // Live location tracking
@@ -84,6 +90,20 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   bool _isCenteringOnUserLocation = false;
   bool _isOpeningStoreDirections = false;
   bool _didOpenInitialTargetBusiness = false;
+  bool _storesLoadCompleted = false;
+  String? _storesLoadEmptyReason;
+  String? _storesLoadError;
+  int _rawStoreCount = 0;
+  int _markerStoreCount = 0;
+  String? _locationNotice;
+  bool _isMapReady = false;
+  bool _isLoadingStores = false;
+  bool _storesLoadInFlight = false;
+  bool _isLoadingLocation = false;
+  Timer? _mapLoadingFailsafeTimer;
+  static const Duration _mapLoadingFailsafe = Duration(seconds: 5);
+  static const Duration _mapLocationTimeout = Duration(seconds: 3);
+  static const Duration _mapStoresQueryTimeout = Duration(seconds: 8);
   static const double _nearStoreThresholdKm = 0.1; // 100 metre
   static const double _locationSyncDistanceMeters = 25;
   static const Duration _locationSyncInterval = Duration(seconds: 15);
@@ -129,14 +149,70 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     }
   }
 
+  void _rebuildFilteredIndices({bool log = false}) {
+    if (_businesses.isEmpty) {
+      _filteredBusinessIndices = [];
+      if (log) {
+        RuntimeDiagnosticLogger.map('stores after search/filter count=0');
+        RuntimeDiagnosticLogger.map('markers rendered count=0');
+      }
+      return;
+    }
+
+    _filteredBusinessIndices = filterMapStoreIndices(
+      businessCount: _businesses.length,
+      businessNameAt: (i) => _businesses[i]['name']?.toString(),
+      categoryAt: (i) => _businesses[i]['category']?.toString(),
+      distanceKmAt: (i) => _businesses[i]['distance_km'] as double?,
+      searchQuery: _searchCandidateIndices == null ? _searchQuery : '',
+      filterCategories: _filterCategories,
+      filterOpenNow: _filterOpenNow,
+      filterDistanceKm: _filterDistance,
+      hasUserLocation: _userLocation != null,
+      userAppliedDistanceFilter: _userAppliedDistanceFilter,
+      candidateIndices: _searchCandidateIndices,
+    );
+    _applyDistanceDataAndSort();
+
+    if (log) {
+      RuntimeDiagnosticLogger.map(
+        'stores after search/filter count=${_filteredBusinessIndices.length}',
+      );
+      RuntimeDiagnosticLogger.map(
+        'active search query=${_searchQuery.isEmpty ? '(empty)' : _searchQuery}',
+      );
+      RuntimeDiagnosticLogger.map(
+        'active category filter=${_filterCategories.isEmpty ? '(none)' : _filterCategories.join(',')}',
+      );
+      RuntimeDiagnosticLogger.map(
+        'user location available=${_userLocation != null}',
+      );
+      if (_userLocation != null) {
+        RuntimeDiagnosticLogger.map('query radius km=$_filterDistance');
+      }
+      RuntimeDiagnosticLogger.map(
+        'markers rendered count=${_filteredBusinessIndices.length}',
+      );
+    }
+  }
+
+  String get _mapListEmptyMessage => resolveMapFilteredEmptyMessage(
+        rawCount: _rawStoreCount,
+        markerCount: _markerStoreCount,
+        filteredCount: _filteredBusinessIndices.length,
+        searchQuery: _searchQuery,
+        filterCategories: _filterCategories,
+        hasUserLocation: _userLocation != null,
+        filterDistanceKm: _filterDistance,
+        userAppliedDistanceFilter: _userAppliedDistanceFilter,
+      );
+
   String _normalize(String s) {
     return TextNormalizer.normalize(s);
   }
 
   void _addProximityDebugLog(String message) {
-    final timestamp = TimeOfDay.now().format(context);
-    final line = '[$timestamp] $message';
-    debugPrint('[MapProximity] $line');
+    RuntimeDiagnosticLogger.mapProximity(message);
   }
 
   Future<void> _syncUserLocationToBackend() async {
@@ -181,7 +257,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         } else if (previous != null && movedMeters >= 3) {
           _userHeadingDegrees = _bearingBetween(previous, nextLocation);
         }
-        _applyDistanceDataAndSort();
+        _rebuildFilteredIndices();
       });
     } else {
       _userLocation = nextLocation;
@@ -212,18 +288,25 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         _lastProximityCheckAt == null ||
         now.difference(_lastProximityCheckAt!) >= const Duration(seconds: 10) ||
         movedMeters >= _locationSyncDistanceMeters;
-    if (shouldCheckProximity) {
+    if (shouldCheckProximity && _storesLoadCompleted) {
       _lastProximityCheckAt = now;
       unawaited(_checkAndSendProximityNotifications());
     }
   }
 
-  Future<void> _initializeNotifications() async {
+  Future<void> _ensureNotificationsReady() async {
     if (kIsWeb || _notificationsReady) return;
 
     _notificationsReady = true;
     _addProximityDebugLog('Bildirim sistemi hazir.');
-    await _checkAndSendProximityNotifications();
+  }
+
+  void _maybeStartProximityAfterStoresLoaded() {
+    if (!_storesLoadCompleted || _mapStores.isEmpty) return;
+    unawaited(_ensureNotificationsReady());
+    if (_userLocation != null) {
+      unawaited(_checkAndSendProximityNotifications());
+    }
   }
 
   bool _matchesFavoriteStoreProduct(Product favorite, Product storeProduct) {
@@ -416,38 +499,29 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
   Future<void> _checkAndSendProximityNotifications() async {
     if (!mounted) return;
+    if (!_storesLoadCompleted) return;
+    if (!_notificationsReady) return;
+    if (_userLocation == null) return;
 
-    if (!_notificationsReady) {
-      _addProximityDebugLog('Bildirim sistemi hazir degil.');
-      return;
-    }
-    if (_userLocation == null) {
-      _addProximityDebugLog(
-        'Kullanici konumu yok, yakinlik kontrolu yapilmadi.',
-      );
-      return;
-    }
-    if (_businesses.isEmpty) {
-      _addProximityDebugLog('Magaza listesi bos, yakinlik kontrolu yapilmadi.');
+    RuntimeDiagnosticLogger.mapProximity(
+      'input stores count=${_mapStores.length}',
+    );
+
+    if (_mapStores.isEmpty) {
+      final reason = _storesLoadEmptyReason?.trim();
+      if (reason != null && reason.isNotEmpty) {
+        _addProximityDebugLog('Magaza listesi bos: $reason');
+      }
       return;
     }
 
     _addProximityDebugLog(
-      'Yakinlik taramasi basladi. ${_businesses.length} magaza kontrol ediliyor.',
+      'Yakinlik taramasi basladi. ${_mapStores.length} magaza kontrol ediliyor.',
     );
 
-    for (final business in _businesses) {
-      final storeName = business['name']?.toString() ?? '';
-      final location = business['location'] as LatLng?;
-      if (storeName.isEmpty) {
-        _addProximityDebugLog('Adsiz magaza atlandi.');
-        continue;
-      }
-      if (location == null) {
-        _addProximityDebugLog('$storeName atlandi: konum bilgisi yok.');
-        continue;
-      }
-
+    for (final marker in _mapStores) {
+      final storeName = marker.name;
+      final location = marker.location;
       final km = _distanceKmTo(location);
       if (km == null) {
         _addProximityDebugLog(
@@ -508,6 +582,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    RuntimeDiagnosticLogger.map('opening');
     _moveAnimationController =
         AnimationController(
           vsync: this,
@@ -529,18 +604,56 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     }
 
     _businesses = [];
-    // ... rest of initState
+    _mapStores = [];
     if (widget.targetBusiness != null) {
       // ... existing code
     }
 
     _filteredBusinessIndices = [];
-    _initializeNotifications();
-    _initializeMap();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _isMapReady = true;
+      });
+      RuntimeDiagnosticLogger.map('render default center');
+      _mapController.move(_initialPosition, 14.0);
+      _startMapLoadingFailsafe();
+    });
+    scheduleMicrotask(() {
+      RuntimeDiagnosticLogger.map('stores query scheduled');
+      unawaited(_loadMapStoresEmergencyPipeline());
+    });
+    unawaited(_checkLocationPermissionAndStart());
+  }
+
+  void _startMapLoadingFailsafe() {
+    _mapLoadingFailsafeTimer?.cancel();
+    _mapLoadingFailsafeTimer = Timer(_mapLoadingFailsafe, () {
+      if (!mounted) return;
+      if (_isLoadingStores || _isLoadingLocation) {
+        RuntimeDiagnosticLogger.map(
+          'loading failsafe fired — forcing loading cleared',
+        );
+        _clearMapLoadingStates();
+      }
+    });
+  }
+
+  void _clearMapLoadingStates() {
+    if (!mounted) return;
+    final hadLoading = _isLoadingStores || _isLoadingLocation;
+    setState(() {
+      _isLoadingStores = false;
+      _isLoadingLocation = false;
+    });
+    if (hadLoading) {
+      RuntimeDiagnosticLogger.map('loading cleared');
+    }
   }
 
   @override
   void dispose() {
+    _mapLoadingFailsafeTimer?.cancel();
     _positionStreamSubscription?.cancel();
     _searchDebounce?.cancel();
     if (_activeMapMoveListener != null) {
@@ -551,12 +664,160 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  Future<void> _initializeMap() async {
-    // 1. Start fetching stores immediately (Non-blocking UI)
-    _loadStoresFromSupabase();
+  Future<void> _loadMapStoresEmergencyPipeline() async {
+    if (_storesLoadInFlight) {
+      RuntimeDiagnosticLogger.map('stores query skipped — load already in flight');
+      return;
+    }
+    _storesLoadInFlight = true;
+    final queryStartedMs = DateTime.now().millisecondsSinceEpoch;
+    if (mounted) {
+      setState(() {
+        _isLoadingStores = true;
+        _storesLoadError = null;
+        _storesLoadCompleted = false;
+        _storesLoadEmptyReason = null;
+      });
+    }
+    var rawCount = 0;
+    try {
+      final result = await MapStoreEmergencyPipeline()
+          .load()
+          .timeout(_mapStoresQueryTimeout);
+      final list = result.rows;
+      rawCount = list.length;
+      _rawStoreCount = rawCount;
+      RuntimeDiagnosticLogger.map(
+        'stores raw count=$rawCount source=${result.primarySource}',
+      );
+      RuntimeDiagnosticLogger.map(
+        'stores query ms=${DateTime.now().millisecondsSinceEpoch - queryStartedMs}',
+      );
+      if (list.isEmpty) {
+        _storesLoadEmptyReason =
+            'Mağaza sorgusu boş döndü — terminalde [Map] empty reason satırına bakın.';
+      }
 
-    // 2. Check permission and start location updates
-    _checkLocationPermissionAndStart();
+      if (!mounted) return;
+
+      final newMarkers = <MapStoreMarker>[];
+      var cityFallbackCount = 0;
+
+      for (final row in list) {
+        final source =
+            row['_map_pipeline_source']?.toString() ?? result.primarySource;
+        final marker = MapStoreMarker.fromPipelineRow(
+          row,
+          disambiguationIndex: newMarkers.length,
+          source: source,
+          mapCategory: _mapStoreCategoryToMap,
+        );
+        if (marker == null) continue;
+        if (marker.fromCityFallback) cityFallbackCount++;
+        newMarkers.add(marker);
+      }
+
+      RuntimeDiagnosticLogger.map(
+        'stores with coordinates count=${newMarkers.length}',
+      );
+      RuntimeDiagnosticLogger.mapFallback(
+        'synthetic markers generated count=$cityFallbackCount',
+      );
+      if (cityFallbackCount > 0) {
+        RuntimeDiagnosticLogger.map(
+          'city/district coordinate fallback count=$cityFallbackCount',
+        );
+      }
+
+      final newBusinesses = newMarkers
+          .asMap()
+          .entries
+          .map((entry) => entry.value.toBusinessRecord(index: entry.key))
+          .toList(growable: false);
+
+      _markerStoreCount = newBusinesses.length;
+
+      setState(() {
+        _mapStores = newMarkers;
+        _businesses = newBusinesses;
+        _storesLoadError = newBusinesses.isEmpty
+            ? resolveMapStoresEmptyMessage(
+                rawCount: rawCount,
+                markerCount: newBusinesses.length,
+              )
+            : null;
+        _rebuildFilteredIndices();
+      });
+      _rebuildFilteredIndices(log: true);
+      RuntimeDiagnosticLogger.map(
+        'markers rendered count=${_filteredBusinessIndices.length}',
+      );
+      if (widget.initialSearchQuery != null &&
+          widget.initialSearchQuery!.isNotEmpty) {
+        unawaited(_performSearch(widget.initialSearchQuery!));
+      } else if (_searchQuery.isNotEmpty) {
+        unawaited(_performSearch(_searchQuery));
+      } else {
+        _searchCandidateIndices = null;
+      }
+
+      if (widget.targetBusiness != null) {
+        final index = _businesses.indexWhere(
+          (b) =>
+              _normalize(b['name'].toString()) ==
+              _normalize(widget.targetBusiness!['name'].toString()),
+        );
+
+        if (index != -1) {
+          _openInitialTargetBusiness(index);
+        }
+      } else if (widget.targetStoreName != null) {
+        final index = _businesses.indexWhere(
+          (b) =>
+              _normalize(b['name'].toString()) ==
+              _normalize(widget.targetStoreName!),
+        );
+
+        if (index != -1) {
+          _openInitialTargetBusiness(index);
+        }
+      }
+    } on TimeoutException catch (e, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'Map',
+        e,
+        stackTrace,
+        context: 'stores_timeout',
+      );
+      if (!mounted) return;
+      setState(() {
+        _storesLoadError =
+            'Mağazalar şu an yüklenemedi. Harita varsayılan bölgede açık.';
+      });
+    } catch (e, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure('Map', e, stackTrace, context: 'stores');
+      if (!mounted) return;
+      setState(() {
+        _storesLoadError =
+            'Harita mağazaları yüklenemedi. Bağlantınızı kontrol edin.';
+      });
+    } finally {
+      _storesLoadInFlight = false;
+      _storesLoadCompleted = true;
+      if (mounted) {
+        setState(() => _isLoadingStores = false);
+      }
+      _clearMapLoadingStates();
+      _maybeStartProximityAfterStoresLoaded();
+    }
+  }
+
+  void _showDefaultMapCenter({String? reason}) {
+    if (!mounted) return;
+    _mapController.move(_initialPosition, 14.0);
+    if (reason != null && reason.isNotEmpty) {
+      RuntimeDiagnosticLogger.map(reason);
+    }
   }
 
   Future<Position?> _getFreshCurrentPosition() async {
@@ -611,6 +872,49 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   // _businesses is now an instance variable, initialized in initState
 
   Future<void> _checkLocationPermissionAndStart() async {
+    RuntimeDiagnosticLogger.map('location request start');
+    if (mounted) {
+      setState(() => _isLoadingLocation = true);
+    }
+    final locationStartedMs = DateTime.now().millisecondsSinceEpoch;
+    try {
+      await _checkLocationPermissionAndStartImpl().timeout(_mapLocationTimeout);
+    } on TimeoutException {
+      RuntimeDiagnosticLogger.map(
+        'location timeout fallback to default center',
+      );
+      if (mounted) {
+        setState(() {
+          _locationNotice =
+              'Konum alınamadı, varsayılan bölge gösteriliyor.';
+        });
+      }
+      _showDefaultMapCenter(reason: 'location timeout');
+    } catch (e, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure('Map', e, stackTrace, context: 'location');
+      if (mounted) {
+        setState(() {
+          _locationNotice =
+              'Konum alınamadı, varsayılan bölge gösteriliyor.';
+        });
+      }
+      _showDefaultMapCenter(reason: 'location catch');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingLocation = false);
+      }
+      final elapsed = DateTime.now().millisecondsSinceEpoch - locationStartedMs;
+      if (_userLocation != null) {
+        RuntimeDiagnosticLogger.map(
+          'location loaded lat=${_userLocation!.latitude} '
+          'lng=${_userLocation!.longitude} ms=$elapsed',
+        );
+      }
+      _clearMapLoadingStates();
+    }
+  }
+
+  Future<void> _checkLocationPermissionAndStartImpl() async {
     final locationAccess = LocationAccessService.instance;
 
     if (kIsWeb) {
@@ -648,12 +952,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
           setState(() {
             _userLocation = LatLng(position!.latitude, position.longitude);
-            _applyDistanceDataAndSort();
+            _rebuildFilteredIndices();
             // On Web, auto-center immediately when location is found
             _mapController.move(_userLocation!, 15.0);
           });
           _syncUserLocationToBackend();
-          _checkAndSendProximityNotifications();
+          _maybeStartProximityAfterStoresLoaded();
           _startLiveLocationUpdates();
         } else if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -697,11 +1001,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
     try {
       final serviceEnabled = await locationAccess.isLocationServiceEnabled();
+      RuntimeDiagnosticLogger.map(
+        'location permission status=serviceEnabled:$serviceEnabled',
+      );
       if (!serviceEnabled) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Konum servisleri kapalı. Lütfen açın.'),
+              content: const Text('Konum servisleri kapalı. Harita varsayılan konumda açılıyor.'),
               action: SnackBarAction(
                 label: 'Ayarlar',
                 onPressed: () {
@@ -711,16 +1018,27 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             ),
           );
         }
+        _showDefaultMapCenter(reason: 'location service disabled');
         return;
       }
 
       final permission = await locationAccess.ensurePermission();
+      RuntimeDiagnosticLogger.map('location permission status=$permission');
       if (permission == LocationPermission.denied) {
         if (mounted) {
+          setState(() {
+            _locationNotice =
+                'Konum alınamadı, varsayılan bölge gösteriliyor.';
+          });
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Konum izni reddedildi.')),
+            const SnackBar(
+              content: Text(
+                'Konum izni verilmedi. Harita varsayılan konumda açılıyor.',
+              ),
+            ),
           );
         }
+        _showDefaultMapCenter(reason: 'location permission denied');
         return;
       }
 
@@ -732,11 +1050,11 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
               title: const Text('Konum İzni Gerekli'),
               content: const Text(
                 'Konum izni kalıcı olarak reddedilmiş veya kısıtlanmış. '
-                'Uygulamanın konumunuzu bulabilmesi için cihaz ayarlarından izin vermeniz gerekmektedir.',
+                'Harita varsayılan konumda açılacak; izin vermek için ayarlara gidebilirsiniz.',
               ),
               actions: [
                 TextButton(
-                  child: const Text('İptal'),
+                  child: const Text('Tamam'),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 TextButton(
@@ -750,31 +1068,37 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             ),
           );
         }
+        _showDefaultMapCenter(reason: 'location permission deniedForever');
         return;
       }
 
       final position = await locationAccess.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 3),
         ),
         requestPermissionIfNeeded: false,
       );
       if (position == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Konum alınamadı.')),
+            const SnackBar(
+              content: Text('Konum alınamadı. Harita varsayılan konumda açılıyor.'),
+            ),
           );
         }
+        _showDefaultMapCenter(reason: 'location position null');
         return;
       }
 
       if (mounted) {
         setState(() {
           _userLocation = LatLng(position.latitude, position.longitude);
-          _applyDistanceDataAndSort();
+          _locationNotice = null;
+          _rebuildFilteredIndices();
         });
         _syncUserLocationToBackend();
-        _checkAndSendProximityNotifications();
+        _maybeStartProximityAfterStoresLoaded();
 
         // Move map to user location on initial load
         if (_userLocation != null) {
@@ -783,13 +1107,16 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       }
 
       _startLiveLocationUpdates();
-    } catch (e) {
-      debugPrint('Konum hatası: $e');
+    } catch (e, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure('Map', e, stackTrace, context: 'location');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Konum alınamadı: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Konum alınamadı. Harita varsayılan konumda açılıyor.'),
+          ),
+        );
       }
+      _showDefaultMapCenter(reason: 'location catch');
     }
   }
 
@@ -843,130 +1170,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             debugPrint('Location stream error: $e');
           },
         );
-  }
-
-  Future<void> _loadStoresFromSupabase() async {
-    try {
-      final list = await _storeService.getStoresForMap();
-      if (list.isEmpty) {
-        debugPrint(
-          '[MapPage] getStoresForMap returned 0 stores '
-          '(check Supabase logs above for query errors)',
-        );
-      }
-
-      if (!mounted) return;
-
-      final newBusinesses = <Map<String, dynamic>>[];
-
-      for (final s in list) {
-        // ... (parsing logic)
-        final lat = s['store_lat'] as num?;
-        final lng = s['store_lng'] as num?;
-        if (lat == null || lng == null) continue;
-
-        final name = s['business_name'] as String? ?? 'Mağaza';
-        final category = _mapStoreCategoryToMap(s['category'] as String?);
-
-        final List<String> gallery = [];
-        if (s['gallery_images'] is List) {
-          for (final e in s['gallery_images'] as List) {
-            if (gallery.length >= 5) break;
-            if (e != null && e.toString().isNotEmpty) gallery.add(e.toString());
-          }
-        }
-
-        final phone = s['phone']?.toString().trim() ?? '';
-        final email = s['email']?.toString().trim() ?? '';
-        final hasContactInfo = phone.isNotEmpty || email.isNotEmpty;
-        final city = s['city']?.toString().trim() ?? '';
-        final district = s['district']?.toString().trim() ?? '';
-        final description = resolveMapStoreBio(s);
-        final addressLine = formatMapStoreAddress(
-          address: s['address']?.toString(),
-          district: district,
-          city: city,
-        );
-        final logoUrl = s['logo_url']?.toString();
-        final hasDescription = description.isNotEmpty;
-        final hasCategory = (s['category']?.toString().trim().isNotEmpty ?? false);
-        final hasLogo = logoUrl != null && logoUrl.isNotEmpty;
-
-        newBusinesses.add({
-          'id': s['seller_id'],
-          'seller_id': s['seller_id'],
-          'name': name,
-          'distance': '-',
-          'distance_km': null,
-          'location': LatLng(lat.toDouble(), lng.toDouble()),
-          'category': category,
-          'description': description,
-          'address': addressLine,
-          'address_line': addressLine,
-          'fromSupabase': true,
-          'logo_url': logoUrl,
-          'gallery_images': gallery,
-          'follower_count': (s['follower_count'] as num?)?.toInt() ?? 0,
-          'rating': (s['rating'] as num?)?.toDouble() ?? 0.0,
-          'created_at': s['created_at']?.toString(),
-          'city': city,
-          'district': district,
-          'has_contact_info': hasContactInfo,
-          'profile_complete': hasLogo && hasDescription && hasCategory && hasContactInfo,
-          'is_brand_verified': s['is_brand_verified'] == true,
-        });
-      }
-
-      setState(() {
-        _businesses = newBusinesses;
-
-        // If there is an initial search query, perform search now that stores are loaded
-        if (widget.initialSearchQuery != null &&
-            widget.initialSearchQuery!.isNotEmpty) {
-          _filteredBusinessIndices = List.generate(
-            _businesses.length,
-            (i) => i,
-          );
-        } else if (_filteredBusinessIndices.isEmpty) {
-          _filteredBusinessIndices = List.generate(
-            _businesses.length,
-            (i) => i,
-          );
-        }
-        _applyDistanceDataAndSort();
-      });
-      if (widget.initialSearchQuery != null &&
-          widget.initialSearchQuery!.isNotEmpty) {
-        unawaited(_performSearch(widget.initialSearchQuery!));
-      }
-      _checkAndSendProximityNotifications();
-
-      // Check for target business AFTER stores are loaded
-      if (widget.targetBusiness != null) {
-        final index = _businesses.indexWhere(
-          (b) =>
-              _normalize(b['name'].toString()) ==
-              _normalize(widget.targetBusiness!['name'].toString()),
-        );
-
-        if (index != -1) {
-          _openInitialTargetBusiness(index);
-        }
-      } else if (widget.targetStoreName != null) {
-        final index = _businesses.indexWhere(
-          (b) =>
-              _normalize(b['name'].toString()) ==
-              _normalize(widget.targetStoreName!),
-        );
-
-        if (index != -1) {
-          _openInitialTargetBusiness(index);
-        }
-      }
-    } catch (e, stackTrace) {
-      debugPrint('[MapPage] getStoresForMap failed: $e');
-      debugPrintStack(stackTrace: stackTrace);
-    }
   }
 
   String _mapStoreCategoryToMap(String? category) {
@@ -1043,61 +1246,10 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   void _applyMapFilters(Map<String, dynamic> filters) {
     setState(() {
       _filterDistance = filters['distance'];
-      _filterCategories = filters['categories'];
-      _filterOpenNow = filters['openNow'];
-
-      // Re-filter businesses based on new criteria
-      // Note: Distance filtering is simulated here since we don't have real user location calculation
-      // In a real app, you would calculate distance between user location and business location
-
-      final filteredIndices = <int>[];
-
-      for (int i = 0; i < _businesses.length; i++) {
-        final business = _businesses[i];
-
-        // Category Filter
-        if (_filterCategories.isNotEmpty) {
-          final category = business['category'] as String? ?? 'other';
-          // Simple mapping or direct comparison
-          bool categoryMatch = _filterCategories.any(
-            (c) => c.toLowerCase() == category.toLowerCase(),
-          );
-          if (!categoryMatch) continue;
-        }
-
-        // Open Now Filter (Simulated)
-        if (_filterOpenNow) {
-          // Assume randomly some are closed for demo or check business hours if available
-          // For now, let's just say index % 5 == 0 are closed
-          if (i % 5 == 0) continue;
-        }
-
-        // Distance Filter (real distance if location exists)
-        if (_userLocation != null) {
-          final location = business['location'] as LatLng?;
-          final km = location == null ? null : _distanceKmTo(location);
-          if (km == null || km > _filterDistance) continue;
-        }
-
-        // Search Query Filter (preserve existing search logic)
-        if (_searchQuery.isNotEmpty) {
-          // This part is handled by _performSearch, but we need to combine them.
-          // For simplicity, if search is active, we might want to re-run search logic
-          // or just apply filters on top of search results.
-          // Let's rely on _performSearch to handle text search, and this function to handle property filters.
-          // But here we are rebuilding _filteredBusinessIndices from scratch.
-          // So we should check search query match here too.
-
-          final name = _normalize(business['name'].toString());
-          final normalizedQuery = _normalize(_searchQuery);
-          if (!name.contains(normalizedQuery)) continue;
-        }
-
-        filteredIndices.add(i);
-      }
-
-      _filteredBusinessIndices = filteredIndices;
-      _applyDistanceDataAndSort();
+      _filterCategories = List<String>.from(filters['categories'] as List);
+      _filterOpenNow = filters['openNow'] as bool;
+      _userAppliedDistanceFilter = true;
+      _rebuildFilteredIndices(log: true);
 
       if (_selectedBusinessIndex != null &&
           !_filteredBusinessIndices.contains(_selectedBusinessIndex)) {
@@ -1105,7 +1257,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       }
     });
 
-    // Show feedback
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -1142,11 +1293,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     if (trimmedQuery.isEmpty) {
       if (!mounted || requestVersion != _searchRequestVersion) return;
       setState(() {
-        _filteredBusinessIndices = List.generate(
-          _businesses.length,
-          (index) => index,
-        );
-        _applyDistanceDataAndSort();
+        _searchCandidateIndices = null;
+        _rebuildFilteredIndices(log: true);
       });
       return;
     }
@@ -1175,8 +1323,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     }
 
     setState(() {
-      _filteredBusinessIndices = combinedIndices.toList(growable: false);
-      _applyDistanceDataAndSort();
+      _searchCandidateIndices = combinedIndices.toList(growable: false);
+      _rebuildFilteredIndices(log: true);
     });
 
     if (_filteredBusinessIndices.isNotEmpty) {
@@ -1917,6 +2065,30 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           SafeArea(
             child: Column(
               children: [
+                if (_locationNotice != null)
+                  MaterialBanner(
+                    content: Text(_locationNotice!),
+                    leading: const Icon(Icons.location_off_outlined),
+                    actions: [
+                      IconButton(
+                        onPressed: () {
+                          setState(() => _locationNotice = null);
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                if (_storesLoadError != null)
+                  MaterialBanner(
+                    content: Text(_storesLoadError!),
+                    leading: const Icon(Icons.info_outline),
+                    actions: [
+                      TextButton(
+                        onPressed: _loadMapStoresEmergencyPipeline,
+                        child: const Text('Tekrar dene'),
+                      ),
+                    ],
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                   child: Row(
@@ -2043,12 +2215,20 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                 Container(
                   height: 52,
                   margin: const EdgeInsets.symmetric(vertical: 10),
-                  child: _filteredBusinessIndices.isEmpty
+                  child: !_storesLoadCompleted && _mapStores.isEmpty
+                      ? const SizedBox.shrink()
+                      : _filteredBusinessIndices.isEmpty
                       ? Center(
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: Text(
-                              'Sonuç bulunamadı',
+                              _storesLoadCompleted && _markerStoreCount == 0
+                                  ? (_mapListEmptyMessage.isEmpty
+                                        ? 'Sonuç bulunamadı'
+                                        : _mapListEmptyMessage)
+                                  : (_mapListEmptyMessage.isEmpty
+                                        ? 'Sonuç bulunamadı'
+                                        : _mapListEmptyMessage),
                               style: TextStyle(
                                 color: Colors.grey[600],
                                 fontSize: 13,
@@ -2167,7 +2347,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.only(top: 8),
-                    child: FlutterMap(
+                    child: Stack(
+                      children: [
+                        FlutterMap(
                       mapController: _mapController,
                       options: MapOptions(
                         initialCenter: _userLocation ?? _initialPosition,
@@ -2244,6 +2426,52 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                                 ),
                               ),
                             ],
+                          ),
+                      ],
+                    ),
+                        if (shouldShowStoreLoadingChip(
+                          isMapReady: _isMapReady,
+                          isLoadingStores: _isLoadingStores,
+                          businessCount: _businesses.length,
+                        ))
+                          Positioned(
+                            top: 12,
+                            right: 12,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.92),
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.08),
+                                    blurRadius: 8,
+                                  ),
+                                ],
+                              ),
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Mağazalar yükleniyor…',
+                                      style: TextStyle(fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
                       ],
                     ),
