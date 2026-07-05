@@ -9,6 +9,7 @@ import '../core/app_perf_logger.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../core/home_section_trace.dart';
+import '../core/home_data_diagnostics.dart';
 import '../core/section_load_state.dart';
 import '../models/product_list_model.dart';
 import 'optimized_image.dart';
@@ -24,6 +25,8 @@ class SponsoredProductListsSection extends StatefulWidget {
     this.categoryFilter,
     this.maxItems = 6,
     this.loadTimeout = const Duration(seconds: 10),
+    this.suppressSkeleton = false,
+    this.maxSkeletonDuration = const Duration(seconds: 4),
     super.key,
   });
 
@@ -33,6 +36,8 @@ class SponsoredProductListsSection extends StatefulWidget {
   final String? categoryFilter;
   final int maxItems;
   final Duration loadTimeout;
+  final bool suppressSkeleton;
+  final Duration maxSkeletonDuration;
 
   @override
   State<SponsoredProductListsSection> createState() =>
@@ -47,11 +52,29 @@ class _SponsoredProductListsSectionState
 
   SectionLoadState _loadState = SectionLoadState.beginLoading();
   List<ProductList> _lists = const [];
+  bool _skeletonTimedOut = false;
+  Timer? _skeletonTimer;
 
   @override
   void initState() {
     super.initState();
+    HomeSectionDiagnostics.loading(section: 'sponsored_lists');
+    _skeletonTimer = Timer(widget.maxSkeletonDuration, () {
+      if (!mounted || _skeletonTimedOut || !_loadState.isLoading) return;
+      setState(() => _skeletonTimedOut = true);
+      HomeSkeletonDiagnostics.timeout(source: 'sponsored_lists');
+      HomeSectionDiagnostics.hidden(
+        section: 'sponsored_lists',
+        reason: 'timeout',
+      );
+    });
     unawaited(_loadLists());
+  }
+
+  @override
+  void dispose() {
+    _skeletonTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -91,6 +114,25 @@ class _SponsoredProductListsSectionState
             : const SectionLoadState(phase: SectionLoadPhase.loaded);
       });
       state = lists.isEmpty ? SectionLoadPhase.empty : SectionLoadPhase.loaded;
+      if (lists.isEmpty) {
+        HomeAdsDiagnostics.sponsoredHidden(reason: 'empty');
+        HomeSectionDiagnostics.hidden(
+          section: 'sponsored_lists',
+          reason: widget.suppressSkeleton
+              ? 'empty_after_products_loaded'
+              : 'empty',
+        );
+      } else {
+        HomeAdsDiagnostics.sponsoredRaw(count: lists.length);
+        HomeAdsDiagnostics.sponsoredRendered(
+          count: lists.length,
+          widget: 'SponsoredProductListsSection',
+        );
+        HomeSectionDiagnostics.render(
+          section: 'sponsored_lists',
+          itemCount: lists.length,
+        );
+      }
     } on TimeoutException {
       source = 'timeout';
       state = SectionLoadPhase.empty;
@@ -143,10 +185,25 @@ class _SponsoredProductListsSectionState
   @override
   Widget build(BuildContext context) {
     if (_loadState.isLoading) {
+      if (widget.suppressSkeleton || _skeletonTimedOut) {
+        HomeSkeletonDiagnostics.hide(
+          source: 'sponsored_lists',
+          reason: widget.suppressSkeleton ? 'products_loaded' : 'timeout',
+        );
+        return const SizedBox.shrink();
+      }
+      HomeSkeletonDiagnostics.show(
+        source: 'sponsored_lists',
+        reason: 'fetch_pending',
+      );
       return const _SponsoredListsSectionSkeleton();
     }
 
     if (_lists.isEmpty) {
+      HomeSkeletonDiagnostics.hide(
+        source: 'sponsored_lists',
+        reason: 'ads_empty',
+      );
       return const SizedBox.shrink();
     }
 

@@ -6,22 +6,30 @@ import '../../../widgets/sponsored_product_lists_section.dart';
 
 /// Sponsored rails — deferred from home core.
 class HomeSponsoredSection extends StatelessWidget {
-  const HomeSponsoredSection({super.key});
+  const HomeSponsoredSection({
+    super.key,
+    this.suppressSkeleton = false,
+  });
+
+  final bool suppressSkeleton;
 
   @override
   Widget build(BuildContext context) {
     WebPerfTrace.instance.mark(WebPerfTraceStage.deferredCampaignLoaded);
-    return const Column(
+    return Column(
       children: [
         SponsoredProductListsSection(
           title: 'Öne Çıkan Listeler',
           subtitle: 'Ana sayfada sponsorlu olarak gösterilen ürün listeleri',
           placement: AdPlacement.homeFeed,
+          suppressSkeleton: suppressSkeleton,
         ),
-        SizedBox(height: 16),
+        const SizedBox(height: 16),
       ],
     );
   }
 }
 
-Widget buildHomeSponsoredSection() => const HomeSponsoredSection();
+Widget buildHomeSponsoredSection({bool suppressSkeleton = false}) {
+  return HomeSponsoredSection(suppressSkeleton: suppressSkeleton);
+}

@@ -52,7 +52,7 @@ class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection>
 
   @override
   Widget build(BuildContext context) {
-    if (!_ready || (widget.isLoading && widget.products.isEmpty)) {
+    if (!_ready && widget.isLoading && widget.products.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: SkeletonLoading(
@@ -61,6 +61,10 @@ class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection>
           borderRadius: 12,
         ),
       );
+    }
+
+    if (!_ready && widget.products.isNotEmpty) {
+      return const SizedBox.shrink();
     }
 
     if (widget.errorMessage != null && widget.products.isEmpty) {
@@ -72,6 +76,9 @@ class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection>
 
     if (widget.products.isEmpty) {
       HomeUiDiagnostics.noProductsEmptyState();
+      if (!widget.showViewAll) {
+        return const SizedBox.shrink();
+      }
       return _HomeProductEmptyState(
         message: 'Henüz ürün bulunmuyor.',
         onRetry: widget.onRetry,

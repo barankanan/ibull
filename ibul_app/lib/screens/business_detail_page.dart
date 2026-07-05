@@ -11,6 +11,7 @@ import '../models/product_model.dart';
 import '../models/product_pricing.dart';
 import '../models/product_list_model.dart';
 import '../models/db_product.dart';
+import '../core/home_data_diagnostics.dart';
 import '../services/store_service.dart';
 import '../services/supabase_service.dart';
 import '../services/product_list_service.dart';
@@ -349,6 +350,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       }
 
       debugPrint('✅ Sonuç: ${storeProducts.length} ürün listelenecek.');
+      StoreDetailDataDiagnostics.products(count: storeProducts.length);
       debugPrint(
         '[BDP-Timing] ${sw.elapsedMilliseconds}ms — _fetchStoreProducts products ready (${storeProducts.length})',
       );

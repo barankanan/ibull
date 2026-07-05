@@ -8,6 +8,7 @@ import 'auth/user_identity.dart';
 import 'auth/ibul_auth_context.dart';
 import 'auth/auth_listener_guard.dart';
 import 'auth/auth_debug_logger.dart';
+import 'auth/auth_flow_logger.dart';
 import 'cart_state.dart';
 import 'favorite_state.dart';
 import 'review_state.dart';
@@ -135,6 +136,39 @@ class AppState extends ChangeNotifier {
       IbulAuthContextService.instance.isCustomerContext;
   bool get isLoggedIn => isCustomerLoggedIn;
 
+  /// Eager customer session after login form success — unblocks UI before the
+  /// auth listener finishes profile hydration.
+  Future<void> applyCustomerSessionFromSignIn({String? role}) async {
+    final user = _authService.currentUser;
+    if (user == null) return;
+
+    await IbulAuthContextService.instance.setActiveContext(
+      IbulAuthContext.customer,
+      notify: false,
+    );
+
+    Map<String, dynamic>? profile;
+    try {
+      profile = await _authService
+          .getUserProfile()
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {}
+
+    _currentUser = UserIdentity.buildAuthUserMap(
+      uid: user.id,
+      email: user.email,
+      profile: profile,
+      userMetadata: Map<String, dynamic>.from(user.userMetadata ?? const {}),
+    );
+    AuthFlowLogger.customerSessionApplied(
+      userId: user.id,
+      context: IbulAuthContext.customer,
+    );
+    AuthFlowLogger.appStateAuthUpdated(isLoggedIn: isCustomerLoggedIn);
+    notifyListeners();
+    unawaited(_loadUserData());
+  }
+
   // Search History Persistence
   Future<void> _loadSearchHistory() async {
     try {
@@ -183,11 +217,13 @@ class AppState extends ChangeNotifier {
     }
 
     try {
+      AuthFlowLogger.sessionListenerMounted();
       _authService.authStateChanges.listen((authState) async {
       final requestVersion = ++_authStateVersion;
       try {
         await IbulAuthContextService.instance.ensureLoaded();
         final user = authState.session?.user;
+        AuthFlowLogger.sessionReceived(userId: user?.id);
         final authContext = IbulAuthContextService.instance;
         final userId = user?.id;
         final activeContext = authContext.activeContext;
@@ -270,6 +306,7 @@ class AppState extends ChangeNotifier {
           }
           if (_isStaleAuthRequest(requestVersion)) return;
           if (stateChanged) {
+            AuthFlowLogger.appStateAuthUpdated(isLoggedIn: isCustomerLoggedIn);
             notifyListeners();
           }
         } finally {

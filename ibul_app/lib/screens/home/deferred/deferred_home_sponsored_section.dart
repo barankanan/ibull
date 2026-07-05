@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../../core/home_data_diagnostics.dart';
 import '../../../core/web_perf_trace.dart';
 import '../../../widgets/skeleton_loading.dart';
 import '../home_section_error.dart';
@@ -10,9 +13,13 @@ class DeferredHomeSponsoredSection extends StatefulWidget {
   const DeferredHomeSponsoredSection({
     super.key,
     this.delay = Duration.zero,
+    this.suppressSkeleton = false,
+    this.maxSkeletonDuration = const Duration(seconds: 4),
   });
 
   final Duration delay;
+  final bool suppressSkeleton;
+  final Duration maxSkeletonDuration;
 
   @override
   State<DeferredHomeSponsoredSection> createState() =>
@@ -22,11 +29,25 @@ class DeferredHomeSponsoredSection extends StatefulWidget {
 class _DeferredHomeSponsoredSectionState extends State<DeferredHomeSponsoredSection> {
   Future<void>? _loadFuture;
   bool _scheduled = false;
+  bool _skeletonTimedOut = false;
+  Timer? _skeletonTimer;
 
   @override
   void initState() {
     super.initState();
+    _skeletonTimer = Timer(widget.maxSkeletonDuration, () {
+      if (!mounted || _skeletonTimedOut) return;
+      setState(() => _skeletonTimedOut = true);
+      HomeSkeletonDiagnostics.timeout(source: 'sponsored');
+      HomeSectionDiagnostics.state(section: 'sponsored', state: 'hidden');
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleLoad());
+  }
+
+  @override
+  void dispose() {
+    _skeletonTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _scheduleLoad() async {
@@ -49,6 +70,26 @@ class _DeferredHomeSponsoredSectionState extends State<DeferredHomeSponsoredSect
   }
 
   @override
+  void didUpdateWidget(covariant DeferredHomeSponsoredSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.suppressSkeleton && widget.suppressSkeleton) {
+      _skeletonTimer?.cancel();
+      if (!_skeletonTimedOut && mounted) {
+        setState(() => _skeletonTimedOut = true);
+        HomeSkeletonDiagnostics.hide(
+          source: 'sponsored',
+          reason: 'products_loaded',
+        );
+      }
+    }
+  }
+
+  bool get _shouldShowSkeleton {
+    if (widget.suppressSkeleton || _skeletonTimedOut) return false;
+    return true;
+  }
+
+  @override
   Widget build(BuildContext context) {
     const placeholder = Padding(
       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -60,21 +101,41 @@ class _DeferredHomeSponsoredSectionState extends State<DeferredHomeSponsoredSect
     );
 
     final future = _loadFuture;
-    if (future == null) return placeholder;
+    if (future == null) {
+      if (!_shouldShowSkeleton) {
+        return const SizedBox.shrink();
+      }
+      HomeSkeletonDiagnostics.show(source: 'sponsored', reason: 'library_pending');
+      return placeholder;
+    }
 
     return FutureBuilder<void>(
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
+          if (!_shouldShowSkeleton) {
+            return const SizedBox.shrink();
+          }
+          HomeSkeletonDiagnostics.show(
+            source: 'sponsored',
+            reason: 'library_loading',
+          );
           return placeholder;
         }
         if (snapshot.hasError) {
+          HomeSectionDiagnostics.state(section: 'sponsored', state: 'error');
           return HomeSectionError(
             message: 'Sponsorlu bölüm şu an yüklenemedi.',
             onRetry: _retry,
           );
         }
-        return sponsored_section.buildHomeSponsoredSection();
+        HomeSkeletonDiagnostics.hide(
+          source: 'sponsored',
+          reason: 'library_loaded',
+        );
+        return sponsored_section.buildHomeSponsoredSection(
+          suppressSkeleton: widget.suppressSkeleton,
+        );
       },
     );
   }

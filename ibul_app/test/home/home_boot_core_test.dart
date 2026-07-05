@@ -68,10 +68,11 @@ void main() {
       expect(countMountedProviders(IbulAppMode.customer), 6);
     });
 
-    test('home deferred entry points at HomeScreenCore not legacy full', () {
+    test('home deferred entry routes desktop to core and mobile to legacy', () {
       final entry =
           File('lib/screens/home_screen_deferred_entry.dart').readAsStringSync();
       expect(entry, contains('HomeScreenCore('));
+      expect(entry, contains('legacy_home.HomeScreen'));
       expect(entry, isNot(contains('home_screen_legacy_full.dart')));
     });
 

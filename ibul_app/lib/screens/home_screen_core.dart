@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
 import 'package:provider/provider.dart';
 
+import '../ads/models/home_card_template.dart';
+import '../ads/services/home_feature_ad_service.dart';
 import '../core/app_motion.dart';
 import '../core/app_state.dart';
 import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/home_boot_diagnostics.dart';
+import '../core/home_data_diagnostics.dart';
 import '../core/home_for_you_helper.dart';
 import '../core/home_snapshot_cache.dart';
 import '../core/home_ui_diagnostics.dart';
@@ -21,6 +24,7 @@ import '../core/web_perf_logger.dart';
 import '../core/web_perf_trace.dart';
 import '../models/db_product.dart';
 import '../models/home_products_fetch_report.dart';
+import '../models/product_model.dart';
 import '../services/home_hero_banners_fetch.dart';
 import '../services/supabase_service.dart';
 import '../widgets/home_boot_timeout_banner.dart';
@@ -29,6 +33,7 @@ import '../widgets/custom_header.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_perf_debug_panel.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
+import '../widgets/home_category_card_section.dart';
 import 'home_deferred_tab.dart';
 import 'home_lazy_routes.dart';
 import 'home/deferred/deferred_home_full_rail_section.dart';
@@ -58,7 +63,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   static const Duration kHeroDelay = Duration(milliseconds: 800);
   static const Duration kSideDelay = Duration(milliseconds: 800);
   static const Duration kSponsoredDelay = Duration(milliseconds: 1000);
-  static const Duration kFullRailDelay = Duration(milliseconds: 1000);
+  static const Duration kDeferredSkeletonMax = Duration(seconds: 4);
   static const Duration kSlowLoadBannerDelay = Duration(seconds: 5);
   static const Duration kFallbackLoadDelay = Duration(seconds: 8);
 
@@ -67,11 +72,15 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   final ProductLoadTraceNotifier _productLoadTrace = ProductLoadTraceNotifier();
   final SingleFlightGuard _productFetchGuard = SingleFlightGuard();
   final SingleFlightGuard _heroFetchGuard = SingleFlightGuard();
+  final SingleFlightGuard _featureAdsFetchGuard = SingleFlightGuard();
+  final HomeFeatureAdService _homeFeatureAdService = HomeFeatureAdService();
 
   List<DBProduct> _products = [];
   List<String> _heroBannerUrls = [];
+  List<HomeCategoryCardGroup> _homeFeatureAdGroups = [];
   bool _isLoadingProducts = true;
   bool _isLoadingHero = true;
+  bool _isLoadingFeatureAds = true;
   String? _productError;
   String? _productErrorDetail;
   bool _loggedFirstFrame = false;
@@ -107,6 +116,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         HomeBootDiagnostics.logStageScheduled('products');
         unawaited(_fetchHomeProducts());
         unawaited(_fetchHeroBanners());
+        unawaited(_fetchHomeFeatureAds());
       }
       if (QrInitialParams.isQrPath) {
         unawaited(_openQrDeferred());
@@ -188,6 +198,11 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     });
   }
 
+  bool get _productsReady => !_isLoadingProducts && _products.isNotEmpty;
+
+  bool get _suppressBelowFoldSkeleton =>
+      _productsReady || (!_isLoadingProducts && _productError != null);
+
   Future<void> _fetchHeroBanners() async {
     if (!_heroFetchGuard.tryBegin()) return;
     try {
@@ -198,12 +213,60 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         _isLoadingHero = false;
       });
       if (result.imageUrls.isNotEmpty) {
+        HomeAdsDiagnostics.heroRaw(count: result.rawCount);
+        HomeAdsDiagnostics.heroActive(count: result.imageUrls.length);
+        HomeAdsDiagnostics.heroRendered(count: result.imageUrls.length);
         HomeUiDiagnostics.realBanners(count: result.imageUrls.length);
       } else {
+        final reason = result.error ?? 'empty';
+        HomeAdsDiagnostics.heroHidden(reason: reason);
         HomeUiDiagnostics.noBannersHidden();
       }
     } finally {
       _heroFetchGuard.finish();
+    }
+  }
+
+  Future<void> _fetchHomeFeatureAds() async {
+    if (!_featureAdsFetchGuard.tryBegin()) return;
+    HomeAdsDiagnostics.demoDisabled();
+    HomeAdsDiagnostics.requestStart(source: 'web_home');
+    try {
+      final groups = await _homeFeatureAdService.loadHomePageGroups();
+      if (!mounted) return;
+      setState(() {
+        _homeFeatureAdGroups = groups;
+        _isLoadingFeatureAds = false;
+      });
+      HomeAdsDiagnostics.featureRaw(count: groups.length);
+      if (groups.isEmpty) {
+        HomeAdsDiagnostics.hidden(reason: 'empty');
+        HomeSectionDiagnostics.hidden(
+          section: 'home_feature_ads',
+          reason: 'empty',
+        );
+      } else {
+        final adCount = groups.fold<int>(
+          0,
+          (sum, group) =>
+              sum +
+              group.cards.fold<int>(
+                0,
+                (cardSum, card) => cardSum + card.ads.length,
+              ),
+        );
+        HomeAdsDiagnostics.activeCount(count: adCount);
+        HomeAdsDiagnostics.rendered(count: adCount, placement: 'web_home');
+        HomeAdsDiagnostics.featureRendered(count: adCount);
+        HomeSectionDiagnostics.render(section: 'home_feature_ads', itemCount: adCount);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isLoadingFeatureAds = false);
+      HomeAdsDiagnostics.hidden(reason: 'error');
+      HomeSectionDiagnostics.state(section: 'home_feature_ads', state: 'error');
+    } finally {
+      _featureAdsFetchGuard.finish();
     }
   }
 
@@ -216,6 +279,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         query: 'home initial products fetch',
       );
       HomeBootDiagnostics.logProductsRequestStart();
+      HomeDataDiagnostics.requestStart(source: 'home_screen_core');
       WebPerfLogger.recordSupabaseInitialRequest();
       final fetchStarted = DateTime.now().millisecondsSinceEpoch;
       final report = await SupabaseService.instance
@@ -250,6 +314,19 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         _sectionsRevealed = true;
       });
       if (products.isNotEmpty) {
+        HomeDataDiagnostics.requestSuccess(
+          count: products.length,
+          source: 'home_screen_core',
+          ms: fetchMs,
+        );
+        HomeSkeletonDiagnostics.hide(
+          source: 'home_products',
+          reason: 'products_loaded',
+        );
+        HomeSectionDiagnostics.hidden(
+          section: 'below_fold_skeleton',
+          reason: 'products_loaded',
+        );
         HomeUiDiagnostics.realProducts(count: products.length, source: 'network');
         unawaited(
           HomeSnapshotCache.instance.writePopularProductsPersisted(products),
@@ -545,15 +622,13 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         selectedCategory: _selectedCategory,
         onShortcutTap: _setSelectedCategory,
       ),
-      if (isWeb && (_isLoadingHero || _heroBannerUrls.isNotEmpty))
+      if (isWeb)
         IbulHeroCampaignRow(
-          heroDelay: kHeroDelay,
+          heroDelay: _heroBannerUrls.isNotEmpty ? Duration.zero : kHeroDelay,
           sideDelay: kSideDelay,
           bannerImageUrls: _heroBannerUrls,
           isLoadingHero: _isLoadingHero,
         )
-      else if (isWeb)
-        const SizedBox(height: 8)
       else
         const SizedBox(height: 8),
       DeferredHomeFullRailSection(
@@ -563,16 +638,40 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         maxItems: kPreviewBatchSize,
         errorMessage: _productError,
         onRetry: _fetchHomeProducts,
+        delay: _productsReady ? Duration.zero : Duration.zero,
+        suppressSkeleton: _productsReady,
+        maxSkeletonDuration: kDeferredSkeletonMax,
       ),
-      DeferredHomeSponsoredSection(delay: kSponsoredDelay),
-      DeferredHomeFullRailSection(
-        delay: kFullRailDelay,
-        title: 'Sizin İçin Seçtiklerimiz',
-        products: _forYouProducts,
-        isLoading: _isLoadingProducts,
-        maxItems: kPreviewBatchSize,
-        showViewAll: false,
+      if (_homeFeatureAdGroups.isNotEmpty)
+        HomeCategoryCardSections(
+          groups: _homeFeatureAdGroups,
+          convertToProduct: Product.fromDBProduct,
+        )
+      else if (_isLoadingFeatureAds && !_suppressBelowFoldSkeleton)
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: SkeletonLoading(
+            width: double.infinity,
+            height: 120,
+            borderRadius: 12,
+          ),
+        ),
+      DeferredHomeSponsoredSection(
+        delay: _suppressBelowFoldSkeleton ? Duration.zero : kSponsoredDelay,
+        suppressSkeleton: _suppressBelowFoldSkeleton,
+        maxSkeletonDuration: kDeferredSkeletonMax,
       ),
+      if (_forYouProducts.isNotEmpty)
+        DeferredHomeFullRailSection(
+          delay: Duration.zero,
+          title: 'Sizin İçin Seçtiklerimiz',
+          products: _forYouProducts,
+          isLoading: false,
+          maxItems: kPreviewBatchSize,
+          showViewAll: false,
+          suppressSkeleton: _suppressBelowFoldSkeleton,
+          maxSkeletonDuration: kDeferredSkeletonMax,
+        ),
       const IbulTrustBarSection(),
     ];
   }

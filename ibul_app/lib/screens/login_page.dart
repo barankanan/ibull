@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
+import '../core/auth/auth_flow_logger.dart';
 import '../core/auth/auth_session_guard.dart';
 import '../core/constants.dart';
 import '../core/runtime_diagnostic_logger.dart';
@@ -38,6 +39,7 @@ class _LoginPageState extends State<LoginPage>
   @override
   void initState() {
     super.initState();
+    AuthFlowLogger.loginPageOpened(type: 'customer');
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -62,13 +64,19 @@ class _LoginPageState extends State<LoginPage>
     if (_formKey.currentState!.validate()) {
       setState(() => _isLoading = true);
       final loginStartedMs = DateTime.now().millisecondsSinceEpoch;
+      final email = _emailController.text.trim();
+      AuthFlowLogger.submitStart(type: 'customer', email: email);
       RuntimeDiagnosticLogger.auth('login submitted');
 
       try {
+        AuthFlowLogger.supabaseSignInStart(type: 'customer');
         await _authService.signInWithEmailPassword(
-          _emailController.text.trim(),
+          email,
           _passwordController.text,
           authArea: 'user',
+        );
+        AuthFlowLogger.supabaseSignInSuccess(
+          userId: _authService.currentUser?.id,
         );
         RuntimeDiagnosticLogger.auth(
           'supabase auth success '
@@ -116,6 +124,10 @@ class _LoginPageState extends State<LoginPage>
         );
         if (!mounted) return;
 
+        final appState = Provider.of<AppState>(context, listen: false);
+        await appState.applyCustomerSessionFromSignIn(role: resolution.rawRole);
+        if (!mounted) return;
+
         // Login successful (customer context)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -124,17 +136,16 @@ class _LoginPageState extends State<LoginPage>
           ),
         );
 
-        final appState = Provider.of<AppState>(context, listen: false);
-        // Non-critical side data (cart/favorites/profile) hydrates in the
-        // background via AppState's auth listener; we only wait a short window
-        // for the customer session flag before routing.
-        for (int i = 0; i < 20; i++) {
-          if (!mounted) return;
-          if (appState.isLoggedIn) break;
-          await Future.delayed(const Duration(milliseconds: 100));
+        if (!appState.isLoggedIn) {
+          for (int i = 0; i < 20; i++) {
+            if (!mounted) return;
+            if (appState.isLoggedIn) break;
+            await Future.delayed(const Duration(milliseconds: 100));
+          }
         }
         if (!mounted) return;
         RuntimeDiagnosticLogger.auth('non-critical init deferred');
+        AuthFlowLogger.redirect(target: '/home?tab=4');
         RuntimeDiagnosticLogger.auth(
           'route to home '
           'ms=${DateTime.now().millisecondsSinceEpoch - loginStartedMs}',
@@ -142,6 +153,10 @@ class _LoginPageState extends State<LoginPage>
         HomeNavigation.openHome(context, initialIndex: 4);
       } catch (e) {
         if (!mounted) return;
+        AuthFlowLogger.supabaseSignInError(
+          code: e.runtimeType.toString(),
+          message: _authService.describeSignInError(e),
+        );
         final message = _authService.describeSignInError(e);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

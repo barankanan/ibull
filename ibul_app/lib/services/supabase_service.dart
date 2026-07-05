@@ -15,6 +15,7 @@ import '../utils/product_visibility_helper.dart';
 import 'store_follow_service.dart';
 import '../utils/product_edit_log.dart';
 import '../core/runtime_diagnostic_logger.dart';
+import '../core/home_data_diagnostics.dart';
 import '../core/config/runtime_config.dart';
 import '../core/product_filter_audit.dart';
 import '../models/home_products_fetch_report.dart';
@@ -163,13 +164,18 @@ class SupabaseService {
       'max_weight_grams, discount_price, stock, status, approval_status, '
       'admin_approval_status, description, specifications, attributes, '
       'video_url, variants, created_at, stores(business_name)';
-  /// Ultra-light first query — vitrin preview only.
-  static const String _homeProductPreviewSelectFields =
-      'id, name, image_url, price, old_price, status, '
-      'approval_status, admin_approval_status, stores(business_name)';
-  static const String _homeProductPreviewSelectFieldsSansStore =
-      'id, name, image_url, price, old_price, status, '
-      'approval_status, admin_approval_status';
+  /// Home catalog projection aligned with [StoreService.getMenuProductsBySellerId]:
+  /// omits approval columns so [ProductVisibilityHelper] trusts RLS (same as store detail).
+  static const String _homeProductCatalogSelectFields =
+      'id, seller_id, name, brand, image_url, image_urls, main_category, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, discount_price, status, '
+      'stock, created_at, updated_at, stores(business_name)';
+  static const String _homeProductCatalogSelectFieldsSansStore =
+      'id, seller_id, name, brand, image_url, image_urls, main_category, '
+      'sub_category, price, pricing_type, pricing_mode, base_price, '
+      'portion_price, price_per_kg, size_options, discount_price, status, '
+      'stock, created_at, updated_at';
   /// Card-only projection for home first paint — omits heavy arrays/text blobs.
   static const String _homeProductCardSelectFields =
       'id, seller_id, name, brand, image_url, main_category, '
@@ -290,6 +296,7 @@ class SupabaseService {
   /// Home grid fetch with filter/parse diagnostics for web production debugging.
   Future<HomeProductsFetchReport> fetchInitialHomeProductsReport() async {
     const table = 'products';
+    HomeDataDiagnostics.requestStart(source: 'home_initial');
     if (!AppRuntimeConfig.hasSupabaseConfig) {
       return HomeProductsFetchReport.configMissing();
     }
@@ -305,8 +312,8 @@ class SupabaseService {
         '.order(created_at,desc).range(0,${fetchLimit - 1})';
 
     final selectCandidates = <String>[
-      _homeProductPreviewSelectFields,
-      _homeProductPreviewSelectFieldsSansStore,
+      _homeProductCatalogSelectFields,
+      _homeProductCatalogSelectFieldsSansStore,
       _homeProductCardSelectFields,
       _homeProductCardSelectFieldsSansStore,
       _homeProductSelectFieldsSansStore,
@@ -315,6 +322,7 @@ class SupabaseService {
     Object? lastError;
     StackTrace? lastStack;
     String lastSelect = selectCandidates.first;
+    HomeProductsFetchReport? approvalFilteredEmptyReport;
 
     for (final select in selectCandidates) {
       lastSelect = select;
@@ -322,8 +330,13 @@ class SupabaseService {
         final fetched = await _fetchHomeProductRows(
           select: select,
           fetchLimit: fetchLimit,
+          source: 'home_initial',
         );
         final parseResult = _parseHomeProductRows(fetched.rows);
+        HomeDataDiagnostics.afterParse(
+          successCount: parseResult.successCount,
+          failCount: parseResult.failCount,
+        );
 
         List<DBProduct> products = parseResult.products;
         if (followedStoreIds.isNotEmpty && products.isNotEmpty) {
@@ -363,7 +376,7 @@ class SupabaseService {
           'parsed=${products.length}',
         );
 
-        return HomeProductsFetchReport(
+        final report = HomeProductsFetchReport(
           outcome: outcome,
           products: products,
           table: table,
@@ -374,7 +387,34 @@ class SupabaseService {
           parseFailCount: parseResult.failCount,
           lastParseError: parseResult.lastError,
         );
+
+        if (fetched.audit.isEmptyAfterFilter &&
+            _homeSelectIncludesApprovalColumns(select)) {
+          approvalFilteredEmptyReport ??= report;
+          HomeDataDiagnostics.approvalFilterRetry(
+            rawCount: fetched.audit.rawCount,
+            activeCount: fetched.audit.afterActiveStatusCount,
+          );
+          continue;
+        }
+
+        if (products.isNotEmpty) {
+          final first = products.first;
+          HomeDataDiagnostics.firstProduct(
+            id: first.id ?? '',
+            title: first.name,
+            storeId: first.sellerId ?? '',
+          );
+        }
+        HomeDataDiagnostics.requestSuccess(
+          count: products.length,
+          source: 'home_initial',
+        );
+        HomeDataDiagnostics.renderingProducts(count: products.length);
+
+        return report;
       } catch (e, stackTrace) {
+        HomeDataDiagnostics.requestError(error: e.toString());
         lastError = e;
         lastStack = stackTrace;
         RuntimeDiagnosticLogger.logFailure(
@@ -390,6 +430,11 @@ class SupabaseService {
       }
     }
 
+    final filteredEmpty = approvalFilteredEmptyReport;
+    if (filteredEmpty != null) {
+      return filteredEmpty;
+    }
+
     return HomeProductsFetchReport(
       outcome: HomeProductsFetchOutcome.queryError,
       products: const [],
@@ -401,10 +446,16 @@ class SupabaseService {
     );
   }
 
+  static bool _homeSelectIncludesApprovalColumns(String select) {
+    return select.contains('approval_status') ||
+        select.contains('admin_approval_status');
+  }
+
   Future<({List<Map<String, dynamic>> rows, ProductFilterAudit audit})>
   _fetchHomeProductRows({
     required String select,
     required int fetchLimit,
+    String source = 'home',
   }) async {
     String currentSelect = select;
     Object? lastError;
@@ -422,6 +473,13 @@ class SupabaseService {
             .toList(growable: false);
         final audit = ProductFilterAudit.fromRows(rawRows);
         final filtered = ProductVisibilityHelper.filterPublicProductMaps(rawRows);
+        HomeDataDiagnostics.rawRows(count: audit.rawCount, source: source);
+        HomeDataDiagnostics.afterVisibilityFilter(
+          count: audit.afterVisibilityFilterCount,
+        );
+        HomeDataDiagnostics.afterApprovalFilter(
+          count: audit.afterApprovalStatusCount,
+        );
         RuntimeDiagnosticLogger.products(
           'filter audit raw=${audit.rawCount} active=${audit.afterActiveStatusCount} '
           'approval=${audit.afterApprovalStatusCount} visible=${audit.afterVisibilityFilterCount}',

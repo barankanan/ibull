@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
-import '../core/app_motion.dart';
+import '../core/auth/auth_flow_logger.dart';
 import '../core/auth/auth_session_guard.dart';
 import '../core/constants.dart';
 import 'become_seller_page.dart';
 import '../services/auth_service.dart';
-import 'seller/admin_panel_page.dart';
 import 'seller_panel_page.dart';
 
 class SellerLoginPage extends StatefulWidget {
@@ -37,6 +36,7 @@ class _SellerLoginPageState extends State<SellerLoginPage>
   @override
   void initState() {
     super.initState();
+    AuthFlowLogger.sellerLoginPageOpened(adminMode: widget.adminMode);
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -71,12 +71,23 @@ class _SellerLoginPageState extends State<SellerLoginPage>
         }
 
         // 1. Sign in
+        AuthFlowLogger.submitStart(
+          type: widget.adminMode ? 'admin' : 'seller',
+          email: _emailController.text.trim(),
+        );
+        AuthFlowLogger.supabaseSignInStart(
+          type: widget.adminMode ? 'admin' : 'seller',
+        );
         await _authService.signInWithEmailPassword(
           _emailController.text.trim(),
           _passwordController.text,
           authArea: widget.adminMode ? 'admin' : 'seller',
         );
+        AuthFlowLogger.supabaseSignInSuccess(
+          userId: _authService.currentUser?.id,
+        );
 
+        AuthFlowLogger.sellerProfileFetchStart();
         final resolution = await _authService.resolveLoginRoute(
           diagnosticContext: widget.adminMode ? 'admin_login' : 'seller_login',
           includeStoreProfile: !widget.adminMode,
@@ -86,16 +97,21 @@ class _SellerLoginPageState extends State<SellerLoginPage>
 
         if (widget.adminMode) {
           if (resolution.resolvedRole == LoginResolvedRole.admin) {
-            Navigator.pushReplacement(
-              context,
-              buildAppPageRoute<void>(
-                builder: (context) => const AdminPanelPage(),
-              ),
+            AuthFlowLogger.sellerProfileFetchSuccess(
+              sellerId: resolution.userId,
+            );
+            AuthFlowLogger.redirect(target: '/admin');
+            Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
+              '/admin',
+              (route) => false,
             );
             return;
           }
 
           await _authService.signOut();
+          AuthFlowLogger.sellerProfileFetchError(
+            message: 'not_admin role=${resolution.rawRole ?? 'unknown'}',
+          );
           throw Exception(
             'Bu hesap admin degil. Rol: ${resolution.rawRole ?? 'unknown'}',
           );
@@ -103,6 +119,10 @@ class _SellerLoginPageState extends State<SellerLoginPage>
 
         if (resolution.resolvedRole == LoginResolvedRole.seller) {
           if (resolution.isSellerApproved) {
+            AuthFlowLogger.sellerProfileFetchSuccess(
+              sellerId: resolution.storeProfile?['id']?.toString() ??
+                  resolution.userId,
+            );
             await _authService.markSellerLoginSuccess(
               userId: resolution.userId ?? '',
               role: resolution.rawRole,
@@ -110,6 +130,7 @@ class _SellerLoginPageState extends State<SellerLoginPage>
             );
             appState.clearCustomerSessionView();
             if (!mounted) return;
+            AuthFlowLogger.redirect(target: '/seller');
             Navigator.of(
               context,
               rootNavigator: true,
@@ -118,6 +139,9 @@ class _SellerLoginPageState extends State<SellerLoginPage>
           } else {
             // Not approved yet
             await _authService.signOutSeller(); // Logout
+            AuthFlowLogger.sellerProfileFetchError(
+              message: 'seller_not_approved',
+            );
             throw Exception(
               'Satıcı hesabınız henüz onaylanmadı. Lütfen yönetici onayını bekleyin.',
             );
@@ -125,12 +149,14 @@ class _SellerLoginPageState extends State<SellerLoginPage>
         }
 
         if (resolution.resolvedRole == LoginResolvedRole.waiter) {
+          AuthFlowLogger.sellerProfileFetchSuccess(sellerId: resolution.userId);
           await _authService.markSellerLoginSuccess(
             userId: resolution.userId ?? '',
             role: resolution.rawRole,
           );
           appState.clearCustomerSessionView();
           if (!mounted) return;
+          AuthFlowLogger.redirect(target: '/seller?role=waiter');
           Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
             '/seller',
             (route) => false,
@@ -140,6 +166,9 @@ class _SellerLoginPageState extends State<SellerLoginPage>
         }
 
         await _authService.signOutSeller();
+        AuthFlowLogger.sellerProfileFetchError(
+          message: 'role_rejected ${resolution.resolvedRole.name}',
+        );
         throw Exception(
           AuthSessionGuard.sellerLoginRejectionMessage(resolution.resolvedRole),
         );
@@ -160,6 +189,13 @@ class _SellerLoginPageState extends State<SellerLoginPage>
           );
         }
         if (!mounted) return;
+        AuthFlowLogger.supabaseSignInError(
+          code: e.runtimeType.toString(),
+          message: _authService.describeSignInError(
+            e,
+            adminMode: widget.adminMode,
+          ),
+        );
         final message = _authService.describeSignInError(
           e,
           adminMode: widget.adminMode,

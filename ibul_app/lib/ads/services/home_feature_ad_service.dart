@@ -22,7 +22,7 @@ class HomeFeatureAdService {
     AdsRepository? repository,
     HomeCardTemplateService? templateService,
     SupabaseClient? client,
-  })  : _repository = repository ?? AdsRepository(),
+  })  : _repository = repository ?? AdsRepository(usePreviewOnFailure: false),
         _templateService = templateService ?? HomeCardTemplateService(),
         _client = client ?? Supabase.instance.client;
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/runtime_config.dart';
+import '../core/home_data_diagnostics.dart';
 import '../core/home_snapshot_cache.dart';
 
 /// Supabase campaign_images hero banners — no asset/demo fallback.
@@ -11,19 +12,27 @@ class HomeHeroBannersFetch {
 
   static const Duration requestTimeout = Duration(seconds: 3);
 
-  static List<String> readCachedUrlsSync() => _readCachedUrls();
+  static List<String> readCachedUrlsSync() =>
+      _readCachedUrls(preferMobile: false);
 
-  static Future<HomeHeroBannersFetchResult> fetch() async {
-    final cached = _readCachedUrls();
+  static Future<HomeHeroBannersFetchResult> fetch({
+    bool preferMobile = false,
+  }) async {
+    HomeAdsDiagnostics.heroRequestStart();
+    final cached = _readCachedUrls(preferMobile: preferMobile);
     if (cached.isNotEmpty) {
+      HomeAdsDiagnostics.heroRaw(count: cached.length);
+      HomeAdsDiagnostics.heroActive(count: cached.length);
       return HomeHeroBannersFetchResult(
         imageUrls: cached,
         source: 'cache',
         ms: 0,
+        rawCount: cached.length,
       );
     }
 
     if (!AppRuntimeConfig.hasSupabaseConfig) {
+      HomeAdsDiagnostics.heroHidden(reason: 'config_missing');
       return const HomeHeroBannersFetchResult(
         imageUrls: [],
         source: 'skipped',
@@ -40,14 +49,20 @@ class HomeHeroBannersFetch {
           .order('sort_order', ascending: true)
           .timeout(requestTimeout);
       final list = (rows as List).cast<Map<String, dynamic>>();
-      final urls = _resolveBannerUrls(list);
+      HomeAdsDiagnostics.heroRaw(count: list.length);
+      final urls = _resolveBannerUrls(list, preferMobile: preferMobile);
+      HomeAdsDiagnostics.heroActive(count: urls.length);
       if (urls.isNotEmpty) {
+        HomeAdsDiagnostics.heroRendered(count: urls.length);
+        HomeAdsDiagnostics.heroBanners(count: urls.length);
         HomeSnapshotCache.instance.writeMemory(
           HomeSnapshot(
             heroAds: list,
             createdAt: DateTime.now(),
           ),
         );
+      } else {
+        HomeAdsDiagnostics.heroHidden(reason: 'no_resolvable_urls');
       }
       return HomeHeroBannersFetchResult(
         imageUrls: urls,
@@ -56,6 +71,8 @@ class HomeHeroBannersFetch {
         rawCount: list.length,
       );
     } catch (error) {
+      HomeAdsDiagnostics.heroHidden(reason: 'error');
+      HomeAdsDiagnostics.sectionHidden(source: 'hero_banners');
       return HomeHeroBannersFetchResult(
         imageUrls: const [],
         source: 'network',
@@ -65,25 +82,32 @@ class HomeHeroBannersFetch {
     }
   }
 
-  static List<String> _readCachedUrls() {
+  static List<String> _readCachedUrls({bool preferMobile = false}) {
     final snapshot = HomeSnapshotCache.instance.readMemory();
     if (snapshot == null || snapshot.heroAds.isEmpty) return const [];
-    return _resolveBannerUrls(snapshot.heroAds);
+    return _resolveBannerUrls(snapshot.heroAds, preferMobile: preferMobile);
   }
 
-  static List<String> _resolveBannerUrls(List<Map<String, dynamic>> banners) {
+  static List<String> _resolveBannerUrls(
+    List<Map<String, dynamic>> banners, {
+    bool preferMobile = false,
+  }) {
     return banners
-        .map(_resolveBannerImagePath)
+        .map((banner) => _resolveBannerImagePath(banner, preferMobile: preferMobile))
         .whereType<String>()
         .toList(growable: false);
   }
 
-  static String? _resolveBannerImagePath(Map<String, dynamic> banner) {
+  static String? _resolveBannerImagePath(
+    Map<String, dynamic> banner, {
+    bool preferMobile = false,
+  }) {
     final imagePath = banner['image_path']?.toString().trim() ?? '';
     final mobileImagePath =
         banner['mobile_image_path']?.toString().trim() ?? '';
-    final resolved =
-        imagePath.isNotEmpty ? imagePath : mobileImagePath;
+    final resolved = preferMobile
+        ? (mobileImagePath.isNotEmpty ? mobileImagePath : imagePath)
+        : (imagePath.isNotEmpty ? imagePath : mobileImagePath);
     if (resolved.isEmpty || resolved.startsWith('assets/')) return null;
     return resolved;
   }

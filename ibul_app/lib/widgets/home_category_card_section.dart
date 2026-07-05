@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/ad_product_trace.dart';
+import '../core/home_data_diagnostics.dart';
 import '../ads/enums/ad_enums.dart';
 import '../ads/helpers/home_feature_ad_helper.dart';
 import '../ads/models/home_card_template.dart';
@@ -533,19 +534,34 @@ class HomeCategoryCardSections extends StatelessWidget {
     required this.groups,
     required this.convertToProduct,
     this.isLoading = false,
+    this.suppressSkeleton = false,
     super.key,
   });
 
   final List<HomeCategoryCardGroup> groups;
   final Product Function(DBProduct dbProduct) convertToProduct;
   final bool isLoading;
+  final bool suppressSkeleton;
 
   @override
   Widget build(BuildContext context) {
     if (isLoading && groups.isEmpty) {
+      if (suppressSkeleton) {
+        HomeSectionDiagnostics.hidden(
+          section: 'home_feature_ads',
+          reason: 'products_loaded',
+        );
+        return const SizedBox.shrink();
+      }
       return const _HomeCategoryCardSectionsSkeleton();
     }
-    if (groups.isEmpty) return const SizedBox.shrink();
+    if (groups.isEmpty) {
+      HomeSectionDiagnostics.hidden(
+        section: 'home_feature_ads',
+        reason: 'empty',
+      );
+      return const SizedBox.shrink();
+    }
     if (kDebugMode) {
       debugPrint(
         'HomeCategoryCardSections: group_count=${groups.length}',

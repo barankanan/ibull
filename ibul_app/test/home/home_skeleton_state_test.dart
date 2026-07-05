@@ -129,6 +129,25 @@ void main() {
       expect(find.byType(SkeletonLoading), findsNothing);
     });
 
+    testWidgets('HomeCategoryCardSections suppresses skeleton after products load', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: HomeCategoryCardSections(
+              groups: const [],
+              isLoading: true,
+              suppressSkeleton: true,
+              convertToProduct: (_) => throw UnimplementedError(),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byType(SkeletonLoading), findsNothing);
+    });
+
     test('Sponsored empty state loading dışına çıkar', () {
       const empty = SectionLoadState(phase: SectionLoadPhase.empty);
       expect(empty.isLoading, isFalse);

@@ -74,4 +74,32 @@ void main() {
     expect(source.contains('bidAmount'), isFalse);
     expect(source.contains('..sort((a, b)'), isFalse);
   });
+
+  test('previewListFromCampaign uses RPC metadata when list hydration fails', () {
+    final campaign = AdsRepository.mapHomeSponsoredCollectionRpcRow({
+      'campaign_id': 'cmp_1',
+      'seller_id': '00000000-0000-4000-8000-000000000001',
+      'store_id': 'store_1',
+      'collection_id': 'list_1',
+      'title': 'Yaz Koleksiyonu',
+      'cover_url': 'https://cdn.example/cover.jpg',
+      'placement': 'home_feed',
+      'starts_at': '2026-06-01T00:00:00.000Z',
+      'ends_at': '2026-12-31T23:59:59.000Z',
+    });
+
+    final preview = HomeSponsoredContentService.previewListFromCampaign(campaign);
+    expect(preview, isNotNull);
+    expect(preview!.id, 'list_1');
+    expect(preview.name, 'Yaz Koleksiyonu');
+    expect(preview.iconUrl, 'https://cdn.example/cover.jpg');
+
+    final resolved = HomeSponsoredContentService.resolveSponsoredPreviewLists(
+      listIds: const ['list_1'],
+      hydratedLists: const [],
+      campaignByCollectionId: {'list_1': campaign},
+    );
+    expect(resolved, hasLength(1));
+    expect(resolved.first.id, 'list_1');
+  });
 }

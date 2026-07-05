@@ -1,14 +1,15 @@
-import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
-import '../core/route_observer.dart';
-import '../screens/home_lazy_routes.dart';
 import '../screens/notifications_page.dart';
+import '../core/route_observer.dart';
 import 'web_header_menu_items.dart';
 import 'search_overlay.dart';
+import '../screens/map_page.dart';
+import '../screens/product_detail_page.dart';
+import '../screens/camera_page.dart';
 
 class WebHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
@@ -112,7 +113,11 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                   context.read<AppState>().addRecentlyViewedProduct(product);
                   _searchFocusNode.unfocus();
                   _hideOverlay();
-                  unawaited(HomeLazyRoutes.openProductDetail(context, product));
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ProductDetailPage(product: product),
+                    ),
+                  );
                 },
                 showFilters: showFilters,
               ),
@@ -376,7 +381,9 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                     onTap: () {
                       _searchFocusNode.unfocus();
                       _hideOverlay();
-                      unawaited(HomeLazyRoutes.openCamera(context));
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const CameraPage()),
+                      );
                     },
                     borderRadius: BorderRadius.circular(8),
                     child: const Padding(
@@ -423,7 +430,13 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
 
   Widget _buildLocation() {
     return InkWell(
-      onTap: () => unawaited(HomeLazyRoutes.openMap(context)),
+      onTap: () {
+        // Navigate to MapPage
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const MapPage()),
+        );
+      },
       child: Row(
         children: [
           const Icon(Icons.map, color: AppColors.primary, size: 24),
@@ -513,7 +526,12 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                       return InkWell(
                         onTap: () {
                           if (category == 'Yakın Lokasyon') {
-                            unawaited(HomeLazyRoutes.openMap(context));
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const MapPage(),
+                              ),
+                            );
                           } else {
                             widget.onCategorySelected?.call(category);
                           }
