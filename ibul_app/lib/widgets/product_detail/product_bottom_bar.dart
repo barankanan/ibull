@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
+import '../../core/cart_add_diagnostics.dart';
 import '../../core/home_navigation.dart';
+import '../../core/product_cart_identity.dart';
+import '../../core/product_purchasability_helper.dart';
 import '../../screens/checkout_page.dart';
 import '../../screens/business_detail_page.dart';
 import '../../core/app_state.dart';
@@ -49,6 +52,11 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
         final product = viewModel.displayProduct;
         final category = (product.category ?? '').toLowerCase();
         final isFoodCategory = category.contains('yemek');
+        final purchasability = viewModel.purchasability;
+        final isBlocked = purchasability.isDefinitivelyBlocked;
+        final blockedLabel =
+            ProductPurchasabilityHelper.blockedButtonLabel(purchasability) ??
+            ProductPurchasabilityHelper.notForSaleLabel;
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
@@ -187,7 +195,8 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                         height: 40,
                         width: 120,
                         child: ElevatedButton(
-                          onPressed: viewModel.isAddToCartInProgress
+                          onPressed: (viewModel.isAddToCartInProgress ||
+                                  (isBlocked && !viewModel.isAddedToCart))
                               ? null
                               : () async {
                             final appState = AppState();
@@ -211,6 +220,12 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                                 ),
                               );
                             } else {
+                              CartAddDiagnostics.tap(
+                                source: 'product_detail',
+                                productId: product.productId,
+                                canonicalId: ProductCartIdentity.resolve(product),
+                                name: product.name,
+                              );
                               final error = await viewModel.addToCart();
                               if (!context.mounted) return;
                               if (error != null) {
@@ -238,7 +253,11 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: viewModel.isAddedToCart
                                 ? Colors.green
-                                : const Color(0xFF6200EA),
+                                : (isBlocked
+                                    ? const Color(0xFFBDBDBD)
+                                    : const Color(0xFF6200EA)),
+                            disabledBackgroundColor: const Color(0xFFBDBDBD),
+                            disabledForegroundColor: Colors.white,
                             foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
@@ -255,7 +274,11 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                                   ),
                                 )
                               : Text(
-                            viewModel.isAddedToCart ? 'SEPETTE' : 'SEPETE EKLE',
+                            viewModel.isAddedToCart
+                                ? 'SEPETTE'
+                                : (isBlocked
+                                    ? blockedLabel.toUpperCase()
+                                    : 'SEPETE EKLE'),
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
@@ -269,7 +292,9 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                         height: 40,
                         width: 105,
                         child: OutlinedButton(
-                          onPressed: () async {
+                          onPressed: isBlocked
+                              ? null
+                              : () async {
                             final appState = AppState();
                             if (!appState.isLoggedIn) {
                               _showLoginRequiredDialog(context);
@@ -277,6 +302,12 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                             }
                             InteractionFeedback.forInteraction(
                               InteractionFeedbackType.mainCta,
+                            );
+                            CartAddDiagnostics.tap(
+                              source: 'product_detail_buy_now',
+                              productId: product.productId,
+                              canonicalId: ProductCartIdentity.resolve(product),
+                              name: product.name,
                             );
                             final error = await viewModel.addToCart();
                             if (!context.mounted) return;

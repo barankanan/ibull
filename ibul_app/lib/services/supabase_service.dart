@@ -683,12 +683,12 @@ class SupabaseService {
   DBProduct mapRowToDBProduct(Map<String, dynamic> row) => _mapToDBProduct(row);
 
   static const String _cartValidationSelect =
-      'id, seller_id, store_id, name, brand, image_url, image_urls, main_category, '
+      'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, discount_price, sale_price, stock, status, '
       'approval_status, admin_approval_status, variant_group_id, variants, '
       'updated_at, stores(business_name)';
   static const String _cartValidationSelectSansStore =
-      'id, seller_id, store_id, name, brand, image_url, image_urls, main_category, '
+      'id, seller_id, name, brand, image_url, image_urls, main_category, '
       'sub_category, price, discount_price, sale_price, stock, status, '
       'approval_status, admin_approval_status, variant_group_id, variants, '
       'updated_at';
@@ -952,6 +952,14 @@ class SupabaseService {
       debugPrint('Error getting products by ids: $e');
       return [];
     }
+  }
+
+  /// Single-product detail projection for quick view fallback (opens on eye tap only).
+  Future<DBProduct?> getProductQuickViewDetail(String productId) async {
+    final id = productId.trim();
+    if (id.isEmpty) return null;
+    final rows = await getProductsByIds([id]);
+    return rows.isEmpty ? null : rows.first;
   }
 
   /// Home feature ad cards — seller-selected SKUs; relaxed approval gate.

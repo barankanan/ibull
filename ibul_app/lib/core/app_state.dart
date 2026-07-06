@@ -24,7 +24,10 @@ import '../models/product_list_model.dart';
 import '../models/product_list_price_change.dart';
 import '../utils/dynamic_value_helpers.dart';
 import 'app_ready.dart';
+import 'cart_add_diagnostics.dart';
+import 'product_cart_identity.dart';
 import 'web_boot_step_profiler.dart';
+import 'recent_products_diagnostics.dart';
 
 /// Global uygulama state'i - favoriler ve sepet
 /// Provider pattern ile yönetilmektedir.
@@ -49,6 +52,7 @@ class AppState extends ChangeNotifier {
   AppState._internal() {
     _initAuth();
     _loadLocalCollections(requestVersion: _authStateVersion);
+    unawaited(_loadRecentlyViewedFromLocal());
     _scheduleStartupHydration();
     _cartState.addListener(_handleCartStateChanged);
     _favoriteState.addListener(notifyListeners);
@@ -66,6 +70,9 @@ class AppState extends ChangeNotifier {
       'device_cache_followed_stores_v1';
   static const String _deviceCurrentDeliveryAddressKey =
       'device_cache_current_delivery_address_v1';
+  static const String _deviceRecentlyViewedKey =
+      'device_cache_recently_viewed_v1';
+  static const int _recentlyViewedMaxItems = 10;
 
   // Kullanıcı bilgileri
   Map<String, dynamic>? _currentUser;
@@ -828,15 +835,92 @@ class AppState extends ChangeNotifier {
   List<Product> get recentlyViewedProducts =>
       List.unmodifiable(_recentlyViewedProducts);
 
-  void addRecentlyViewedProduct(Product product) {
-    if (_recentlyViewedProducts.any((p) => p.name == product.name)) {
-      _recentlyViewedProducts.removeWhere((p) => p.name == product.name);
+  void addRecentlyViewedProduct(Product product, {String source = 'unknown'}) {
+    final productId = product.productId?.trim() ?? '';
+    RecentProductsDiagnostics.productDetailOpen(
+      productId: productId.isEmpty ? 'none' : productId,
+      source: source,
+    );
+    RecentProductsDiagnostics.recordStart(
+      productId: productId.isEmpty ? 'none' : productId,
+    );
+
+    try {
+      final dedupeKey = _recentProductDedupeKey(product);
+      _recentlyViewedProducts.removeWhere(
+        (existing) => _recentProductDedupeKey(existing) == dedupeKey,
+      );
+      _recentlyViewedProducts.insert(0, product);
+      if (_recentlyViewedProducts.length > _recentlyViewedMaxItems) {
+        _recentlyViewedProducts.removeRange(
+          _recentlyViewedMaxItems,
+          _recentlyViewedProducts.length,
+        );
+      }
+      notifyListeners();
+      unawaited(_persistRecentlyViewed());
+      RecentProductsDiagnostics.recordSuccess(
+        productId: productId.isEmpty ? 'none' : productId,
+      );
+    } catch (error) {
+      RecentProductsDiagnostics.recordError(message: error.runtimeType.toString());
     }
-    _recentlyViewedProducts.insert(0, product);
-    if (_recentlyViewedProducts.length > 5) {
-      _recentlyViewedProducts.removeLast();
+  }
+
+  String _recentProductDedupeKey(Product product) {
+    final productId = product.productId?.trim() ?? '';
+    if (productId.isNotEmpty) return 'id:$productId';
+    return 'name:${product.name.trim()}|brand:${product.brand.trim()}';
+  }
+
+  Future<void> _loadRecentlyViewedFromLocal() async {
+    try {
+      final prefs = await _getPrefs();
+      final raw = prefs.getString(_deviceRecentlyViewedKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      _recentlyViewedProducts
+        ..clear()
+        ..addAll(
+          decoded
+              .whereType<Map>()
+              .map((item) => Product.fromJson(Map<String, dynamic>.from(item)))
+              .where((product) => product.name.trim().isNotEmpty),
+        );
+      if (_recentlyViewedProducts.length > _recentlyViewedMaxItems) {
+        _recentlyViewedProducts.removeRange(
+          _recentlyViewedMaxItems,
+          _recentlyViewedProducts.length,
+        );
+      }
+      notifyListeners();
+    } catch (error) {
+      RecentProductsDiagnostics.recordError(
+        message: 'load_${error.runtimeType}',
+      );
     }
+  }
+
+  Future<void> _persistRecentlyViewed() async {
+    try {
+      final prefs = await _getPrefs();
+      final payload =
+          _recentlyViewedProducts.map((product) => product.toJson()).toList();
+      await prefs.setString(_deviceRecentlyViewedKey, jsonEncode(payload));
+    } catch (error) {
+      RecentProductsDiagnostics.recordError(
+        message: 'persist_${error.runtimeType}',
+      );
+    }
+  }
+
+  @visibleForTesting
+  Future<void> clearRecentlyViewedForTest() async {
+    _recentlyViewedProducts.clear();
     notifyListeners();
+    final prefs = await _getPrefs();
+    await prefs.remove(_deviceRecentlyViewedKey);
   }
 
   // Misafir kullanıcı için varsayılan verileri yükle

@@ -13,20 +13,27 @@ extension _AppStateCartFavoritesDomain on AppState {
     Product product, {
     bool variantSelectionComplete = true,
   }) async {
-    final key = CartState.productKey(product);
+    final normalized = ProductCartIdentity.withCanonicalId(product);
+    final canonicalId = ProductCartIdentity.resolve(normalized);
+    CartAddDiagnostics.appStateAddStart(
+      productId: product.productId?.trim() ?? '-',
+      canonicalId: canonicalId,
+    );
+
+    final key = CartState.productKey(normalized);
     if (_cartAddInFlightKeys.contains(key)) {
       return null;
     }
     _cartAddInFlightKeys.add(key);
     try {
       final validation = await CartValidationService.instance.validateForAdd(
-        product,
+        normalized,
         variantSelectionComplete: variantSelectionComplete,
       );
       if (!validation.allowed) {
         return validation.message;
       }
-      _addToCartImpl(validation.product ?? product);
+      _addToCartImpl(validation.product ?? normalized);
       return null;
     } finally {
       _cartAddInFlightKeys.remove(key);

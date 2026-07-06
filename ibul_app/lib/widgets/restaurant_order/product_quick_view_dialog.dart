@@ -10,6 +10,7 @@ import '../../core/app_state.dart';
 import '../../core/cart_add_diagnostics.dart';
 import '../../core/constants.dart';
 import '../../core/interaction_feedback.dart';
+import '../../core/product_cart_identity.dart';
 import '../../core/product_purchasability_helper.dart';
 import '../../core/product_rich_description.dart';
 import '../../models/product_model.dart';
@@ -419,12 +420,15 @@ class _ProductQuickViewPanelState extends State<ProductQuickViewPanel> {
       return;
     }
     InteractionFeedback.forInteraction(InteractionFeedbackType.addToCart);
+    final canonicalProduct = ProductCartIdentity.withCanonicalId(_displayProduct);
     CartAddDiagnostics.tap(
-      productId: _displayProduct.productId ?? '-',
       source: 'quick_view',
+      productId: _displayProduct.productId,
+      canonicalId: ProductCartIdentity.resolve(canonicalProduct),
+      name: _displayProduct.name,
     );
     final messenger = ScaffoldMessenger.maybeOf(context);
-    final error = await appState.addToCart(_displayProduct);
+    final error = await appState.addToCart(canonicalProduct);
     if (error != null) {
       messenger?.showSnackBar(
         SnackBar(content: Text(error), duration: const Duration(seconds: 2)),
@@ -1535,7 +1539,10 @@ class _QuickViewProductContent {
 
   @visibleForTesting
   static Product mergeDetailFallback(Product seed, Product detail) {
+    final canonicalId =
+        ProductCartIdentity.resolve(seed) ?? ProductCartIdentity.resolve(detail);
     return seed.copyWith(
+      productId: canonicalId ?? seed.productId ?? detail.productId,
       description: _preferNonEmpty(seed.description, detail.description),
       shortDescription: _preferNonEmpty(
         seed.shortDescription,
@@ -1554,6 +1561,10 @@ class _QuickViewProductContent {
       category: _preferNonEmpty(seed.category, detail.category),
       subCategory: _preferNonEmpty(seed.subCategory, detail.subCategory),
       stock: seed.stock ?? detail.stock,
+      catalogStatus: seed.catalogStatus ?? detail.catalogStatus,
+      approvalStatus: seed.approvalStatus ?? detail.approvalStatus,
+      adminApprovalStatus:
+          seed.adminApprovalStatus ?? detail.adminApprovalStatus,
     );
   }
 

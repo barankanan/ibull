@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../core/app_state.dart';
+import '../core/product_cart_identity.dart';
+import '../core/product_purchasability_helper.dart';
 import '../models/db_product.dart';
 import '../models/product_model.dart';
 import '../services/database_helper.dart';
@@ -14,6 +16,7 @@ import '../utils/product_visibility_helper.dart';
 class ProductDetailViewModel extends ChangeNotifier {
   Product initialProduct;
   final AppState appState;
+  final String openSource;
   late ReviewSummary _reviewSummary;
   String? _storeLogoUrl;
 
@@ -75,6 +78,7 @@ class ProductDetailViewModel extends ChangeNotifier {
   ProductDetailViewModel({
     required this.initialProduct,
     required this.appState,
+    this.openSource = 'product_detail',
   }) {
     final localReviews = List<Map<String, dynamic>>.unmodifiable(
       appState.getProductReviewsFor(
@@ -93,7 +97,10 @@ class ProductDetailViewModel extends ChangeNotifier {
   }
 
   void _init() {
-    appState.addRecentlyViewedProduct(initialProduct);
+    appState.addRecentlyViewedProduct(
+      initialProduct,
+      source: openSource,
+    );
     _parseVariantOptions();
     _syncSelectedVariantsFromStructuredVariants();
     isFavorite = appState.isFavorite(initialProduct);
@@ -834,11 +841,14 @@ class ProductDetailViewModel extends ChangeNotifier {
     isAddToCartInProgress = true;
     notifyListeners();
     try {
-      final error = await appState.addToCart(
+      final cartProduct = ProductCartIdentity.withCanonicalId(
         displayProduct.copyWith(
           selectedServices: selectedServices,
           selectedParts: selectedParts,
         ),
+      );
+      final error = await appState.addToCart(
+        cartProduct,
         variantSelectionComplete: variantComplete,
       );
       if (error != null) {
@@ -868,6 +878,22 @@ class ProductDetailViewModel extends ChangeNotifier {
       reviewCount: reviewCount,
     );
     notifyListeners();
+  }
+
+  /// Ürünün satın alınabilirlik değerlendirmesi (tek kaynak helper).
+  ///
+  /// Yerel snapshot'a ek olarak Supabase'den tazelenen katalog stoğunu da
+  /// hesaba katar; böylece "Stokta (0)" durumunda buton kesin bloklanır.
+  ProductPurchasability get purchasability {
+    final base = ProductPurchasabilityHelper.evaluate(displayProduct);
+    if (_catalogStock != null && _catalogStock! <= 0) {
+      return const ProductPurchasability(
+        canPurchase: false,
+        reason: ProductPurchasabilityReason.outOfStock,
+        userMessage: ProductPurchasabilityHelper.outOfStockMessage,
+      );
+    }
+    return base;
   }
 
   Product get displayProduct {

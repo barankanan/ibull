@@ -139,13 +139,19 @@ class Product {
   });
 
   /// Sepete ekle hızlı doğrulama map'i (checkout yerine geçmez).
+  ///
+  /// Lean home projeksiyonunda düşmüş null approval alanları eklenmez; böylece
+  /// [ProductVisibilityHelper] RLS'e güvenir ve DB doğrulamasına izin verilir.
   Map<String, dynamic> toCartValidationMap() {
     return {
-      'id': productId,
-      'status': catalogStatus,
-      'approval_status': approvalStatus,
-      'admin_approval_status': adminApprovalStatus,
-      'stock': stock,
+      if (productId != null && productId!.trim().isNotEmpty) 'id': productId,
+      if (catalogStatus != null && catalogStatus!.trim().isNotEmpty)
+        'status': catalogStatus,
+      if (approvalStatus != null && approvalStatus!.trim().isNotEmpty)
+        'approval_status': approvalStatus,
+      if (adminApprovalStatus != null && adminApprovalStatus!.trim().isNotEmpty)
+        'admin_approval_status': adminApprovalStatus,
+      if (stock != null) 'stock': stock,
       'price': _cartValidationNumericPrice(price),
       if (catalogDiscountPrice != null) 'discount_price': catalogDiscountPrice,
       if (catalogUpdatedAt != null)

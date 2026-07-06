@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_image_cdn.dart';
 import '../core/cart_add_diagnostics.dart';
+import '../core/product_cart_identity.dart';
 import '../core/product_purchasability_helper.dart';
 import '../models/product_model.dart';
 import '../screens/product_detail_page.dart';
@@ -1247,11 +1248,14 @@ class _ProductCardState extends State<ProductCard> {
       return;
     }
     InteractionFeedback.forInteraction(InteractionFeedbackType.addToCart);
+    final canonicalProduct = ProductCartIdentity.withCanonicalId(widget.product);
     CartAddDiagnostics.tap(
-      productId: widget.product.productId ?? '-',
       source: 'home_card',
+      productId: widget.product.productId,
+      canonicalId: ProductCartIdentity.resolve(canonicalProduct),
+      name: widget.product.name,
     );
-    final error = await _appState.addToCart(widget.product);
+    final error = await _appState.addToCart(canonicalProduct);
     if (!context.mounted) return;
     if (error != null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1468,10 +1472,16 @@ class _ProductCardState extends State<ProductCard> {
       return;
     }
     CartAddDiagnostics.tap(
-      productId: widget.product.productId ?? '-',
       source: 'home_card_food_online',
+      productId: widget.product.productId,
+      canonicalId: ProductCartIdentity.resolve(
+        ProductCartIdentity.withCanonicalId(widget.product),
+      ),
+      name: widget.product.name,
     );
-    final error = await _appState.addToCart(widget.product);
+    final error = await _appState.addToCart(
+      ProductCartIdentity.withCanonicalId(widget.product),
+    );
     if (!context.mounted) return;
     if (error != null) {
       ScaffoldMessenger.of(context).showSnackBar(

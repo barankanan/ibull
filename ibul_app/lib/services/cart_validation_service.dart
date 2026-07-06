@@ -1,3 +1,5 @@
+import '../core/cart_add_diagnostics.dart';
+import '../core/product_cart_identity.dart';
 import '../models/product_model.dart';
 import '../utils/product_visibility_helper.dart';
 import 'cart_product_validation_cache.dart';
@@ -105,8 +107,10 @@ class CartValidationService {
   CartAddValidation? tryFastPathValidation(Product product) {
     final map = product.toCartValidationMap();
     final partialError = validateProductRowForCart(map);
+    final hasDecisiveApproval = _hasDecisiveApprovalSnapshot(product);
     if (partialError != null &&
         _hasAnyCatalogSnapshotField(product) &&
+        hasDecisiveApproval &&
         !hasTrustedLocalSnapshot(product)) {
       return CartAddValidation.blocked(partialError);
     }
@@ -128,6 +132,12 @@ class CartValidationService {
         (product.approvalStatus ?? '').trim().isNotEmpty ||
         (product.adminApprovalStatus ?? '').trim().isNotEmpty ||
         product.stock != null;
+  }
+
+  /// Approval alanı gerçekten doluysa yerel snapshot kesin blok yapabilir.
+  bool _hasDecisiveApprovalSnapshot(Product product) {
+    return (product.approvalStatus ?? '').trim().isNotEmpty ||
+        (product.adminApprovalStatus ?? '').trim().isNotEmpty;
   }
 
   Product applyRowToProduct(Product product, Map<String, dynamic> row) {
@@ -155,11 +165,21 @@ class CartValidationService {
 
   CartAddValidation validateFetchedRow(
     Product product,
-    Map<String, dynamic>? row,
-  ) {
+    Map<String, dynamic>? row, {
+    String? lookupId,
+  }) {
     if (row == null) {
+      CartAddDiagnostics.dbLookupResult(found: false, count: 0);
+      CartAddDiagnostics.blocked(
+        source: 'cart_validation',
+        reason: lookupId == null || lookupId.isEmpty
+            ? 'missing_product_id'
+            : 'product_not_found',
+      );
       return CartAddValidation.blocked(notForSaleMessage);
     }
+
+    CartAddDiagnostics.dbLookupResult(found: true, count: 1);
 
     final rowError = validateProductRowForCart(row);
     if (rowError != null) {
@@ -174,8 +194,16 @@ class CartValidationService {
   ) async {
     final override = fetchRowsOverride;
     if (override != null) {
+      CartAddDiagnostics.dbLookup(
+        method: 'fetchRowsOverride',
+        ids: ids,
+      );
       return override(ids);
     }
+    CartAddDiagnostics.dbLookup(
+      method: 'getProductRowsForCartValidation',
+      ids: ids,
+    );
     return SupabaseService.instance.getProductRowsForCartValidation(ids);
   }
 
@@ -191,27 +219,85 @@ class CartValidationService {
       return CartAddValidation.blocked(variantError);
     }
 
-    final productId = product.productId?.trim() ?? '';
-    if (productId.isEmpty) {
+    final canonicalId = ProductCartIdentity.resolve(product);
+    if (canonicalId == null) {
+      CartAddDiagnostics.blocked(
+        source: 'cart_validation',
+        reason: 'missing_canonical_id',
+      );
       return CartAddValidation.blocked(missingProductIdMessage);
     }
 
-    final fastPath = tryFastPathValidation(product);
+    final normalizedProduct = ProductCartIdentity.withCanonicalId(product);
+
+    CartAddDiagnostics.validationStart(
+      productId: product.productId?.trim() ?? '-',
+      canonicalId: canonicalId,
+    );
+    CartAddDiagnostics.productStatus(
+      status: normalizedProduct.catalogStatus,
+      approvalStatus: normalizedProduct.approvalStatus,
+      adminApprovalStatus: normalizedProduct.adminApprovalStatus,
+      stock: normalizedProduct.stock,
+    );
+
+    final fastPath = tryFastPathValidation(normalizedProduct);
     if (fastPath != null) {
+      _logValidationOutcome(fastPath, source: 'cart_validation');
       return fastPath;
     }
 
-    final cachedRow = _cache.get(productId);
+    final cachedRow = _cache.get(canonicalId);
     if (cachedRow != null) {
-      return validateFetchedRow(product, cachedRow);
+      final cachedResult = validateFetchedRow(
+        normalizedProduct,
+        cachedRow,
+        lookupId: canonicalId,
+      );
+      _logValidationOutcome(cachedResult, source: 'cart_validation');
+      return cachedResult;
     }
 
-    final rows = await _fetchValidationRows([productId]);
-    final row = rows[productId];
+    final rows = await _fetchValidationRows([canonicalId]);
+    final row = rows[canonicalId];
     if (row != null) {
-      _cache.put(productId, row);
+      _cache.put(canonicalId, row);
     }
-    return validateFetchedRow(product, row);
+    final result = validateFetchedRow(
+      normalizedProduct,
+      row,
+      lookupId: canonicalId,
+    );
+    _logValidationOutcome(result, source: 'cart_validation');
+    return result;
+  }
+
+  void _logValidationOutcome(
+    CartAddValidation result, {
+    required String source,
+  }) {
+    final reason = result.allowed ? 'ok' : _reasonForMessage(result.message);
+    CartAddDiagnostics.validationResult(
+      canPurchase: result.allowed,
+      reason: reason,
+      message: result.message,
+    );
+    if (result.allowed) {
+      final id = result.product?.productId?.trim() ?? '';
+      if (id.isNotEmpty) {
+        CartAddDiagnostics.success(source: source, productId: id);
+      }
+    } else {
+      CartAddDiagnostics.blocked(source: source, reason: reason);
+    }
+  }
+
+  String _reasonForMessage(String? message) {
+    if (message == notForSaleMessage) return 'not_for_sale';
+    if (message == outOfStockMessage) return 'out_of_stock';
+    if (message == variantRequiredMessage) return 'variant_required';
+    if (message == missingProductIdMessage) return 'missing_product_id';
+    return 'unknown';
   }
 
   Future<CartRevalidationResult> revalidate(List<Product> products) async {
@@ -225,8 +311,8 @@ class CartValidationService {
     }
 
     final ids = products
-        .map((product) => product.productId?.trim() ?? '')
-        .where((id) => id.isNotEmpty)
+        .map(ProductCartIdentity.resolve)
+        .whereType<String>()
         .toSet()
         .toList(growable: false);
     final rows = ids.isEmpty
@@ -239,7 +325,7 @@ class CartValidationService {
     final messages = <String>[];
 
     for (final product in products) {
-      final productId = product.productId?.trim() ?? '';
+      final productId = ProductCartIdentity.resolve(product) ?? '';
       if (productId.isEmpty) {
         updated.add(product);
         continue;

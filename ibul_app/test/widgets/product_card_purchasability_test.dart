@@ -17,9 +17,10 @@ Product _product({
   String? approvalStatus,
   int stock = 999,
   String category = 'Elektronik',
+  String productId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
 }) {
   return Product(
-    productId: 'card-prod',
+    productId: productId,
     name: 'Samsung Galaxy S24 256 GB Gri',
     brand: 'Samsung',
     price: '54999 TL',

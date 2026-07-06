@@ -60,7 +60,7 @@ void main() {
   });
 
   Product trustedProduct({
-    String productId = 'prod-fast',
+    String productId = 'prod-fast1',
     String approvalStatus = 'approved',
     String? adminApprovalStatus = 'approved',
     int stock = 5,
@@ -162,7 +162,7 @@ void main() {
       };
 
       final result = await service.validateForAdd(
-        sampleProduct(productId: 'prod-db', price: '99 TL'),
+        sampleProduct(productId: 'prod-db-01', price: '99 TL'),
         variantSelectionComplete: true,
       );
 
@@ -207,7 +207,7 @@ void main() {
         };
       };
 
-      final product = sampleProduct(productId: 'prod-cache', price: '99 TL');
+      final product = sampleProduct(productId: 'prod-cache1', price: '99 TL');
       final first = await service.validateForAdd(
         product,
         variantSelectionComplete: true,
@@ -280,6 +280,86 @@ void main() {
       );
       expect(result.allowed, isFalse);
       expect(result.message, CartValidationService.missingProductIdMessage);
+    });
+
+    test('blocks preview token ids before DB lookup', () async {
+      var dbCalled = false;
+      service.fetchRowsOverride = (_) async {
+        dbCalled = true;
+        return {};
+      };
+
+      final result = await service.validateForAdd(
+        sampleProduct(productId: 'preview-card-1'),
+        variantSelectionComplete: true,
+      );
+
+      expect(result.allowed, isFalse);
+      expect(result.message, CartValidationService.missingProductIdMessage);
+      expect(dbCalled, isFalse);
+    });
+
+    test('DB lookup uses canonical id from productId', () async {
+      const canonicalId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+      final requestedIds = <String>[];
+      service.fetchRowsOverride = (ids) async {
+        requestedIds.addAll(ids);
+        return {
+          canonicalId: {
+            'id': canonicalId,
+            'status': 'Aktif',
+            'approval_status': 'approved',
+            'stock': 5,
+            'price': 99,
+          },
+        };
+      };
+
+      final result = await service.validateForAdd(
+        sampleProduct(productId: canonicalId, price: '99 TL'),
+        variantSelectionComplete: true,
+      );
+
+      expect(requestedIds, [canonicalId]);
+      expect(result.allowed, isTrue);
+    });
+
+    test('lean home snapshot without approval defers to DB instead of blocking',
+        () async {
+      const productId = '17821651777404055';
+      var dbCalled = false;
+      service.fetchRowsOverride = (ids) async {
+        dbCalled = true;
+        return {
+          productId: {
+            'id': productId,
+            'status': 'Aktif',
+            'approval_status': 'approved',
+            'admin_approval_status': 'approved',
+            'stock': 14,
+            'price': 18999,
+          },
+        };
+      };
+
+      final result = await service.validateForAdd(
+        Product(
+          productId: productId,
+          name: 'Apple iPad 10. Nesil 64 GB Wi-Fi Mavi',
+          brand: 'Apple',
+          price: '18999',
+          catalogStatus: 'Aktif',
+          stock: 14,
+          rating: 0,
+          reviewCount: 0,
+          tags: const [],
+          images: const [],
+        ),
+        variantSelectionComplete: true,
+      );
+
+      expect(dbCalled, isTrue);
+      expect(result.allowed, isTrue);
     });
   });
 
