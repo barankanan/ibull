@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_image_cdn.dart';
+import '../core/cart_add_diagnostics.dart';
+import '../core/product_purchasability_helper.dart';
 import '../models/product_model.dart';
 import '../screens/product_detail_page.dart';
 import '../screens/home_screen.dart';
@@ -212,14 +214,11 @@ class _ProductCardState extends State<ProductCard> {
 
   void _showQuickView() {
     InteractionFeedback.lightImpact(channel: 'product_quick_view');
-    showAppModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.42),
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return ProductQuickInfoSheet(product: widget.product);
-      },
+    showProductQuickView(
+      context,
+      product: widget.product,
+      forceFoodOrderButton: widget.forceFoodOrderButton,
+      source: 'product_card',
     );
   }
 
@@ -1007,11 +1006,55 @@ class _ProductCardState extends State<ProductCard> {
               buttonHeight: buttonHeight,
               fontSize: fontSize,
             )
+          : _resolvePurchasability().isDefinitivelyBlocked
+          ? _buildNotForSaleButton(
+              purchasability: _resolvePurchasability(),
+              buttonHeight: buttonHeight,
+              fontSize: fontSize,
+            )
           : _buildAddToCartButton(
               context: context,
               buttonHeight: buttonHeight,
               fontSize: fontSize,
             ),
+    );
+  }
+
+  ProductPurchasability _resolvePurchasability() {
+    return ProductPurchasabilityHelper.evaluate(widget.product);
+  }
+
+  Widget _buildNotForSaleButton({
+    required ProductPurchasability purchasability,
+    required double buttonHeight,
+    required double fontSize,
+  }) {
+    final label =
+        ProductPurchasabilityHelper.blockedButtonLabel(purchasability) ??
+        ProductPurchasabilityHelper.notForSaleLabel;
+    return SizedBox(
+      key: const ValueKey('product-card-not-for-sale-button'),
+      width: double.infinity,
+      height: buttonHeight,
+      child: ElevatedButton(
+        onPressed: null,
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+          alignment: Alignment.center,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(widget.compact ? 6 : 12),
+          ),
+          disabledBackgroundColor: const Color(0xFFEDEDED),
+          disabledForegroundColor: const Color(0xFF9E9E9E),
+        ),
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600),
+        ),
+      ),
     );
   }
 
@@ -1198,13 +1241,35 @@ class _ProductCardState extends State<ProductCard> {
     _appState.toggleFavorite(widget.product);
   }
 
-  void _handleAddToCartTap(BuildContext context) {
+  Future<void> _handleAddToCartTap(BuildContext context) async {
     if (!_appState.isLoggedIn) {
       _showLoginRequiredDialog(context);
       return;
     }
     InteractionFeedback.forInteraction(InteractionFeedbackType.addToCart);
-    _appState.addToCart(widget.product);
+    CartAddDiagnostics.tap(
+      productId: widget.product.productId ?? '-',
+      source: 'home_card',
+    );
+    final error = await _appState.addToCart(widget.product);
+    if (!context.mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error), duration: const Duration(seconds: 2)),
+      );
+      return;
+    }
+    InteractionFeedback.forInteraction(
+      InteractionFeedbackType.successState,
+      channel: 'cart_add_success',
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Ürün sepete eklendi'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 1),
+      ),
+    );
   }
 
   void _showFoodOrderModePopup(BuildContext context) {
@@ -1397,12 +1462,23 @@ class _ProductCardState extends State<ProductCard> {
     );
   }
 
-  void _navigateToOnlineCart(BuildContext context) {
+  Future<void> _navigateToOnlineCart(BuildContext context) async {
     if (!_appState.isLoggedIn) {
       _showLoginRequiredDialog(context);
       return;
     }
-    _appState.addToCart(widget.product);
+    CartAddDiagnostics.tap(
+      productId: widget.product.productId ?? '-',
+      source: 'home_card_food_online',
+    );
+    final error = await _appState.addToCart(widget.product);
+    if (!context.mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error), duration: const Duration(seconds: 2)),
+      );
+      return;
+    }
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(
