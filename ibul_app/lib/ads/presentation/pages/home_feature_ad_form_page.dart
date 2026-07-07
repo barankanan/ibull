@@ -379,6 +379,7 @@ class _HomeFeatureAdFormPageState extends State<HomeFeatureAdFormPage> {
       return;
     }
     setState(() => _isSubmitting = true);
+    debugPrint('[SellerAds] create_start');
     try {
       final campaign = await _adService.createHomeFeatureAd(
         sellerId: widget.sellerId,
@@ -395,11 +396,20 @@ class _HomeFeatureAdFormPageState extends State<HomeFeatureAdFormPage> {
         totalBudget: _totalBudget,
         extraSettings: _buildExtraSettings(),
       );
+      debugPrint(
+        '[SellerAds] create_success campaignId=${campaign.id}'
+        ' status=${campaign.status.dbValue}',
+      );
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_draftKey);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Reklamınız admin onayına gönderildi.')),
+        const SnackBar(
+          content: Text(
+            'Reklamınız admin onayına gönderildi. '
+            'Onaylandıktan sonra ana sayfada görünecek.',
+          ),
+        ),
       );
       Navigator.of(context).pop(campaign);
     } catch (e) {

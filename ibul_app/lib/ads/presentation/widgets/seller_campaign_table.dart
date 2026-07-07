@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../helpers/home_feature_ad_helper.dart';
+import '../../helpers/safe_table_math.dart';
 import '../../enums/ad_enums.dart';
 import '../../models/ad_campaign.dart';
 import '../../models/ad_health_score.dart';
@@ -325,24 +326,41 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
         cellBuilder: (ctx, row, _) {
           if (row.campaign.type == AdCampaignType.homeFeature) {
             final m = HomeFeatureAdHelper.metrics(row.campaign);
+            // Sabit 52px satır yüksekliğinde iki satırlık içerik, temadan
+            // miras kalan line-height (M3 bodyMedium height=1.43) ile
+            // dikeyde taşıyordu (RenderFlex overflow). Explicit height +
+            // mainAxisSize.min + Flexible ile içerik her zaman hücreye sığar;
+            // font/renk/hiyerarşi aynı kalır.
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  row.campaign.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                    color: Color(0xFF0F172A),
+                Flexible(
+                  child: Text(
+                    row.campaign.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      height: 1.15,
+                      color: Color(0xFF0F172A),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  'G:${m.impressionsCount} B:${m.bannerClicksCount} P:${m.profileOpensCount}',
-                  style: const TextStyle(fontSize: 10, color: Color(0xFF64748B)),
+                Flexible(
+                  child: Text(
+                    'G:${m.impressionsCount} B:${m.bannerClicksCount} P:${m.profileOpensCount}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      height: 1.15,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
                 ),
               ],
             );
@@ -354,6 +372,9 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
             style: const TextStyle(
               fontWeight: FontWeight.w700,
               fontSize: 13,
+              // 2 satırlık isim 32px'lik hücre içinde tema line-height'ı ile
+              // dikeyde kırpılıyordu; 1.2 ile iki satır tam sığar.
+              height: 1.2,
               color: Color(0xFF0F172A),
             ),
           );
@@ -583,7 +604,18 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
       final col = byId[id];
       if (col == null) continue;
       final override = _widthOverrides[id];
-      result.add(override == null ? col : _withWidth(col, override));
+      result.add(
+        override == null
+            ? col
+            : _withWidth(
+                col,
+                SafeTableMath.safeColumnWidth(
+                  override,
+                  fallback: col.width,
+                  min: col.minWidth,
+                ),
+              ),
+      );
     }
     return result;
   }
@@ -771,28 +803,36 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: col.numeric
               ? CrossAxisAlignment.end
               : CrossAxisAlignment.start,
           children: [
-            Text(
-              col.labelTr,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF3B82F6),
+            Flexible(
+              child: Text(
+                col.labelTr,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 10,
+                  height: 1.15,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF3B82F6),
+                ),
               ),
             ),
             const SizedBox(height: 3),
-            Text(
-              col.labelEn,
-              maxLines: 1,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF1D4ED8),
+            Flexible(
+              child: Text(
+                col.labelEn,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.15,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1D4ED8),
+                ),
               ),
             ),
           ],
@@ -820,58 +860,67 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
     required bool isSorted,
     required bool dropIndicator,
   }) {
+    // Sabit 58px başlık yüksekliğinde tema line-height'ı ile dikey taşmayı
+    // engelle: explicit height + min + Flexible (tasarım birebir korunur).
     final labelContent = Column(
       mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: col.numeric
           ? CrossAxisAlignment.end
           : CrossAxisAlignment.start,
       children: [
         if (col.labelTr.isNotEmpty)
-          Text(
-            col.labelTr,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w500,
-              color: isSorted
-                  ? const Color(0xFF3B82F6)
-                  : const Color(0xFF94A3B8),
+          Flexible(
+            child: Text(
+              col.labelTr,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                height: 1.15,
+                fontWeight: FontWeight.w500,
+                color: isSorted
+                    ? const Color(0xFF3B82F6)
+                    : const Color(0xFF94A3B8),
+              ),
             ),
           ),
         const SizedBox(height: 3),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
-                col.labelEn,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  color: isSorted
-                      ? const Color(0xFF1D4ED8)
-                      : const Color(0xFF334155),
+        Flexible(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  col.labelEn,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.15,
+                    fontWeight: FontWeight.w800,
+                    color: isSorted
+                        ? const Color(0xFF1D4ED8)
+                        : const Color(0xFF334155),
+                  ),
                 ),
               ),
-            ),
-            if (col.sortable && widget.onSortChanged != null) ...[
-              const SizedBox(width: 2),
-              Icon(
-                isSorted
-                    ? (widget.sortAscending
-                          ? Icons.arrow_upward_rounded
-                          : Icons.arrow_downward_rounded)
-                    : Icons.unfold_more_rounded,
-                size: 11,
-                color: isSorted
-                    ? const Color(0xFF2563EB)
-                    : const Color(0xFFCBD5E1),
-              ),
+              if (col.sortable && widget.onSortChanged != null) ...[
+                const SizedBox(width: 2),
+                Icon(
+                  isSorted
+                      ? (widget.sortAscending
+                            ? Icons.arrow_upward_rounded
+                            : Icons.arrow_downward_rounded)
+                      : Icons.unfold_more_rounded,
+                  size: 11,
+                  color: isSorted
+                      ? const Color(0xFF2563EB)
+                      : const Color(0xFFCBD5E1),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ],
     );
@@ -925,9 +974,11 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
               onDragUpdate: (globalX) {
                 if (_resizingId != col.id) return;
                 final delta = globalX - _resizeDragStartX;
-                final newW = (_resizeDragStartWidth + delta).clamp(
-                  col.minWidth,
-                  600.0,
+                final newW = SafeTableMath.safeColumnWidth(
+                  _resizeDragStartWidth + delta,
+                  fallback: col.width,
+                  min: col.minWidth,
+                  max: 600.0,
                 );
                 setState(() => _widthOverrides[col.id] = newW);
               },
@@ -1076,22 +1127,24 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
 
   Widget _buildFooter() {
     const pageSizes = <int>[10, 25, 50];
-    final resolvedSize = pageSizes.contains(widget.pageSize)
-        ? widget.pageSize
+    // Sınır doğrulaması: web release'te dynamic kanaldan sızabilecek bozuk
+    // (NaN/negatif/yanlış tip) değerler pagination hesabını asla kıramaz.
+    final safeTotal = SafeTableMath.safeCount(widget.totalRowCount);
+    final safeSize = SafeTableMath.safeCount(widget.pageSize, fallback: 10);
+    final safeIndex = SafeTableMath.safeCount(widget.pageIndex);
+    final resolvedSize = pageSizes.contains(safeSize)
+        ? safeSize
         : pageSizes.first;
-    final totalPages = widget.pageSize <= 0
-        ? 1
-        : ((widget.totalRowCount + widget.pageSize - 1) / widget.pageSize)
-              .ceil()
-              .clamp(1, 999999);
-    final canBack = widget.pageIndex > 0;
-    final canNext = widget.pageIndex + 1 < totalPages;
-    final start = widget.totalRowCount == 0
-        ? 0
-        : widget.pageIndex * widget.pageSize + 1;
-    final end = (widget.pageIndex * widget.pageSize + widget.rows.length).clamp(
+    final totalPages = SafeTableMath.safePageCount(
+      totalRowCount: safeTotal,
+      pageSize: safeSize,
+    );
+    final canBack = safeIndex > 0;
+    final canNext = safeIndex + 1 < totalPages;
+    final start = safeTotal == 0 ? 0 : safeIndex * resolvedSize + 1;
+    final end = (safeIndex * resolvedSize + widget.rows.length).clamp(
       0,
-      widget.totalRowCount,
+      safeTotal < start ? start : safeTotal,
     );
 
     return Container(
@@ -1104,7 +1157,7 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
       child: Row(
         children: [
           Text(
-            '$start \u2013 $end / ${widget.totalRowCount}',
+            '$start \u2013 $end / $safeTotal',
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -1141,12 +1194,12 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
             tooltip: '\u00d6nceki sayfa',
             visualDensity: VisualDensity.compact,
             onPressed: canBack
-                ? () => widget.onPageChanged?.call(widget.pageIndex - 1)
+                ? () => widget.onPageChanged?.call(safeIndex - 1)
                 : null,
             icon: const Icon(Icons.chevron_left_rounded, size: 20),
           ),
           Text(
-            '${widget.pageIndex + 1} / $totalPages',
+            '${safeIndex + 1} / $totalPages',
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
@@ -1157,7 +1210,7 @@ class _SellerCampaignTableState extends State<SellerCampaignTable> {
             tooltip: 'Sonraki sayfa',
             visualDensity: VisualDensity.compact,
             onPressed: canNext
-                ? () => widget.onPageChanged?.call(widget.pageIndex + 1)
+                ? () => widget.onPageChanged?.call(safeIndex + 1)
                 : null,
             icon: const Icon(Icons.chevron_right_rounded, size: 20),
           ),

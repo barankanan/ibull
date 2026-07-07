@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 
 import '../../enums/ad_enums.dart';
 import '../../helpers/ad_metrics_helper.dart';
+import '../../helpers/home_feature_ad_helper.dart';
+import '../../helpers/safe_table_math.dart';
 import '../../models/ad_campaign.dart';
 import '../../models/ad_campaign_page.dart';
 import '../../models/ad_health_score.dart';
@@ -177,6 +179,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
     }
 
     try {
+      debugPrint('[SellerAds] load_start sellerId=$_effectiveSellerId');
       debugPrint(
         'Seller ads current filters: search="$_searchQuery", statuses=${_selectedStatusFilters.join(',')}, type=$_typeFilter, objective=$_objectiveFilter',
       );
@@ -184,6 +187,7 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
           .getCampaignsForSeller(_effectiveSellerId)
           .timeout(const Duration(seconds: 4));
       if (!mounted || token != _campaignLoadToken) return;
+      debugPrint('[SellerAds] db_rows count=${campaigns.length}');
 
       final mergedCampaigns = _mergeCampaigns(
         remoteCampaigns: campaigns,
@@ -426,17 +430,45 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
           'Seller ads table refresh savedId=$_lastSavedCampaignId savedSeller=$_lastSavedSellerId savedStatus=$_lastSavedStatus fetchedCount=${rows.length} fetchTotal=${page.totalCount} localCount=${localFallback.items.length} localTotal=${localFallback.totalCount} fetchedContains=${rows.any((campaign) => campaign.id == _lastSavedCampaignId)} localContains=${localFallback.items.any((campaign) => campaign.id == _lastSavedCampaignId)} resolvedContains=${resolvedRows.any((campaign) => campaign.id == _lastSavedCampaignId)} sellerId=$_effectiveSellerId statuses=${_selectedStatusFilters.join(',')} type=$_typeFilter objective=$_objectiveFilter',
         );
       }
+      // Sınır doğrulaması: repository'den dönen sayaçlar her zaman güvenli
+      // int olmalı (NaN.ceil regresyon koruması).
+      final safeTotalCount = SafeTableMath.safeCount(
+        resolvedTotalCount,
+        fallback: resolvedRows.length,
+      );
+      final safePageIndex = SafeTableMath.safeCount(resolvedPageIndex);
+      debugPrint(
+        '[SellerAds] filtered_rows count=${resolvedRows.length}',
+      );
+      // Ana sayfa görünürlüğü — reklam neden home'da yok, seller logunda net.
+      for (final campaign in resolvedRows) {
+        if (!HomeFeatureAdHelper.isHomeFeature(campaign)) continue;
+        final reason =
+            HomeFeatureAdHelper.sellerHomeVisibilityReason(campaign);
+        debugPrint(
+          '[SellerAds] home_visibility campaignId=${campaign.id}'
+          ' visible=${reason == null}'
+          ' reason=${reason ?? 'live'}',
+        );
+      }
+      debugPrint(
+        '[SellerAds] table_metrics rows=${resolvedRows.length}'
+        ' rowsPerPage=$_tablePageSize'
+        ' totalCount=$safeTotalCount'
+        ' pageCount=${SafeTableMath.safePageCount(totalRowCount: safeTotalCount, pageSize: _tablePageSize)}',
+      );
       setState(() {
         _tableCampaigns = resolvedRows;
-        _tableTotalCount = resolvedTotalCount;
-        _tablePageIndex = resolvedPageIndex;
+        _tableTotalCount = safeTotalCount;
+        _tablePageIndex = safePageIndex;
         _isLoadingTable = false;
         _selectionMode = _selectionMode && resolvedRows.isNotEmpty;
         _selectedCampaignIds.removeWhere(
           (id) => !resolvedRows.any((campaign) => campaign.id == id),
         );
       });
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[SellerAds] table_error reason=$error');
       if (!mounted || token != _tableLoadToken) {
         return;
       }
@@ -451,8 +483,11 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       }
       setState(() {
         _tableCampaigns = fallbackRows.items;
-        _tableTotalCount = fallbackRows.totalCount;
-        _tablePageIndex = fallbackRows.page;
+        _tableTotalCount = SafeTableMath.safeCount(
+          fallbackRows.totalCount,
+          fallback: fallbackRows.items.length,
+        );
+        _tablePageIndex = SafeTableMath.safeCount(fallbackRows.page);
         _isLoadingTable = false;
         _selectionMode = _selectionMode && fallbackRows.items.isNotEmpty;
         _selectedCampaignIds.removeWhere(
@@ -908,6 +943,14 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       ' insertedId=${normalized.id}'
       ' insertedStatus=${normalized.status.dbValue}'
       ' insertedSellerId=${normalized.sellerId}',
+    );
+    debugPrint(
+      '[SellerAds] create_success campaignId=${normalized.id}'
+      ' status=${normalized.status.dbValue}',
+    );
+    debugPrint(
+      '[SellerAds] approval_status campaignId=${normalized.id}'
+      ' status=${normalized.status.dbValue}',
     );
   }
 
@@ -1711,6 +1754,11 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
       ' willShowLoadingShell=$diagWillShowLoading'
       ' willShowEmptyState=$diagWillShowEmpty',
     );
+    if (diagWillShowEmpty) {
+      debugPrint(
+        '[SellerAds] empty_state reason=${_campaigns.isEmpty ? 'no_campaigns' : 'filters_no_match'}',
+      );
+    }
     return Container(
       padding: const EdgeInsets.only(top: 18, bottom: 18),
       decoration: BoxDecoration(
@@ -2417,8 +2465,8 @@ class _SellerAdsManagerContentState extends State<SellerAdsManagerContent> {
 
   Widget _buildApprovalInfoBanner(int count) {
     final summary = count == 1
-        ? '1 kampanya icin onay bekleniliyor.'
-        : '$count kampanya icin onay bekleniliyor.';
+        ? '1 kampanya icin admin onayi bekleniyor. Onaylandiktan sonra ana sayfada gorunecek.'
+        : '$count kampanya icin admin onayi bekleniyor. Onaylandiktan sonra ana sayfada gorunecek.';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),

@@ -370,4 +370,51 @@ class HomeFeatureAdHelper {
   }) {
     return ineligibleReason(campaign, now: now) == null;
   }
+
+  /// Seller panelde gösterilecek "ana sayfa görünürlüğü" makine-okur kodu.
+  /// null → yayında.
+  static String? sellerHomeVisibilityReason(
+    AdCampaign campaign, {
+    DateTime? now,
+  }) {
+    final reason = ineligibleReason(campaign, now: now);
+    if (reason != null) return reason;
+    if (selectedProductIds(campaign).isEmpty) return 'no_product';
+    return null;
+  }
+
+  /// Seller panelde kullanıcıya gösterilecek net görünürlük etiketi.
+  static String sellerHomeVisibilityLabel(
+    AdCampaign campaign, {
+    DateTime? now,
+  }) {
+    final reason = sellerHomeVisibilityReason(campaign, now: now);
+    switch (reason) {
+      case null:
+        return 'Yayında';
+      case 'status_not_approved':
+        return 'Admin onayı bekleniyor. Onaylandıktan sonra ana sayfada görünecek.';
+      case 'status_rejected':
+        return 'Reddedildi — ana sayfada görünmüyor';
+      case 'status_paused':
+        return 'Duraklatıldı — ana sayfada görünmüyor';
+      case 'status_inactive':
+        return 'Pasif — ana sayfada görünmüyor';
+      case 'status_draft':
+        return 'Taslak — henüz onaya gönderilmedi';
+      case 'status_scheduled':
+      case 'date_not_started':
+        return 'Planlandı — başlangıç tarihini bekliyor';
+      case 'date_expired':
+        return 'Süresi doldu — ana sayfada görünmüyor';
+      case 'no_banner':
+      case 'template_missing':
+      case 'no_product':
+        return 'Reklam görseli veya ürün bağlantısı eksik';
+      case 'placement_mismatch':
+        return 'Yerleşim uyumsuz — ana sayfada görünmüyor';
+      default:
+        return 'Ana sayfada görünmüyor';
+    }
+  }
 }

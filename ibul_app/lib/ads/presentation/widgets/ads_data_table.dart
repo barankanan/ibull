@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../helpers/safe_table_math.dart';
+
 enum AdsTableDensity { compact, comfortable, spacious }
 
 class AdsTableColumn<T> {
@@ -779,16 +781,19 @@ class _AdsDataTableState<T> extends State<AdsDataTable<T>> {
 
   Widget _buildFooter() {
     final allowedPageSizes = const <int>[10, 25, 50];
-    final resolvedPageSize = allowedPageSizes.contains(widget.pageSize)
-        ? widget.pageSize
+    // Sınır doğrulaması: bozuk (NaN/negatif/yanlış tip) değerler pagination
+    // hesabını kıramaz — NaN.ceil() koruması.
+    final safeSize = SafeTableMath.safeCount(widget.pageSize, fallback: 10);
+    final safeIndex = SafeTableMath.safeCount(widget.pageIndex);
+    final resolvedPageSize = allowedPageSizes.contains(safeSize)
+        ? safeSize
         : allowedPageSizes.first;
-    final totalPages = widget.pageSize <= 0
-        ? 1
-        : ((widget.totalRowCount + widget.pageSize - 1) / widget.pageSize)
-              .ceil()
-              .clamp(1, 999999);
-    final canGoBack = widget.pageIndex > 0;
-    final canGoNext = widget.pageIndex + 1 < totalPages;
+    final totalPages = SafeTableMath.safePageCount(
+      totalRowCount: widget.totalRowCount,
+      pageSize: safeSize,
+    );
+    final canGoBack = safeIndex > 0;
+    final canGoNext = safeIndex + 1 < totalPages;
 
     return Container(
       constraints: const BoxConstraints(minHeight: 58),
@@ -832,12 +837,12 @@ class _AdsDataTableState<T> extends State<AdsDataTable<T>> {
                 tooltip: 'Onceki sayfa',
                 visualDensity: VisualDensity.compact,
                 onPressed: canGoBack
-                    ? () => widget.onPageChanged?.call(widget.pageIndex - 1)
+                    ? () => widget.onPageChanged?.call(safeIndex - 1)
                     : null,
                 icon: const Icon(Icons.chevron_left_rounded),
               ),
               Text(
-                '${widget.pageIndex + 1} / $totalPages',
+                '${safeIndex + 1} / $totalPages',
                 style: const TextStyle(
                   color: Color(0xFF334155),
                   fontSize: 12,
@@ -848,7 +853,7 @@ class _AdsDataTableState<T> extends State<AdsDataTable<T>> {
                 tooltip: 'Sonraki sayfa',
                 visualDensity: VisualDensity.compact,
                 onPressed: canGoNext
-                    ? () => widget.onPageChanged?.call(widget.pageIndex + 1)
+                    ? () => widget.onPageChanged?.call(safeIndex + 1)
                     : null,
                 icon: const Icon(Icons.chevron_right_rounded),
               ),

@@ -109,6 +109,37 @@ class AdsRepository {
     return items;
   }
 
+  /// `.count(CountOption.exact)` sonucunu güvenli bir `int`e çevirir.
+  ///
+  /// `PostgrestFilterBuilder.count()` (select sonrası) `PostgrestResponse`
+  /// döndürür; `SupabaseQueryBuilder.count()` ise doğrudan `int`. Bu metod
+  /// her iki shape'i ve bozuk (NaN/negatif/yanlış tip) değerleri normalize
+  /// eder ki UI pagination hesabına asla sayı olmayan bir değer sızmasın.
+  @visibleForTesting
+  static int normalizeCountResult(dynamic result, {int fallback = 0}) {
+    if (result is int) return result < 0 ? fallback : result;
+    if (result is num) {
+      final value = result.toDouble();
+      if (value.isNaN || value.isInfinite || value < 0) return fallback;
+      return value.floor();
+    }
+    if (result == null) return fallback;
+    try {
+      final dynamic nested = (result as dynamic).count;
+      if (nested is int) return nested < 0 ? fallback : nested;
+      if (nested is num) {
+        return normalizeCountResult(nested, fallback: fallback);
+      }
+    } catch (_) {
+      // Bilinmeyen shape — aşağıda fallback loglanır.
+    }
+    debugPrint(
+      'AdsRepository count normalize fallback: '
+      'runtimeType=${result.runtimeType}',
+    );
+    return fallback;
+  }
+
   Map<String, dynamic>? _asJsonMap(dynamic value, {required String label}) {
     if (value is Map) {
       return Map<String, dynamic>.from(value);
@@ -366,7 +397,15 @@ class AdsRepository {
         countQuery = applyFilters(countQuery);
         dataQuery = applyFilters(dataQuery);
 
-        final totalCount = await countQuery.count(CountOption.exact);
+        // KÖK NEDEN FIX (NaN.ceil):
+        // `select(...)` sonrası `.count(CountOption.exact)` bir `int` DEĞİL,
+        // `PostgrestResponse` döndürür. `countQuery` dynamic olduğu için bu
+        // tip hatası analyzer'a görünmüyordu; web release derlemesinde
+        // (omit-implicit-checks) response nesnesi `int totalCount` alanına
+        // sızıp footer'daki sayfa hesabında NaN üretiyor ve
+        // "Unsupported operation: NaN.ceil()" hatasına yol açıyordu.
+        final dynamic countResult = await countQuery.count(CountOption.exact);
+        final int totalCount = normalizeCountResult(countResult);
         final safePage = page < 0 ? 0 : page;
         final fromIndex = safePage * pageSize;
         final toIndex = pageSize <= 0 ? fromIndex : fromIndex + pageSize - 1;

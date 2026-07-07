@@ -167,8 +167,13 @@ class HomeFeatureAdService {
               'active_home_feature_ads count=${fromView.length}',
             );
           }
+          debugPrint(
+            '[HomeAds] source=active_home_feature_ads rows=${fromView.length}',
+          );
           return fromView;
         }
+        // View boş → campaigns tablosuna fallback (D.2).
+        debugPrint('[HomeAds] hidden reason=view_empty fallback=campaigns');
       }
 
       var query = _client
@@ -186,13 +191,43 @@ class HomeFeatureAdService {
       }
 
       final res = await query.order('created_at', ascending: false);
-      return (res as List)
-          .map((e) => AdCampaign.fromJson(Map<String, dynamic>.from(e)))
-          .where(HomeFeatureAdHelper.isEligibleForHomeDisplay)
-          .toList();
+      final rows = res as List;
+      debugPrint('[HomeAds] source=campaigns rows=${rows.length}');
+      final eligible = <AdCampaign>[];
+      for (final raw in rows) {
+        final campaign = AdCampaign.fromJson(Map<String, dynamic>.from(raw));
+        final reason = HomeFeatureAdHelper.ineligibleReason(campaign);
+        if (reason == null) {
+          eligible.add(campaign);
+        } else {
+          // inactive_date_range / status vb. gizlenme sebebi release'te de
+          // net görünsün.
+          debugPrint(
+            '[HomeAds] hidden reason=$reason campaignId=${campaign.id}',
+          );
+        }
+      }
+      return eligible;
     } catch (e) {
       debugPrint('HomeFeatureAdService.getApprovedHomeFeatureAds: $e');
+      debugPrint('[HomeAds] hidden reason=query_error');
       return [];
+    }
+  }
+
+  /// Yalnız teşhis için: onay bekleyen home_feature kampanya sayısı.
+  /// RLS vb. nedenlerle okunamazsa null döner (log atlanır).
+  Future<int?> _countPendingHomeFeatureAds() async {
+    try {
+      final res = await _client
+          .from('campaigns')
+          .select('id')
+          .eq('type', AdCampaignType.homeFeature.dbValue)
+          .eq('status', CampaignStatus.pendingReview.dbValue)
+          .count(CountOption.exact);
+      return res.count;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -207,6 +242,9 @@ class HomeFeatureAdService {
       final viewRows = (viewRes as List)
           .map((row) => Map<String, dynamic>.from(row as Map))
           .toList(growable: false);
+      debugPrint(
+        '[HomeAds] db_rows count=${viewRows.length} source=active_home_feature_ads',
+      );
       if (viewRows.isEmpty) return const [];
 
       final ids = viewRows
@@ -258,6 +296,7 @@ class HomeFeatureAdService {
               'skip id=$id store=${campaign.metadata['store_name']} reason=$skipReason',
             );
           }
+          debugPrint('[HomeAds] hidden reason=$skipReason campaignId=$id');
           continue;
         }
         campaigns.add(campaign);
@@ -274,12 +313,18 @@ class HomeFeatureAdService {
   }) async {
     if (!forceRefresh) {
       final cached = _groupsCache.read(_groupsCacheKey);
-      if (cached != null) return cached;
+      if (cached != null) {
+        debugPrint('[HomeAds] cache_hit true source=memory_ttl');
+        return cached;
+      }
     }
+    debugPrint('[HomeAds] cache_hit false source=supabase');
+    debugPrint('[HomeAds] fetch_start');
 
     final templates = await _templateService.getActiveTemplates();
     final templateById = {for (final t in templates) t.id: t};
     final campaigns = await getApprovedHomeFeatureAds();
+    debugPrint('[HomeAds] approved_active count=${campaigns.length}');
     traceAdProduct(
       stage: AdProductTraceStage.adBannerFetchStarted,
       placement: 'home_feature',
@@ -289,7 +334,17 @@ class HomeFeatureAdService {
         'HomeFeatureAdService.loadHomePageGroups: fetched ${campaigns.length} home_feature campaigns',
       );
     }
-    if (campaigns.isEmpty) return const [];
+    if (campaigns.isEmpty) {
+      // Neden boş? Pending mi, hiç kampanya mı yok — release'te net görünsün.
+      final pendingCount = await _countPendingHomeFeatureAds();
+      if (pendingCount != null) {
+        debugPrint('[HomeAds] pending count=$pendingCount');
+      }
+      debugPrint(
+        '[HomeAds] hidden reason=${(pendingCount ?? 0) > 0 ? 'pending_review' : 'no_active_campaign'}',
+      );
+      return const [];
+    }
 
     traceAdProduct(
       stage: AdProductTraceStage.adBannerFetchSuccess,
@@ -324,6 +379,11 @@ class HomeFeatureAdService {
       final template = _resolveTemplate(templateById, templateId);
       final bannerUrls = HomeFeatureAdHelper.bannerImages(campaign);
       final productIds = HomeFeatureAdHelper.selectedProductIds(campaign);
+      debugPrint(
+        '[HomeAds] asset_rows count=${bannerUrls.length + productIds.length}'
+        ' banners=${bannerUrls.length} products=${productIds.length}'
+        ' campaignId=${campaign.id}',
+      );
       final storeName = AdJsonHelper.asString(
         campaign.metadata['store_name'],
         fallback: campaign.name,
@@ -382,6 +442,10 @@ class HomeFeatureAdService {
             'store="$storeName" reason=no_banner',
           );
         }
+        debugPrint('[HomeAds] missing_asset campaignId=${campaign.id}');
+        debugPrint(
+          '[HomeAds] hidden reason=missing_asset campaignId=${campaign.id}',
+        );
         continue;
       }
 
@@ -505,6 +569,13 @@ class HomeFeatureAdService {
           products: fetchReport.products,
           maxProducts: HomeFeatureAdHelper.maxProducts,
         );
+        debugPrint(
+          '[HomeAds] linked_products count=${resolved.length}'
+          ' requested=${ad.productIds.length} campaignId=${ad.campaignId}',
+        );
+        if (resolved.isEmpty && ad.productIds.isNotEmpty) {
+          debugPrint('[HomeAds] missing_product campaignId=${ad.campaignId}');
+        }
 
         if (resolved.isEmpty) {
           traceAdProduct(
@@ -580,6 +651,15 @@ class HomeFeatureAdService {
         'no_banner=$skippedNoBanner',
       );
     }
+    if (skippedInactiveStore > 0) {
+      debugPrint('[HomeAds] hidden reason=inactive_store count=$skippedInactiveStore');
+    }
+    if (skippedMissingCategory > 0) {
+      debugPrint('[HomeAds] hidden reason=category_missing count=$skippedMissingCategory');
+    }
+    if (skippedNoBanner > 0) {
+      debugPrint('[HomeAds] hidden reason=no_banner count=$skippedNoBanner');
+    }
 
     final groups = <HomeCategoryCardGroup>[];
     for (final entry in adsByGroupKey.entries) {
@@ -617,6 +697,9 @@ class HomeFeatureAdService {
         'HomeFeatureAdService.loadHomePageGroups: category_group_count=${groups.length}',
       );
     }
+    debugPrint(
+      '[HomeAds] render count=${groups.fold<int>(0, (sum, g) => sum + g.cards.fold<int>(0, (s, c) => s + c.ads.length))} groups=${groups.length}',
+    );
     if (groups.isNotEmpty && !_hasUnresolvedAdProducts(groups)) {
       _groupsCache.write(_groupsCacheKey, groups);
     }

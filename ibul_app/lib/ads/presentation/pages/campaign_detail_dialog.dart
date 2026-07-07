@@ -224,6 +224,33 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
                           foregroundColor: const Color(0xFF0369A1),
                           icon: Icons.ads_click_outlined,
                         ),
+                        // Ana sayfa görünürlüğü — seller neden görünmediğini
+                        // net görsün ("Yayında" / onay bekliyor / eksik asset).
+                        if (HomeFeatureAdHelper.isHomeFeature(widget.campaign))
+                          Builder(
+                            builder: (context) {
+                              final visible =
+                                  HomeFeatureAdHelper.sellerHomeVisibilityReason(
+                                        widget.campaign,
+                                      ) ==
+                                      null;
+                              return StatusChip(
+                                label:
+                                    HomeFeatureAdHelper.sellerHomeVisibilityLabel(
+                                  widget.campaign,
+                                ),
+                                backgroundColor: visible
+                                    ? const Color(0xFFDCFCE7)
+                                    : const Color(0xFFFFF7ED),
+                                foregroundColor: visible
+                                    ? const Color(0xFF15803D)
+                                    : const Color(0xFF9A3412),
+                                icon: visible
+                                    ? Icons.check_circle_outline
+                                    : Icons.visibility_off_outlined,
+                              );
+                            },
+                          ),
                         if (widget.isAdmin)
                           StatusChip(
                             label:
