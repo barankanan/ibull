@@ -6,6 +6,7 @@ import '../core/app_motion.dart';
 import '../core/interaction_feedback.dart';
 import '../models/product_model.dart';
 import '../models/product_list_model.dart';
+import '../responsive/breakpoints.dart';
 import 'home_screen.dart';
 import 'list_detail_page.dart';
 import 'product_detail_page.dart';
@@ -481,7 +482,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
       cacheExtent: 800,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 250, // Match Home Page
-        childAspectRatio: 0.65,
+        childAspectRatio: 0.78,
         crossAxisSpacing: 16, // Match Home Page spacing
         mainAxisSpacing: 16, // Match Home Page spacing
       ),
@@ -802,7 +803,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
           maxCrossAxisExtent: 250,
-          childAspectRatio: 0.65,
+          childAspectRatio: 0.78,
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
         ),
@@ -942,18 +943,28 @@ class _FavoritesPageState extends State<FavoritesPage> {
       );
     }
 
-    return GridView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.65,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: favorites.length,
-      itemBuilder: (context, index) {
-        final product = favorites[index];
-        return _buildProductCard(product);
+    // Responsive kolon: sabit 2 kolon geniş ekranlarda dev kart üretiyordu.
+    // Kolon sayısı mağaza sayfasıyla aynı ProductGridSizing helper'ından gelir.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = ProductGridSizing.columnCountForWidth(
+          constraints.maxWidth - 24,
+          spacing: 10,
+        );
+        return GridView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            childAspectRatio: 0.78,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 12,
+          ),
+          itemCount: favorites.length,
+          itemBuilder: (context, index) {
+            final product = favorites[index];
+            return _buildProductCard(product);
+          },
+        );
       },
     );
   }
@@ -1300,18 +1311,27 @@ class _FavoritesPageState extends State<FavoritesPage> {
             ),
           ),
           Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 0.65,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 12,
-              ),
-              itemCount: _recommendedProducts.length,
-              itemBuilder: (context, index) {
-                final product = _recommendedProducts[index];
-                return _buildProductCard(product);
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = ProductGridSizing.columnCountForWidth(
+                  constraints.maxWidth - 24,
+                  spacing: 10,
+                );
+                return GridView.builder(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    childAspectRatio: 0.78,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 12,
+                  ),
+                  itemCount: _recommendedProducts.length,
+                  itemBuilder: (context, index) {
+                    final product = _recommendedProducts[index];
+                    return _buildProductCard(product);
+                  },
+                );
               },
             ),
           ),
@@ -1387,7 +1407,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       top: Radius.circular(8),
                     ),
                     child: AspectRatio(
-                      aspectRatio: 1.0,
+                      aspectRatio: 1.2,
                       child: Container(
                         color: Colors.grey[100],
                         child: image != null && image.isNotEmpty
@@ -1499,7 +1519,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
               // Content
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(6),
+                  padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -1527,7 +1547,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
 
                       // Title
                       Text(
@@ -1540,7 +1560,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 1),
 
                       // Rating
                       Row(
@@ -1568,7 +1588,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                           ),
                         ],
                       ),
-                      const Spacer(),
+                      const SizedBox(height: 4),
 
                       // Price
                       Text(
