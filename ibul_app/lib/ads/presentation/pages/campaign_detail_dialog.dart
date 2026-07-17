@@ -224,6 +224,15 @@ class _CampaignDetailDialogState extends State<CampaignDetailDialog> {
                           foregroundColor: const Color(0xFF0369A1),
                           icon: Icons.ads_click_outlined,
                         ),
+                        // Hedef kategori = ana sayfada görüneceği alan.
+                        if (HomeFeatureAdHelper.isHomeFeature(widget.campaign))
+                          StatusChip(
+                            label:
+                                'Hedef kategori: ${HomeFeatureAdHelper.categoryName(widget.campaign) ?? '-'}',
+                            backgroundColor: const Color(0xFFF3E8FF),
+                            foregroundColor: const Color(0xFF6D28D9),
+                            icon: Icons.category_outlined,
+                          ),
                         // Ana sayfa görünürlüğü — seller neden görünmediğini
                         // net görsün ("Yayında" / onay bekliyor / eksik asset).
                         if (HomeFeatureAdHelper.isHomeFeature(widget.campaign))

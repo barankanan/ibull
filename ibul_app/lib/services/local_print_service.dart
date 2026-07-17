@@ -73,20 +73,30 @@ class _BridgeResponseCacheEntry {
 }
 
 class LocalPrintService {
-  LocalPrintService({http.Client? client, Uri? baseUri, Duration? timeout})
-    : _client = client ?? http.Client(),
-      _baseUri = baseUri ?? Uri.parse('http://127.0.0.1:3001'),
-      _timeout = timeout ?? const Duration(seconds: 5) {
+  LocalPrintService({
+    http.Client? client,
+    Uri? baseUri,
+    Duration? timeout,
+    this.allowWebAgent = false,
+  })  : _client = client ?? http.Client(),
+        _baseUri = baseUri ?? Uri.parse('http://127.0.0.1:3001'),
+        _timeout = timeout ?? const Duration(seconds: 5) {
     _log(
       'Init',
       'baseUrl=$_baseUri timeoutMs=${_timeout.inMilliseconds} '
-          'host=${_baseUri.host} port=${_baseUri.port}',
+          'host=${_baseUri.host} port=${_baseUri.port} '
+          'allowWebAgent=$allowWebAgent',
     );
   }
 
   final http.Client _client;
   final Uri _baseUri;
   final Duration _timeout;
+
+  /// Web'de seller panel, masaüstü agent'a (localhost bridge, CORS/PNA
+  /// destekli) bilinçli olarak bağlanabilir. Varsayılan false: müşteri web
+  /// sayfaları localhost'u probe etmez. Native mobil HER ZAMAN engellenir.
+  final bool allowWebAgent;
 
   static const Map<String, String> _headers = <String, String>{
     'Content-Type': 'application/json',
@@ -116,6 +126,15 @@ class LocalPrintService {
   static bool get _shouldSkipOnMobile =>
       PlatformCapabilities.shouldSkipLocalPrintBridge;
 
+  /// Instance bazlı atlama kararı: web + [allowWebAgent] ise agent'a izin
+  /// verilir; native mobil telefonlarda daima atlanır.
+  bool get _skipBridgeRequests {
+    if (allowWebAgent && kIsWeb && !PlatformCapabilities.isMobileNative) {
+      return false;
+    }
+    return _shouldSkipOnMobile;
+  }
+
   static void _logMobileSkipOnce() {
     if (_loggedMobileSkip) return;
     _loggedMobileSkip = true;
@@ -123,7 +142,7 @@ class LocalPrintService {
   }
 
   Future<Map<String, dynamic>?> health({bool useCache = true}) async {
-    if (_shouldSkipOnMobile) {
+    if (_skipBridgeRequests) {
       _logMobileSkipOnce();
       return null;
     }
@@ -166,7 +185,7 @@ class LocalPrintService {
   Future<LocalPrintHealthStatus> checkAvailability({
     Duration timeout = const Duration(milliseconds: 1500),
   }) async {
-    if (_shouldSkipOnMobile) {
+    if (_skipBridgeRequests) {
       _logMobileSkipOnce();
       return LocalPrintHealthStatus(
         isAvailable: false,

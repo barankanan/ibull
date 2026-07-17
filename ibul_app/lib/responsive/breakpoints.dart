@@ -42,6 +42,56 @@ class ScreenBreakpoints {
   static const double maxContentWidth = 1400;
 }
 
+/// Ürün grid'leri için kart-genişliği tabanlı responsive kolon hesabı.
+///
+/// Sabit `crossAxisCount: 2`, tablet genişliklerinde dev/amatör görünen
+/// kartlar üretiyordu. Kolon sayısı kullanılabilir genişlikten türetilir ve
+/// kart genişliği [minCardWidth]–[maxCardWidth] bandında tutulur.
+///
+/// Hedef davranış (grid padding düşülmüş kullanılabilir genişlik için):
+///   <~420 → 2 kolon, ~420–700 → 2-3, ~700–950 → 3-4,
+///   ~950–1250 → 4-5, 1250+ → 5-6 kolon.
+class ProductGridSizing {
+  ProductGridSizing._();
+
+  /// Kart bu genişliğin altına düşmesin (içerik sıkışmasın).
+  static const double minCardWidth = 180;
+
+  /// Kart bu genişliğin üstüne çıkmasın (dev kart görünümü engellenir).
+  static const double maxCardWidth = 250;
+
+  static const double defaultSpacing = 12;
+  static const int minColumns = 2;
+  static const int maxColumns = 6;
+
+  /// [availableWidth]: grid'in yatay padding'i düşülmüş genişliği.
+  static int columnCountForWidth(
+    double availableWidth, {
+    double spacing = defaultSpacing,
+  }) {
+    if (!availableWidth.isFinite || availableWidth <= 0) return minColumns;
+    var columns =
+        ((availableWidth + spacing) / (minCardWidth + spacing)).floor();
+    // Kartlar maxCardWidth'i aşacaksa kolon sayısını artır.
+    final minByMaxWidth =
+        ((availableWidth + spacing) / (maxCardWidth + spacing)).ceil();
+    if (minByMaxWidth > columns) columns = minByMaxWidth;
+    if (columns < minColumns) return minColumns;
+    if (columns > maxColumns) return maxColumns;
+    return columns;
+  }
+
+  /// Seçilen kolon sayısında tek kartın alacağı genişlik.
+  static double cardWidthFor(
+    double availableWidth, {
+    double spacing = defaultSpacing,
+  }) {
+    if (!availableWidth.isFinite || availableWidth <= 0) return minCardWidth;
+    final columns = columnCountForWidth(availableWidth, spacing: spacing);
+    return (availableWidth - (columns - 1) * spacing) / columns;
+  }
+}
+
 /// Screen size kategorisi
 enum ScreenSize {
   mobile,

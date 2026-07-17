@@ -21,6 +21,7 @@ import '../core/review_state.dart';
 import '../utils/log_mask_helpers.dart';
 import '../widgets/custom_header.dart';
 import '../widgets/web_header.dart'; // Web Header eklendi
+import '../core/mobile_app_download_prompt_controller.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/filter_sidebar.dart'; // Filter Sidebar eklendi
 import '../widgets/address_bar.dart';
@@ -237,6 +238,15 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       debugPrint('[HomeScreen] first frame — calling _handleTableQrLaunch');
       _handleTableQrLaunch();
+      
+      // Show mobile app download prompt if applicable
+      final screenWidth = MediaQuery.sizeOf(context).width;
+      debugPrint('[MobileAppPrompt] schedule source=HomeScreen width=$screenWidth');
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          MobileAppDownloadPromptController.checkAndShowPrompt(context);
+        }
+      });
     });
   }
 

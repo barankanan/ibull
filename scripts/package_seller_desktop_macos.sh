@@ -7,6 +7,8 @@ APP_PATH="$PROJECT_DIR/build/macos/Build/Products/Release/IbulSellerDesktop.app"
 DMG_DIR="$PROJECT_DIR/build/macos/dist"
 DMG_PATH="$DMG_DIR/IbulSellerDesktop.dmg"
 STAGING_DIR="$DMG_DIR/dmg-staging"
+ARTIFACTS_DMG="$PROJECT_DIR/release_artifacts/macos/IbulSellerDesktop.dmg"
+CHECKSUMS_DIR="$PROJECT_DIR/release_artifacts/checksums"
 
 "$SCRIPT_DIR/build_seller_desktop.sh"
 
@@ -31,6 +33,18 @@ hdiutil create \
 
 rm -rf "$STAGING_DIR"
 
+mkdir -p "$(dirname "$ARTIFACTS_DMG")" "$CHECKSUMS_DIR"
+cp -f "$DMG_PATH" "$ARTIFACTS_DMG"
+shasum -a 256 "$ARTIFACTS_DMG" | tee "$CHECKSUMS_DIR/IbulSellerDesktop.dmg.sha256"
+
 echo ""
 echo "DMG hazir:"
-echo "  $DMG_PATH"
+echo "  Build:  $DMG_PATH"
+echo "  Staged: $ARTIFACTS_DMG"
+echo ""
+echo "DMG mount test:"
+echo "  hdiutil attach \"$ARTIFACTS_DMG\""
+echo "  hdiutil detach /Volumes/Ibul\\ Seller\\ Desktop"
+echo ""
+echo "Not: Developer ID notarization yapilmadiysa bazi Mac'lerde"
+echo "     sag tik > Ac gerekebilir (Apple Development imzasi)."

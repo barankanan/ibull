@@ -19,6 +19,9 @@ import 'restaurant_connectivity_provider_stub.dart'
 List<SingleChildWidget> buildCustomerProviders() {
   RuntimeDiagnosticLogger.localPrint('skipped: customer app');
   RuntimeDiagnosticLogger.startup('[SellerModule] not mounted in customer app');
+  debugPrint(
+    '[WebPerf] heavy_module_skipped module=seller/admin/garson reason=customer_boot',
+  );
   return [
     ChangeNotifierProvider.value(value: CartState()),
     ChangeNotifierProvider.value(value: FavoriteState()),

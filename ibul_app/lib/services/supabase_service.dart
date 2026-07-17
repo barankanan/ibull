@@ -660,12 +660,19 @@ class SupabaseService {
     }
   }
 
-  Future<DBProduct?> getProduct(int id) async {
+  Future<DBProduct?> getProduct(int id) async => getProductByIdString('$id');
+
+  /// Quick view enrich: kart üzerindeki ince veriyi tam ürün satırıyla
+  /// tamamlamak için string id ile tek ürün çeker. Public görünürlük
+  /// filtresi uygulanır; bulunamazsa/hata olursa null döner.
+  Future<DBProduct?> getProductByIdString(String id) async {
+    final normalized = id.trim();
+    if (normalized.isEmpty) return null;
     try {
       final response = await _supabase
           .from('products')
           .select(_productSelectFields)
-          .eq('id', id.toString())
+          .eq('id', normalized)
           .maybeSingle();
 
       if (response == null) return null;

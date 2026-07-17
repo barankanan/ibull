@@ -4,6 +4,8 @@ import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
+import 'core/config/runtime_config.dart';
+
 const String _kFirebaseWebApiKey = String.fromEnvironment(
   'IBUL_FIREBASE_WEB_API_KEY',
 );
@@ -25,12 +27,8 @@ const String _kFirebaseStorageBucket = String.fromEnvironment(
 const String _kFirebaseWebMeasurementId = String.fromEnvironment(
   'IBUL_FIREBASE_WEB_MEASUREMENT_ID',
 );
-const String _kFirebaseAndroidApiKey = String.fromEnvironment(
-  'IBUL_FIREBASE_ANDROID_API_KEY',
-);
-const String _kFirebaseAndroidAppId = String.fromEnvironment(
-  'IBUL_FIREBASE_ANDROID_APP_ID',
-);
+// IBUL_FIREBASE_ANDROID_API_KEY / IBUL_FIREBASE_ANDROID_APP_ID artık
+// AppRuntimeConfig üzerinden okunur (dart-define → generated fallback).
 const String _kFirebaseIosApiKey = String.fromEnvironment(
   'IBUL_FIREBASE_IOS_API_KEY',
 );
@@ -111,23 +109,30 @@ class DefaultFirebaseOptions {
     ),
   );
 
+  // Android alanları AppRuntimeConfig üzerinden çözülür:
+  // dart-define → generated_runtime_config.g.dart → StateError.
+  // Böylece dart-define kaybolsa bile build script'in ürettiği generated
+  // fallback devreye girer (Supabase ile aynı katmanlı okuma).
   static FirebaseOptions get android => FirebaseOptions(
     apiKey: _requireValue(
       'IBUL_FIREBASE_ANDROID_API_KEY',
-      _kFirebaseAndroidApiKey,
+      AppRuntimeConfig.firebaseAndroidApiKeyResolved.value,
     ),
     appId: _requireValue(
       'IBUL_FIREBASE_ANDROID_APP_ID',
-      _kFirebaseAndroidAppId,
+      AppRuntimeConfig.firebaseAndroidAppIdResolved.value,
     ),
     messagingSenderId: _requireValue(
       'IBUL_FIREBASE_MESSAGING_SENDER_ID',
-      _kFirebaseMessagingSenderId,
+      AppRuntimeConfig.firebaseMessagingSenderIdResolved.value,
     ),
-    projectId: _requireValue('IBUL_FIREBASE_PROJECT_ID', _kFirebaseProjectId),
+    projectId: _requireValue(
+      'IBUL_FIREBASE_PROJECT_ID',
+      AppRuntimeConfig.firebaseProjectIdResolved.value,
+    ),
     storageBucket: _requireValue(
       'IBUL_FIREBASE_STORAGE_BUCKET',
-      _kFirebaseStorageBucket,
+      AppRuntimeConfig.firebaseStorageBucketResolved.value,
     ),
   );
 

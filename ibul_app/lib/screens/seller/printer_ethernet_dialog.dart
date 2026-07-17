@@ -12,16 +12,21 @@
 // the row as a TCP printer and bypasses CUPS/USB.
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/config/runtime_config.dart';
+import '../../features/seller/panel/widgets/seller_download_app_content.dart';
 import '../../models/desktop_printer_setup_models.dart';
+import '../../models/printer_discovery_result.dart';
 import '../../models/printer_model.dart';
 import '../../models/printer_profile.dart';
 import '../../services/desktop_print_orchestrator.dart';
 import '../../services/local_print_service.dart';
+import '../../services/mobile_ethernet_printer_service.dart';
 import '../../services/printer_error_messages.dart';
 import '../../services/printer_repository.dart';
 import '../../services/restaurant_offline/restaurant_connectivity_service.dart';
@@ -92,8 +97,9 @@ class AddEthernetPrinterScreen extends StatefulWidget {
 class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   late final DesktopPrintOrchestrator _orchestrator =
       widget.orchestrator ?? DesktopPrintOrchestrator();
-  late final LocalPrintService _localPrintService = 
-      widget.localPrintService ?? LocalPrintService();
+  // Web'de seller paneli masaüstü agent'a (localhost bridge) bağlanabilir.
+  late final LocalPrintService _localPrintService =
+      widget.localPrintService ?? LocalPrintService(allowWebAgent: true);
 
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _ipCtrl = TextEditingController();
@@ -120,6 +126,39 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   bool _scanning = false;
   EthernetScanResult? _scanResult;
   String? _scanError;
+  String? _scanProgressLabel;
+
+  // Bulunan yazıcı kartlarının düzenlenebilir durumu (endpoint anahtarlı).
+  final Map<String, TextEditingController> _deviceNameCtrls =
+      <String, TextEditingController>{};
+  final Map<String, String> _deviceProfileIds = <String, String>{};
+  final Map<String, EthernetConnectionDiagnostic> _deviceTestResults =
+      <String, EthernetConnectionDiagnostic>{};
+
+  /// Aynı seller altındaki kayıtlı yazıcı adları (çakışma kontrolü için).
+  List<String> _existingPrinterNames = const <String>[];
+
+  /// Web: masaüstü yazıcı yardımcısı (local print agent) durumu.
+  /// null = kontrol ediliyor, true = bağlı, false = yok.
+  bool? _webAgentHealthy;
+  bool _webAgentChecking = false;
+
+  // Mobil (Android) direct-TCP yolu: bridge yok, tarama/test/baskı telefon
+  // üzerinden doğrudan TCP socket ile yapılır. Masaüstü/iOS akışı değişmez.
+  MobileEthernetPrinterService? _mobileTcpService;
+  MobileEthernetScanSession? _mobileScanSession;
+
+  MobileEthernetPrinterService get _mobileTcp =>
+      _mobileTcpService ??= MobileEthernetPrinterService();
+
+  bool get _useMobileDirectTcp {
+    if (kIsWeb) return false;
+    try {
+      return Platform.isAndroid;
+    } catch (_) {
+      return false;
+    }
+  }
 
   bool _saving = false;
   String? _formError;
@@ -218,6 +257,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     super.initState();
     _ipCtrl.addListener(_onNetworkFieldsChanged);
     _portCtrl.addListener(_onNetworkFieldsChanged);
+    if (kIsWeb) {
+      unawaited(_checkWebAgent());
+    }
     final existing = widget.existing;
     if (existing != null) {
       _nameCtrl.text = existing.name;
@@ -257,10 +299,83 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     _maybeRefreshNetworkPreflight();
   }
 
+  // ── bulunan yazıcı kartı yardımcıları ────────────────────────────────────
+
+  String _deviceKey(EthernetDiscoveredDevice device) => device.endpointLabel;
+
+  /// Karttaki düzenlenebilir ad controller'ı; ilk erişimde çakışmasız
+  /// varsayılan ad üretilir ("POS Yazıcı - 45").
+  TextEditingController _deviceNameCtrl(EthernetDiscoveredDevice device) {
+    return _deviceNameCtrls.putIfAbsent(_deviceKey(device), () {
+      final taken = <String>[
+        ..._existingPrinterNames,
+        for (final ctrl in _deviceNameCtrls.values) ctrl.text,
+      ];
+      return TextEditingController(
+        text: PrinterDiscoveryNaming.defaultNameFor(
+          device.host,
+          existingNames: taken,
+        ),
+      );
+    });
+  }
+
+  String _deviceProfileId(EthernetDiscoveredDevice device) =>
+      _deviceProfileIds[_deviceKey(device)] ?? _selectedProfileId;
+
+  void _setDeviceProfile(EthernetDiscoveredDevice device, String profileId) {
+    setState(() => _deviceProfileIds[_deviceKey(device)] = profileId);
+  }
+
+  void _applyDeviceNameTemplate(
+    EthernetDiscoveredDevice device,
+    String template,
+  ) {
+    final taken = <String>[
+      ..._existingPrinterNames,
+      for (final entry in _deviceNameCtrls.entries)
+        if (entry.key != _deviceKey(device)) entry.value.text,
+    ];
+    setState(() {
+      _deviceNameCtrl(device).text = PrinterDiscoveryNaming.applyTemplate(
+        template,
+        device.host,
+        existingNames: taken,
+      );
+      // Şablon rol önerisi: mutfak/bar → mutfak, diğerleri → adisyon.
+      _role =
+          PrinterDiscoveryNaming.suggestedRoleForTemplate(template) == 'mutfak'
+              ? EthernetPrinterRole.mutfak
+              : EthernetPrinterRole.adisyon;
+    });
+  }
+
+  /// Çakışma kontrolü için kayıtlı yazıcı adlarını arka planda çeker.
+  Future<void> _prefetchExistingPrinterNames() async {
+    try {
+      final repo = widget.repository ?? PrinterRepository();
+      final printers = await repo.fetchPrinters(widget.restaurantId);
+      if (!mounted) return;
+      setState(() {
+        _existingPrinterNames = <String>[
+          for (final printer in printers)
+            if (printer.id != (widget.existing?.id ?? '')) printer.name,
+        ];
+      });
+    } catch (_) {
+      // Offline/hata: çakışma kontrolü best-effort kalır.
+    }
+  }
+
   void _applyDiscoveredDevice(EthernetDiscoveredDevice device) {
+    final deviceName = _deviceNameCtrl(device).text.trim();
+    final profileId = _deviceProfileId(device);
     setState(() {
       _ipCtrl.text = device.host;
       _portCtrl.text = device.port.toString();
+      if (deviceName.isNotEmpty) {
+        _nameCtrl.text = deviceName;
+      }
       _connectionDiagnostic = null;
       _printDiagnostic = null;
       _networkPreflight = null;
@@ -269,8 +384,41 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       _portError = null;
       _formError = null;
     });
+    if (profileId != _selectedProfileId) {
+      _applyProfileSelection(profileId);
+    }
     _maybeRefreshNetworkPreflight();
   }
+
+  // ── web: masaüstü yazıcı yardımcısı (local print agent) ─────────────────
+
+  /// Web'de localhost agent health check'i. Tarayıcı doğrudan TCP açamaz;
+  /// tarama/test/baskı ancak agent (İBUL Satıcı Masaüstü) açıkken yapılır.
+  Future<void> _checkWebAgent() async {
+    if (!kIsWeb || _webAgentChecking) return;
+    setState(() => _webAgentChecking = true);
+    try {
+      _localPrintService.invalidateBridgeStatusCache();
+      final status = await _localPrintService.checkAvailability(
+        timeout: const Duration(milliseconds: 2500),
+      );
+      if (!mounted) return;
+      setState(() => _webAgentHealthy = status.isAvailable);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _webAgentHealthy = false);
+    } finally {
+      if (mounted) {
+        setState(() => _webAgentChecking = false);
+      }
+    }
+  }
+
+  static const String _webAgentMissingMessage =
+      'Web\'den yazıcı taramak için İBUL Satıcı Masaüstü uygulaması açık '
+      'olmalı. Web tarayıcı güvenliği nedeniyle yazıcıya doğrudan '
+      'bağlanamaz; masaüstü uygulaması açıkken tarama, test ve baskı '
+      'yapılabilir.';
 
   Future<void> _runAutoScan() async {
     if (_scanning) return;
@@ -279,17 +427,21 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       _scanError = null;
       _scanResult = null;
     });
-    if (kIsWeb) {
+    if (kIsWeb && _webAgentHealthy != true) {
       setState(() {
         _scanning = false;
-        _scanError =
-            'Web sürümü yerel ağa erişemez. Masaüstü uygulamasından tarayın.';
+        _scanError = _webAgentMissingMessage;
       });
+      unawaited(_checkWebAgent());
       return;
     }
     final port = int.tryParse(_portCtrl.text.trim()) ??
         PrinterModel.ethernetDefaultPort;
     final hostHint = _ipCtrl.text.trim();
+    if (_useMobileDirectTcp) {
+      await _runMobileAutoScan(port);
+      return;
+    }
     try {
       final raw = await _localPrintService
           .scanEthernetPrinters(port: port, printerHost: hostHint)
@@ -304,6 +456,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
               : 'Ağ taraması tamamlanamadı. IP adresini manuel girebilirsiniz.';
         }
       });
+      if (result.devices.isNotEmpty) {
+        unawaited(_prefetchExistingPrinterNames());
+      }
     } catch (error) {
       if (!mounted) return;
       final diagnostic = resolveEthernetConnectionException(
@@ -324,20 +479,86 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     }
   }
 
+  /// Android: bridge olmadan telefon üzerinden subnet taraması.
+  Future<void> _runMobileAutoScan(int port) async {
+    final session = MobileEthernetScanSession();
+    _mobileScanSession = session;
+    try {
+      final result = await _mobileTcp.scan(
+        port: port,
+        session: session,
+        onProgress: (done, total, rangeLabel) {
+          if (!mounted) return;
+          // UI'yi boğmamak için ~16 host'ta bir güncelle.
+          if (done % 16 != 0 && done != total) return;
+          setState(() => _scanProgressLabel = '$rangeLabel ($done/$total)');
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _scanResult = result;
+        if (!result.ok) {
+          _scanError = result.message.isNotEmpty
+              ? result.message
+              : 'Ağ taraması tamamlanamadı. IP adresini manuel girebilirsiniz.';
+        }
+      });
+      if (result.devices.isNotEmpty) {
+        unawaited(_prefetchExistingPrinterNames());
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _scanError =
+            'Ağ taraması başarısız. IP adresini manuel girebilirsiniz.';
+      });
+      debugPrint('[EthernetPrinter][mobile_scan_error] $error');
+    } finally {
+      _mobileScanSession = null;
+      if (mounted) {
+        setState(() {
+          _scanning = false;
+          _scanProgressLabel = null;
+        });
+      }
+    }
+  }
+
+  void _cancelMobileScan() {
+    _mobileScanSession?.cancel();
+  }
+
   Future<void> _runConnectionTestForDevice(
     EthernetDiscoveredDevice device,
   ) async {
     _applyDiscoveredDevice(device);
     await _runConnectionTest();
+    if (!mounted) return;
+    final diagnostic = _connectionDiagnostic;
+    if (diagnostic != null) {
+      setState(() => _deviceTestResults[_deviceKey(device)] = diagnostic);
+    }
   }
 
   Future<void> _runPrintTestForDevice(EthernetDiscoveredDevice device) async {
     _applyDiscoveredDevice(device);
     if (!_connectionOk) {
       await _runConnectionTest();
-      if (!mounted || !_connectionOk) return;
+      if (!mounted) return;
+      if (!_connectionOk) {
+        final diagnostic = _connectionDiagnostic;
+        if (diagnostic != null) {
+          setState(() => _deviceTestResults[_deviceKey(device)] = diagnostic);
+        }
+        return;
+      }
     }
     await _runPrintTest();
+    if (!mounted) return;
+    final diagnostic = _printDiagnostic ?? _connectionDiagnostic;
+    if (diagnostic != null) {
+      setState(() => _deviceTestResults[_deviceKey(device)] = diagnostic);
+    }
   }
 
   Future<void> _saveDiscoveredDevice(EthernetDiscoveredDevice device) async {
@@ -381,6 +602,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     _nameCtrl.dispose();
     _ipCtrl.dispose();
     _portCtrl.dispose();
+    for (final ctrl in _deviceNameCtrls.values) {
+      ctrl.dispose();
+    }
     _localPrintService.dispose();
     super.dispose();
   }
@@ -541,19 +765,19 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       _portError = null;
       _technicalExpanded = false;
     });
-    if (kIsWeb) {
+    if (kIsWeb && _webAgentHealthy != true) {
       setState(() {
         _connectionTesting = false;
         _connectionDiagnostic = EthernetConnectionDiagnostic(
           ok: false,
           errorCode: 'bridge_unreachable',
-          title: 'Web sürümü desteklenmiyor',
-          message:
-              'Web sürümü yerel ağa erişemez. Masaüstü uygulamasından test edin.',
+          title: 'Masaüstü uygulaması gerekli',
+          message: _webAgentMissingMessage,
           host: form.host,
           port: form.port,
         );
       });
+      unawaited(_checkWebAgent());
       return;
     }
     final host = form.host;
@@ -561,6 +785,38 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     debugPrint(
       '[EthernetPrinter][connection_test_start] host=$host port=$port',
     );
+    if (_useMobileDirectTcp) {
+      try {
+        final diagnostic = await _mobileTcp
+            .testConnection(host: host, port: port)
+            .timeout(const Duration(seconds: 8));
+        if (!mounted) return;
+        setState(() {
+          _connectionDiagnostic = diagnostic;
+          if (!diagnostic.ok) _printDiagnostic = null;
+        });
+        debugPrint(
+          diagnostic.ok
+              ? '[EthernetPrinter][mobile_connection_ok] host=$host port=$port'
+              : '[EthernetPrinter][mobile_connection_error] code=${diagnostic.errorCode}',
+        );
+      } catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _connectionDiagnostic = resolveEthernetConnectionException(
+            error,
+            host: host,
+            port: port,
+          );
+          _printDiagnostic = null;
+        });
+      } finally {
+        if (mounted) {
+          setState(() => _connectionTesting = false);
+        }
+      }
+      return;
+    }
     try {
       final result = await _localPrintService
           .probeTcpPrinter(host: host, port: port, printer: payload)
@@ -673,19 +929,19 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       _portError = null;
       _technicalExpanded = false;
     });
-    if (kIsWeb) {
+    if (kIsWeb && _webAgentHealthy != true) {
       setState(() {
         _printTesting = false;
         _printDiagnostic = EthernetConnectionDiagnostic(
           ok: false,
           errorCode: 'bridge_unreachable',
-          title: 'Web sürümü desteklenmiyor',
-          message:
-              'Web sürümü yerel ağa erişemez. Masaüstü uygulamasından test edin.',
+          title: 'Masaüstü uygulaması gerekli',
+          message: _webAgentMissingMessage,
           host: form.host,
           port: form.port,
         );
       });
+      unawaited(_checkWebAgent());
       return;
     }
     final host = form.host;
@@ -693,6 +949,41 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     debugPrint(
       '[EthernetPrinter][test_start] host=$host port=$port backend=tcp',
     );
+    if (_useMobileDirectTcp) {
+      try {
+        final profile = _selectedPrinterProfile;
+        final diagnostic = await _mobileTcp
+            .printTestReceipt(
+              host: host,
+              port: port,
+              sellerName: form.name,
+              autoCut: _autoCut && profile.supportsCut,
+              charsPerLine: profile.charsPerLine,
+            )
+            .timeout(const Duration(seconds: 20));
+        if (!mounted) return;
+        setState(() => _printDiagnostic = diagnostic);
+        debugPrint(
+          diagnostic.ok
+              ? '[EthernetPrinter][mobile_print_ok] host=$host port=$port'
+              : '[EthernetPrinter][mobile_print_error] code=${diagnostic.errorCode}',
+        );
+      } catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _printDiagnostic = resolveEthernetConnectionException(
+            error,
+            host: host,
+            port: port,
+          );
+        });
+      } finally {
+        if (mounted) {
+          setState(() => _printTesting = false);
+        }
+      }
+      return;
+    }
     try {
       final result = await _orchestrator
           .printBridgeTest(
@@ -819,6 +1110,19 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     final port = form.port;
     final name = form.name;
     final isUpdate = widget.existing?.id.isNotEmpty == true;
+    // Aynı seller altında ad çakışması engeli (best-effort: liste
+    // çekilemezse kayıt engellenmez).
+    if (_existingPrinterNames.isEmpty) {
+      await _prefetchExistingPrinterNames();
+    }
+    if (!mounted) return;
+    if (PrinterDiscoveryNaming.isDuplicateName(name, _existingPrinterNames)) {
+      setState(() {
+        _saving = false;
+        _formError = 'Bu isimde yazıcı zaten var. Lütfen farklı ad girin.';
+      });
+      return;
+    }
     try {
       final repo = widget.repository ?? PrinterRepository();
       final saved = await repo.upsertEthernetPrinter(
@@ -936,6 +1240,14 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
             children: [
               _IntroBanner(),
               const SizedBox(height: 16),
+              if (kIsWeb) ...[
+                WebAgentStatusBanner(
+                  healthy: _webAgentHealthy,
+                  checking: _webAgentChecking,
+                  onRetry: _checkWebAgent,
+                ),
+                const SizedBox(height: 12),
+              ],
               _EthernetAutoScanPanel(
                 scanning: _scanning,
                 scanResult: _scanResult,
@@ -949,6 +1261,16 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                 connectionTesting: _connectionTesting,
                 printTesting: _printTesting,
                 saving: _saving,
+                scanProgressLabel: _scanProgressLabel,
+                onCancelScan: _scanning && _useMobileDirectTcp
+                    ? _cancelMobileScan
+                    : null,
+                nameCtrlForDevice: _deviceNameCtrl,
+                profileIdForDevice: _deviceProfileId,
+                onDeviceProfileChanged: _setDeviceProfile,
+                onDeviceTemplateSelected: _applyDeviceNameTemplate,
+                testResultForDevice: (device) =>
+                    _deviceTestResults[_deviceKey(device)],
               ),
               const SizedBox(height: 16),
               const Text(
@@ -1704,6 +2026,13 @@ class _EthernetAutoScanPanel extends StatelessWidget {
     required this.connectionTesting,
     required this.printTesting,
     required this.saving,
+    this.scanProgressLabel,
+    this.onCancelScan,
+    required this.nameCtrlForDevice,
+    required this.profileIdForDevice,
+    required this.onDeviceProfileChanged,
+    required this.onDeviceTemplateSelected,
+    required this.testResultForDevice,
   });
 
   final bool scanning;
@@ -1718,6 +2047,22 @@ class _EthernetAutoScanPanel extends StatelessWidget {
   final bool connectionTesting;
   final bool printTesting;
   final bool saving;
+
+  /// Mobil taramada canlı ilerleme ("192.168.1.1 - 192.168.1.254 taranıyor").
+  final String? scanProgressLabel;
+
+  /// Mobil taramada iptal; null ise iptal düğmesi gösterilmez.
+  final VoidCallback? onCancelScan;
+
+  // Bulunan yazıcı kartı düzenleme durumu (dialog state'inde yaşar).
+  final TextEditingController Function(EthernetDiscoveredDevice)
+      nameCtrlForDevice;
+  final String Function(EthernetDiscoveredDevice) profileIdForDevice;
+  final void Function(EthernetDiscoveredDevice, String) onDeviceProfileChanged;
+  final void Function(EthernetDiscoveredDevice, String)
+      onDeviceTemplateSelected;
+  final EthernetConnectionDiagnostic? Function(EthernetDiscoveredDevice)
+      testResultForDevice;
 
   @override
   Widget build(BuildContext context) {
@@ -1775,6 +2120,31 @@ class _EthernetAutoScanPanel extends StatelessWidget {
               ),
             ],
           ),
+          if (scanning && scanProgressLabel != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    scanProgressLabel!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ),
+                if (onCancelScan != null)
+                  TextButton(
+                    key: const Key('ethernet_scan_cancel_button'),
+                    onPressed: onCancelScan,
+                    child: const Text(
+                      'İptal',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+              ],
+            ),
+          ],
           if (scanResult != null) ...[
             const SizedBox(height: 10),
             Text(
@@ -1811,6 +2181,13 @@ class _EthernetAutoScanPanel extends StatelessWidget {
                 onTest: () => onTestDevice(device),
                 onPrintTest: () => onPrintTestDevice(device),
                 onSave: () => onSaveDevice(device),
+                nameController: nameCtrlForDevice(device),
+                profileId: profileIdForDevice(device),
+                onProfileChanged: (profileId) =>
+                    onDeviceProfileChanged(device, profileId),
+                onTemplateSelected: (template) =>
+                    onDeviceTemplateSelected(device, template),
+                testResult: testResultForDevice(device),
               );
             }),
           ],
@@ -1849,6 +2226,125 @@ class _ScanMessageBanner extends StatelessWidget {
   }
 }
 
+/// Web'de masaüstü yazıcı yardımcısı (local print agent) durum kartı.
+class WebAgentStatusBanner extends StatelessWidget {
+  const WebAgentStatusBanner({
+    super.key,
+    required this.healthy,
+    required this.checking,
+    required this.onRetry,
+  });
+
+  final bool? healthy;
+  final bool checking;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = healthy == true;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: connected ? const Color(0xFFF0FDF4) : const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color:
+              connected ? const Color(0xFF10B981) : const Color(0xFFFDBA74),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                connected
+                    ? Icons.check_circle_outline
+                    : Icons.desktop_windows_outlined,
+                size: 18,
+                color: connected
+                    ? const Color(0xFF059669)
+                    : const Color(0xFF9A3412),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  connected
+                      ? 'Masaüstü yazıcı yardımcısı bağlı'
+                      : 'Web\'den yazıcı taramak için İBUL Satıcı Masaüstü '
+                          'uygulaması açık olmalı.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: connected
+                        ? const Color(0xFF065F46)
+                        : const Color(0xFF9A3412),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (!connected) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'Web tarayıcı güvenliği nedeniyle yazıcıya doğrudan '
+              'bağlanamaz. Masaüstü uygulaması açıkken tarama, test ve '
+              'baskı yapılabilir.',
+              style: TextStyle(
+                fontSize: 11,
+                color: Color(0xFF9A3412),
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                FilledButton.icon(
+                  key: const Key('web_agent_download_button'),
+                  onPressed: () =>
+                      SellerDownloadAppContent.openDownloadOrExplain(
+                    context,
+                    AppRuntimeConfig.sellerDesktopWindowsDownloadUrlOrNull,
+                  ),
+                  icon: const Icon(Icons.download_outlined, size: 16),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: const Color(0xFF8B5CF6),
+                  ),
+                  label: const Text(
+                    'Masaüstü uygulamasını indir',
+                    style: TextStyle(fontSize: 11.5),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('web_agent_retry_button'),
+                  onPressed: checking ? null : onRetry,
+                  icon: checking
+                      ? const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh, size: 16),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  label: const Text(
+                    'Tekrar dene',
+                    style: TextStyle(fontSize: 11.5),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _DiscoveredDeviceRow extends StatelessWidget {
   const _DiscoveredDeviceRow({
     required this.device,
@@ -1858,6 +2354,11 @@ class _DiscoveredDeviceRow extends StatelessWidget {
     required this.onTest,
     required this.onPrintTest,
     required this.onSave,
+    required this.nameController,
+    required this.profileId,
+    required this.onProfileChanged,
+    required this.onTemplateSelected,
+    required this.testResult,
   });
 
   final EthernetDiscoveredDevice device;
@@ -1867,6 +2368,11 @@ class _DiscoveredDeviceRow extends StatelessWidget {
   final VoidCallback onTest;
   final VoidCallback onPrintTest;
   final VoidCallback onSave;
+  final TextEditingController nameController;
+  final String profileId;
+  final ValueChanged<String> onProfileChanged;
+  final ValueChanged<String> onTemplateSelected;
+  final EthernetConnectionDiagnostic? testResult;
 
   @override
   Widget build(BuildContext context) {
@@ -1915,9 +2421,10 @@ class _DiscoveredDeviceRow extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        device.endpointLabel,
+                        'IP: ${device.host} · Port: ${device.port}'
+                        '${device.latencyMs != null ? ' · Gecikme: ${device.latencyMs} ms' : ''}',
                         style: const TextStyle(
-                          fontSize: 13,
+                          fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                           color: Color(0xFF111827),
                         ),
@@ -1941,6 +2448,91 @@ class _DiscoveredDeviceRow extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(height: 8),
+          // Ad düzenleme: kaydetmeden önce yazıcıya isim verin.
+          TextField(
+            key: Key('ethernet_device_name_${device.host}'),
+            controller: nameController,
+            enabled: !busy,
+            style: const TextStyle(fontSize: 12.5),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: 'Yazıcı adı',
+              labelStyle: const TextStyle(fontSize: 11.5),
+              prefixIcon: const Icon(Icons.edit_outlined, size: 16),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 32,
+                minHeight: 32,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 8,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          // Hızlı ad şablonları.
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final template
+                  in PrinterDiscoveryNaming.quickNameTemplates)
+                ActionChip(
+                  key: Key(
+                    'ethernet_template_${device.host}_'
+                    '${template.split(' ').first.toLowerCase()}',
+                  ),
+                  label: Text(
+                    template,
+                    style: const TextStyle(fontSize: 10.5),
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  onPressed: busy ? null : () => onTemplateSelected(template),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // Profil seçimi (POS-80 / POS-58 / Generic 80mm).
+          DropdownButtonFormField<String>(
+            key: Key('ethernet_device_profile_${device.host}'),
+            initialValue: PrinterProfile.byId(profileId) != null
+                ? profileId
+                : PrinterProfile.pos80.id,
+            isDense: true,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF111827)),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: 'Yazıcı profili',
+              labelStyle: const TextStyle(fontSize: 11.5),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 8,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            items: [
+              for (final profile in PrinterProfile.ethernetSetupProfiles)
+                DropdownMenuItem<String>(
+                  value: profile.id,
+                  child: Text(
+                    profile.label,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+            ],
+            onChanged: busy
+                ? null
+                : (value) {
+                    if (value != null) onProfileChanged(value);
+                  },
+          ),
           if (hint != null && hint.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
@@ -1949,6 +2541,44 @@ class _DiscoveredDeviceRow extends StatelessWidget {
                 fontSize: 10,
                 color: Color(0xFF9A3412),
                 height: 1.35,
+              ),
+            ),
+          ],
+          if (testResult != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              key: Key('ethernet_device_test_status_${device.host}'),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 8,
+              ),
+              decoration: BoxDecoration(
+                color: testResult!.ok
+                    ? const Color(0xFFF0FDF4)
+                    : const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: testResult!.ok
+                      ? const Color(0xFF10B981)
+                      : const Color(0xFFFCA5A5),
+                ),
+              ),
+              child: Text(
+                testResult!.ok
+                    ? 'Test başarılı'
+                    : (testResult!.message.isNotEmpty
+                        ? testResult!.message
+                        : 'Yazıcıya ulaşılamadı. Telefon ve yazıcı aynı '
+                            'Wi-Fi ağında mı kontrol edin.'),
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: testResult!.ok
+                      ? const Color(0xFF065F46)
+                      : const Color(0xFF991B1B),
+                  height: 1.35,
+                ),
               ),
             ),
           ],
@@ -1965,7 +2595,10 @@ class _DiscoveredDeviceRow extends StatelessWidget {
                   foregroundColor: const Color(0xFF8B5CF6),
                   side: const BorderSide(color: Color(0xFF8B5CF6)),
                 ),
-                child: const Text('Test Et', style: TextStyle(fontSize: 11)),
+                child: const Text(
+                  'Bağlantıyı Test Et',
+                  style: TextStyle(fontSize: 11),
+                ),
               ),
               OutlinedButton(
                 key: Key('ethernet_scan_print_${device.host}'),
@@ -1974,7 +2607,7 @@ class _DiscoveredDeviceRow extends StatelessWidget {
                   visualDensity: VisualDensity.compact,
                 ),
                 child: const Text(
-                  'Test Fişi Gönder',
+                  'Test Fişi Bas',
                   style: TextStyle(fontSize: 11),
                 ),
               ),

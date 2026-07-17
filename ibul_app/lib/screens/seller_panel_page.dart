@@ -43,6 +43,7 @@ import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
 import '../services/desktop_print_orchestrator.dart';
 import '../services/desktop_print_hub.dart';
+import '../services/mobile_order_print_service.dart';
 import '../services/printer_encoding_profile_store.dart';
 import '../services/print_station_service.dart';
 import '../services/printer_event_log_service.dart';
@@ -99,10 +100,14 @@ import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_overview_widgets.dart';
 import '../features/seller/panel/helpers/seller_panel_lifecycle_guards.dart';
 import '../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
+import '../features/seller/panel/helpers/seller_desktop_app_banner_prefs.dart';
+import '../features/seller/panel/helpers/seller_logout_helper.dart';
 import '../services/restaurant_offline/restaurant_offline_snapshot_sync.dart';
 import '../widgets/restaurant_offline_banner.dart';
 import '../features/seller/panel/helpers/seller_panel_module_helpers.dart';
 import '../features/seller/panel/models/seller_panel_types.dart';
+import '../features/seller/panel/widgets/seller_desktop_app_banner.dart';
+import '../features/seller/panel/widgets/seller_download_app_content.dart';
 import '../features/seller/panel/widgets/seller_panel_common_widgets.dart';
 import '../features/seller/panel/widgets/seller_panel_detail_widgets.dart';
 import '../features/seller/panel/widgets/seller_panel_shell.dart';
@@ -348,6 +353,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   bool _isDashboardRefreshRunning = false;
 
   bool _sidebarCollapsed = false;
+  bool _desktopAppBannerHidden = false;
+  final SellerLogoutGuard _sellerLogoutGuard = SellerLogoutGuard();
   final TextEditingController _feedbackSearchController =
       TextEditingController();
   String _selectedFeedbackTab = 'Tum';
@@ -1748,6 +1755,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     unawaited(_restoreLastSelectedModule());
     unawaited(_restoreGarsonAreaFilter());
     unawaited(_restoreSidebarCollapsed());
+    unawaited(_restoreDesktopAppBannerHidden());
     unawaited(_bootstrapSellerOwnerAndDashboardState());
     _sellerOrderHighlightExpiryScheduler = SellerOrderHighlightExpiryScheduler(
       highlightDuration: const Duration(seconds: 30),
@@ -2189,7 +2197,22 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     if (_desktopPrintHubRestaurantId == resolvedRestaurantId) {
       return;
     }
-    final hub = _cachedDesktopPrintHub ?? context.read<DesktopPrintHub>();
+    // Web'de DesktopPrintHub provider'ı mount edilmez (app_providers.dart
+    // `if (!kIsWeb)`); doğrudan read ProviderNotFound fırlatıp Garson akışını
+    // kırıyordu. Hub yoksa sayfa kırılmaz; yazıcı servis kartı durumu zaten
+    // gösterir.
+    var hub = _cachedDesktopPrintHub;
+    if (hub == null) {
+      try {
+        hub = context.read<DesktopPrintHub>();
+        debugPrint(
+          '[GarsonPage] provider_check name=DesktopPrintHub found=true',
+        );
+      } on ProviderNotFoundException {
+        debugPrint('[GarsonPage] provider_missing name=DesktopPrintHub');
+        return;
+      }
+    }
     _cachedDesktopPrintHub = hub;
     await hub.start(resolvedRestaurantId);
     _desktopPrintHubRestaurantId = resolvedRestaurantId;
@@ -2235,6 +2258,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return 'reviews';
       case SellerModule.support:
         return 'support';
+      case SellerModule.downloadApp:
+        return 'download_app';
     }
   }
 
@@ -2266,6 +2291,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return 'sidebar_reviews_tap';
       case SellerModule.support:
         return 'sidebar_support_tap';
+      case SellerModule.downloadApp:
+        return 'sidebar_download_app_tap';
     }
   }
 
@@ -2297,6 +2324,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return SellerModule.reviews;
       case 'support':
         return SellerModule.support;
+      case 'download_app':
+        return SellerModule.downloadApp;
       default:
         return null;
     }
@@ -3014,6 +3043,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         );
         _subscribeSupportTickets();
         _subscribeCancelAppealNotifications();
+        break;
+      case SellerModule.downloadApp:
+        _logSellerPanel(
+          'Tab',
+          'module=${module.name} fetch=none refetch=false',
+        );
         break;
     }
   }
@@ -4039,45 +4074,59 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     return filtered;
   }
 
-  Future<void> _exitSellerPanel() async {
-    debugPrint(
-      '[SellerExit] _exitSellerPanel triggered — returning to customer home',
-    );
-    setState(() => _isLoading = true);
+  Future<void> _restoreDesktopAppBannerHidden() async {
     try {
-      final hasConsumerBackup = await _authService.hasSellerSwitchBackup();
-      bool restoredConsumerSession = false;
-      if (hasConsumerBackup) {
-        restoredConsumerSession = await _authService
-            .restoreUserSessionAfterSellerExit();
-      } else {
-        await _authService.signOutSeller();
-      }
-      AppState().clearCustomerSessionView();
+      final hidden = await SellerDesktopAppBannerPrefs.isBannerHidden();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Satıcı panelinden çıkıldı.')),
-      );
-      debugPrint(
-        '[SellerExit] navigating to HomeScreen(home tab) — routes cleared '
-        '(restoredConsumerSession=$restoredConsumerSession)',
-      );
-      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-        buildAppPageRoute<void>(
-          builder: (_) => HomeScreen(initialIndex: restoredConsumerSession ? 4 : 0),
-        ),
-        (route) => false,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Çıkış yapılamadı: $e')));
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
+      if (hidden != _desktopAppBannerHidden) {
+        setState(() => _desktopAppBannerHidden = hidden);
       }
+    } catch (_) {
+      // ignore
     }
+  }
+
+  Future<void> _dismissDesktopAppBanner() async {
+    if (_desktopAppBannerHidden) return;
+    setState(() => _desktopAppBannerHidden = true);
+    try {
+      await SellerDesktopAppBannerPrefs.setBannerHidden(true);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  Future<void> _stopSellerPanelLiveWorkForLogout() async {
+    _productSearchDebounce?.cancel();
+    _packagingVideoUploadProgressTimer?.cancel();
+    _localPrintPollTimer?.cancel();
+    _localPrintPollTimer = null;
+    _productsRealtimeRetryTimer?.cancel();
+    // Garson realtime akışı da logout öncesi durdurulur; aksi halde signOut
+    // sonrası kanal hatası state güncellemesi tetikleyebilir.
+    await _garsonRealtimeSubscription?.cancel();
+    _garsonRealtimeSubscription = null;
+    await _productsSubscription?.cancel();
+    _productsSubscription = null;
+    await _subAdminsSubscription?.cancel();
+    _subAdminsSubscription = null;
+    await _supportTicketsSubscription?.cancel();
+    _supportTicketsSubscription = null;
+    await _cancelAppealNotificationsSubscription?.cancel();
+    _cancelAppealNotificationsSubscription = null;
+    final printHub = _cachedDesktopPrintHub;
+    if (printHub != null) {
+      await printHub.stop();
+    }
+    _cachedDesktopPrintHub = null;
+  }
+
+  Future<void> _handleSellerLogoutTap() {
+    return _sellerLogoutGuard.execute(
+      context: context,
+      stopLiveWork: _stopSellerPanelLiveWorkForLogout,
+      isMounted: () => mounted,
+    );
   }
 
   Future<void> _ensureSellerAuthAccess() async {
@@ -8666,78 +8715,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   Widget? _buildWebPrintNoticeBanner() {
-    if (!kIsWeb) return null;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFDE68A)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(
-                Icons.download_for_offline_outlined,
-                size: 18,
-                color: Color(0xFFD97706),
-              ),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Profesyonel yazdırma için Satıcı Uygulamasını indirin.',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF92400E),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Tarayıcı baskısı yerine Windows veya MacBook için Seller Desktop App kullanın. Adisyon ve mutfak fişleri uygulama içindeki yerel yazdırma servisiyle daha kararlı çalışır.',
-            style: TextStyle(
-              fontSize: 12.5,
-              color: Color(0xFF92400E),
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              FilledButton.icon(
-                onPressed: () => BrowserFileDownload.openExternalUrl(
-                  AppRuntimeConfig.sellerDesktopWindowsDownloadUrl,
-                ),
-                icon: const Icon(Icons.desktop_windows_outlined),
-                label: const Text('Ibul Satıcı Windows\'u İndir'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF92400E),
-                  foregroundColor: Colors.white,
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => BrowserFileDownload.openExternalUrl(
-                  AppRuntimeConfig.sellerDesktopMacosDownloadUrl,
-                ),
-                icon: const Icon(Icons.laptop_mac_outlined),
-                label: const Text('MacBook Uygulamasını İndir'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF92400E),
-                  side: const BorderSide(color: Color(0xFFF59E0B)),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+    if (!kIsWeb || _desktopAppBannerHidden) return null;
+    return SellerDesktopAppBanner(
+      onDismiss: () => unawaited(_dismissDesktopAppBanner()),
+      onOpenDownloadPage: () => _setSelectedModule(SellerModule.downloadApp),
     );
   }
 
@@ -8789,7 +8770,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           ),
           onLogoutTap: () {
             Navigator.of(context).pop();
-            _exitSellerPanel();
+            unawaited(_handleSellerLogoutTap());
           },
         ),
         content: _buildMobileContentArea(),
@@ -8807,7 +8788,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         drawerItems: _buildPanelMenuEntries(
           beforeSelect: () => Navigator.of(context).maybePop(),
         ),
-        onLogoutTap: _exitSellerPanel,
+        onLogoutTap: _handleSellerLogoutTap,
         content: _buildContent(),
         onNotificationsTap: () {},
         contentBanner: webPrintNoticeBanner,
@@ -8824,7 +8805,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ),
         sidebar: SellerPanelSidebar(
           items: _buildPanelMenuEntries(),
-          onLogoutTap: _exitSellerPanel,
+          onLogoutTap: _handleSellerLogoutTap,
           collapsed: _sidebarCollapsed,
         ),
         content: _buildContent(),
@@ -8946,6 +8927,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return _buildMobileReviewsModule();
       case SellerModule.support:
         return _buildMobileSupportModule();
+      case SellerModule.downloadApp:
+        return _buildDownloadAppModule();
     }
   }
 
@@ -12829,6 +12812,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     );
   }
 
+  // Android: kayıtlı Ethernet yazıcısına direct TCP adisyon baskısı.
+  // Test fişiyle aynı transport'u (MobileEthernetPrinterService) kullanır.
+  MobileOrderPrintService? _mobileOrderPrintServiceInstance;
+  MobileOrderPrintService get _mobileOrderPrintService =>
+      _mobileOrderPrintServiceInstance ??= MobileOrderPrintService();
+
   Future<UnifiedPrinterModel?> _garsonReceiptPrinterForDirectDispatch(
     String sellerId,
   ) async {
@@ -14021,6 +14010,39 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             ..['table_order_id'] = activeOrderId;
       payloadBuildMs = payloadWatch.elapsedMilliseconds;
 
+      // Android: bridge/istasyon yok — kayıtlı Ethernet yazıcısına direct
+      // TCP bas. Kuyruğa düşürmek Android'de hiç basılmamak demektir.
+      if (MobileOrderPrintService.isSupportedPlatform) {
+        final printWatch = Stopwatch()..start();
+        final directResult = await _mobileOrderPrintService
+            .printReceiptPayload(
+              restaurantId: sellerId,
+              payload: basePayload,
+              orderId: activeOrderId,
+            );
+        bridgeRequestMs = printWatch.elapsedMilliseconds;
+        path = 'mobile_tcp';
+        ok = directResult.ok;
+        if (!mounted) return;
+        if (directResult.ok) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Adisyon fiziksel olarak yazdırıldı.'),
+              backgroundColor: Color(0xFF10B981),
+            ),
+          );
+          return;
+        }
+        errorMessage = directResult.message;
+        _showPrinterWorkflowSnackBar(
+          directResult.message.isNotEmpty
+              ? directResult.message
+              : 'Adisyon yazdırılamadı. Yazıcı bağlantısını kontrol edin.',
+          warning: true,
+        );
+        return;
+      }
+
       if (_supportsDirectLocalPrintBridge && bridgeReachable) {
         final toBridgeWatch = Stopwatch()..start();
         final resolveWatch = Stopwatch()..start();
@@ -14325,6 +14347,34 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         isHistoryReprint: true,
         historyRecordId: record.id,
       );
+
+      // Android: geçmiş adisyon da direct TCP ile basılır (kuyruk yok).
+      if (MobileOrderPrintService.isSupportedPlatform) {
+        final directResult = await _mobileOrderPrintService
+            .printReceiptPayload(
+              restaurantId: sellerId,
+              payload: basePayload,
+              orderId: record.id,
+              flowName: 'history_reprint',
+            );
+        if (!mounted) return;
+        if (directResult.ok) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('(Eski Masa) adisyon yazdırıldı.'),
+              backgroundColor: Color(0xFF10B981),
+            ),
+          );
+        } else {
+          _showPrinterWorkflowSnackBar(
+            directResult.message.isNotEmpty
+                ? directResult.message
+                : '(Eski Masa) adisyon yazdırılamadı.',
+            warning: true,
+          );
+        }
+        return;
+      }
 
       final payload = _enrichQueuedReceiptPayloadWithPrinterRouting(
         basePayload,
@@ -16479,6 +16529,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         return _buildReviewsModule();
       case SellerModule.support:
         return _buildSupportModule();
+      case SellerModule.downloadApp:
+        return _buildDownloadAppModule();
     }
   }
 
@@ -26424,7 +26476,36 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       'pendingChanges=${_garsonHasPendingRemoteChanges.value} '
       'refreshGeneration=$_garsonManualRefreshGeneration',
     );
+    debugPrint('[GarsonPage] open buildId=$_garsonBuildRenderCount');
+    debugPrint(
+      '[GarsonPage] provider_check name=RestaurantConnectivityService'
+      ' found=true source=singleton',
+    );
 
+    // Scroll fix: üst bar, banner'lar, servis paneli ve masa grid'i TEK ana
+    // scroll içinde doğal akışta kayar. Önceden yalnız grid'in bulunduğu
+    // Expanded alanı kayıyor, sayfa "küçük pencere" hissi veriyordu.
+    return LayoutBuilder(
+      builder: (context, viewport) {
+        final viewportHeight = viewport.maxHeight.isFinite
+            ? viewport.maxHeight
+            : 720.0;
+        final minBoardHeight = math.max(320.0, viewportHeight - 240.0);
+        return SingleChildScrollView(
+          primary: false,
+          child: _buildGarsonModuleBody(
+            sellerId: sellerId,
+            minBoardHeight: minBoardHeight,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildGarsonModuleBody({
+    required String sellerId,
+    required double minBoardHeight,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -26462,7 +26543,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
           const SizedBox(height: 12),
         ],
 
-        Expanded(
+        ConstrainedBox(
+          // Tek sayfa scroll'unda board alanı en az ekran kadar yer kaplar;
+          // loading/empty state'ler eskisi gibi ortalanmış görünür.
+          constraints: BoxConstraints(minHeight: minBoardHeight),
           child: sellerId.isEmpty
               ? (_garsonInitialBootstrapFinished
                     ? const Center(
@@ -26596,7 +26680,9 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                               !renderBundle.willShowGrid) {
                             return _buildGarsonAreasLoadingPlaceholder();
                           }
-                          return SingleChildScrollView(
+                          // Tek ana scroll: fallback grid kendi scroll'unu
+                          // açmaz, sayfa scroll'u ile birlikte akar.
+                          return Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: _buildGarsonGroupedTableGrids(
                               renderBundle: renderBundle,
@@ -26974,7 +27060,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                           ),
                         ),
                         const SizedBox(height: 10),
-                        Expanded(
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(minHeight: 280),
                           child:
                               _garsonStatusFilter != null &&
                                   displayTableNumbers.isEmpty
@@ -27006,8 +27093,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                 )
                               : Builder(
                                   builder: (context) {
-                                    return SingleChildScrollView(
-                                      child: _buildGarsonGroupedTableGrids(
+                                    // Tek ana scroll: masa grid'i iç scroll
+                                    // alanı oluşturmaz; doğal yüksekliğinde
+                                    // ana sayfa scroll'u ile kayar.
+                                    return _buildGarsonGroupedTableGrids(
                                         renderBundle: renderBundle,
                                         columnsResolver: _webGarsonGridColumns,
                                         aspectRatioResolver:
@@ -27079,7 +27168,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                                             tableOrders: tableOrders,
                                           );
                                         },
-                                      ),
                                     );
                                   },
                                 ),
@@ -32080,6 +32168,10 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     await _loadSellerQuestions();
     if (!mounted) return;
     setState(() {});
+  }
+
+  Widget _buildDownloadAppModule() {
+    return const SellerDownloadAppContent();
   }
 
   Widget _buildSupportModule() => _buildSupportModuleImpl();

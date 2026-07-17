@@ -16,9 +16,10 @@ import '../core/build_profile.dart';
 import '../core/constants.dart';
 import '../screens/login_page.dart';
 import '../screens/business_detail_page.dart';
+import '../services/supabase_service.dart';
 import 'optimized_image.dart';
 import 'premium_interactions.dart';
-import 'restaurant_order/product_quick_view_dialog.dart';
+import 'ecommerce_product_quick_info_sheet.dart';
 import 'staggered_reveal.dart';
 
 class _CampaignBadgeData {
@@ -210,6 +211,15 @@ class _ProductCardState extends State<ProductCard> {
     });
   }
 
+  /// Liste projeksiyonları description/specifications içermeyebilir;
+  /// quick view açılınca tam satır arka planda çekilip birleştirilir.
+  Future<Product?> _enrichQuickViewProduct() async {
+    final id = widget.product.productId?.trim() ?? '';
+    if (id.isEmpty) return null;
+    final row = await SupabaseService.instance.getProductByIdString(id);
+    return row == null ? null : Product.fromDBProduct(row);
+  }
+
   void _showQuickView() {
     InteractionFeedback.lightImpact(channel: 'product_quick_view');
     showAppModalBottomSheet<void>(
@@ -218,7 +228,12 @@ class _ProductCardState extends State<ProductCard> {
       barrierColor: Colors.black.withValues(alpha: 0.42),
       isScrollControlled: true,
       builder: (sheetContext) {
-        return ProductQuickInfoSheet(product: widget.product);
+        return EcommerceProductQuickInfoSheet(
+          product: widget.product,
+          enrich: _enrichQuickViewProduct,
+          onAddToCart: () => _handleAddToCartTap(context),
+          onViewDetails: _onCardTap,
+        );
       },
     );
   }

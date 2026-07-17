@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/ads/enums/ad_enums.dart';
 import 'package:ibul_app/ads/helpers/home_feature_ad_helper.dart';
 import 'package:ibul_app/ads/models/ad_campaign.dart';
+import 'package:ibul_app/ads/models/home_card_template.dart';
 
 AdCampaign _campaign({
   CampaignStatus status = CampaignStatus.approved,
@@ -204,6 +205,86 @@ void main() {
     });
   });
 
+  group('Kategori hedefleme (yanlış section engeli)', () {
+    HomeFeatureCategoryGrouping groupingOf(AdCampaign campaign) =>
+        HomeFeatureAdHelper.resolveCategoryGrouping(campaign: campaign)!;
+
+    test('yemek reklamı yemek section ile eşleşir', () {
+      final campaign = _campaign(metadata: const {
+        'card_template_id': 'tpl-1',
+        'category_name': 'Yemek / Yemekler',
+        'banner_images': ['https://example.com/banner.png'],
+        'selected_product_ids': ['p1'],
+        'selected_product_categories': ['Yemek'],
+      });
+      expect(
+        HomeFeatureAdHelper.matchesGroupingCategory(
+          campaign,
+          groupingOf(campaign),
+        ),
+        isTrue,
+      );
+      expect(
+        HomeFeatureAdHelper.sellerHomeVisibilityReason(campaign, now: now),
+        isNull,
+      );
+    });
+
+    test('elektronik ürünlü reklam yemek section’ında GÖRÜNMEZ', () {
+      final campaign = _campaign(metadata: const {
+        'card_template_id': 'tpl-1',
+        'category_name': 'Yemek / Yemekler',
+        'banner_images': ['https://example.com/banner.png'],
+        'selected_product_ids': ['p1'],
+        'selected_product_categories': ['Elektronik'],
+      });
+      expect(
+        HomeFeatureAdHelper.matchesGroupingCategory(
+          campaign,
+          groupingOf(campaign),
+        ),
+        isFalse,
+      );
+      expect(
+        HomeFeatureAdHelper.sellerHomeVisibilityReason(campaign, now: now),
+        'category_conflict',
+      );
+      expect(
+        HomeFeatureAdHelper.sellerHomeVisibilityLabel(campaign, now: now),
+        'Seçilen ürünlerin kategorisi reklam hedefiyle uyuşmuyor.',
+      );
+    });
+
+    test('eski kampanya (ürün kategorisi yok) backward-compatible eşleşir',
+        () {
+      final campaign = _campaign(); // selected_product_categories alanı yok
+      expect(
+        HomeFeatureAdHelper.matchesGroupingCategory(
+          campaign,
+          groupingOf(campaign),
+        ),
+        isTrue,
+      );
+    });
+
+    test('çok kategorili seçim: en az biri hedefle eşleşiyorsa görünür', () {
+      final campaign = _campaign(metadata: const {
+        'card_template_id': 'tpl-1',
+        'category_name': 'Yemek',
+        'banner_images': ['https://example.com/banner.png'],
+        'selected_product_ids': ['p1', 'p2'],
+        'selected_product_categories': ['Elektronik', 'Yemekler'],
+      });
+      expect(
+        HomeFeatureAdHelper.matchesGroupingCategory(
+          campaign,
+          groupingOf(campaign),
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('Home fetch kaynak kuralları (kaynak kod sözleşmesi)', () {
     test('home feature service never uses preview/demo fallback', () {
       final source = File('lib/ads/services/home_feature_ad_service.dart')
@@ -240,6 +321,45 @@ void main() {
       expect(source.contains('[HomeAds] missing_asset campaignId='), isTrue);
       expect(source.contains('[HomeAds] missing_product campaignId='), isTrue);
       expect(source.contains('[HomeAds] pending count='), isTrue);
+    });
+
+    test('category_match / category_mismatch / display_text logları mevcut',
+        () {
+      final source = File('lib/ads/services/home_feature_ad_service.dart')
+          .readAsStringSync();
+      expect(
+        source.contains('[HomeAds] category_match campaignId='),
+        isTrue,
+      );
+      expect(
+        source.contains('[HomeAds] hidden reason=category_mismatch'),
+        isTrue,
+      );
+      expect(
+        source.contains('[HomeAds] hidden reason=missing_category_target'),
+        isTrue,
+      );
+      expect(
+        source.contains('[HomeAds] display_text campaignId='),
+        isTrue,
+      );
+    });
+
+    test('seller form seçilen ürünlerin kategorisini metadata\'ya kaydeder',
+        () {
+      final form =
+          File('lib/ads/presentation/pages/home_feature_ad_form_page.dart')
+              .readAsStringSync();
+      expect(
+        form.contains('selectedProductCategories: productCategories'),
+        isTrue,
+      );
+      final helper = File('lib/ads/helpers/home_feature_ad_helper.dart')
+          .readAsStringSync();
+      expect(
+        helper.contains("'selected_product_categories': selectedProductCategories"),
+        isTrue,
+      );
     });
 
     test('seller panelde pending onay mesajı mevcut', () {

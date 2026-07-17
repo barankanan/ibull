@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../core/ad_product_trace.dart';
 import '../core/home_data_diagnostics.dart';
 import '../ads/enums/ad_enums.dart';
+import '../ads/helpers/home_feature_ad_display_text.dart';
 import '../ads/helpers/home_feature_ad_helper.dart';
 import '../ads/models/home_card_template.dart';
 import '../ads/services/home_feature_ad_service.dart';
@@ -304,8 +305,13 @@ class _HomeCardBlockState extends State<_HomeCardBlock> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Kategori başlığıyla aynı/benzer ("Yemek" vs "Yemekler") kart
+          // başlığı tekrar yazılmaz — profesyonel görünüm kuralı.
           if (widget.cardTitle.trim().isNotEmpty &&
-              widget.cardTitle.trim() != widget.ads.first.categoryName.trim())
+              !HomeFeatureAdDisplayText.isSimilarTitle(
+                widget.cardTitle,
+                widget.ads.first.categoryName,
+              ))
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: Text(

@@ -20,6 +20,7 @@ import '../services/store_follow_service.dart';
 import '../models/store_follow_state.dart';
 import '../widgets/store_notifications_sheet.dart';
 import '../screens/login_page.dart';
+import '../responsive/breakpoints.dart';
 import '../utils/text_normalizer.dart';
 import '../utils/product_visibility_helper.dart';
 import '../widgets/product_card.dart';
@@ -3780,19 +3781,34 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       );
     }
 
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: aspectRatioOverride ?? 0.70,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 10,
-      ),
-      itemCount: displayProducts.length,
-      itemBuilder: (context, index) =>
-          buildGridItem(displayProducts[index], tight: true),
+    // Responsive kolon: sabit 2 kolon tablet genişliklerinde dev kart
+    // üretiyordu. Kolon sayısı kart genişliği bandından (ProductGridSizing)
+    // türetilir; mobilde 2 kolon davranışı aynen korunur.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final outerWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.of(context).size.width;
+        // Grid padding'i (12+12) düşülmüş kullanılabilir genişlik.
+        final columns = ProductGridSizing.columnCountForWidth(
+          outerWidth - 24,
+          spacing: 10,
+        );
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            childAspectRatio: aspectRatioOverride ?? 0.70,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 10,
+          ),
+          itemCount: displayProducts.length,
+          itemBuilder: (context, index) =>
+              buildGridItem(displayProducts[index], tight: true),
+        );
+      },
     );
   }
 

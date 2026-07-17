@@ -368,8 +368,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(localService.scanCallCount, 1);
-    expect(find.text('192.168.10.100:9100'), findsOneWidget);
+    expect(find.text('IP: 192.168.10.100 · Port: 9100'), findsOneWidget);
     expect(find.text('Ulaşılabilir'), findsOneWidget);
+    // Yeni kart UX: varsayılan ad + profil seçimi + hızlı ad şablonları.
+    final deviceNameField = tester.widget<TextField>(
+      find.byKey(const Key('ethernet_device_name_192.168.10.100')),
+    );
+    expect(deviceNameField.controller?.text, 'POS Yazıcı - 100');
+    expect(
+      find.byKey(const Key('ethernet_device_profile_192.168.10.100')),
+      findsOneWidget,
+    );
+    expect(find.text('Kasa Yazıcısı'), findsOneWidget);
+    expect(find.text('Mutfak Yazıcısı'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('ethernet_select_192.168.10.100')));
     await tester.pumpAndSettle();
@@ -380,8 +391,13 @@ void main() {
     final portField = tester.widget<TextField>(
       find.byKey(const Key('ethernet_port_field')),
     );
+    final nameField = tester.widget<TextField>(
+      find.byKey(const Key('ethernet_name_field')),
+    );
     expect(ipField.controller?.text, '192.168.10.100');
     expect(portField.controller?.text, '9100');
+    // Karttaki düzenlenebilir ad forma aktarılır.
+    expect(nameField.controller?.text, 'POS Yazıcı - 100');
   });
 
   testWidgets('different subnet warning is shown for manual IP entry', (

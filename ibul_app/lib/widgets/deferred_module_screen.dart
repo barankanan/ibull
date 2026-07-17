@@ -60,6 +60,7 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
     _libraryLoaded = false;
     _forcedError = null;
 
+    final loadWatch = Stopwatch()..start();
     widget.trace?.setStage(WebBootTraceStage.loadLibraryStarted);
     WebPerfTrace.instance.mark(WebPerfTraceStage.homeDeferredLoadStarted);
     _armWatchdog(attempt);
@@ -78,6 +79,10 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
     ).then((_) async {
       if (attempt != _attempt) return;
       _watchdogTimer?.cancel();
+      debugPrint(
+        '[WebPerf] route_deferred_load route=${widget.moduleName}'
+        ' ms=${loadWatch.elapsedMilliseconds}',
+      );
       widget.trace?.setStage(WebBootTraceStage.loadLibraryCompleted);
       WebPerfTrace.instance.mark(WebPerfTraceStage.homeDeferredLoadCompleted);
       clearWebBootError();

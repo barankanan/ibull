@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
@@ -5,6 +7,7 @@ import '../core/auth/auth_flow_logger.dart';
 import '../core/auth/auth_session_guard.dart';
 import '../core/constants.dart';
 import 'become_seller_page.dart';
+import '../features/seller/panel/helpers/seller_login_back_navigation.dart';
 import '../services/auth_service.dart';
 import 'seller_panel_page.dart';
 
@@ -292,7 +295,7 @@ class _SellerLoginPageState extends State<SellerLoginPage>
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () => Navigator.maybePop(context),
+                  onTap: () => unawaited(SellerLoginBackNavigation.handle(context)),
                   borderRadius: BorderRadius.circular(10),
                   child: Padding(
                     padding: const EdgeInsets.all(8),

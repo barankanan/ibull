@@ -44,6 +44,8 @@ Future<void> _mainImpl(IbulAppMode mode) async {
   RuntimeDiagnosticLogger.startup(
     '[Boot] entrypoint=${ibulEntrypointLabel(mode)}',
   );
+  // Güvenli config diagnostiği (key loglanmaz; sadece varlık/host/uzunluk/kaynak).
+  AppRuntimeConfig.logSupabaseConfigDiagnostics();
   WebBootStepProfiler.done('widgets_binding');
 
   if (AppRuntimeConfig.safeBootMode) {

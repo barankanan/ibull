@@ -8,9 +8,10 @@ import '../core/web_perf_trace.dart';
 import '../models/db_product.dart';
 import '../models/home_product_preview.dart';
 import '../models/product_model.dart';
+import '../services/supabase_service.dart';
+import 'ecommerce_product_quick_info_sheet.dart';
 import 'optimized_image.dart';
 import 'premium_interactions.dart';
-import 'restaurant_order/product_quick_view_dialog.dart';
 import 'skeleton_loading.dart';
 
 /// Lightweight product tile — fixed rail dimensions, no RenderFlex overflow.
@@ -82,6 +83,16 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
     );
   }
 
+  /// Kart üzerindeki ince önizleme verisini tam ürün satırıyla tamamlar.
+  /// Popup beklemez: sheet kart verisiyle anında açılır, bu fetch geldiğinde
+  /// içerik tazelenir (timeout sheet tarafında uygulanır).
+  Future<Product?> _enrichPreviewProduct() async {
+    final row = await SupabaseService.instance.getProductByIdString(
+      widget.preview.id,
+    );
+    return row == null ? null : Product.fromDBProduct(row);
+  }
+
   void _showQuickView() {
     InteractionFeedback.lightImpact(channel: 'home_preview_quick_view');
     showAppModalBottomSheet<void>(
@@ -90,7 +101,12 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
       barrierColor: Colors.black.withValues(alpha: 0.42),
       isScrollControlled: true,
       builder: (sheetContext) {
-        return ProductQuickInfoSheet(product: _previewAsProduct());
+        return EcommerceProductQuickInfoSheet(
+          product: _previewAsProduct(),
+          enrich: _enrichPreviewProduct,
+          onAddToCart: widget.onAddTap ?? widget.onTap,
+          onViewDetails: widget.onTap,
+        );
       },
     );
   }

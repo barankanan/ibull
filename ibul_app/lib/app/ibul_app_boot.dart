@@ -27,6 +27,7 @@ Future<void> runIbulAppBootstrap({
 }) async {
   WebBootLogger.log('start');
   WebBootStepProfiler.start('boot_total');
+  debugPrint('[WebPerf] boot_start');
 
   QrInitialParams.captureFromUri();
   debugPrint(
@@ -67,6 +68,11 @@ Future<void> runIbulAppBootstrap({
       runAppWidget();
       WebBootLogger.log('app_ready', detail: 'web_deferred_init');
       WebBootStepProfiler.done('first_frame_scheduled');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        debugPrint(
+          '[WebPerf] first_frame_ms=${bootWatch.elapsedMilliseconds}',
+        );
+      });
       _scheduleWebBootLoaderDismiss();
 
       unawaited(
@@ -137,10 +143,14 @@ Future<void> _completeWebBootInit({
 }) async {
   try {
     WebBootStepProfiler.start('supabase_initialize');
+    final supabaseWatch = Stopwatch()..start();
     await Future.wait<void>([
       initializeDateFormatting('tr_TR'),
       initializeAppSupabase(),
     ]);
+    debugPrint(
+      '[WebPerf] supabase_init_ms=${supabaseWatch.elapsedMilliseconds}',
+    );
     WebBootStepProfiler.done('supabase_initialize');
 
     if (afterCoreInit != null) {

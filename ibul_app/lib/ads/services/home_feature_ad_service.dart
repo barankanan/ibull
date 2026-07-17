@@ -9,6 +9,7 @@ import '../../models/ad_linked_products_fetch_report.dart';
 import '../../services/supabase_service.dart';
 import '../enums/ad_enums.dart';
 import '../helpers/ad_json_helper.dart';
+import '../helpers/home_feature_ad_display_text.dart';
 import '../helpers/home_feature_ad_helper.dart';
 import '../models/ad_campaign.dart';
 import '../models/campaign_asset.dart';
@@ -47,6 +48,7 @@ class HomeFeatureAdService {
     String budgetType = 'total',
     double dailyBudget = 0,
     double totalBudget = 0,
+    List<String>? selectedProductCategories,
     Map<String, dynamic>? extraSettings,
   }) async {
     final uniqueBannerUrls = HomeFeatureAdHelper.uniqueOrderedIds(bannerUrls);
@@ -88,6 +90,7 @@ class HomeFeatureAdService {
       dailyBudget: resolvedDailyBudget > 0 ? resolvedDailyBudget : null,
       totalBudget: resolvedTotalBudget > 0 ? resolvedTotalBudget : null,
       durationDays: durationDays,
+      selectedProductCategories: selectedProductCategories,
       extraSettings: extraSettings,
     );
 
@@ -431,6 +434,29 @@ class HomeFeatureAdService {
             'store="$storeName" reason=category_missing',
           );
         }
+        // Kategori hedefi yoksa yanlış section'a koymak yerine gizle.
+        debugPrint(
+          '[HomeAds] hidden reason=missing_category_target campaignId=${campaign.id}',
+        );
+        continue;
+      }
+
+      // Kategori hedef eşleşmesi: ürün kategorileri hedefle çelişiyorsa
+      // reklam bu section'da render edilmez (yemek ↔ elektronik sızıntısı).
+      final categoryMatch = HomeFeatureAdHelper.matchesGroupingCategory(
+        campaign,
+        grouping,
+      );
+      debugPrint(
+        '[HomeAds] category_match campaignId=${campaign.id}'
+        ' target=${grouping.canonicalLeaf}'
+        ' section=${grouping.displayName}'
+        ' match=$categoryMatch',
+      );
+      if (!categoryMatch) {
+        debugPrint(
+          '[HomeAds] hidden reason=category_mismatch campaignId=${campaign.id}',
+        );
         continue;
       }
 
@@ -467,13 +493,27 @@ class HomeFeatureAdService {
         ),
       );
 
+      // Profesyonel başlık çözümü: kategori tekrarı ve dummy adlar yerine
+      // kampanya adı (iyiyse) veya store+kategori temelli doğal başlık.
+      final displayText = HomeFeatureAdDisplayText.resolve(
+        categoryName: grouping.displayName,
+        rawCardTitle: template?.title ?? grouping.subtitle,
+        campaignName: campaign.name,
+        storeName: storeName,
+      );
+      debugPrint(
+        '[HomeAds] display_text campaignId=${campaign.id}'
+        ' sectionTitle=${displayText.sectionTitle}'
+        ' cardTitleSource=${displayText.cardTitleSource}',
+      );
+
       final ad = HomeFeatureDisplayAd(
         campaignId: campaign.id,
         sellerId: campaign.sellerId,
         storeId: campaign.storeId,
-        storeName: storeName,
+        storeName: displayText.storeLabel,
         cardTemplateId: template?.id ?? templateId ?? campaign.id,
-        cardTitle: template?.title ?? grouping.subtitle ?? grouping.displayName,
+        cardTitle: displayText.cardTitle,
         categoryName: grouping.displayName,
         bannerUrls: bannerUrls,
         productIds: productIds,
@@ -676,13 +716,24 @@ class HomeFeatureAdService {
         );
       }
 
+      // Kart bloğu başlığı: alt başlık kategori başlığının tekrarıysa
+      // ("Yemek" → "Yemekler") ilk reklamın profesyonel başlığı kullanılır.
+      final subtitleCandidate = bucket.subtitle;
+      final blockTitle = (subtitleCandidate != null &&
+              !HomeFeatureAdDisplayText.isWeakTitle(
+                subtitleCandidate,
+                categoryName: bucket.displayName,
+              ))
+          ? subtitleCandidate
+          : allAds.first.cardTitle;
+
       groups.add(
         HomeCategoryCardGroup(
           categoryName: bucket.displayName,
           cards: [
             HomeCardDisplayGroup(
               templateId: allAds.first.cardTemplateId,
-              cardTitle: bucket.subtitle ?? allAds.first.cardTitle,
+              cardTitle: blockTitle,
               templateSortOrder: allAds.first.sortOrder,
               ads: allAds,
             ),

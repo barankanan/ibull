@@ -2,6 +2,7 @@ import '../enums/ad_enums.dart';
 import '../helpers/ad_json_helper.dart';
 import '../models/ad_campaign.dart';
 import '../models/home_card_template.dart';
+import 'home_feature_ad_display_text.dart';
 
 class HomeFeatureAdHelper {
   const HomeFeatureAdHelper._();
@@ -241,6 +242,49 @@ class HomeFeatureAdHelper {
         .toList();
   }
 
+  /// Seçilen ürünlerin ana kategorileri (form kayıt sırasında yazılır).
+  /// Eski kampanyalarda alan yoktur → boş liste (backward compatible).
+  static List<String> selectedProductCategories(AdCampaign campaign) {
+    final raw = campaign.metadata['selected_product_categories'];
+    if (raw is List) {
+      return raw
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+    }
+    return const <String>[];
+  }
+
+  /// Kategori hedef eşleşmesi: kampanyanın ürün kategorileri biliniyorsa ve
+  /// HİÇBİRİ hedef kategori yaprağıyla benzeşmiyorsa reklam o section'da
+  /// gösterilmez (yemek reklamı elektronik alanına düşemez ve tersi).
+  /// Ürün kategorisi bilinmiyorsa (eski kampanya) hedef kategoriye güvenilir.
+  static bool matchesGroupingCategory(
+    AdCampaign campaign,
+    HomeFeatureCategoryGrouping grouping,
+  ) {
+    final productCategories = selectedProductCategories(campaign);
+    if (productCategories.isEmpty) return true;
+    for (final category in productCategories) {
+      if (HomeFeatureAdDisplayText.isSimilarTitle(
+            category,
+            grouping.canonicalLeaf,
+          ) ||
+          HomeFeatureAdDisplayText.isSimilarTitle(
+            category,
+            grouping.displayName,
+          ) ||
+          (grouping.subtitle != null &&
+              HomeFeatureAdDisplayText.isSimilarTitle(
+                category,
+                grouping.subtitle,
+              ))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   static int sortOrder(AdCampaign campaign) =>
       AdJsonHelper.asInt(campaign.metadata['sort_order']);
 
@@ -288,6 +332,7 @@ class HomeFeatureAdHelper {
     double? dailyBudget,
     double? totalBudget,
     int? durationDays,
+    List<String>? selectedProductCategories,
     Map<String, dynamic>? extraSettings,
   }) {
     return {
@@ -296,6 +341,9 @@ class HomeFeatureAdHelper {
       'category_name': categoryName,
       'banner_images': bannerImages,
       'selected_product_ids': selectedProductIds,
+      if (selectedProductCategories != null &&
+          selectedProductCategories.isNotEmpty)
+        'selected_product_categories': selectedProductCategories,
       'selected_banner_order': bannerImages,
       'selected_product_order': selectedProductIds,
       'sort_order': sortOrder,
@@ -380,6 +428,10 @@ class HomeFeatureAdHelper {
     final reason = ineligibleReason(campaign, now: now);
     if (reason != null) return reason;
     if (selectedProductIds(campaign).isEmpty) return 'no_product';
+    final grouping = resolveCategoryGrouping(campaign: campaign);
+    if (grouping != null && !matchesGroupingCategory(campaign, grouping)) {
+      return 'category_conflict';
+    }
     return null;
   }
 
@@ -411,6 +463,8 @@ class HomeFeatureAdHelper {
       case 'template_missing':
       case 'no_product':
         return 'Reklam görseli veya ürün bağlantısı eksik';
+      case 'category_conflict':
+        return 'Seçilen ürünlerin kategorisi reklam hedefiyle uyuşmuyor.';
       case 'placement_mismatch':
         return 'Yerleşim uyumsuz — ana sayfada görünmüyor';
       default:

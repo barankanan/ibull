@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
 import '../services/restaurant_offline/restaurant_connectivity_service.dart';
@@ -209,8 +208,18 @@ class _RestaurantOfflineReconnectListenerState
       return widget.child;
     }
 
-    return Consumer<RestaurantConnectivityService>(
-      builder: (context, connectivity, child) {
+    // KÖK NEDEN FIX (Garson ProviderNotFound): web'de
+    // RestaurantConnectivityService provider'ı mount edilmez
+    // (app_providers.dart `if (!kIsWeb)`), bu Consumer build sırasında
+    // "Provider<RestaurantConnectivityService> not found" fırlatıp Garson
+    // sayfasını kırıyordu. Banner ile aynı desen: singleton'ı
+    // ListenableBuilder ile dinle — desktop'ta provider da aynı instance'ı
+    // (`.value(RestaurantConnectivityService.instance)`) veriyordu,
+    // davranış birebir aynı kalır.
+    return ListenableBuilder(
+      listenable: RestaurantConnectivityService.instance,
+      builder: (context, child) {
+        final connectivity = RestaurantConnectivityService.instance;
         final offline =
             !connectivity.hasNetwork || !connectivity.supabaseReachable;
         if (_wasOffline && !offline) {

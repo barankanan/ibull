@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../helpers/home_feature_ad_display_text.dart';
 import '../../helpers/home_feature_ad_helper.dart';
 import '../../models/home_card_template.dart';
 import '../../services/home_card_template_service.dart';
@@ -150,6 +151,7 @@ class _HomeFeatureAdFormPageState extends State<HomeFeatureAdFormPage> {
                 'name': p.name,
                 'image_url': p.imageUrl,
                 'price': p.price,
+                'category': p.mainCategory,
                 'sub_category': p.subCategory,
               },
             )
@@ -378,6 +380,34 @@ class _HomeFeatureAdFormPageState extends State<HomeFeatureAdFormPage> {
       _showSnack(issues.first);
       return;
     }
+
+    // Kategori hedefi: seçilen ürünlerin ana kategorileri kaydedilir; hedef
+    // kategoriyle çelişiyorsa seller net uyarılır (yanlış section engeli).
+    final productCategories = _selectedProductMaps
+        .map((p) => p['category']?.toString().trim() ?? '')
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    final templateCategory =
+        _selectedTemplate!.categoryName ?? _selectedTemplate!.title;
+    final hasCategoryMatch = productCategories.isEmpty ||
+        productCategories.any(
+          (c) => HomeFeatureAdDisplayText.isSimilarTitle(c, templateCategory),
+        );
+    if (!hasCategoryMatch) {
+      _showSnack(
+        'Seçilen ürünlerin kategorisi reklam hedefiyle uyuşmuyor. '
+        'Ana sayfa reklamında "$templateCategory" kategorisinden ürün seçin.',
+      );
+      return;
+    }
+    if (productCategories.length > 1) {
+      _showSnack(
+        'Farklı kategorilerden ürün seçtiniz. Reklam yalnızca '
+        '"$templateCategory" alanında gösterilecek.',
+      );
+    }
+
     setState(() => _isSubmitting = true);
     debugPrint('[SellerAds] create_start');
     try {
@@ -394,6 +424,7 @@ class _HomeFeatureAdFormPageState extends State<HomeFeatureAdFormPage> {
         budgetType: _budgetType,
         dailyBudget: _budgetType == 'daily' ? _dailyBudget : 0,
         totalBudget: _totalBudget,
+        selectedProductCategories: productCategories,
         extraSettings: _buildExtraSettings(),
       );
       debugPrint(

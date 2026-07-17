@@ -22,6 +22,7 @@ import '../core/single_flight_guard.dart';
 import '../core/web_boot_step_profiler.dart';
 import '../core/web_perf_logger.dart';
 import '../core/web_perf_trace.dart';
+import '../core/mobile_app_download_prompt_controller.dart';
 import '../models/db_product.dart';
 import '../models/home_products_fetch_report.dart';
 import '../models/product_model.dart';
@@ -121,6 +122,15 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       if (QrInitialParams.isQrPath) {
         unawaited(_openQrDeferred());
       }
+      
+      // Show mobile app download prompt if applicable (delay slightly to let home load)
+      final screenWidth = MediaQuery.sizeOf(context).width;
+      debugPrint('[MobileAppPrompt] schedule source=HomeScreenCore width=$screenWidth');
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          MobileAppDownloadPromptController.checkAndShowPrompt(context);
+        }
+      });
     });
   }
 
@@ -281,11 +291,13 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       HomeBootDiagnostics.logProductsRequestStart();
       HomeDataDiagnostics.requestStart(source: 'home_screen_core');
       WebPerfLogger.recordSupabaseInitialRequest();
+      debugPrint('[WebPerf] home_data_start');
       final fetchStarted = DateTime.now().millisecondsSinceEpoch;
       final report = await SupabaseService.instance
           .fetchInitialHomeProductsReport()
           .timeout(const Duration(seconds: 5));
       final fetchMs = DateTime.now().millisecondsSinceEpoch - fetchStarted;
+      debugPrint('[WebPerf] home_data_done ms=$fetchMs');
       final products = report.products.take(kPreviewBatchSize).toList(growable: false);
       HomeBootDiagnostics.logProductsRequestDone(
         count: products.length,

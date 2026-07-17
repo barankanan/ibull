@@ -280,6 +280,7 @@ String resolveSellerPanelRenderTarget({
     case SellerModule.achievements:
     case SellerModule.reviews:
     case SellerModule.support:
+    case SellerModule.downloadApp:
       return selectedModule.name;
   }
 }
@@ -892,6 +893,7 @@ List<SellerModule> visibleSellerModules(
     SellerModule.achievements,
     SellerModule.reviews,
     SellerModule.support,
+    SellerModule.downloadApp,
   ];
 }
 
@@ -923,6 +925,8 @@ String sellerModuleLabel(SellerModule module) {
       return 'Yorumlar, Değerlendirmeler, Şikayetler';
     case SellerModule.support:
       return 'Destek';
+    case SellerModule.downloadApp:
+      return 'İndir';
   }
 }
 
@@ -965,5 +969,7 @@ IconData sellerModuleIcon(SellerModule module) {
       return Icons.rate_review_outlined;
     case SellerModule.support:
       return Icons.support_agent_outlined;
+    case SellerModule.downloadApp:
+      return Icons.download_for_offline_outlined;
   }
 }

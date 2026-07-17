@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALLER_LOCAL="$ROOT_DIR/build/windows/installer/IbulSellerSetup.exe"
-URL="${IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL:-${IBUL_WINDOWS_INSTALLER_DOWNLOAD_URL:-https://github.com/barankanan/ibull/releases/download/v1.0.2-windows-seller/IbulSellerSetup.exe}}"
+URL="${IBUL_SELLER_DESKTOP_WINDOWS_DOWNLOAD_URL:-${IBUL_WINDOWS_INSTALLER_DOWNLOAD_URL:-https://github.com/barankanan/ibull/releases/download/ibul-public-downloads/IbulSellerSetup.exe}}"
 
 echo "[1/4] Checking local installer artifact..."
 if [[ ! -f "$INSTALLER_LOCAL" ]]; then

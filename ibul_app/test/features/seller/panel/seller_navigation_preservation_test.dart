@@ -498,6 +498,7 @@ void main() {
         SellerModule.achievements,
         SellerModule.reviews,
         SellerModule.support,
+        SellerModule.downloadApp,
       ]) {
         expect(
           resolveSellerPanelRenderTarget(
@@ -541,6 +542,7 @@ void main() {
         SellerModule.achievements,
         SellerModule.reviews,
         SellerModule.support,
+        SellerModule.downloadApp,
       ]) {
         expect(
           shouldRunDashboardRefresh(selectedModule: module),

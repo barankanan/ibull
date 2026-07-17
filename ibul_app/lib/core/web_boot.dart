@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/ibul_app_mode.dart';
+import 'config/runtime_config.dart';
 import 'web_page_reload.dart';
 
 /// Web boot tracing. Uses [print] on web so release Chrome console shows logs.
@@ -39,6 +40,7 @@ class WebBootFatalScreen extends StatelessWidget {
     this.entrypoint,
     this.stackSummary,
     this.missingDefine,
+    this.debugInfoLines,
   });
 
   final String message;
@@ -47,6 +49,12 @@ class WebBootFatalScreen extends StatelessWidget {
   final String? entrypoint;
   final String? stackSummary;
   final String? missingDefine;
+
+  /// GEÇİCİ teşhis build'i: release'te de gösterilen güvenli debug satırları.
+  /// İçerik [AppRuntimeConfig.safeDiagnostics] + maskelenmiş hata metnidir;
+  /// anon key değeri asla içermez (sadece uzunluk). Teşhis bitince
+  /// [buildWebBootFatalScreen] içindeki üretim kaldırılarak kapatılır.
+  final List<String>? debugInfoLines;
 
   @override
   Widget build(BuildContext context) {
@@ -63,9 +71,11 @@ class WebBootFatalScreen extends StatelessWidget {
         'stack: $stackSummary',
     ];
 
-    if (showDevDetails && devLines.isNotEmpty) {
-      // ignore: avoid_print
-      print('[WebBootFatal] ${devLines.join(' | ')}');
+    // UI tasarımı değişmez (dev detayları ekranda sadece debug/profile'da),
+    // ama gerçek sebep release dahil HER modda console'a yazılır ki
+    // "Sunucu yapılandırması eksik" görüldüğünde missing=<define> izlenebilsin.
+    if (devLines.isNotEmpty) {
+      debugPrint('[WebBootFatal] ${devLines.join(' | ')}');
     }
 
     return MaterialApp(
@@ -116,6 +126,27 @@ class WebBootFatalScreen extends StatelessWidget {
                       ),
                     ),
                   ],
+                  if (debugInfoLines != null && debugInfoLines!.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: SelectableText(
+                        debugInfoLines!.join('\n'),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade700,
+                          fontFamily: 'monospace',
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 28),
                   FilledButton(
                     onPressed: reloadWebPage,
@@ -156,6 +187,32 @@ String? webBootMissingDefine(Object error) {
   return null;
 }
 
+/// GEÇİCİ teşhis build'i: [AppRuntimeConfig.safeDiagnostics] + maskelenmiş
+/// hata bilgisinden küçük, kopyalanabilir bir debug satır listesi üretir.
+/// Anon key değeri asla içermez (sadece uzunluk); [AppRuntimeConfig.maskSecrets]
+/// hata metnindeki olası JWT/secret kalıntılarını da maskeler.
+List<String> _buildSafeDebugInfoLines(Object error) {
+  final diag = AppRuntimeConfig.safeDiagnostics();
+  final maskedError = AppRuntimeConfig.maskSecrets(error.toString());
+  return <String>[
+    'DEBUG BUILD:',
+    'marker=${diag['buildMarker']}',
+    'urlPresent=${diag['supabaseUrlPresent']}',
+    'keyPresent=${diag['supabaseAnonKeyPresent']}',
+    'source=${diag['configSource']}',
+    'host=${diag['supabaseUrlHost']}',
+    'keyLength=${diag['anonKeyLength']}',
+    'missing=${diag['missingKey']}',
+    'firebaseApiKeyPresent=${diag['firebaseAndroidApiKeyPresent']}',
+    'firebaseAppIdPresent=${diag['firebaseAndroidAppIdPresent']}',
+    'firebaseProjectId=${diag['firebaseProjectId']}',
+    'firebaseSource=${diag['firebaseSource']}',
+    'firebaseMissing=${diag['firebaseMissingKey']}',
+    'errorType=${error.runtimeType}',
+    'errorMessage=$maskedError',
+  ];
+}
+
 WebBootFatalScreen buildWebBootFatalScreen(
   Object error, {
   StackTrace? stackTrace,
@@ -172,5 +229,6 @@ WebBootFatalScreen buildWebBootFatalScreen(
     entrypoint: ibulEntrypointLabel(IbulAppModeRegistry.current),
     stackSummary: stackSummary,
     missingDefine: webBootMissingDefine(error),
+    debugInfoLines: _buildSafeDebugInfoLines(error),
   );
 }

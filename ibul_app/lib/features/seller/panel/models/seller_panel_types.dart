@@ -12,6 +12,7 @@ enum SellerModule {
   achievements,
   reviews,
   support,
+  downloadApp,
 }
 
 enum SellerDashboardRangePreset {

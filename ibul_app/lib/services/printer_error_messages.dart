@@ -107,6 +107,7 @@ class EthernetDiscoveredDevice {
     this.sameSubnet,
     this.subnet,
     this.networkHint = '',
+    this.latencyMs,
   });
 
   final String host;
@@ -116,6 +117,9 @@ class EthernetDiscoveredDevice {
   final bool? sameSubnet;
   final String? subnet;
   final String networkHint;
+
+  /// TCP bağlantı gecikmesi (ms); tarama probe'u ölçtüyse dolu.
+  final int? latencyMs;
 
   String get endpointLabel => '$host:$port';
 
@@ -136,6 +140,9 @@ class EthernetDiscoveredDevice {
           : (json['sameSubnet'] is bool ? json['sameSubnet'] as bool : null),
       subnet: json['subnet']?.toString(),
       networkHint: json['suggested_message']?.toString().trim() ?? '',
+      latencyMs: int.tryParse(
+        json['latency_ms']?.toString() ?? json['latencyMs']?.toString() ?? '',
+      ),
     );
   }
 }
