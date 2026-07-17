@@ -34,6 +34,8 @@ Qoder/
 .env
 .env.*
 !.env.example
+# .env'den build sırasında üretilir; stub: generated_runtime_config_stub.dart
+ibul_app/lib/core/config/generated_runtime_config.g.dart
 **/.env
 **/.env.*
 !**/.env.example
@@ -142,6 +144,13 @@ build/web/downloads/*.exe
 build/windows/installer/*.exe
 build/macos/dist/*.dmg
 
+# Staged public download artifacts (binaries gitignored via **/*.apk etc.)
+release_artifacts/android/*
+release_artifacts/macos/*
+release_artifacts/windows/*
+release_artifacts/checksums/*
+!release_artifacts/**/.gitkeep
+
 # =============================================================================
 # Logs & temp
 # =============================================================================
@@ -173,3 +182,8 @@ logs/
 .build/
 .buildlog/
 .svn/
+
+# Android signing keys
+ibul_app/android/key.properties
+ibul_app/android/*.jks
+ibul_app/android/*.keystore

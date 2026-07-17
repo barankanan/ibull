@@ -122,7 +122,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       if (QrInitialParams.isQrPath) {
         unawaited(_openQrDeferred());
       }
-      
+
       // Show mobile app download prompt if applicable (delay slightly to let home load)
       final screenWidth = MediaQuery.sizeOf(context).width;
       debugPrint('[MobileAppPrompt] schedule source=HomeScreenCore width=$screenWidth');

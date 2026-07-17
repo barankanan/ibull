@@ -238,7 +238,7 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       debugPrint('[HomeScreen] first frame — calling _handleTableQrLaunch');
       _handleTableQrLaunch();
-      
+
       // Show mobile app download prompt if applicable
       final screenWidth = MediaQuery.sizeOf(context).width;
       debugPrint('[MobileAppPrompt] schedule source=HomeScreen width=$screenWidth');
