@@ -1,6 +1,6 @@
 part of '../../main.dart';
 
-enum _IhizView { landing, login, apply, dashboard }
+enum _IhizView { landing, login, apply, adminLogin, dashboard }
 
 enum _DeliveryStage { idle, headingToStore, onTheWay, delivered }
 

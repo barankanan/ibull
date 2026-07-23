@@ -30,9 +30,17 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'src/config/ihiz_runtime_config.dart';
+import 'src/pages/ihiz_admin_login_page.dart';
+import 'src/sections/ihiz_courier_cta_section.dart';
+import 'src/sections/ihiz_hero_section.dart';
 import 'src/sections/ihiz_login_marketing_section.dart';
+import 'src/sections/ihiz_why_section.dart';
+import 'src/theme/ihiz_brand.dart';
+import 'src/util/ihiz_web_location.dart';
 import 'src/widgets/ihiz_landing_widgets.dart';
 import 'src/widgets/ihiz_marketing_chrome.dart';
+import 'src/widgets/ihiz_site_footer.dart';
+import 'src/widgets/ihiz_top_header.dart';
 
 part 'src/models/ihiz_application_models.dart';
 part 'src/models/ihiz_pricing_models.dart';
@@ -91,11 +99,34 @@ class _IhizEntryPageState extends State<IhizEntryPage> {
   @override
   void initState() {
     super.initState();
+    // Direct visits to /admin/login open the admin screen; back/forward keep
+    // the view in sync.
+    if (IhizWebLocation.isAdminLogin) {
+      _view = _IhizView.adminLogin;
+    }
+    IhizWebLocation.onPopState((isAdminNow) {
+      if (!mounted) return;
+      if (isAdminNow && _view != _IhizView.adminLogin) {
+        setState(() => _view = _IhizView.adminLogin);
+      } else if (!isAdminNow && _view == _IhizView.adminLogin) {
+        setState(() => _view = _IhizView.landing);
+      }
+    });
     _bootstrapPricingConfig();
     _subscribePricingConfig();
     _startPricingConfigPolling();
     _subscribeAuthState();
     unawaited(_restoreLoggedInCourierSession());
+  }
+
+  void _openAdminLogin() {
+    IhizWebLocation.push(IhizWebLocation.adminLoginPath);
+    setState(() => _view = _IhizView.adminLogin);
+  }
+
+  void _closeAdminLogin() {
+    IhizWebLocation.push('/');
+    setState(() => _view = _IhizView.landing);
   }
 
   Future<void> _bootstrapPricingConfig() async {
@@ -332,7 +363,10 @@ class _IhizEntryPageState extends State<IhizEntryPage> {
         return _IhizLandingPage(
           onLogin: () => setState(() => _view = _IhizView.login),
           onApply: () => setState(() => _view = _IhizView.apply),
+          onAdminLogin: _openAdminLogin,
         );
+      case _IhizView.adminLogin:
+        return IhizAdminLoginPage(onBack: _closeAdminLogin);
       case _IhizView.login:
         return _IhizLoginPage(
           onBack: () => setState(() => _view = _IhizView.landing),
@@ -376,72 +410,115 @@ class _IhizEntryPageState extends State<IhizEntryPage> {
   }
 }
 
-class _IhizLandingPage extends StatelessWidget {
-  const _IhizLandingPage({required this.onLogin, required this.onApply});
+class _IhizLandingPage extends StatefulWidget {
+  const _IhizLandingPage({
+    required this.onLogin,
+    required this.onApply,
+    required this.onAdminLogin,
+  });
 
   final VoidCallback onLogin;
   final VoidCallback onApply;
+  final VoidCallback onAdminLogin;
 
+  @override
+  State<_IhizLandingPage> createState() => _IhizLandingPageState();
+}
+
+class _IhizLandingPageState extends State<_IhizLandingPage> {
   static const Color _ink = Color(0xFF102941);
+
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _deliveryKey = GlobalKey();
+  final GlobalKey _returnKey = GlobalKey();
+  final GlobalKey _supportKey = GlobalKey();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollTo(GlobalKey key) {
+    final ctx = key.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 450),
+      curve: Curves.easeInOutCubic,
+      alignment: 0.05,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isMobile = constraints.maxWidth < 920;
+        final isMobile = IhizBrand.isMobile(constraints.maxWidth);
 
         return Scaffold(
-          backgroundColor: const Color(0xFFF2F7FB),
+          backgroundColor: IhizBrand.surface,
           body: SafeArea(
-            child: Stack(
+            bottom: false,
+            child: Column(
               children: [
-                Positioned(
-                  top: -180,
-                  right: -120,
-                  child: Container(
-                    width: 420,
-                    height: 420,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF1D7ABF).withValues(alpha: 0.13),
+                IhizTopHeader(
+                  items: [
+                    IhizNavItem(
+                      label: 'Teslimat',
+                      onTap: () => _scrollTo(_deliveryKey),
                     ),
-                  ),
-                ),
-                Positioned(
-                  bottom: -210,
-                  left: -140,
-                  child: Container(
-                    width: 460,
-                    height: 460,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF09A66D).withValues(alpha: 0.1),
+                    IhizNavItem(
+                      label: 'İade',
+                      onTap: () => _scrollTo(_returnKey),
                     ),
-                  ),
+                    IhizNavItem(label: 'Kurye Ol', onTap: widget.onApply),
+                    IhizNavItem(
+                      label: 'Destek',
+                      onTap: () => _scrollTo(_supportKey),
+                    ),
+                    IhizNavItem(
+                      label: 'Admin Girişi',
+                      onTap: widget.onAdminLogin,
+                      emphasized: true,
+                    ),
+                  ],
                 ),
-                SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                    isMobile ? 14 : 28,
-                    18,
-                    isMobile ? 14 : 28,
-                    28,
-                  ),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: isMobile ? 560 : 1220,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _LandingFirstFold(
-                            isMobile: isMobile,
-                            onLogin: onLogin,
-                            onApply: onApply,
+                Expanded(
+                  child: SingleChildScrollView(
+                    controller: _scrollController,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: IhizBrand.contentMaxWidth,
                           ),
-                          const SizedBox(height: 10),
-                          _ComparisonCard(isMobile: isMobile),
-                          const SizedBox(height: 14),
+                          child: Padding(
+                              padding: EdgeInsets.fromLTRB(
+                                isMobile ? 16 : 28,
+                                isMobile ? 14 : 22,
+                                isMobile ? 16 : 28,
+                                isMobile ? 40 : 64,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  IhizHeroSection(
+                                    onLogin: widget.onLogin,
+                                    onApply: widget.onApply,
+                                  ),
+                                  SizedBox(height: isMobile ? 28 : 44),
+                                  KeyedSubtree(
+                                    key: _deliveryKey,
+                                    child: const IhizWhySection(),
+                                  ),
+                                  SizedBox(height: isMobile ? 48 : 88),
+                                  KeyedSubtree(
+                                    key: _returnKey,
+                                    child: _ComparisonCard(isMobile: isMobile),
+                                  ),
+                                  SizedBox(height: isMobile ? 48 : 88),
                           IhizSectionShell(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -728,39 +805,43 @@ class _IhizLandingPage extends StatelessWidget {
                               ],
                             ),
                           ),
-                          const SizedBox(height: 14),
-                          IhizSectionShell(
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.circle,
-                                  size: 10,
-                                  color: _ink.withValues(alpha: 0.42),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'iBul satıcı ağı + İHIZ kurye ile yerel ticaret tek akışta.',
-                                    style: TextStyle(
-                                      color: _ink.withValues(alpha: 0.68),
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w700,
+                                  SizedBox(height: isMobile ? 48 : 88),
+                                  KeyedSubtree(
+                                    key: _supportKey,
+                                    child: IhizCourierCtaSection(
+                                      onApply: widget.onApply,
                                     ),
                                   ),
-                                ),
-                                Text(
-                                  '© 2026',
-                                  style: TextStyle(
-                                    color: _ink.withValues(alpha: 0.56),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w800,
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.circle,
+                                        size: 10,
+                                        color: _ink.withValues(alpha: 0.42),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'iBul satıcı ağı + İHIZ kurye ile yerel ticaret tek akışta.',
+                                          style: TextStyle(
+                                            color: _ink.withValues(alpha: 0.68),
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ],
-                      ),
+                        IhizSiteFooter(
+                          onApply: widget.onApply,
+                          onAdminLogin: widget.onAdminLogin,
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -769,210 +850,6 @@ class _IhizLandingPage extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-class _LandingFirstFold extends StatelessWidget {
-  const _LandingFirstFold({
-    required this.isMobile,
-    required this.onLogin,
-    required this.onApply,
-  });
-
-  final bool isMobile;
-  final VoidCallback onLogin;
-  final VoidCallback onApply;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final viewportHeight = MediaQuery.sizeOf(context).height;
-        final titleSize = (width * (isMobile ? 0.132 : 0.078)).clamp(
-          42.0,
-          72.0,
-        );
-        final headlineSize = (width * (isMobile ? 0.106 : 0.066)).clamp(
-          30.0,
-          62.0,
-        );
-        final contentMaxWidth = isMobile ? width : 860.0;
-        final buttonGapFromHeader =
-            (viewportHeight * (isMobile ? 0.365 : 0.305)).clamp(206.0, 360.0);
-        final bottomInset = (viewportHeight * (isMobile ? 0.03 : 0.035)).clamp(
-          16.0,
-          40.0,
-        );
-
-        return Container(
-          constraints: BoxConstraints(minHeight: isMobile ? 620 : 720),
-          width: double.infinity,
-          padding: EdgeInsets.fromLTRB(
-            isMobile ? 14 : 26,
-            isMobile ? 18 : 28,
-            isMobile ? 14 : 26,
-            isMobile ? 14 : 28,
-          ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(32),
-            image: const DecorationImage(
-              image: AssetImage('assets/hero/hero_bg.png'),
-              fit: BoxFit.cover,
-              alignment: Alignment(0, 0.05),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF144E87).withValues(alpha: 0.28),
-                blurRadius: 28,
-                offset: const Offset(0, 16),
-              ),
-            ],
-          ),
-          child: Container(
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(28)),
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                isMobile ? 10 : 18,
-                isMobile ? 8 : 16,
-                isMobile ? 10 : 18,
-                isMobile ? 12 : 20,
-              ),
-              child: Column(
-                children: [
-                  _HeroHeader(
-                    isMobile: isMobile,
-                    brandSize: titleSize,
-                    headlineSize: headlineSize,
-                  ),
-                  SizedBox(height: buttonGapFromHeader),
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: contentMaxWidth),
-                    child: _ActionButtons(
-                      isMobile: isMobile,
-                      onLogin: onLogin,
-                      onApply: onApply,
-                    ),
-                  ),
-                  SizedBox(height: bottomInset),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-// Responsive kararlar:
-// - Hero yüksekliği sabit değil; ekrana göre dinamik alt boşluk kullanılıyor.
-// - Başlık ve marka tipografisi clamp ile küçük/büyük cihazlara uyarlanıyor.
-// - Alt bölümde kartlar mobilde dikey, geniş ekranda yatay akışa geçiyor.
-// - Butonlar ve kart içerikleri taşmayı önlemek için esnek genişlikte tutuluyor.
-
-class _HeroHeader extends StatelessWidget {
-  const _HeroHeader({
-    required this.isMobile,
-    required this.brandSize,
-    required this.headlineSize,
-  });
-
-  final bool isMobile;
-  final double brandSize;
-  final double headlineSize;
-
-  @override
-  Widget build(BuildContext context) {
-    final sloganSize = (brandSize * 0.44).clamp(17.0, 29.0);
-    final logoSize = (brandSize * 0.76).clamp(40.0, 68.0);
-    final ihizSize = (brandSize * 0.89).clamp(38.0, 62.0);
-    final lockupWidth = (ihizSize * 2.2 + logoSize).clamp(210.0, 450.0);
-    final headingSize = (headlineSize * 0.9).clamp(28.0, 56.0);
-
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: logoSize + (isMobile ? 12 : 16),
-              height: logoSize + (isMobile ? 12 : 16),
-              padding: EdgeInsets.all(isMobile ? 6 : 8),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.96),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Image.asset(
-                'assets/hero/ihiz_logo.png',
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) {
-                  return const Icon(
-                    Icons.local_shipping_outlined,
-                    color: Color(0xFF3D64F4),
-                  );
-                },
-              ),
-            ),
-            SizedBox(width: isMobile ? 8 : 12),
-            Text(
-              'İHIZ',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: ihizSize,
-                letterSpacing: 1.2,
-                shadows: const [
-                  Shadow(
-                    color: Color(0x660A2C58),
-                    blurRadius: 10,
-                    offset: Offset(0, 3),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        SizedBox(height: isMobile ? 2 : 3),
-        Container(
-          width: lockupWidth,
-          height: 2.4,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.95),
-            borderRadius: BorderRadius.circular(999),
-          ),
-        ),
-        SizedBox(height: isMobile ? 1 : 2),
-        Text(
-          'İstediğin HIZ',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.98),
-            fontWeight: FontWeight.w600,
-            fontSize: sloganSize,
-          ),
-        ),
-        SizedBox(height: isMobile ? 5 : 8),
-        Text(
-          '1 Saate Kapında,\nGününde Teslimat!',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.98),
-            fontWeight: FontWeight.w600,
-            fontSize: headingSize,
-            fontFamily: 'Trebuchet MS',
-            height: 1.05,
-            shadows: const [
-              Shadow(
-                color: Color(0x66223A66),
-                blurRadius: 10,
-                offset: Offset(0, 3),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
@@ -1170,85 +1047,6 @@ class _ComparisonPill extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ActionButtons extends StatelessWidget {
-  const _ActionButtons({
-    required this.isMobile,
-    required this.onLogin,
-    required this.onApply,
-  });
-
-  final bool isMobile;
-  final VoidCallback onLogin;
-  final VoidCallback onApply;
-
-  @override
-  Widget build(BuildContext context) {
-    final buttonHeight = isMobile ? 56.0 : 64.0;
-    final fontSize = isMobile ? 20.0 : 25.0;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final buttonWidth =
-            (((constraints.maxWidth - 10) / 2) * (isMobile ? 0.84 : 0.82))
-                .clamp(130.0, 310.0);
-
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: buttonWidth,
-              child: ElevatedButton(
-                onPressed: onLogin,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1F64D6),
-                  foregroundColor: Colors.white,
-                  minimumSize: Size.fromHeight(buttonHeight),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  side: BorderSide(
-                    color: Colors.white.withValues(alpha: 0.92),
-                    width: 1.8,
-                  ),
-                  elevation: 7,
-                  shadowColor: const Color(0x6616449D),
-                  textStyle: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: fontSize,
-                  ),
-                ),
-                child: const Text('Giriş Yap'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            SizedBox(
-              width: buttonWidth,
-              child: ElevatedButton(
-                onPressed: onApply,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white.withValues(alpha: 0.96),
-                  foregroundColor: const Color(0xFF245BB1),
-                  minimumSize: Size.fromHeight(buttonHeight),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  elevation: 6,
-                  shadowColor: const Color(0x332A4E8E),
-                  textStyle: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: fontSize,
-                  ),
-                ),
-                child: const Text('Kayıt Ol'),
-              ),
-            ),
-          ],
-        );
-      },
     );
   }
 }

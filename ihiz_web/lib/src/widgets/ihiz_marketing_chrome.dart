@@ -12,15 +12,15 @@ class IhizSectionShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFFDDE6F4)),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE6EEF9)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 24,
+            color: const Color(0xFF0E2A47).withValues(alpha: 0.06),
+            blurRadius: 22,
             offset: const Offset(0, 10),
           ),
         ],
