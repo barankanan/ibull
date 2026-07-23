@@ -23,6 +23,8 @@ class StoreServiceMappers {
       'storeUrl': data['website'],
       'description': data['description'],
       'slogan': data['slogan'],
+      'receiptBranchLabel': data['receipt_branch_label'],
+      'receiptFooterNote': data['receipt_footer_note'],
       'phone': data['phone'],
       'email': data['email'],
       'whatsapp': data['whatsapp'],
@@ -87,6 +89,18 @@ class StoreServiceMappers {
       'banners': data['banners'],
       'seller_videos': data['sellerVideos'],
     };
+    // Receipt-only store fields. Sent as NULL when the owner clears them so an
+    // empty branch/footer never falls back to demo text on the printed ticket.
+    // Guarded by containsKey so partial updates (e.g. toggling isStoreOpen) that
+    // omit these keys never wipe an existing value.
+    if (data.containsKey('receiptBranchLabel')) {
+      final value = data['receiptBranchLabel']?.toString().trim() ?? '';
+      map['receipt_branch_label'] = value.isEmpty ? null : value;
+    }
+    if (data.containsKey('receiptFooterNote')) {
+      final value = data['receiptFooterNote']?.toString().trim() ?? '';
+      map['receipt_footer_note'] = value.isEmpty ? null : value;
+    }
     if (data['storeLat'] != null) {
       map['store_lat'] = data['storeLat'];
     }

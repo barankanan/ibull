@@ -937,4 +937,127 @@ void main() {
       );
     });
   });
+
+  group('incomingHasUnseenWaiterCall — waiter call breaks board freeze', () {
+    Map<String, dynamic> order(String id, String status, {int table = 5}) => {
+      'id': id,
+      'status': status,
+      'table_number': table,
+    };
+
+    test('empty incoming batch → no bypass', () {
+      expect(
+        incomingHasUnseenWaiterCall(
+          incomingOrders: const [],
+          visibleOrders: const [],
+        ),
+        isFalse,
+      );
+    });
+
+    test('new call_waiter not yet visible → bypass the freeze', () {
+      expect(
+        incomingHasUnseenWaiterCall(
+          incomingOrders: [order('call-1', 'call_waiter')],
+          visibleOrders: const [],
+        ),
+        isTrue,
+        reason:
+            'a brand-new customer waiter call must reach the waiter '
+            'immediately instead of being frozen as a pending change',
+      );
+    });
+
+    test('call_waiter already visible → do not re-trigger a bypass', () {
+      expect(
+        incomingHasUnseenWaiterCall(
+          incomingOrders: [order('call-1', 'call_waiter')],
+          visibleOrders: [order('call-1', 'call_waiter')],
+        ),
+        isFalse,
+        reason:
+            'an already-visible call is not a new event; ordinary background '
+            'churn must stay frozen so the grid does not jump',
+      );
+    });
+
+    test('only non-call orders in batch → stay frozen', () {
+      expect(
+        incomingHasUnseenWaiterCall(
+          incomingOrders: [order('ord-1', 'new'), order('ord-2', 'preparing')],
+          visibleOrders: const [],
+        ),
+        isFalse,
+      );
+    });
+
+    test('status matching is case/whitespace insensitive', () {
+      expect(
+        incomingHasUnseenWaiterCall(
+          incomingOrders: [order('call-1', '  Call_Waiter ')],
+          visibleOrders: const [],
+        ),
+        isTrue,
+      );
+    });
+
+    test('waiter call with missing id is treated as unseen', () {
+      expect(
+        incomingHasUnseenWaiterCall(
+          incomingOrders: [
+            {'status': 'call_waiter', 'table_number': 7},
+          ],
+          visibleOrders: const [],
+        ),
+        isTrue,
+      );
+    });
+
+    test('a new call alongside already-visible orders still bypasses', () {
+      expect(
+        incomingHasUnseenWaiterCall(
+          incomingOrders: [
+            order('ord-1', 'new', table: 3),
+            order('call-9', 'call_waiter', table: 9),
+          ],
+          visibleOrders: [order('ord-1', 'new', table: 3)],
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('visibleSellerModules — Garson/Sistem food-category gating', () {
+    test('food category shows Garson and Sistem in the sidebar', () {
+      final modules = visibleSellerModules('restoran');
+      expect(modules, contains(SellerModule.garson));
+      expect(modules, contains(SellerModule.system));
+    });
+
+    test(
+      'empty category hides Garson and Sistem — this is exactly why a failed '
+      'store profile load made those menus disappear',
+      () {
+        // When the store profile fails to load, _storeCategory stays empty and
+        // visibleSellerModules('') must NOT include the food-only modules.
+        final modules = visibleSellerModules('');
+        expect(modules, isNot(contains(SellerModule.garson)));
+        expect(modules, isNot(contains(SellerModule.system)));
+        // Non-food modules stay visible regardless.
+        expect(modules, contains(SellerModule.store));
+        expect(modules, contains(SellerModule.orders));
+      },
+    );
+
+    test('non-food category (market) hides Garson and Sistem', () {
+      final modules = visibleSellerModules('market');
+      expect(modules, isNot(contains(SellerModule.garson)));
+      expect(modules, isNot(contains(SellerModule.system)));
+    });
+
+    test('waiter entry (garsonOnly) shows only Garson', () {
+      final modules = visibleSellerModules('restoran', garsonOnly: true);
+      expect(modules, <SellerModule>[SellerModule.garson]);
+    });
+  });
 }

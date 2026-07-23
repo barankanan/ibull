@@ -621,6 +621,68 @@ class StoreTableService {
     }
   }
 
+  /// Creates a waiter call for [tableNumber], reusing an existing active call
+  /// instead of inserting a duplicate.
+  ///
+  /// A waiter call is stored as a `table_orders` row with status
+  /// `call_waiter`. Tapping "Garson Çağır" repeatedly (or double taps) must not
+  /// pile up 10 separate active calls for the same table, so we first look for a
+  /// still-active (non-terminal) `call_waiter` row for this seller+table and
+  /// reuse it when present.
+  Future<Map<String, dynamic>> ensureWaiterCall({
+    required String sellerId,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+  }) async {
+    debugPrint(
+      '[WaiterCall][db] ensureWaiterCall seller=$sellerId table=$tableNumber',
+    );
+    try {
+      final existing = await _supabase
+          .from('table_orders')
+          .select()
+          .eq('seller_id', sellerId)
+          .eq('table_number', tableNumber)
+          .eq('status', 'call_waiter')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .timeout(tableOrderTimeout);
+      final rows = List<Map<String, dynamic>>.from(existing as List);
+      if (rows.isNotEmpty) {
+        final row = Map<String, dynamic>.from(rows.first);
+        debugPrint(
+          '[WaiterCall][db] reused active call id=${row['id']} table=$tableNumber',
+        );
+        return row;
+      }
+    } on TimeoutException {
+      // Dedup lookup timed out — fall through and create the call anyway.
+    } catch (error) {
+      // Never block a waiter call on the dedup lookup; fall through to insert.
+      debugPrint('[WaiterCall][db] dedup lookup failed: $error');
+    }
+
+    final inserted = await submitTableOrder(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      items: const [
+        {
+          'name': 'Garson Çağrıldı',
+          'quantity': 1,
+          'price': 0.0,
+          'type': 'waiter_call',
+        },
+      ],
+      status: 'call_waiter',
+      tableRow: tableRow,
+      placementSource: 'customer',
+    );
+    debugPrint(
+      '[WaiterCall][db] inserted id=${inserted['id']} table=$tableNumber',
+    );
+    return inserted;
+  }
+
   Stream<List<Map<String, dynamic>>> getTableOrdersStream(String sellerId) {
     final resolvedSellerId = sellerId.trim();
     if (resolvedSellerId.isEmpty) {

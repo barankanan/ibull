@@ -472,6 +472,7 @@ class OrderPreviewRecord {
     this.storeName,
     this.storeBranch,
     this.storePhone,
+    this.storeFooterNote,
     // Print-job metadata (available when built from PrintJobModel)
     this.printHistory = const [],
     this.printerTarget,
@@ -507,6 +508,48 @@ class OrderPreviewRecord {
   final String? storeName;
   final String? storeBranch;
   final String? storePhone;
+  final String? storeFooterNote;
+
+  /// Returns a copy with the owner-provided receipt store fields attached.
+  /// Empty strings are normalised to null so the preview omits the line
+  /// instead of rendering a demo/fallback value.
+  OrderPreviewRecord withStoreReceiptContext({
+    String? storeName,
+    String? storeBranch,
+    String? storePhone,
+    String? storeFooterNote,
+  }) {
+    String? clean(String? value) {
+      final trimmed = value?.trim() ?? '';
+      return trimmed.isEmpty ? null : trimmed;
+    }
+
+    return OrderPreviewRecord(
+      orderId: orderId,
+      tableNumber: tableNumber,
+      items: items,
+      status: status,
+      revision: revision,
+      grandTotal: grandTotal,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      closedAt: closedAt,
+      openedAt: openedAt,
+      waiterName: waiterName,
+      waiterId: waiterId,
+      closedByName: closedByName,
+      paymentMethod: paymentMethod,
+      paymentNote: paymentNote,
+      lastEditNote: lastEditNote,
+      lastEditSummary: lastEditSummary,
+      storeName: clean(storeName) ?? this.storeName,
+      storeBranch: clean(storeBranch) ?? this.storeBranch,
+      storePhone: clean(storePhone) ?? this.storePhone,
+      storeFooterNote: clean(storeFooterNote) ?? this.storeFooterNote,
+      printHistory: printHistory,
+      printerTarget: printerTarget,
+    );
+  }
 
   // Operational metadata
   final List<PrintHistoryEntry> printHistory;

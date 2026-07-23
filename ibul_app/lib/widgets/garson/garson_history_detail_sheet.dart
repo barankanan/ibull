@@ -12,6 +12,7 @@ Future<void> showGarsonHistoryDetailSheet({
   VoidCallback? onPrintAdisyon,
   VoidCallback? onPrintKitchen,
   Future<bool> Function()? onRestoreTable,
+  Map<String, String> receiptStoreContext = const <String, String>{},
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -23,6 +24,7 @@ Future<void> showGarsonHistoryDetailSheet({
         onPrintAdisyon: onPrintAdisyon,
         onPrintKitchen: onPrintKitchen,
         onRestoreTable: onRestoreTable,
+        receiptStoreContext: receiptStoreContext,
       );
     },
   );
@@ -35,12 +37,17 @@ class GarsonHistoryDetailSheet extends StatefulWidget {
     this.onPrintAdisyon,
     this.onPrintKitchen,
     this.onRestoreTable,
+    this.receiptStoreContext = const <String, String>{},
   });
 
   final TableOrderHistoryRecord record;
   final VoidCallback? onPrintAdisyon;
   final VoidCallback? onPrintKitchen;
   final Future<bool> Function()? onRestoreTable;
+
+  /// Owner-provided receipt store info so the history preview shows the same
+  /// dynamic branch/phone/footer that the reprint produces. Empty by default.
+  final Map<String, String> receiptStoreContext;
 
   @override
   State<GarsonHistoryDetailSheet> createState() =>
@@ -252,7 +259,15 @@ class _GarsonHistoryDetailSheetState extends State<GarsonHistoryDetailSheet> {
                           isScrollControlled: true,
                           backgroundColor: Colors.transparent,
                           builder: (_) => OrderPreviewSheet(
-                            record: OrderPreviewRecord.fromHistory(record),
+                            record: OrderPreviewRecord.fromHistory(
+                              record,
+                            ).withStoreReceiptContext(
+                              storeName: widget.receiptStoreContext['store_name'],
+                              storeBranch: widget.receiptStoreContext['branch'],
+                              storePhone: widget.receiptStoreContext['phone'],
+                              storeFooterNote:
+                                  widget.receiptStoreContext['footer_note'],
+                            ),
                             initialTab: 0,
                             onPrintAdisyon: widget.onPrintAdisyon,
                             onPrintKitchenTicket: widget.onPrintKitchen,

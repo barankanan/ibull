@@ -351,6 +351,7 @@ class MobileEscPosOrderReceipt {
       'header_note',
       'reprint_label',
     ]);
+    final footerNote = _firstNonEmpty(payload, const ['footer_note']);
     final createdAtRaw = _firstNonEmpty(payload, const [
       'order_created_at',
       'created_at',
@@ -437,6 +438,12 @@ class MobileEscPosOrderReceipt {
       ..._boldOn,
       ..._line(formatLine('TOPLAM', '${_money(grandTotal)} TL', width)),
       ..._boldOff,
+      if (footerNote != null) ...[
+        ..._line(divider),
+        ..._alignCenter,
+        ..._line(footerNote),
+        ..._alignLeft,
+      ],
       ..._lf,
       ..._lf,
       ..._lf,

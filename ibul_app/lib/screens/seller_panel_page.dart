@@ -538,6 +538,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   final _storeUrlController = TextEditingController();
   final _storeDescController = TextEditingController();
   final _sloganController = TextEditingController();
+  final _receiptBranchLabelController = TextEditingController();
+  final _receiptFooterNoteController = TextEditingController();
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
   final _whatsappController = TextEditingController();
@@ -902,6 +904,26 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       hasPublishedData: hasPublishedData,
       source: source,
     );
+  }
+
+  /// A customer "Garson Çağır" is a `table_orders` row with status
+  /// `call_waiter`. It is a high-priority, time-sensitive notification that
+  /// must reach the waiter immediately, so it is exempt from the background
+  /// publish freeze that otherwise keeps the grid stable while the waiter
+  /// works. Returns true when [incomingOrders] carries a `call_waiter` row that
+  /// is not already visible on the board (matched by id).
+  bool _incomingHasUnseenWaiterCall(List<Map<String, dynamic>> incomingOrders) {
+    final hasUnseen = incomingHasUnseenWaiterCall(
+      incomingOrders: incomingOrders,
+      visibleOrders: _garsonOrdersSnapshotForUi(),
+    );
+    if (hasUnseen) {
+      debugPrint(
+        '[WaiterCall][realtime] unseen waiter call in batch '
+        '(incoming=${incomingOrders.length}) — bypassing board freeze',
+      );
+    }
+    return hasUnseen;
   }
 
   void _markGarsonHasPendingRemoteChanges({required String source}) {
@@ -3552,10 +3574,12 @@ class _SellerPanelPageState extends State<SellerPanelPage>
           _garsonStreamState = 'stream_event_same';
           return;
         }
-        if (_shouldBlockGarsonBackgroundPublish(
-          source: 'table_orders_stream',
-          hasPublishedData: _garsonManualTableOrdersSignature != null,
-        )) {
+        final hasUnseenWaiterCall = _incomingHasUnseenWaiterCall(orders);
+        if (!hasUnseenWaiterCall &&
+            _shouldBlockGarsonBackgroundPublish(
+              source: 'table_orders_stream',
+              hasPublishedData: _garsonManualTableOrdersSignature != null,
+            )) {
           _garsonStreamState = 'stream_event_blocked';
           _logGarsonAutoRefreshBlocked(
             source: 'table_orders_stream',
@@ -3678,6 +3702,17 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         'closedTableAtKeys=${_webGarsonClosedTableAt.keys} '
         'sellerId=$sellerId',
       );
+      final pendingWaiterCalls = fresh
+          .where(
+            (order) =>
+                (order['status']?.toString() ?? '').trim().toLowerCase() ==
+                'call_waiter',
+          )
+          .length;
+      debugPrint(
+        '[WaiterCall][waiter] initial pending calls=$pendingWaiterCalls '
+        'source=$source',
+      );
       final nextSignature = tableOrdersListSignature(fresh);
       if (_garsonManualTableOrdersSignature == nextSignature) {
         _garsonStreamState = 'snapshot_same_data';
@@ -3700,6 +3735,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         return shouldAutoApply;
       }
       if (!userInitiated &&
+          !_incomingHasUnseenWaiterCall(fresh) &&
           _shouldBlockGarsonBackgroundPublish(
             source: source,
             hasPublishedData: _garsonManualTableOrdersSignature != null,
@@ -5169,6 +5205,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     _storeUrlController.dispose();
     _storeDescController.dispose();
     _sloganController.dispose();
+    _receiptBranchLabelController.dispose();
+    _receiptFooterNoteController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
     _whatsappController.dispose();
@@ -5272,6 +5310,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
     _storeUrlController.text = data['storeUrl']?.toString() ?? '';
     _storeDescController.text = data['description']?.toString() ?? '';
     _sloganController.text = data['slogan']?.toString() ?? '';
+    _receiptBranchLabelController.text =
+        data['receiptBranchLabel']?.toString() ?? '';
+    _receiptFooterNoteController.text =
+        data['receiptFooterNote']?.toString() ?? '';
     _phoneController.text = data['phone']?.toString() ?? '';
     _emailController.text = data['email']?.toString() ?? '';
     _whatsappController.text = data['whatsapp']?.toString() ?? '';
@@ -5374,6 +5416,10 @@ class _SellerPanelPageState extends State<SellerPanelPage>
   Future<void> _loadStoreProfile() async {
     final profileSellerId = await _ensureSellerDataOwnerIdResolved(
       source: '_loadStoreProfile',
+    );
+    debugPrint(
+      '[StoreProfile][load] sellerId=${_authService.currentUser?.id ?? '-'} '
+      'ownerId=${profileSellerId.isEmpty ? '-' : profileSellerId}',
     );
     if (profileSellerId.isEmpty) return;
     _rememberSellerDataOwnerId(
@@ -5588,6 +5634,8 @@ class _SellerPanelPageState extends State<SellerPanelPage>
         'storeUrl': _storeUrlController.text,
         'description': _storeDescController.text,
         'slogan': _sloganController.text,
+        'receiptBranchLabel': _receiptBranchLabelController.text.trim(),
+        'receiptFooterNote': _receiptFooterNoteController.text.trim(),
         'phone': _phoneController.text,
         'email': _emailController.text,
         'whatsapp': _whatsappController.text,
@@ -5617,6 +5665,11 @@ class _SellerPanelPageState extends State<SellerPanelPage>
       };
 
       await _storeService.updateStoreProfile(data);
+
+      // Receipt store-context is cached for up to 30 min; drop it so the next
+      // printed ticket immediately reflects the just-saved branch/footer/phone.
+      _garsonReceiptStoreContextCache = null;
+      _garsonReceiptStoreContextCachedAt = null;
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -12677,24 +12730,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Map<String, String> _buildGarsonReceiptStoreContextFromPanelState(
     String sellerId,
   ) {
-    final branchSource = _selectedDistrict.trim().isNotEmpty
-        ? _selectedDistrict.trim()
-        : (_selectedCity.trim().isNotEmpty ? _selectedCity.trim() : 'Merkez');
-    final upperBranchSource = branchSource.toUpperCase();
-    final branch =
-        (upperBranchSource.contains('ŞUBE') ||
-            upperBranchSource.contains('SUBE'))
-        ? upperBranchSource
-        : '$upperBranchSource ŞUBE';
+    // Receipt store info is owner-provided and fully dynamic. Empty values are
+    // returned as empty strings so the renderers omit the line entirely — never
+    // a demo/fallback like "MERKEZ ŞUBE" or "-".
     return <String, String>{
       'store_id': sellerId,
       'store_name': _storeNameController.text.trim().isNotEmpty
           ? _storeNameController.text.trim()
           : 'Mağaza',
-      'branch': branch,
-      'phone': _phoneController.text.trim().isNotEmpty
-          ? _phoneController.text.trim()
-          : '-',
+      'branch': _receiptBranchLabelController.text.trim(),
+      'phone': _phoneController.text.trim(),
+      'footer_note': _receiptFooterNoteController.text.trim(),
     };
   }
 
@@ -12722,42 +12768,58 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     if (_hasGarsonStoreContextOnPanel) {
       return _garsonReceiptStoreContextForPrint(sellerId);
     }
-    const storeContextSelect =
-        'seller_id, business_name, phone, district, city';
-    final storeRow = await Supabase.instance.client
-        .from('stores')
-        .select(storeContextSelect)
-        .eq('seller_id', sellerId)
-        .maybeSingle();
+    // Prefer the receipt columns, but fall back to the base columns when the
+    // SUPABASE_STORE_RECEIPT_FIELDS.sql migration is not applied yet, so a
+    // missing column never breaks receipt printing.
+    Map<String, dynamic>? storeRow;
+    try {
+      storeRow = await Supabase.instance.client
+          .from('stores')
+          .select(
+            'seller_id, business_name, phone, '
+            'receipt_branch_label, receipt_footer_note',
+          )
+          .eq('seller_id', sellerId)
+          .maybeSingle();
+    } on PostgrestException catch (error) {
+      final normalized =
+          '${error.code} ${error.message} ${error.details ?? ''}'
+              .toLowerCase();
+      final missingReceiptColumns =
+          error.code == '42703' ||
+          (normalized.contains('does not exist') &&
+              (normalized.contains('receipt_branch_label') ||
+                  normalized.contains('receipt_footer_note')));
+      if (!missingReceiptColumns) rethrow;
+      debugPrint(
+        '[StoreProfile][load] receipt columns missing for print context — '
+        'retrying base columns. sellerId=$sellerId code=${error.code}',
+      );
+      storeRow = await Supabase.instance.client
+          .from('stores')
+          .select('seller_id, business_name, phone')
+          .eq('seller_id', sellerId)
+          .maybeSingle();
+    }
 
     final storeName =
         (storeRow?['business_name']?.toString().trim().isNotEmpty ?? false)
         ? storeRow!['business_name'].toString().trim()
         : 'Mağaza';
 
-    final phone = (storeRow?['phone']?.toString().trim().isNotEmpty ?? false)
-        ? storeRow!['phone'].toString().trim()
-        : '-';
-
-    final branchSource =
-        (storeRow?['district']?.toString().trim().isNotEmpty ?? false)
-        ? storeRow!['district'].toString().trim()
-        : ((storeRow?['city']?.toString().trim().isNotEmpty ?? false)
-              ? storeRow!['city'].toString().trim()
-              : 'Merkez');
-
-    final upperBranchSource = branchSource.toUpperCase();
-    final branch =
-        (upperBranchSource.contains('ŞUBE') ||
-            upperBranchSource.contains('SUBE'))
-        ? upperBranchSource
-        : '$upperBranchSource ŞUBE';
+    // Phone / branch / footer are all owner-provided and optional. Empty means
+    // "do not print this line" — never a demo fallback.
+    final phone = storeRow?['phone']?.toString().trim() ?? '';
+    final branch = storeRow?['receipt_branch_label']?.toString().trim() ?? '';
+    final footerNote =
+        storeRow?['receipt_footer_note']?.toString().trim() ?? '';
 
     final built = <String, String>{
       'store_id': storeRow?['seller_id']?.toString() ?? sellerId,
       'store_name': storeName,
       'branch': branch,
       'phone': phone,
+      'footer_note': footerNote,
     };
     _garsonReceiptStoreContextCache = built;
     _garsonReceiptStoreContextCachedAt = DateTime.now();
@@ -13647,10 +13709,18 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     final roundedSubtotal = _garsonRoundMoney(subtotal);
     final grandTotal = _garsonRoundMoney(roundedSubtotal - discount);
 
+    // Branch / phone / footer are owner-provided and optional: only include the
+    // key when non-empty so the receipt renderer omits the line rather than
+    // printing a demo fallback ("MERKEZ ŞUBE", "-") or an empty separator.
+    final branchLabel = (storeContext['branch'] ?? '').trim();
+    final phoneLabel = (storeContext['phone'] ?? '').trim();
+    final footerNote = (storeContext['footer_note'] ?? '').trim();
+
     final payload = <String, dynamic>{
       'store_name': storeContext['store_name'] ?? 'Mağaza',
-      'branch': storeContext['branch'] ?? 'MERKEZ ŞUBE',
-      'phone': storeContext['phone'] ?? '-',
+      if (branchLabel.isNotEmpty) 'branch': branchLabel,
+      if (phoneLabel.isNotEmpty) 'phone': phoneLabel,
+      if (footerNote.isNotEmpty) 'footer_note': footerNote,
       'table_no': tableNumber.toString(),
       ...tableFields,
       // The receipt renderer prefers these timestamps in order:
@@ -14644,7 +14714,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       final basePayload = <String, dynamic>{
         'title': 'MUTFAK FİŞİ (ESKİ MASA)',
         'store_name': storeContext['store_name'] ?? 'Restoran',
-        'branch': storeContext['branch'] ?? 'MERKEZ ŞUBE',
+        if ((storeContext['branch'] ?? '').trim().isNotEmpty)
+          'branch': storeContext['branch']!.trim(),
         'table_no': record.tableNumber.toString(),
         'table_number': record.tableNumber,
         ...tableFields,
@@ -15923,6 +15994,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       tableNumber: tableNumber,
       routeSessionId: routeSession.sessionId,
       storeCategory: _storeCategory,
+      receiptStoreContext: _garsonReceiptStoreContextForPrint(sellerId),
       tableTitleOverride: tableTitle,
       sessionKeyOverride: sessionKeyOverride,
       restoredFromHistoryId: restoredFromHistoryId,
@@ -16205,6 +16277,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               _buildStoreInfoCard(),
               const SizedBox(height: 10),
               _buildContactInfoCard(),
+              const SizedBox(height: 10),
+              _buildAdisyonReceiptInfoCard(),
               const SizedBox(height: 10),
               _buildAddressInfoCard(),
               const SizedBox(height: 10),
@@ -29372,6 +29446,8 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                         const SizedBox(height: StoreProfileDashboardTokens.pageGap),
                         _buildContactInfoCard(),
                         const SizedBox(height: StoreProfileDashboardTokens.pageGap),
+                        _buildAdisyonReceiptInfoCard(),
+                        const SizedBox(height: StoreProfileDashboardTokens.pageGap),
                         _buildAddressInfoCard(),
                       ],
                     );
@@ -29699,6 +29775,31 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildAdisyonReceiptInfoCard() {
+    return StoreProfileSectionCard(
+      title: 'Adisyon / Fiş Bilgileri',
+      subtitle: 'Adisyon fişinde görünecek şube ve alt not',
+      icon: Icons.receipt_long_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildStoreTextField(
+            controller: _receiptBranchLabelController,
+            label: 'Fişte Görünecek Şube / Konum',
+            hint: 'Arsuz / Gökmeydan',
+          ),
+          const SizedBox(height: 12),
+          _buildStoreTextField(
+            controller: _receiptFooterNoteController,
+            label: 'Fiş Alt Notu',
+            hint: 'Afiyet olsun, yine bekleriz.',
+            maxLines: 3,
+          ),
+        ],
       ),
     );
   }
@@ -33990,6 +34091,7 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
     required this.tableNumber,
     required this.routeSessionId,
     this.storeCategory,
+    this.receiptStoreContext = const <String, String>{},
     this.tableTitleOverride,
     this.sessionKeyOverride,
     this.restoredFromHistoryId,
@@ -34031,6 +34133,11 @@ class _MobileGarsonTableFlowPage extends StatefulWidget {
   final int tableNumber;
   final String routeSessionId;
   final String? storeCategory;
+
+  /// Owner-provided receipt store info (store_name / branch / phone /
+  /// footer_note) so the adisyon preview sheet shows the same dynamic values
+  /// that get printed. Empty/absent keys mean "do not show that line".
+  final Map<String, String> receiptStoreContext;
   final String? tableTitleOverride;
   final String? sessionKeyOverride;
   final String? restoredFromHistoryId;
@@ -40359,7 +40466,14 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
         builder: (_) => OrderPreviewSheet(
-          record: OrderPreviewRecord.fromTableOrder(normalizedOrder),
+          record: OrderPreviewRecord.fromTableOrder(
+            normalizedOrder,
+          ).withStoreReceiptContext(
+            storeName: widget.receiptStoreContext['store_name'],
+            storeBranch: widget.receiptStoreContext['branch'],
+            storePhone: widget.receiptStoreContext['phone'],
+            storeFooterNote: widget.receiptStoreContext['footer_note'],
+          ),
           onPrintAdisyon: widget.onPrintAdisyon != null
               ? () => widget.onPrintAdisyon!(tableNo, [normalizedOrder])
               : null,

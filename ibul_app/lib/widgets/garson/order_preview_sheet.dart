@@ -334,31 +334,38 @@ class _AdisyonTab extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              // Branch + phone row
-              _DashedDivider(),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      record.storeBranch?.toUpperCase() ?? 'MERKEZ ŞUBE',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (record.storePhone != null)
-                      Text(
-                        'Tel: ${record.storePhone}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+              // Branch + phone row — only shown when the owner filled either;
+              // never a demo fallback like "MERKEZ ŞUBE" or a "-" phone.
+              if ((record.storeBranch?.trim().isNotEmpty ?? false) ||
+                  (record.storePhone?.trim().isNotEmpty ?? false)) ...[
+                _DashedDivider(),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      if (record.storeBranch?.trim().isNotEmpty ?? false)
+                        Text(
+                          record.storeBranch!.trim().toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        )
+                      else
+                        const SizedBox.shrink(),
+                      if (record.storePhone?.trim().isNotEmpty ?? false)
+                        Text(
+                          'Tel: ${record.storePhone!.trim()}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
+              ],
               _DashedDivider(),
               const SizedBox(height: 6),
               // Date / time / table
@@ -440,17 +447,23 @@ class _AdisyonTab extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              const Center(
-                child: Text(
-                  'Teşekkür Ederiz',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontStyle: FontStyle.italic,
-                    color: Color(0xFF6B7280),
+              // Owner-provided receipt footer note — shown only when filled,
+              // matching exactly what the printed adisyon renders. No hardcoded
+              // "Teşekkür Ederiz" fallback.
+              if (record.storeFooterNote?.trim().isNotEmpty ?? false) ...[
+                const SizedBox(height: 8),
+                Center(
+                  child: Text(
+                    record.storeFooterNote!.trim(),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontStyle: FontStyle.italic,
+                      color: Color(0xFF6B7280),
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

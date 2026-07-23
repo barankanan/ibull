@@ -223,6 +223,49 @@ void main() {
       expect(line.length, 32);
       expect(line.endsWith('999.00'), isTrue);
     });
+
+    test('fiş alt notu (footer_note) fişin altına basılır', () {
+      final payload = buildPayload()
+        ..['footer_note'] = 'Afiyet olsun, yine bekleriz.';
+      final bytes = MobileEscPosOrderReceipt.build(
+        payload: payload,
+        items: MobileEscPosOrderReceipt.extractItems(payload),
+      );
+      expect(bytesContainText(bytes, 'Afiyet olsun, yine bekleriz.'), isTrue);
+    });
+
+    test('footer_note yoksa alt not basılmaz (boş footer üretilmez)', () {
+      final payload = buildPayload();
+      expect(payload.containsKey('footer_note'), isFalse);
+      final bytes = MobileEscPosOrderReceipt.build(
+        payload: payload,
+        items: MobileEscPosOrderReceipt.extractItems(payload),
+      );
+      expect(bytesContainText(bytes, 'Afiyet olsun'), isFalse);
+    });
+
+    test('şube/telefon payloadda yoksa fişe hiç basılmaz (demo fallback yok)',
+        () {
+      final payload = buildPayload()..remove('branch');
+      // Ne şube satırı ne de "Tel:" öneki basılmalı; asla MERKEZ ŞUBE/555.
+      final bytes = MobileEscPosOrderReceipt.build(
+        payload: payload,
+        items: MobileEscPosOrderReceipt.extractItems(payload),
+      );
+      expect(bytesContainText(bytes, 'MERKEZ ŞUBE'), isFalse);
+      expect(bytesContainText(bytes, 'Tel:'), isFalse);
+    });
+
+    test('telefon doluysa "Tel:" öneki ile basılır', () {
+      final payload = buildPayload()
+        ..['phone'] = '05376247077'
+        ..remove('branch');
+      final bytes = MobileEscPosOrderReceipt.build(
+        payload: payload,
+        items: MobileEscPosOrderReceipt.extractItems(payload),
+      );
+      expect(bytesContainText(bytes, 'Tel: 05376247077'), isTrue);
+    });
   });
 
   group('MobileOrderPrintService routing', () {

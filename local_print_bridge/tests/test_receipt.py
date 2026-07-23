@@ -66,6 +66,76 @@ class ReceiptRendererTests(unittest.TestCase):
         self.assertIn("160,00 TL".encode("cp857"), data)
         self.assertIn(b"\x1dV\x01", data)
 
+    def _settings(self) -> BridgeSettings:
+        return BridgeSettings(
+            host="127.0.0.1",
+            port=19001,
+            printer_queue="Thermal58",
+            paper_width_mm=58,
+            chars_per_line=32,
+            encoding="cp857",
+            codepage=13,
+            render_mode="text",
+            raster_chunk_height=256,
+            allowed_origins=("https://ibul-ecommerce.web.app",),
+            healthcheck_queue=False,
+            print_system_enabled=True,
+            cut_mode="partial",
+            transport_mode="auto",
+            usb_vendor_id=None,
+            usb_product_id=None,
+            network_host="",
+            network_port=9100,
+        )
+
+    def _payload(self, **overrides) -> ReceiptPayload:
+        base = dict(
+            store_name="DESTINA",
+            branch="",
+            phone="",
+            table_no="5",
+            date_time=datetime.fromisoformat("2026-04-08T14:35:00+03:00"),
+            items=[
+                ReceiptItem(
+                    name="Lahmacun",
+                    quantity=Decimal("1"),
+                    line_total=Decimal("80.00"),
+                    unit_price=Decimal("80.00"),
+                    note="",
+                )
+            ],
+            totals=ReceiptTotals(
+                subtotal=Decimal("80.00"),
+                discount=Decimal("0.00"),
+                service_charge=Decimal("0.00"),
+                grand_total=Decimal("80.00"),
+            ),
+            currency="TRY",
+            footer_note="",
+        )
+        base.update(overrides)
+        return ReceiptPayload(**base)
+
+    def test_empty_branch_phone_footer_are_not_printed(self) -> None:
+        # Boş şube/telefon/footer → ilgili satır HİÇ basılmamalı; asla demo.
+        data = ReceiptRenderer(self._settings()).render(self._payload())
+        self.assertIn("DESTINA".encode("cp857"), data)
+        self.assertNotIn(b"Tel:", data)
+        self.assertNotIn("SUBE".encode("cp857"), data)
+        self.assertNotIn("Afiyet".encode("cp857"), data)
+
+    def test_dynamic_branch_phone_footer_are_printed(self) -> None:
+        data = ReceiptRenderer(self._settings()).render(
+            self._payload(
+                phone="05376247077",
+                branch="Arsuz / Gokmeydan",
+                footer_note="Afiyet olsun, yine bekleriz.",
+            )
+        )
+        self.assertIn("Tel: 05376247077".encode("cp857"), data)
+        self.assertIn("Arsuz / Gokmeydan".encode("cp857"), data)
+        self.assertIn("Afiyet olsun, yine bekleriz.".encode("cp857"), data)
+
 
 if __name__ == "__main__":
     unittest.main()

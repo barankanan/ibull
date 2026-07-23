@@ -480,6 +480,38 @@ bool shouldBlockGarsonBackgroundPublish({
   return true;
 }
 
+/// The status a customer "Garson Çağır" is stored under in `table_orders`.
+const String kWaiterCallStatus = 'call_waiter';
+
+/// A waiter call is a high-priority, time-sensitive notification that must
+/// reach the waiter immediately, so it is exempt from the background publish
+/// freeze that otherwise keeps the grid stable while the waiter works.
+///
+/// Returns true when [incomingOrders] carries a `call_waiter` row that is not
+/// already visible (matched by `id`) in [visibleOrders]. When it does, the
+/// realtime/snapshot handlers merge the batch into the visible board instead of
+/// stashing it as a silent "pending changes" indicator.
+bool incomingHasUnseenWaiterCall({
+  required List<Map<String, dynamic>> incomingOrders,
+  required List<Map<String, dynamic>> visibleOrders,
+}) {
+  if (incomingOrders.isEmpty) return false;
+  final visibleIds = <String>{
+    for (final order in visibleOrders)
+      if ((order['id']?.toString() ?? '').trim().isNotEmpty)
+        order['id'].toString().trim(),
+  };
+  for (final order in incomingOrders) {
+    final status = (order['status']?.toString() ?? '').trim().toLowerCase();
+    if (status != kWaiterCallStatus) continue;
+    final id = (order['id']?.toString() ?? '').trim();
+    if (id.isEmpty || !visibleIds.contains(id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool shouldSkipManualGarsonRefresh({required bool refreshInProgress}) =>
     refreshInProgress;
 

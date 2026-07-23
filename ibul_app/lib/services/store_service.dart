@@ -594,6 +594,65 @@ class StoreService {
     }
   }
 
+  /// Core store profile columns that always exist in every environment.
+  static const String _storeProfileBaseColumns =
+      'business_name,website,description,slogan,phone,email,whatsapp,'
+      'support_phone,address,postal_code,tax_number,instagram,facebook,'
+      'twitter,city,district,business_type,working_hours,is_store_open,'
+      'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
+      'cover_url,gallery_images,banners,seller_videos,store_lat,'
+      'store_lng,category,rating,is_verified';
+
+  /// Optional receipt columns added by SUPABASE_STORE_RECEIPT_FIELDS.sql.
+  /// They may be absent if that migration has not been applied yet, so the
+  /// fetch below degrades gracefully instead of failing the whole profile.
+  static const String _storeProfileReceiptColumns =
+      'receipt_branch_label,receipt_footer_note';
+
+  static bool _isUndefinedColumnError(Object error) {
+    if (error is! PostgrestException) return false;
+    if (error.code == '42703') return true;
+    final haystack =
+        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
+            .toLowerCase();
+    return haystack.contains('does not exist') &&
+        (haystack.contains('receipt_branch_label') ||
+            haystack.contains('receipt_footer_note') ||
+            haystack.contains('column'));
+  }
+
+  /// Fetches the store row for [sellerId], preferring the receipt columns but
+  /// transparently falling back to the base columns when the receipt migration
+  /// has not been applied — so a pending migration never breaks profile load
+  /// (which would otherwise hide the food-only Garson/Sistem menus).
+  Future<Map<String, dynamic>?> _fetchStoreProfileRowResilient(
+    String sellerId, {
+    required String logTag,
+  }) async {
+    try {
+      return await _supabase
+          .from('stores')
+          .select('$_storeProfileBaseColumns,$_storeProfileReceiptColumns')
+          .eq('seller_id', sellerId)
+          .maybeSingle();
+    } on PostgrestException catch (error) {
+      if (_isUndefinedColumnError(error)) {
+        debugPrint(
+          '[StoreProfile][load] receipt columns missing '
+          '(SUPABASE_STORE_RECEIPT_FIELDS.sql pending) — retrying base columns. '
+          'tag=$logTag sellerId=$sellerId code=${error.code} '
+          'message=${error.message}',
+        );
+        return await _supabase
+            .from('stores')
+            .select(_storeProfileBaseColumns)
+            .eq('seller_id', sellerId)
+            .maybeSingle();
+      }
+      rethrow;
+    }
+  }
+
   // Get Store Profile
   Future<Map<String, dynamic>?> getStoreProfile() async {
     final userId = currentUserId;
@@ -619,20 +678,11 @@ class StoreService {
       '[StoreService] getStoreProfile requestUrl=$requestUrl authUserId=$userId',
     );
 
-    const storeProfileColumns =
-        'business_name,website,description,slogan,phone,email,whatsapp,'
-        'support_phone,address,postal_code,tax_number,instagram,facebook,'
-        'twitter,city,district,business_type,working_hours,is_store_open,'
-        'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
-        'cover_url,gallery_images,banners,seller_videos,store_lat,'
-        'store_lng,category,rating,is_verified';
-
     try {
-      final data = await _supabase
-          .from('stores')
-          .select(storeProfileColumns)
-          .eq('seller_id', userId)
-          .maybeSingle();
+      final data = await _fetchStoreProfileRowResilient(
+        userId,
+        logTag: 'getStoreProfile',
+      );
 
       if (data == null) {
         debugPrint(
@@ -649,8 +699,9 @@ class StoreService {
       return mapped;
     } catch (e, stackTrace) {
       debugPrint(
+        '[StoreProfile][load] error=$e '
         '[StoreService] getStoreProfile failed requestUrl=$requestUrl '
-        'authUserId=$userId error=$e',
+        'authUserId=$userId',
       );
       debugPrintStack(stackTrace: stackTrace);
       return null;
@@ -663,20 +714,11 @@ class StoreService {
     final normalizedSellerId = sellerId.trim();
     if (normalizedSellerId.isEmpty) return null;
 
-    const storeProfileColumns =
-        'business_name,website,description,slogan,phone,email,whatsapp,'
-        'support_phone,address,postal_code,tax_number,instagram,facebook,'
-        'twitter,city,district,business_type,working_hours,is_store_open,'
-        'accept_new_orders,allow_messaging,is_holiday_mode,logo_url,'
-        'cover_url,gallery_images,banners,seller_videos,store_lat,'
-        'store_lng,category,rating,is_verified';
-
     try {
-      final data = await _supabase
-          .from('stores')
-          .select(storeProfileColumns)
-          .eq('seller_id', normalizedSellerId)
-          .maybeSingle();
+      final data = await _fetchStoreProfileRowResilient(
+        normalizedSellerId,
+        logTag: 'getStoreProfileForSellerId',
+      );
       if (data == null) return null;
       final mapped = StoreServiceMappers.storeToCamelCase(data);
       final name = mapped['storeName']?.toString().trim() ?? '';
@@ -686,8 +728,9 @@ class StoreService {
       return mapped;
     } catch (e, stackTrace) {
       debugPrint(
-        '[StoreService] getStoreProfileForSellerId failed '
-        'sellerId=$normalizedSellerId error=$e',
+        '[StoreProfile][load] error=$e '
+        'sellerId=$normalizedSellerId '
+        '[StoreService] getStoreProfileForSellerId failed',
       );
       debugPrintStack(stackTrace: stackTrace);
       return null;
@@ -761,7 +804,29 @@ class StoreService {
     dbData['updated_at'] = DateTime.now().toIso8601String();
     dbData['seller_id'] = currentUserId; // Ensure ID is set
 
-    await _supabase.from('stores').upsert(dbData);
+    try {
+      await _supabase.from('stores').upsert(dbData);
+    } on PostgrestException catch (error) {
+      // If the receipt migration is not applied yet, retry without the receipt
+      // columns so saving the rest of the profile still succeeds instead of
+      // failing the whole save.
+      final touchesReceiptColumns =
+          dbData.containsKey('receipt_branch_label') ||
+          dbData.containsKey('receipt_footer_note');
+      if (touchesReceiptColumns && _isUndefinedColumnError(error)) {
+        debugPrint(
+          '[StoreProfile][save] receipt columns missing '
+          '(SUPABASE_STORE_RECEIPT_FIELDS.sql pending) — retrying without them. '
+          'code=${error.code} message=${error.message}',
+        );
+        final withoutReceipt = Map<String, dynamic>.from(dbData)
+          ..remove('receipt_branch_label')
+          ..remove('receipt_footer_note');
+        await _supabase.from('stores').upsert(withoutReceipt);
+      } else {
+        rethrow;
+      }
+    }
 
     // Invalidate cached business name so the next call fetches fresh data.
     _cachedBusinessName = null;
@@ -1754,6 +1819,18 @@ class StoreService {
       status: status,
       tableRow: tableRow,
       placementSource: placementSource,
+    );
+  }
+
+  Future<Map<String, dynamic>> ensureWaiterCall({
+    required String sellerId,
+    required int tableNumber,
+    Map<String, dynamic>? tableRow,
+  }) {
+    return _tableService.ensureWaiterCall(
+      sellerId: sellerId,
+      tableNumber: tableNumber,
+      tableRow: tableRow,
     );
   }
 

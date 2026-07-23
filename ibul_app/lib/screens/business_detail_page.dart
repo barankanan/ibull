@@ -7605,6 +7605,7 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
     if (_isCallingWaiter || _isSending) return;
     setState(() => _isCallingWaiter = true);
     try {
+      debugPrint('[WaiterCall][customer] create requested');
       await _resolveSellerIdIfNeeded();
       final sellerId = _resolvedSellerId;
       if (sellerId == null || sellerId.isEmpty) {
@@ -7642,21 +7643,15 @@ class _FoodOrderDialogState extends State<_FoodOrderDialog> {
         }
         return;
       }
-      await _storeService.submitTableOrder(
+      debugPrint(
+        '[WaiterCall][customer] restaurant=$sellerId table=${widget.tableNumber}',
+      );
+      final call = await _storeService.ensureWaiterCall(
         sellerId: sellerId,
         tableNumber: widget.tableNumber,
-        items: const [
-          {
-            'name': 'Garson Çağrıldı',
-            'quantity': 1,
-            'price': 0.0,
-            'type': 'waiter_call',
-          },
-        ],
-        status: 'call_waiter',
         tableRow: widget.tableRow,
-        placementSource: 'customer',
       );
+      debugPrint('[WaiterCall][customer] call ready id=${call['id']}');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
