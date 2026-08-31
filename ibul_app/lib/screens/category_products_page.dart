@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:carousel_slider/carousel_slider.dart';
 import '../core/constants.dart';
+import '../core/catalog_image_priority.dart';
 import '../features/products/helpers/product_filter_engine.dart';
 import '../features/products/helpers/product_quick_filter_chip_groups.dart';
 import '../features/products/helpers/category_filter_config.dart';
@@ -17,6 +18,7 @@ import '../models/product_model.dart';
 import '../models/db_product.dart';
 import '../services/database_helper.dart';
 import '../widgets/product_card.dart';
+import '../widgets/ibul_page_state.dart';
 import '../widgets/staggered_reveal.dart';
 import '../widgets/custom_header.dart';
 import '../widgets/address_bar.dart';
@@ -1411,7 +1413,13 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                                   scope: 'same-day-rail',
                                   index: index,
                                   product: product,
-                                  child: ProductCard(product: product),
+                                  child: ProductCard(
+                                    product: product,
+                                    imagePriority:
+                                        CatalogImagePriority.forRailIndex(
+                                      index,
+                                    ),
+                                  ),
                                 ),
                               );
                             },
@@ -1520,7 +1528,7 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                   content = GridView.builder(
                     controller: _productGridScrollController,
                     padding: const EdgeInsets.all(16),
-                    cacheExtent: 900,
+                    cacheExtent: 280,
                     gridDelegate: isWeb
                         ? const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 6,
@@ -1567,6 +1575,10 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
                             product: product,
                             compact: false,
                             tight: true,
+                            imagePriority: CatalogImagePriority.forGridIndex(
+                              index,
+                              crossAxisCount: isWeb ? 6 : 2,
+                            ),
                           ),
                         ),
                       );
@@ -1647,43 +1659,22 @@ class _CategoryProductsPageState extends State<CategoryProductsPage>
 
   Widget _buildEmptyFilterState() {
     final hasFilters = _filterState.hasActiveFilters || _searchQuery.isNotEmpty;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search_off, size: 56, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            Text(
-              hasFilters
-                  ? 'Bu filtrelerle ürün bulunamadı'
-                  : 'Bu kategoride ürün bulunamadı',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              hasFilters
-                  ? 'Filtreleri temizleyerek tekrar deneyebilirsin.'
-                  : 'Başka bir alt kategori seçmeyi deneyebilirsin.',
-              style: TextStyle(color: Colors.grey.shade600),
-              textAlign: TextAlign.center,
-            ),
-            if (hasFilters) ...[
-              const SizedBox(height: 20),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _clearFilters,
-                child: const Text('Filtreleri Temizle'),
-              ),
-            ],
-          ],
-        ),
-      ),
+    return IbulPageState.empty(
+      icon: Icons.search_off,
+      iconSize: 56,
+      iconColor: Colors.grey.shade400,
+      title: hasFilters
+          ? 'Bu filtrelerle ürün bulunamadı'
+          : 'Bu kategoride ürün bulunamadı',
+      titleSize: 18,
+      titleWeight: FontWeight.w600,
+      message: hasFilters
+          ? 'Filtreleri temizleyerek tekrar deneyebilirsin.'
+          : 'Başka bir alt kategori seçmeyi deneyebilirsin.',
+      messageColor: Colors.grey.shade600,
+      padding: const EdgeInsets.all(32),
+      actionLabel: hasFilters ? 'Filtreleri Temizle' : null,
+      onAction: hasFilters ? _clearFilters : null,
     );
   }
 

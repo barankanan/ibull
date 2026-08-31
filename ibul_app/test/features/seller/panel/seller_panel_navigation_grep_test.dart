@@ -4,10 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   final sellerPanelFile = File('lib/screens/seller_panel_page.dart');
-  final mainFile = File('lib/main.dart');
+  final sellerRoutesFile = File('lib/app/seller_routes.dart');
 
   String readSellerPanel() => sellerPanelFile.readAsStringSync();
-  String readMainFile() => mainFile.readAsStringSync();
+  String readSellerRoutes() => sellerRoutesFile.readAsStringSync();
 
   String sectionBetween(String source, String start, String end) {
     final startIndex = source.indexOf(start);
@@ -156,7 +156,7 @@ void main() {
     test(
       'SellerPanelPage is not created with UniqueKey or dashboard default',
       () {
-        final source = readMainFile();
+        final source = readSellerRoutes();
         expect(
           RegExp(
             r'SellerPanelPage\([\s\S]{0,200}?key:\s*UniqueKey\(',

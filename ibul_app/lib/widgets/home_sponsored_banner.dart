@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/ibul_chrome.dart';
 import 'optimized_image.dart';
 import 'skeleton_loading.dart';
 
@@ -31,7 +32,7 @@ class HomeSponsoredBannerDimensions {
       return (width: width, height: height);
     }
 
-    final isDesktop = screenWidth >= 1100;
+    final isDesktop = IbulChrome.isWeb(screenWidth);
     var width = isDesktop
         ? math.min(availableWidth, desktopBannerMaxWidth)
         : availableWidth;

@@ -76,9 +76,13 @@ class _WebHeaderMenuItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = isActive ? AppColors.primary : Colors.black87;
 
-    return InkWell(
+    return Semantics(
+      button: true,
+      label: badgeCount == null ? label : '$label, $badgeCount ürün',
+      child: InkWell(
       onTap: onTap,
       hoverColor: Colors.transparent,
+      child: ExcludeSemantics(
       child: Row(
         children: [
           Stack(
@@ -113,10 +117,12 @@ class _WebHeaderMenuItem extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               color: color,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
+      ),
+      ),
       ),
     );
   }

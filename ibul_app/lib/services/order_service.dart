@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -5,9 +6,12 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/runtime_config.dart';
+import '../core/runtime_diagnostic_logger.dart';
+import '../features/checkout/checkout_line_identity.dart';
 import '../utils/dynamic_value_helpers.dart';
 import '../utils/order_status_constants.dart';
 import 'cart_validation_service.dart';
+import 'ihiz_delivery_service.dart';
 import 'supabase_service.dart';
 
 class _CheckoutValidationResult {
@@ -101,6 +105,7 @@ class OrderService {
         paymentCard: paymentCard,
         deliveryType: deliveryType,
         deliverySlot: deliverySlot,
+        idempotencyKey: normalizedKey,
       );
       _inflightCheckouts[normalizedKey] = future;
       try {
@@ -118,6 +123,7 @@ class OrderService {
       paymentCard: paymentCard,
       deliveryType: deliveryType,
       deliverySlot: deliverySlot,
+      idempotencyKey: normalizedKey,
     );
   }
 
@@ -129,10 +135,13 @@ class OrderService {
     required Map<String, dynamic> paymentCard,
     required String deliveryType,
     String? deliverySlot,
+    String? idempotencyKey,
   }) async {
     if (selectedProducts.isEmpty) {
       throw Exception('Sipariş verilecek ürün bulunamadı.');
     }
+
+    final normalizedIdempotencyKey = idempotencyKey?.trim() ?? '';
 
     final now = DateTime.now();
     final orderNumber =
@@ -141,15 +150,9 @@ class OrderService {
     final Set<String> categorySet = {};
     final Set<String> purchasedNames = {};
     final itemsNeedingAttention = selectedProducts
-        .where((source) {
-          final directProductId = source['productId']?.toString();
-          final productObject = source['productObject'];
-          String? objectProductId;
-          try {
-            objectProductId = (productObject as dynamic).productId?.toString();
-          } catch (_) {}
-          return (directProductId ?? objectProductId ?? '').trim().isEmpty;
-        })
+        .where(
+          (source) => !CheckoutLineIdentity.fromSource(source).hasProductId,
+        )
         .toList(growable: false);
     if (itemsNeedingAttention.isNotEmpty) {
       throw Exception(
@@ -163,48 +166,15 @@ class OrderService {
     );
     final validatedProducts = checkoutValidation.selectedProducts;
     final validatedSubtotal = checkoutValidation.serverSubtotal;
-    final productIdsForMetadata = <String>{};
-    final explicitSellerIds = <String>{};
-    final explicitStoreNames = <String>{};
-    for (final source in validatedProducts) {
-      final productId = source['productId']?.toString().trim();
-      if (productId != null && productId.isNotEmpty) {
-        productIdsForMetadata.add(productId);
-      }
-      final sellerId = source['sellerId']?.toString().trim();
-      if (sellerId != null && sellerId.isNotEmpty) {
-        explicitSellerIds.add(sellerId);
-      }
-      final storeName = source['storeName']?.toString().trim();
-      if (storeName != null && storeName.isNotEmpty) {
-        explicitStoreNames.add(storeName);
-      }
-      final productObject = source['productObject'];
-      try {
-        final objectSellerId = (productObject as dynamic).sellerId
-            ?.toString()
-            .trim();
-        if (objectSellerId != null && objectSellerId.isNotEmpty) {
-          explicitSellerIds.add(objectSellerId);
-        }
-      } catch (_) {}
-      try {
-        final objectStoreName = (productObject as dynamic).store
-            ?.toString()
-            .trim();
-        if (objectStoreName != null && objectStoreName.isNotEmpty) {
-          explicitStoreNames.add(objectStoreName);
-        }
-      } catch (_) {}
-      try {
-        final objectProductId = (productObject as dynamic).productId
-            ?.toString()
-            .trim();
-        if (objectProductId != null && objectProductId.isNotEmpty) {
-          productIdsForMetadata.add(objectProductId);
-        }
-      } catch (_) {}
-    }
+    final productIdsForMetadata = CheckoutLineIdentity.collectProductIds(
+      validatedProducts,
+    );
+    final explicitSellerIds = CheckoutLineIdentity.collectSellerIds(
+      validatedProducts,
+    );
+    final explicitStoreNames = CheckoutLineIdentity.collectStoreNames(
+      validatedProducts,
+    );
 
     final productMetadataById = <String, Map<String, dynamic>>{};
     if (productIdsForMetadata.isNotEmpty) {
@@ -224,8 +194,13 @@ class OrderService {
             explicitSellerIds.add(sellerId);
           }
         }
-      } catch (e) {
-        debugPrint('OrderService bulk product metadata warn: $e');
+      } catch (error, stackTrace) {
+        RuntimeDiagnosticLogger.logFailure(
+          'OrderService',
+          error,
+          stackTrace,
+          context: 'bulkProductMetadata',
+        );
       }
     }
 
@@ -263,25 +238,12 @@ class OrderService {
               .toString();
       final attributes = _collectAttributes(source);
       final imageUrl = source['image']?.toString();
-      final productObject = source['productObject'];
+      final identity = CheckoutLineIdentity.fromSource(source);
 
-      String? productId = source['productId']?.toString();
-      String? sellerId = source['sellerId']?.toString();
-      String? storeName = source['storeName']?.toString();
-      String? categoryName = source['category']?.toString();
-
-      try {
-        productId ??= (productObject as dynamic).productId?.toString();
-      } catch (_) {}
-      try {
-        sellerId ??= (productObject as dynamic).sellerId?.toString();
-      } catch (_) {}
-      try {
-        storeName ??= (productObject as dynamic).store?.toString();
-      } catch (_) {}
-      try {
-        categoryName ??= (productObject as dynamic).category?.toString();
-      } catch (_) {}
+      String? productId = identity.productId;
+      String? sellerId = identity.sellerId;
+      String? storeName = identity.storeName;
+      String? categoryName = identity.category;
 
       final metadata = productId == null
           ? null
@@ -364,6 +326,8 @@ class OrderService {
       'currency': 'TRY',
       'created_at': now.toIso8601String(),
       'updated_at': now.toIso8601String(),
+      if (normalizedIdempotencyKey.isNotEmpty)
+        'idempotency_key': normalizedIdempotencyKey,
     };
     final extendedOrderInsert = <String, dynamic>{
       ...baseOrderInsert,
@@ -467,13 +431,24 @@ class OrderService {
               .update({'wallet_reserve_status': 'reserved'})
               .eq('id', orderId);
           orderRow['wallet_reserve_status'] = 'reserved';
-        } catch (_) {}
+        } catch (error, stackTrace) {
+          RuntimeDiagnosticLogger.logFailure(
+            'OrderService',
+            error,
+            stackTrace,
+            context: 'walletReserveStatusUpdate',
+          );
+        }
       }
 
       final helpfulProducts = await _getHelpfulProducts(
         categories: categorySet.toList(),
         excludeNamesLower: purchasedNames,
       );
+
+      if (orderId.isNotEmpty) {
+        _maybeEnsureIhizDeliveryTask(orderId, deliveryType);
+      }
 
       return {
         ...orderRow,
@@ -488,6 +463,22 @@ class OrderService {
         'wallet_holds': walletHolds,
       };
     } catch (error) {
+      // Idempotent replay: unique index (idx_orders_user_idempotency) 23505
+      // fırlattıysa aynı (user_id, idempotency_key) ile önceki sipariş zaten
+      // oluşmuştur. Bu ihlal yalnız orders insert'inde (orderId henüz null) olur.
+      // Bu dalda hiçbir mutasyon (order/items/wallet/notification/history) tekrar
+      // çalışmaz; mevcut sipariş okunup confirmation return yapısı yeniden kurulur.
+      if (normalizedIdempotencyKey.isNotEmpty &&
+          orderId == null &&
+          _isIdempotencyReplayViolation(error)) {
+        return _buildIdempotentReplayResult(
+          userId: userId,
+          idempotencyKey: normalizedIdempotencyKey,
+          deliveryAddress: deliveryAddress,
+          paymentCard: paymentCard,
+          deliveryPricing: deliveryPricing,
+        );
+      }
       await _releaseReservedWalletHolds(
         holds: walletHolds,
         reason: 'Checkout create order rollback',
@@ -496,7 +487,14 @@ class OrderService {
         try {
           await _supabase.from('order_items').delete().eq('order_id', orderId);
           await _supabase.from('orders').delete().eq('id', orderId);
-        } catch (_) {}
+        } catch (error, stackTrace) {
+          RuntimeDiagnosticLogger.logFailure(
+            'OrderService',
+            error,
+            stackTrace,
+            context: 'orderRollbackDelete',
+          );
+        }
       }
       throw Exception(_mapWalletError(error));
     }
@@ -509,11 +507,13 @@ class OrderService {
     required String customerAddress,
     required String city,
     required String district,
+    String? building,
     double? customerLat,
     double? customerLng,
     String? productName,
     required int quantity,
     required double unitPrice,
+    List<Map<String, dynamic>>? productLines,
     String? externalOrderReference,
     String? note,
     String? storeName,
@@ -528,18 +528,26 @@ class OrderService {
     final normalizedCustomerName = customerName.trim();
     final normalizedCustomerPhone = customerPhone.trim();
     final normalizedCustomerAddress = customerAddress.trim();
-    final normalizedProductName = (productName ?? '').trim().isEmpty
-        ? 'Harici Sipariş Ürünü'
-        : productName!.trim();
+    final normalizedBuilding = (building ?? '').trim();
+    final normalizedProductLines = _normalizeExternalCargoProductLines(
+      productLines: productLines,
+      fallbackProductName: productName,
+      fallbackQuantity: quantity,
+      fallbackUnitPrice: unitPrice,
+    );
     if (normalizedCustomerName.isEmpty ||
         normalizedCustomerPhone.isEmpty ||
         normalizedCustomerAddress.isEmpty) {
       throw Exception('Müşteri alanları zorunludur.');
     }
+    if (normalizedProductLines.isEmpty) {
+      throw Exception('Siparişe en az bir ürün ekleyin.');
+    }
 
-    final safeQuantity = quantity <= 0 ? 1 : quantity;
-    final safeUnitPrice = unitPrice < 0 ? 0 : unitPrice;
-    final totalPrice = (safeQuantity * safeUnitPrice).toDouble();
+    final totalPrice = normalizedProductLines.fold<double>(
+      0,
+      (sum, line) => sum + ((line['total_price'] as num?)?.toDouble() ?? 0),
+    );
     final now = DateTime.now();
     final millis = now.millisecondsSinceEpoch.toString();
     final shortSeed = millis.length > 8
@@ -589,6 +597,7 @@ class OrderService {
       'phone': normalizedCustomerPhone,
       'address': normalizedCustomerAddress,
       'detail': normalizedCustomerAddress,
+      if (normalizedBuilding.isNotEmpty) 'building': normalizedBuilding,
       'city': city.trim(),
       'district': district.trim(),
       'lat': ?customerLat,
@@ -675,51 +684,79 @@ class OrderService {
       }
 
       orderId = orderRow['id'].toString();
-      final trackingNumber = _buildTrackingNumber(orderNumber, 0);
+      final itemInserts = <Map<String, dynamic>>[];
+      for (var index = 0; index < normalizedProductLines.length; index++) {
+        final line = normalizedProductLines[index];
+        final lineQuantity = (line['quantity'] as num?)?.toInt() ?? 1;
+        final lineUnitPrice = (line['unit_price'] as num?)?.toDouble() ?? 0;
+        final lineTotal =
+            (line['total_price'] as num?)?.toDouble() ??
+            (lineQuantity * lineUnitPrice);
+        final lineProductId = (line['product_id'] ?? '').toString().trim();
+        final lineProductCode = (line['product_code'] ?? '').toString().trim();
+        final lineStationId = (line['station_id'] ?? '').toString().trim();
+        itemInserts.add({
+          'order_id': orderId,
+          'seller_id': normalizedSellerId,
+          'product_id': lineProductId.isEmpty ? null : lineProductId,
+          'product_code': lineProductCode.isEmpty
+              ? (normalizedProductLines.length == 1
+                    ? productCode
+                    : lineProductId)
+              : lineProductCode,
+          'product_name': (line['product_name'] ?? 'Ürün').toString(),
+          'store_name': resolvedStoreName,
+          'product_image_url': line['product_image_url'],
+          'attributes': <String>[
+            'Harici sipariş',
+            if (normalizedExternalRef.isNotEmpty)
+              'Harici referans: $normalizedExternalRef',
+          ],
+          'quantity': lineQuantity,
+          'unit_price': lineUnitPrice,
+          'total_price': lineTotal,
+          'status': OrderStatusConstants.ecommerceReadyToShip,
+          'shipment_step': OrderStatusConstants.ecommerceReadyToShip,
+          'cargo_company': cargoCompany,
+          'tracking_number': _buildTrackingNumber(orderNumber, index),
+          if (lineStationId.isNotEmpty) 'station_id': lineStationId,
+          'created_at': now.toIso8601String(),
+          'updated_at': now.toIso8601String(),
+        });
+      }
       final insertedItems = await _supabase
           .from('order_items')
-          .insert({
-            'order_id': orderId,
-            'seller_id': normalizedSellerId,
-            'product_id': null,
-            'product_code': productCode,
-            'product_name': normalizedProductName,
-            'store_name': resolvedStoreName,
-            'product_image_url': null,
-            'attributes': <String>[
-              'Harici sipariş',
-              if (normalizedExternalRef.isNotEmpty)
-                'Harici referans: $normalizedExternalRef',
-            ],
-            'quantity': safeQuantity,
-            'unit_price': safeUnitPrice,
-            'total_price': totalPrice,
-            'status': OrderStatusConstants.ecommerceReadyToShip,
-            'shipment_step': OrderStatusConstants.ecommerceReadyToShip,
-            'cargo_company': cargoCompany,
-            'tracking_number': trackingNumber,
-            'created_at': now.toIso8601String(),
-            'updated_at': now.toIso8601String(),
-          })
+          .insert(itemInserts)
           .select(
-            'id, order_id, seller_id, product_name, product_code, quantity, total_price, unit_price, status, store_name, created_at, tracking_number, cargo_company, shipment_step, product_image_url',
+            'id, order_id, seller_id, product_id, product_name, product_code, quantity, total_price, unit_price, status, store_name, created_at, tracking_number, cargo_company, shipment_step, product_image_url, station_id',
           );
 
-      final insertedItem = List<Map<String, dynamic>>.from(
+      final storedItems = List<Map<String, dynamic>>.from(
         insertedItems as List,
-      ).first;
+      );
+      if (storedItems.isEmpty) {
+        throw Exception('Sipariş kalemleri oluşturulamadı.');
+      }
 
       try {
-        await _supabase.from('order_item_status_history').insert({
-          'order_item_id': insertedItem['id'],
-          'status': OrderStatusConstants.ecommerceReadyToShip,
-          'title': 'Harici sipariş İHIZ akışına eklendi',
-          'description':
-              'Satıcı panelinden girilen harici sipariş kurye havuzuna hazırlandı.',
-          'tracking_number': trackingNumber,
-          'cargo_company': cargoCompany,
-          'created_at': now.toIso8601String(),
-        });
+        await _supabase
+            .from('order_item_status_history')
+            .insert(
+              storedItems
+                  .map(
+                    (item) => <String, dynamic>{
+                      'order_item_id': item['id'],
+                      'status': OrderStatusConstants.ecommerceReadyToShip,
+                      'title': 'Harici sipariş İHIZ akışına eklendi',
+                      'description':
+                          'Satıcı panelinden girilen harici sipariş kurye havuzuna hazırlandı.',
+                      'tracking_number': item['tracking_number'],
+                      'cargo_company': cargoCompany,
+                      'created_at': now.toIso8601String(),
+                    },
+                  )
+                  .toList(growable: false),
+            );
       } catch (e) {
         debugPrint('OrderService external order history warn: $e');
       }
@@ -747,13 +784,20 @@ class OrderService {
               .update({'wallet_reserve_status': 'reserved'})
               .eq('id', orderId);
           orderRow['wallet_reserve_status'] = 'reserved';
-        } catch (_) {}
+        } catch (error, stackTrace) {
+          RuntimeDiagnosticLogger.logFailure(
+            'OrderService',
+            error,
+            stackTrace,
+            context: 'walletReserveStatusUpdate',
+          );
+        }
       }
 
       return {
         ...orderRow,
         'delivery_address': addressPayload,
-        'items': [insertedItem],
+        'items': storedItems,
         'delivery_pricing': deliveryPricing,
         'wallet_hold': ?walletHold,
       };
@@ -768,7 +812,14 @@ class OrderService {
         try {
           await _supabase.from('order_items').delete().eq('order_id', orderId);
           await _supabase.from('orders').delete().eq('id', orderId);
-        } catch (_) {}
+        } catch (error, stackTrace) {
+          RuntimeDiagnosticLogger.logFailure(
+            'OrderService',
+            error,
+            stackTrace,
+            context: 'orderRollbackDelete',
+          );
+        }
       }
       throw Exception(_mapWalletError(error));
     }
@@ -864,10 +915,7 @@ class OrderService {
       final items = (groupedItems[oid] ?? <Map<String, dynamic>>[])
           .map(normalizeOrderIdentityFields)
           .toList(growable: false);
-      return {
-        ...orderMap,
-        'items': items,
-      };
+      return {...orderMap, 'items': items};
     }).toList();
   }
 
@@ -1238,7 +1286,14 @@ class OrderService {
             .eq('id', orderId)
             .maybeSingle();
         orderDeliveryType = orderRow?['delivery_type']?.toString() ?? '';
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        RuntimeDiagnosticLogger.logFailure(
+          'OrderService',
+          error,
+          stackTrace,
+          context: 'orderDeliveryTypeLookup',
+        );
+      }
     }
     final resolutionText = normalizedNote.isEmpty
         ? 'Satıcı notu eklenmedi.'
@@ -1613,7 +1668,14 @@ class OrderService {
             .eq('id', orderId)
             .maybeSingle();
         orderDeliveryType = orderRow?['delivery_type']?.toString() ?? '';
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        RuntimeDiagnosticLogger.logFailure(
+          'OrderService',
+          error,
+          stackTrace,
+          context: 'orderDeliveryTypeLookup',
+        );
+      }
     }
     final currentStatus = request['status']?.toString().toLowerCase() ?? '';
     if (currentStatus != 'awaiting_ibul_review' &&
@@ -2177,7 +2239,8 @@ class OrderService {
             ...item,
             ...summary,
             'order_number': fallbackNumber,
-            'order_total_amount': item['total_price'] ?? item['unit_price'] ?? 0,
+            'order_total_amount':
+                item['total_price'] ?? item['unit_price'] ?? 0,
             'order_status': item['status'] ?? OrderStatusConstants.ecommerceNew,
             'customer_id': null,
             'customer_name': 'Musteri bilgisi sinirli',
@@ -2268,18 +2331,39 @@ class OrderService {
 
     final summaries = <String, Map<String, dynamic>>{};
     for (final entry in grouped.entries) {
-      final names = <String>[];
-      for (final item in entry.value) {
+      final items = entry.value;
+      final lineItems = <Map<String, dynamic>>[];
+      for (final item in items) {
         final name = item['product_name']?.toString().trim() ?? '';
-        if (name.isEmpty) continue;
-        if (!names.contains(name)) {
-          names.add(name);
-        }
+        lineItems.add(<String, dynamic>{
+          'product_name': name.isEmpty ? 'Ürün' : name,
+          'product_code': item['product_code']?.toString() ?? '',
+          'quantity': item['quantity'] ?? 1,
+          'unit_price': item['unit_price'] ?? 0,
+          'total_price': item['total_price'] ?? 0,
+        });
       }
+      Map<String, dynamic>? secondary;
+      Map<String, dynamic>? tertiary;
+      if (items.length > 1) secondary = items[1];
+      if (items.length > 2) tertiary = items[2];
       summaries[entry.key] = <String, dynamic>{
-        'item_count': entry.value.length,
-        if (names.length > 1) 'secondary_product_name': names[1],
-        if (names.length > 2) 'third_product_name': names[2],
+        'item_count': items.length,
+        'line_items': lineItems,
+        if (secondary != null)
+          'secondary_product_name': secondary['product_name']?.toString() ?? '',
+        if (secondary != null)
+          'secondary_product_code': secondary['product_code']?.toString() ?? '',
+        if (secondary != null) 'secondary_quantity': secondary['quantity'] ?? 1,
+        if (secondary != null)
+          'secondary_total_amount': secondary['total_price'] ?? 0,
+        if (tertiary != null)
+          'third_product_name': tertiary['product_name']?.toString() ?? '',
+        if (tertiary != null)
+          'third_product_code': tertiary['product_code']?.toString() ?? '',
+        if (tertiary != null) 'third_quantity': tertiary['quantity'] ?? 1,
+        if (tertiary != null)
+          'third_total_amount': tertiary['total_price'] ?? 0,
       };
     }
     return summaries;
@@ -2424,7 +2508,14 @@ class OrderService {
         if (decoded is Map) {
           return decoded.map((key, value) => MapEntry(key.toString(), value));
         }
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        RuntimeDiagnosticLogger.logFailure(
+          'OrderService',
+          error,
+          stackTrace,
+          context: 'asJsonMapDecode',
+        );
+      }
     }
     return <String, dynamic>{};
   }
@@ -2707,6 +2798,11 @@ class OrderService {
     }
 
     await _syncParentOrderStatus(orderId);
+
+    _maybeEnsureIhizDeliveryTask(
+      orderId,
+      normalizedDeliveryType.isNotEmpty ? normalizedDeliveryType : deliveryType,
+    );
 
     try {
       if (!_shouldSendCustomerTrackingNotification(shipmentStep)) {
@@ -3667,21 +3763,29 @@ class OrderService {
       return map;
     }
     if (response is String && response.trim().isNotEmpty) {
+      Object? decoded;
       try {
-        final decoded = jsonDecode(response);
-        if (decoded is Map) {
-          final map = decoded.map(
-            (key, value) => MapEntry(key.toString(), value),
+        decoded = jsonDecode(response);
+      } catch (error, stackTrace) {
+        RuntimeDiagnosticLogger.logFailure(
+          'OrderService',
+          error,
+          stackTrace,
+          context: 'walletReserveRpcDecode',
+        );
+      }
+      if (decoded is Map) {
+        final map = decoded.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+        final ok = map['ok'];
+        if (ok == false) {
+          throw Exception(
+            map['error']?.toString() ?? 'Wallet reserve basarisiz',
           );
-          final ok = map['ok'];
-          if (ok == false) {
-            throw Exception(
-              map['error']?.toString() ?? 'Wallet reserve basarisiz',
-            );
-          }
-          return map;
         }
-      } catch (_) {}
+        return map;
+      }
     }
     throw Exception('Wallet reserve RPC beklenen cevap formatinda donmedi.');
   }
@@ -3742,6 +3846,78 @@ class OrderService {
         raw.contains('infinite recursion detected in policy');
   }
 
+  /// Checkout idempotency unique index (idx_orders_user_idempotency) ihlali mi?
+  /// Yalnız bu index'e scope'lu: başka unique ihlallerini replay saymaz.
+  bool _isIdempotencyReplayViolation(Object error) {
+    final raw = error.toString().toLowerCase();
+    if (!raw.contains('23505')) return false;
+    return raw.contains('idx_orders_user_idempotency') ||
+        raw.contains('idempotency_key');
+  }
+
+  /// Idempotent replay: mevcut (user_id + idempotency_key) siparişini okuyup
+  /// [OrderConfirmationPage]'in beklediği return yapısını yeniden kurar.
+  /// Hiçbir mutasyon çalıştırmaz (yeni order/items/wallet/notification YOK).
+  Future<Map<String, dynamic>> _buildIdempotentReplayResult({
+    required String userId,
+    required String idempotencyKey,
+    required Map<String, dynamic> deliveryAddress,
+    required Map<String, dynamic> paymentCard,
+    required Map<String, dynamic> deliveryPricing,
+  }) async {
+    Map<String, dynamic>? existing;
+    try {
+      existing = await _supabase
+          .from('orders')
+          .select(
+            'id, order_number, created_at, total_amount, status, shipping_amount, total_delivery_fee, customer_delivery_fee, seller_delivery_fee, wallet_reserve_status',
+          )
+          .eq('user_id', userId)
+          .eq('idempotency_key', idempotencyKey)
+          .limit(1)
+          .maybeSingle();
+    } catch (error) {
+      if (!_isMissingDeliveryColumnsError(error)) rethrow;
+      existing = await _supabase
+          .from('orders')
+          .select(
+            'id, order_number, created_at, total_amount, status, shipping_amount',
+          )
+          .eq('user_id', userId)
+          .eq('idempotency_key', idempotencyKey)
+          .limit(1)
+          .maybeSingle();
+    }
+    if (existing == null) {
+      throw Exception('Siparişiniz zaten alınmış ancak kaydı okunamadı.');
+    }
+    final orderRow = Map<String, dynamic>.from(existing);
+    final orderId = orderRow['id']?.toString();
+
+    final storedItems = <Map<String, dynamic>>[];
+    if (orderId != null && orderId.isNotEmpty) {
+      final items = await _supabase
+          .from('order_items')
+          .select()
+          .eq('order_id', orderId);
+      storedItems.addAll(List<Map<String, dynamic>>.from(items as List));
+    }
+
+    return {
+      ...orderRow,
+      'delivery_address': deliveryAddress,
+      'payment_card': {
+        'name': paymentCard['name']?.toString() ?? 'Kart',
+        'number': paymentCard['number']?.toString() ?? '****',
+      },
+      'items': storedItems,
+      'helpful_products': const <Map<String, dynamic>>[],
+      'delivery_pricing': deliveryPricing,
+      'wallet_holds': const <Map<String, dynamic>>[],
+      'idempotent_replay': true,
+    };
+  }
+
   String _mapWalletError(Object error) {
     final raw = error.toString();
     final lower = raw.toLowerCase();
@@ -3759,6 +3935,61 @@ class OrderService {
       return 'Wallet altyapisi hazir degil. SUPABASE_SELLER_WALLET_DELIVERY.sql scriptini calistirin.';
     }
     return raw.replaceFirst('Exception: ', '');
+  }
+
+  List<Map<String, dynamic>> _normalizeExternalCargoProductLines({
+    List<Map<String, dynamic>>? productLines,
+    String? fallbackProductName,
+    required int fallbackQuantity,
+    required double fallbackUnitPrice,
+  }) {
+    final normalized = <Map<String, dynamic>>[];
+    for (final raw in productLines ?? const <Map<String, dynamic>>[]) {
+      final name = (raw['product_name'] ?? raw['productName'] ?? '')
+          .toString()
+          .trim();
+      final quantity = _toInt(raw['quantity'], fallback: 0);
+      final unitPrice = _toDoublePrice(raw['unit_price'] ?? raw['unitPrice']);
+      if (name.isEmpty || quantity <= 0 || unitPrice < 0) continue;
+      final productId = (raw['product_id'] ?? raw['productId'] ?? '')
+          .toString()
+          .trim();
+      final productCode = (raw['product_code'] ?? raw['productCode'] ?? '')
+          .toString()
+          .trim();
+      final stationId = (raw['station_id'] ?? raw['stationId'] ?? '')
+          .toString()
+          .trim();
+      normalized.add(<String, dynamic>{
+        'product_id': productId,
+        'product_code': productCode,
+        'product_name': name,
+        'product_image_url': raw['product_image_url'] ?? raw['productImageUrl'],
+        'quantity': quantity,
+        'unit_price': unitPrice,
+        'total_price': quantity * unitPrice,
+        if (stationId.isNotEmpty) 'station_id': stationId,
+      });
+    }
+    if (normalized.isNotEmpty) return normalized;
+
+    final fallbackName = (fallbackProductName ?? '').trim();
+    final safeQuantity = fallbackQuantity <= 0 ? 0 : fallbackQuantity;
+    final safeUnitPrice = fallbackUnitPrice < 0 ? -1 : fallbackUnitPrice;
+    if (fallbackName.isEmpty || safeQuantity <= 0 || safeUnitPrice < 0) {
+      return const <Map<String, dynamic>>[];
+    }
+    return <Map<String, dynamic>>[
+      {
+        'product_id': '',
+        'product_code': '',
+        'product_name': fallbackName,
+        'product_image_url': null,
+        'quantity': safeQuantity,
+        'unit_price': safeUnitPrice,
+        'total_price': safeQuantity * safeUnitPrice,
+      },
+    ];
   }
 
   String _buildTrackingNumber(String orderNumber, int index) {
@@ -3805,8 +4036,8 @@ class OrderService {
         );
       }
 
-      final visibilityError =
-          CartValidationService.instance.validateProductRowForCart(row);
+      final visibilityError = CartValidationService.instance
+          .validateProductRowForCart(row);
       if (visibilityError != null) {
         throw Exception(visibilityError);
       }
@@ -3916,13 +4147,11 @@ class OrderService {
   }
 
   String _fallbackStoreName(Map<String, dynamic> source) {
-    final productObject = source['productObject'];
-    try {
-      final fromProduct = (productObject as dynamic).store?.toString();
-      if (fromProduct != null && fromProduct.trim().isNotEmpty) {
-        return fromProduct;
-      }
-    } catch (_) {}
+    final identity = CheckoutLineIdentity.fromSource(source);
+    final fromIdentity = identity.storeName?.trim();
+    if (fromIdentity != null && fromIdentity.isNotEmpty) {
+      return fromIdentity;
+    }
     final fromMap =
         source['storeName']?.toString() ??
         source['brand']?.toString() ??
@@ -4308,5 +4537,18 @@ class OrderService {
       deduped[key] = row;
     }
     return deduped.values.toList(growable: false);
+  }
+
+  bool _isIhizDeliveryType(String? raw) {
+    final value = (raw ?? '').toLowerCase();
+    return value.contains('ihiz') ||
+        value.contains('ihız') ||
+        value.contains('kurye');
+  }
+
+  void _maybeEnsureIhizDeliveryTask(String? orderId, String? deliveryType) {
+    final id = (orderId ?? '').trim();
+    if (id.isEmpty || !_isIhizDeliveryType(deliveryType)) return;
+    unawaited(IhizDeliveryService.instance.ensureTaskForOrder(id));
   }
 }

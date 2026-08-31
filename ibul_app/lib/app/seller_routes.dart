@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../features/investor/investor_page.dart' deferred as investor;
 import '../screens/become_seller_page.dart' deferred as become_seller;
 import '../screens/map_page.dart' deferred as map_page;
 import '../screens/seller/admin_panel_page.dart' deferred as admin_panel;
 import '../screens/seller_panel_page.dart' deferred as seller_panel;
 import '../screens/seller_panel_route_args.dart';
 import '../screens/ihiz_courier_page.dart' deferred as ihiz_courier;
+import '../features/ihiz/delivery/ihiz_route_paths.dart';
 import '../widgets/deferred_module_screen.dart';
 import 'route_args.dart';
 
@@ -47,11 +49,33 @@ abstract final class SellerRoutes {
     );
   }
 
+  static Widget buildIhizTracking(String trackingCode) {
+    return DeferredModuleScreen(
+      moduleName: 'ihiz_courier_page',
+      loadLibrary: ihiz_courier.loadLibrary,
+      builder: () => ihiz_courier.IhizTrackingPage(
+        trackingCode: trackingCode,
+      ),
+    );
+  }
+
+  static String? ihizTrackingCode(String path) {
+    return IhizRoutePaths.trackingCodeFromPath(path);
+  }
+
   static Widget buildBecomeSeller() {
     return DeferredModuleScreen(
       moduleName: 'become_seller_page',
       loadLibrary: become_seller.loadLibrary,
       builder: () => become_seller.BecomeSellerPage(),
+    );
+  }
+
+  static Widget buildInvestorPage() {
+    return DeferredModuleScreen(
+      moduleName: 'investor_page',
+      loadLibrary: investor.loadLibrary,
+      builder: () => investor.InvestorPage(),
     );
   }
 

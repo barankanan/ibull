@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
+import 'dart:math' show Random;
 
 import 'package:flutter/foundation.dart'
     show
         debugPrint,
         debugPrintStack,
         defaultTargetPlatform,
+        kDebugMode,
         kIsWeb,
         TargetPlatform;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -23,6 +25,10 @@ import 'kitchen_order_number_fields.dart';
 import 'kitchen_print_trace_log.dart';
 import 'kitchen_product_mapping_cache_store.dart';
 import 'kitchen_routing_service.dart';
+import 'kitchen_station_print_grouping.dart';
+import 'lan_print_bridge_locator.dart';
+import 'seller_cargo_print_job_service.dart';
+import 'local_print_service.dart';
 import 'restaurant_offline/restaurant_offline_order_router.dart';
 import 'printer_encoding_profile_store.dart';
 import 'printer_event_log_service.dart';
@@ -52,6 +58,52 @@ class _KitchenStationNamesResolveResult {
 
   final Map<String, String> namesById;
   final String fallbackReason;
+}
+
+class _LanDirectPrintResult {
+  const _LanDirectPrintResult({
+    required this.ok,
+    this.skipped = false,
+    this.reason = '',
+    this.clientJobIds = const <String>[],
+    this.logicalPrintKeys = const <String>[],
+    this.buttonToBridgeMs = 0,
+    this.bridgeToPrinterMs = 0,
+    this.totalMs = 0,
+    this.t0 = 0,
+    this.t1 = 0,
+    this.t2 = 0,
+    this.t3 = 0,
+    this.t4 = 0,
+    this.t5 = 0,
+    this.t6 = 0,
+    this.t7 = 0,
+    this.t8 = 0,
+  });
+
+  factory _LanDirectPrintResult.skipped([String reason = 'skipped']) =>
+      _LanDirectPrintResult(ok: false, skipped: true, reason: reason);
+
+  factory _LanDirectPrintResult.failed(String reason) =>
+      _LanDirectPrintResult(ok: false, reason: reason);
+
+  final bool ok;
+  final bool skipped;
+  final String reason;
+  final List<String> clientJobIds;
+  final List<String> logicalPrintKeys;
+  final int buttonToBridgeMs;
+  final int bridgeToPrinterMs;
+  final int totalMs;
+  final int t0;
+  final int t1;
+  final int t2;
+  final int t3;
+  final int t4;
+  final int t5;
+  final int t6;
+  final int t7;
+  final int t8;
 }
 
 class OrderPrintJobDispatchResult {
@@ -240,6 +292,17 @@ class OrderPrintJobService {
       <String, Map<String, ProductStationMapping>>{};
   static const Duration _stationNamesCacheTtl = Duration(minutes: 30);
   static final Set<String> _reprintInFlightKeys = <String>{};
+
+  /// Last-known print-system flag per restaurant (default treated as enabled).
+  /// Used only to avoid early-broadcast when we already know printing is off.
+  static final Map<String, bool> _printSystemEnabledCache = <String, bool>{};
+
+  /// Persistent Realtime broadcast sender — one channel per restaurant.
+  /// Avoids per-job subscribe → READY → 100ms → unsubscribe latency.
+  RealtimeChannel? _printSignalChannel;
+  String? _printSignalRestaurantId;
+  Completer<void>? _printSignalReady;
+  bool _printSignalSubscribed = false;
 
   Map<String, String> cachedStationNamesForRestaurant(String restaurantId) {
     return Map<String, String>.from(_readCachedStationNames(restaurantId));
@@ -433,6 +496,13 @@ class OrderPrintJobService {
         .substring(
           ms.toRadixString(16).length > 8 ? ms.toRadixString(16).length - 8 : 0,
         );
+  }
+
+  static String _generateClientPrintJobId() {
+    final rand = Random.secure();
+    final a = DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(16);
+    final b = List.generate(8, (_) => rand.nextInt(16).toRadixString(16)).join();
+    return 'lan-$a$b';
   }
 
   void _logGarsonKitchenFastPathDecision({
@@ -950,26 +1020,15 @@ class OrderPrintJobService {
     bool skipOfflineFallback = false,
     String? storeCategory,
     String? tableName,
+    String? localOrderId,
+    /// Elapsed ms from Garson "Gönder" press until this method entry (T0 base).
+    int t0SendPressedElapsedMs = 0,
   }) async {
+    final t0Watch = Stopwatch()..start();
+    int absMs() => t0SendPressedElapsedMs + t0Watch.elapsedMilliseconds;
     final offlineRouter = RestaurantOfflineOrderRouter(
       orderPrintJobService: this,
     );
-    if (!skipOfflineFallback &&
-        await offlineRouter.shouldRouteOffline(
-          restaurantId: restaurantId,
-          storeCategory: storeCategory,
-        )) {
-      return offlineRouter.dispatchOfflineOrder(
-        restaurantId: restaurantId,
-        tableNumber: tableNumber,
-        items: items,
-        waiterId: waiterId,
-        waiterName: waiterName,
-        notes: notes,
-        tableName: tableName,
-        storeCategory: storeCategory,
-      );
-    }
 
     final traceId = _generateTraceId();
     final pipelineStartedAt = DateTime.now().toIso8601String();
@@ -1002,9 +1061,11 @@ class OrderPrintJobService {
     debugPrint('table=$tableNumber');
     debugPrint('orderId=-');
     debugPrint('items=${normalized.length}');
-    await _debugGarsonPrintConfigSnapshot(
-      restaurantId: restaurantId,
-      normalizedItems: normalized,
+    unawaited(
+      _debugGarsonPrintConfigSnapshot(
+        restaurantId: restaurantId,
+        normalizedItems: normalized,
+      ),
     );
 
     debugPrint(
@@ -1020,19 +1081,92 @@ class OrderPrintJobService {
           'waiterName=${_logValue(waiterName)}',
     );
 
-    final rpcWatch = Stopwatch()..start();
-    late final dynamic response;
-    try {
-      response = await _runCreateTableOrderWithPrintJobsRpc(
+    // P0: LOCAL PRINT FIRST — fire before connectivity / RPC / printer hydration.
+    // Mac desktop + mobile: always try LAN; garsonDesktopFastKitchen must NOT skip.
+    final t1LocalPrintStart = absMs();
+    final lanFuture = _attemptLanDirectKitchenPrint(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      items: normalized,
+      waiterName: waiterName,
+      pipelineStartedAt: pipelineStartedAt,
+      traceId: traceId,
+      t0ElapsedMs: t0SendPressedElapsedMs,
+    );
+
+    // Offline divert without connectivity.refresh (refresh blocks hot path).
+    if (!skipOfflineFallback &&
+        await offlineRouter.shouldRouteOfflineFast(
+          restaurantId: restaurantId,
+          storeCategory: storeCategory,
+        )) {
+      unawaited(
+        lanFuture.then((r) {
+          if (kDebugMode) {
+            debugPrint(
+              'GARSON_PRINT_LATENCY trace=$traceId offline_route '
+              'lan_ok=${r.ok} T0_TO_T7=${r.totalMs}ms',
+            );
+          }
+        }),
+      );
+      // Warm connectivity for next submit — never on the print critical path.
+      unawaited(
+        offlineRouter.shouldRouteOffline(
+          restaurantId: restaurantId,
+          storeCategory: storeCategory,
+        ),
+      );
+      return offlineRouter.dispatchOfflineOrder(
         restaurantId: restaurantId,
         tableNumber: tableNumber,
-        normalized: normalized,
+        items: items,
         waiterId: waiterId,
         waiterName: waiterName,
         notes: notes,
-        traceId: traceId,
-        jobType: jobType,
-      ).timeout(const Duration(seconds: 8));
+        tableName: tableName,
+        storeCategory: storeCategory,
+      );
+    }
+    // Refresh connectivity in background for future offline decisions.
+    unawaited(() async {
+      try {
+        await offlineRouter.shouldRouteOffline(
+          restaurantId: restaurantId,
+          storeCategory: storeCategory,
+        );
+      } catch (_) {}
+    }());
+
+    final t9PersistStart = absMs();
+    final rpcWatch = Stopwatch()..start();
+    final rpcFuture = _runCreateTableOrderWithPrintJobsRpc(
+      restaurantId: restaurantId,
+      tableNumber: tableNumber,
+      normalized: normalized,
+      waiterId: waiterId,
+      waiterName: waiterName,
+      notes: notes,
+      traceId: traceId,
+      jobType: jobType,
+      localOrderId: localOrderId,
+    );
+
+    // Physical print settles first (does not wait for RPC).
+    var lanResult = _LanDirectPrintResult.skipped('pending');
+    try {
+      lanResult = await lanFuture.timeout(
+        const Duration(milliseconds: 600),
+        onTimeout: () => _LanDirectPrintResult.failed('lan_timeout'),
+      );
+    } catch (e) {
+      lanResult = _LanDirectPrintResult.failed('lan_error:$e');
+    }
+    final t8LocalPrintDone = absMs();
+
+    late final dynamic response;
+    try {
+      response = await rpcFuture.timeout(const Duration(seconds: 8));
     } on TimeoutException {
       if (!skipOfflineFallback &&
           await offlineRouter.shouldRouteOffline(
@@ -1053,6 +1187,7 @@ class OrderPrintJobService {
       rethrow;
     }
     final rpcMs = rpcWatch.elapsedMilliseconds;
+    final t10PersistDone = absMs();
 
     final data = response is Map<String, dynamic>
         ? response
@@ -1060,6 +1195,127 @@ class OrderPrintJobService {
               ? Map<String, dynamic>.from(response)
               : <String, dynamic>{});
     final printJobIds = _extractPrintJobIds(data['print_job_ids']);
+    final orderIdText = _textValue(data['order_id']);
+
+    // LAN may still complete after the 600ms client budget — settle briefly
+    // before enabling hub/fallback so we don't double-print a successful TCP.
+    if (!lanResult.ok &&
+        lanResult.reason == 'lan_timeout' &&
+        printJobIds.isNotEmpty) {
+      try {
+        final lateLan = await lanFuture.timeout(
+          const Duration(milliseconds: 350),
+        );
+        if (lateLan.ok) {
+          lanResult = lateLan;
+          logPrintDedup(
+            source: 'LAN',
+            orderId: orderIdText.isEmpty ? '-' : orderIdText,
+            printJobId: printJobIds.join(','),
+            logicalPrintKey: lateLan.logicalPrintKeys.join(','),
+            claim: 'late_settle',
+            claimResult: 'lan_ok',
+            physicalPrintStarted: true,
+            physicalPrintCompleted: true,
+            skipReason: 'timeout_then_success',
+          );
+        }
+      } catch (_) {
+        // Keep lan_timeout; bridge logical-key barrier still covers reprints.
+      }
+    }
+
+    // CRITICAL: close DB jobs as soon as LAN succeeded — before fetch/suppress
+    // so hub postgres_changes/sweep cannot claim for a second physical print.
+    if (lanResult.ok && printJobIds.isNotEmpty) {
+      for (final key in lanResult.logicalPrintKeys) {
+        KitchenLanPrintBarrier.remember(key);
+      }
+      await _markPrintJobsLanPrinted(
+        printJobIds,
+        clientJobIds: lanResult.clientJobIds,
+      );
+      logPrintDedup(
+        source: 'LAN',
+        orderId: orderIdText.isEmpty ? '-' : orderIdText,
+        printJobId: printJobIds.join(','),
+        jobId: lanResult.clientJobIds.join(','),
+        logicalPrintKey: lanResult.logicalPrintKeys.join(','),
+        claim: 'mark_completed',
+        claimResult: 'success',
+        physicalPrintStarted: true,
+        physicalPrintCompleted: true,
+        duplicate: false,
+        skipReason: '-',
+      );
+    }
+
+    final orderSavedAt = _textValue(
+      data['order_saved_at'],
+      fallback: DateTime.now().toIso8601String(),
+    );
+    final printJobCreatedAt = _textValue(
+      data['print_job_created_at'],
+      fallback: DateTime.now().toIso8601String(),
+    );
+    final printSystemEnabledFuture = _fetchPrintSystemEnabled(restaurantId);
+
+    if (kDebugMode) {
+      debugPrint(
+        'GARSON_PRINT_LATENCY\n'
+        'trace=$traceId ok=${lanResult.ok} reason=${lanResult.reason}\n'
+        'T0_SEND_PRESSED=0\n'
+        'T1_LOCAL_PRINT_START=${t1LocalPrintStart}ms\n'
+        'T2_BRIDGE_REQUEST_START=${lanResult.t2}ms\n'
+        'T3_BRIDGE_RECEIVED=${lanResult.t3}ms\n'
+        'T4_TCP_CONNECT_START=${lanResult.t4}ms\n'
+        'T5_TCP_CONNECTED=${lanResult.t5}ms\n'
+        'T6_PAYLOAD_SENT=${lanResult.t6}ms\n'
+        'T7_BRIDGE_SUCCESS=${lanResult.t7}ms\n'
+        'T8_LOCAL_PRINT_DONE=${t8LocalPrintDone}ms\n'
+        'T9_ORDER_PERSIST_START=${t9PersistStart}ms\n'
+        'T10_ORDER_PERSIST_DONE=${t10PersistDone}ms\n'
+        'T0_TO_T1=${t1LocalPrintStart}ms '
+        'T1_TO_T3=${lanResult.t3 - t1LocalPrintStart}ms '
+        'T3_TO_T7=${lanResult.t7 - lanResult.t3}ms '
+        'T0_TO_T7=${lanResult.t7}ms\n'
+        'rpc=${rpcMs}ms garsonDesktopFastKitchen=$garsonDesktopFastKitchen',
+      );
+      debugPrint(
+        'LOCAL_PRINT_LATENCY\n'
+        'trace=$traceId ok=${lanResult.ok} reason=${lanResult.reason}\n'
+        'T0=${lanResult.t0} T1=${lanResult.t1} T2=${lanResult.t2} '
+        'T3=${lanResult.t3} T4=${lanResult.t4} T5=${lanResult.t5} '
+        'T6=${lanResult.t6} T7=${lanResult.t7} T8=${lanResult.t8}\n'
+        'button_to_bridge=${lanResult.buttonToBridgeMs}ms '
+        'bridge_to_printer=${lanResult.bridgeToPrinterMs}ms '
+        'TOTAL=${lanResult.totalMs}ms',
+      );
+      debugPrint(
+        'CLOUD_PRINT_LATENCY trace=$traceId rpc=${rpcMs}ms '
+        'lan_ok=${lanResult.ok} fallback=${lanResult.ok ? "skipped" : "hub_or_local"}',
+      );
+    }
+
+    // Early broadcast only when LAN did NOT already print (fallback path).
+    final shouldBroadcastToHub =
+        printJobIds.isNotEmpty &&
+        !lanResult.ok &&
+        (!_canDirectDispatch || !garsonDesktopFastKitchen);
+    final cachedPrintEnabled = _printSystemEnabledCache[restaurantId];
+    if (shouldBroadcastToHub && cachedPrintEnabled != false) {
+      unawaited(
+        _broadcastPrintJobsReady(
+          restaurantId,
+          printJobIds,
+          printJobCreatedAt: printJobCreatedAt,
+          orderSavedAt: orderSavedAt,
+          pipelineStartedAt: pipelineStartedAt,
+          traceId: traceId,
+        ),
+      );
+    }
+
     final jobsForEventLog = printJobIds.isEmpty
         ? const <Map<String, dynamic>>[]
         : await _fetchPrintJobsByIds(printJobIds);
@@ -1075,14 +1331,6 @@ class OrderPrintJobService {
       printJobIds: printJobIds,
       jobsById: jobsById,
     );
-    final orderSavedAt = _textValue(
-      data['order_saved_at'],
-      fallback: DateTime.now().toIso8601String(),
-    );
-    final printJobCreatedAt = _textValue(
-      data['print_job_created_at'],
-      fallback: DateTime.now().toIso8601String(),
-    );
 
     debugPrint(
       '[PrintPipeline] trace=$traceId stage=print_job_created '
@@ -1091,7 +1339,8 @@ class OrderPrintJobService {
       'orderId=${_logValue(data['order_id'])} '
       'rpcMs=$rpcMs pipelineMs=${pipelineWatch.elapsedMilliseconds} '
       'printJobCount=${(data['print_job_count'] as num?)?.toInt() ?? 0} '
-      'printJobIds=${printJobIds.isEmpty ? '-' : printJobIds.join(",")}',
+      'printJobIds=${printJobIds.isEmpty ? '-' : printJobIds.join(",")} '
+      'early_broadcast=${shouldBroadcastToHub && cachedPrintEnabled != false}',
     );
 
     _logKitchen(
@@ -1250,26 +1499,37 @@ class OrderPrintJobService {
           .ignore();
     }
 
-    final printSystemEnabled = await _fetchPrintSystemEnabled(restaurantId);
+    final printSystemEnabled = await printSystemEnabledFuture;
     if (!printSystemEnabled && printJobIds.isNotEmpty) {
       await _pausePrintJobs(
         printJobIds,
         reason: 'Baskı sistemi kapalı. Fiş yazdırılmadı.',
       );
-      // Do NOT broadcast jobs when printing is disabled; we want these to stay paused.
-    } else if (!_canDirectDispatch && printJobIds.isNotEmpty) {
-      // On mobile (iOS/Android), send a Supabase Realtime broadcast to
-      // notify the desktop hub INSTANTLY about new print jobs.
-      // This bypasses postgres_changes WAL latency (1-5s → <200ms).
-      _broadcastPrintJobsReady(restaurantId, printJobIds).ignore();
+    } else if (lanResult.ok && filteredPrintJobIds.isNotEmpty) {
+      // LAN already printed — mark DB jobs completed so hub/sweep won't reprint.
+      await _markPrintJobsLanPrinted(
+        filteredPrintJobIds,
+        clientJobIds: lanResult.clientJobIds,
+      );
     }
+    // Broadcast (if needed) already fired earlier when LAN failed.
 
     final useGarsonFastKitchen =
+        !lanResult.ok &&
         garsonDesktopFastKitchen &&
         _canDirectDispatch &&
         printSystemEnabled &&
         filteredPrintJobIds.isNotEmpty;
-    final dispatchOutcome = useGarsonFastKitchen
+    final dispatchOutcome = lanResult.ok
+        ? _KitchenPrintDispatchOutcome(
+            dispatchedJobCount: filteredPrintJobIds.length,
+            failedJobCount: 0,
+            failureMessages: const <String>[],
+            physicallyDispatched: true,
+            bridgeRequestMs: lanResult.bridgeToPrinterMs,
+            dispatchPath: 'lan_direct',
+          )
+        : useGarsonFastKitchen
         ? await _dispatchCreatedPrintJobsGarsonFast(
             restaurantId: restaurantId,
             tableNumber: tableNumber,
@@ -1286,7 +1546,9 @@ class OrderPrintJobService {
           );
 
     logKitchenDispatchPath(
-      path: useGarsonFastKitchen
+      path: lanResult.ok
+          ? 'lan_direct'
+          : useGarsonFastKitchen
           ? 'print_jobs_garson_fast'
           : (_canDirectDispatch ? 'print_jobs_legacy_rpc' : 'hub'),
       physicallyDispatched: dispatchOutcome.physicallyDispatched,
@@ -1360,9 +1622,11 @@ class OrderPrintJobService {
       final first = list.isNotEmpty ? list.first : null;
       final map = first is Map ? Map<String, dynamic>.from(first) : null;
       final enabled = map?['print_system_enabled'];
-      return enabled is bool ? enabled : true;
+      final resolved = enabled is bool ? enabled : true;
+      _printSystemEnabledCache[restaurantId] = resolved;
+      return resolved;
     } catch (_) {
-      return true;
+      return _printSystemEnabledCache[restaurantId] ?? true;
     }
   }
 
@@ -1439,6 +1703,55 @@ class OrderPrintJobService {
     );
   }
 
+  /// Cargo / existing ecommerce order: insert pending kitchen [print_jobs]
+  /// grouped by production station. Does not call Garson table RPC.
+  Future<CargoKitchenPrintJobsResult> createPrintJobsForExistingOrder({
+    required String restaurantId,
+    required String orderId,
+    required String orderNumber,
+    required List<Map<String, dynamic>> orderItems,
+    List<Map<String, dynamic>>? productLines,
+    String? storeName,
+    String? createdAt,
+  }) {
+    return SellerCargoPrintJobService(client: _client)
+        .createPrintJobsForExistingOrder(
+      restaurantId: restaurantId,
+      orderId: orderId,
+      orderNumber: orderNumber,
+      orderItems: orderItems,
+      productLines: productLines,
+      stationNamesById: cachedStationNamesForRestaurant(restaurantId),
+      stationCodesById: cachedStationCodesForRestaurant(restaurantId),
+      productStationByProductId:
+          mergedKitchenProductMappingsForRestaurant(restaurantId),
+      storeName: storeName,
+      createdAt: createdAt,
+      onJobsInserted: (printJobIds) => notifyHubPrintJobsReady(
+        restaurantId: restaurantId,
+        printJobIds: printJobIds,
+      ),
+    );
+  }
+
+  Future<void> notifyHubPrintJobsReady({
+    required String restaurantId,
+    required List<String> printJobIds,
+    String printJobCreatedAt = '',
+    String orderSavedAt = '',
+    String pipelineStartedAt = '',
+    String traceId = '',
+  }) {
+    return _broadcastPrintJobsReady(
+      restaurantId,
+      printJobIds,
+      printJobCreatedAt: printJobCreatedAt,
+      orderSavedAt: orderSavedAt,
+      pipelineStartedAt: pipelineStartedAt,
+      traceId: traceId,
+    );
+  }
+
   /// Fast reprint: clone existing kitchen print_job payloads instead of
   /// recreating orders via [create_table_order_with_print_jobs].
   Future<OrderPrintJobDispatchResult> dispatchReprintFast({
@@ -1494,9 +1807,9 @@ class OrderPrintJobService {
       fetchWatch.stop();
       perf.mark('fetchJobMs=${fetchWatch.elapsedMilliseconds}');
       final sourceJobs = pickLatestKitchenPrintJobsForReprint(
-        List<Map<String, dynamic>>.from(rows as List)
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList(growable: false),
+        List<Map<String, dynamic>>.from(
+          rows as List,
+        ).map((row) => Map<String, dynamic>.from(row)).toList(growable: false),
       );
       if (sourceJobs.isEmpty) {
         logGarsonPerfReprint(
@@ -1799,33 +2112,98 @@ class OrderPrintJobService {
     required String? notes,
     required String traceId,
     required String jobType,
+    String? localOrderId,
   }) async {
+    final normalizedLocalOrderId = localOrderId?.trim() ?? '';
+    // PostgREST overload çözümü gönderilen ARGÜMAN ADLARI kümesine göre yapılır:
+    // null gönderilen bir key bile imzaya dahil sayılır. p_local_order_id yalnız
+    // offline replay'de (20260802_orders_table_local_order_idempotency.sql)
+    // anlamlıdır ve DB tarafında `default null`'dur; online garson akışında key'i
+    // hiç göndermeyerek çağrıyı 8-arg imzayla da uyumlu tutuyoruz. Aksi halde
+    // migration uygulanmamış bir DB'de tüm garson siparişleri PGRST202
+    // ("Could not find the function ... in the schema cache") ile düşüyordu.
+    final params = <String, dynamic>{
+      'p_restaurant_id': restaurantId,
+      'p_table_number': tableNumber,
+      'p_items': normalized,
+      'p_waiter_id': (waiterId == null || waiterId.isEmpty) ? null : waiterId,
+      'p_waiter_name': waiterName,
+      'p_notes': '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}',
+      'p_job_type': jobType,
+      'p_order_type': 'table',
+      if (normalizedLocalOrderId.isNotEmpty)
+        'p_local_order_id': normalizedLocalOrderId,
+    };
     try {
       return await _client.rpc(
         'create_table_order_with_print_jobs',
-        params: {
-          'p_restaurant_id': restaurantId,
-          'p_table_number': tableNumber,
-          'p_items': normalized,
-          'p_waiter_id': (waiterId == null || waiterId.isEmpty)
-              ? null
-              : waiterId,
-          'p_waiter_name': waiterName,
-          'p_notes':
-              '$traceId${notes != null && notes.isNotEmpty ? ' $notes' : ''}',
-          'p_job_type': jobType,
-          'p_order_type': 'table',
-        },
+        params: params,
       );
     } on PostgrestException catch (error) {
-      throw Exception(_friendlyDispatchRpcError(error));
+      // Idempotent replay: idx_orders_restaurant_local_order (restaurant_id,
+      // local_order_id) 23505 fırlattıysa aynı offline sipariş zaten oluşmuştur.
+      // Yeni order/items/print_jobs/kitchen dispatch YOK; mevcut sipariş okunup
+      // print_job_ids=[] ile döndürülür (downstream boş listede hiç dispatch etmez).
+      final details =
+          '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
+              .toLowerCase();
+      if (normalizedLocalOrderId.isNotEmpty &&
+          error.code == '23505' &&
+          (details.contains('idx_orders_restaurant_local_order') ||
+              details.contains('local_order_id'))) {
+        final existing = await _client
+            .from('orders')
+            .select('id, order_number')
+            .eq('restaurant_id', restaurantId)
+            .eq('local_order_id', normalizedLocalOrderId)
+            .limit(1)
+            .maybeSingle();
+        if (existing != null) {
+          final row = Map<String, dynamic>.from(existing);
+          return <String, dynamic>{
+            'order_id': row['id'],
+            'order_number': row['order_number'],
+            'print_job_ids': const <dynamic>[],
+            'idempotent_replay': true,
+          };
+        }
+      }
+      throw Exception(
+        _friendlyDispatchRpcError(
+          error,
+          usedLocalOrderId: normalizedLocalOrderId.isNotEmpty,
+        ),
+      );
     }
   }
 
-  String _friendlyDispatchRpcError(PostgrestException error) {
+  String _friendlyDispatchRpcError(
+    PostgrestException error, {
+    bool usedLocalOrderId = false,
+  }) {
     final details =
         '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
             .toLowerCase();
+    // PGRST202: fonksiyon (bu argüman kümesiyle) schema cache'te yok. İki gerçek
+    // neden var: (1) migration DB'ye hiç uygulanmadı, (2) uygulandı ama PostgREST
+    // cache yenilenmedi. Ham mesaj operatöre ne yapacağını söylemiyor.
+    if (error.code == 'PGRST202' ||
+        (details.contains('could not find the function') &&
+            details.contains('create_table_order_with_print_jobs'))) {
+      if (usedLocalOrderId) {
+        return 'Mutfak fişi oluşturulamadı. Supabase\'de '
+            'create_table_order_with_print_jobs fonksiyonunun p_local_order_id '
+            'parametreli sürümü yok. '
+            'ibul_app/supabase/migrations/20260802_orders_table_local_order_idempotency.sql '
+            'dosyasını SQL Editor\'da çalıştırın (sonunda '
+            "notify pgrst, 'reload schema'; vardır).";
+      }
+      return 'Mutfak fişi oluşturulamadı. Supabase\'de '
+          'create_table_order_with_print_jobs fonksiyonu bu imzayla bulunamadı. '
+          'ibul_app/supabase/migrations/ altındaki mutfak print migration\'ları '
+          'uygulanmamış olabilir; uygulandıysa PostgREST şema önbelleği için '
+          "notify pgrst, 'reload schema'; çalıştırın.";
+    }
     if (details.contains(
           'column "table_number" of relation "orders" does not exist',
         ) ||
@@ -1922,49 +2300,60 @@ class OrderPrintJobService {
         continue;
       }
 
-      final payload = await _payloadWithPrinterConfig(job);
+      // Perf: _payloadWithPrinterConfig (encoding config için job'ın kendi
+      // printer_id'sini okur) ve resolveKitchenPrinterForStationOrRole (asıl
+      // dispatch yazıcısını çözer) birbirinden bağımsız. jobStationId/stationName
+      // için ham job payload'ı kullanılıyor — _payloadWithPrinterConfig yalnız
+      // printer_encoding/printer_code_page/printer_assigned_roles EKLER,
+      // station_id/station_name/station_code alanlarına hiç dokunmaz; yani bu
+      // değerler await sonrası safePayload'ta da birebir aynı olurdu. Bu sayede
+      // iki bağımsız DB/cache okuması aynı anda başlar (~1 round-trip kazanç),
+      // job başına claim->resolve->mark-printing->physical-print sırası ve
+      // job'lar arası döngü sırası değişmez.
+      final rawJobPayload = _jobPayload(job);
+      final jobStationId = _textValue(
+        job['station_id'] ?? rawJobPayload['station_id'],
+      );
+      final stationNameForResolve =
+          stationNamesById[jobStationId] ??
+          _textValue(rawJobPayload['station_name']);
+      final printerResolveWatch = Stopwatch()..start();
+      debugPrint('[KitchenPrintJob][create_start]');
+      debugPrint('documentType=kitchen');
+      debugPrint('role=mutfak');
+      debugPrint('stationName=$stationNameForResolve');
+      debugPrint('stationId=${jobStationId.isEmpty ? '-' : jobStationId}');
+      final parallelResults = await Future.wait<dynamic>([
+        _payloadWithPrinterConfig(job),
+        _printOrchestrator.resolveKitchenPrinterForStationOrRole(
+          restaurantId: restaurantId,
+          stationId: jobStationId,
+          stationName: stationNameForResolve,
+          tableId: tableNumber.toString(),
+          orderId: _logValue(job['order_id']),
+          printJobId: printJobId,
+          flowName: 'kitchen_order',
+          source: 'order_print_job_service_garson_fast',
+          minimalSnapshot: true,
+        ),
+      ]);
+      totalPrinterResolveMs += printerResolveWatch.elapsedMilliseconds;
+      final payload = parallelResults[0] as Map<String, dynamic>;
       final safePayload = Map<String, dynamic>.from(payload);
       if (KitchenTicketHeaderResolver.isDiningAreaStationLabel(
         _textValue(safePayload['area_name']),
       )) {
         safePayload.remove('area_name');
       }
-      final jobStationId = _textValue(
-        job['station_id'] ?? safePayload['station_id'],
-      );
       final headerOverride = jobStationId.isNotEmpty
           ? KitchenTicketHeaderResolver.productionHeaderLabel(
-              stationName:
-                  stationNamesById[jobStationId] ??
-                  _textValue(safePayload['station_name']),
+              stationName: stationNameForResolve,
               stationCode:
                   stationCodesById[jobStationId] ??
                   _textValue(safePayload['station_code']),
             )
           : null;
-      final printerResolveWatch = Stopwatch()..start();
-      debugPrint('[KitchenPrintJob][create_start]');
-      debugPrint('documentType=kitchen');
-      debugPrint('role=mutfak');
-      debugPrint(
-        'stationName=${stationNamesById[jobStationId] ?? _textValue(safePayload['station_name'])}',
-      );
-      debugPrint('stationId=${jobStationId.isEmpty ? '-' : jobStationId}');
-      final kitchenPrinter = await _printOrchestrator
-          .resolveKitchenPrinterForStationOrRole(
-            restaurantId: restaurantId,
-            stationId: jobStationId,
-            stationName:
-                stationNamesById[jobStationId] ??
-                _textValue(safePayload['station_name']),
-            tableId: tableNumber.toString(),
-            orderId: _logValue(job['order_id']),
-            printJobId: printJobId,
-            flowName: 'kitchen_order',
-            source: 'order_print_job_service_garson_fast',
-            minimalSnapshot: true,
-          );
-      totalPrinterResolveMs += printerResolveWatch.elapsedMilliseconds;
+      final kitchenPrinter = parallelResults[1] as UnifiedPrinterModel?;
       if (kitchenPrinter == null) {
         failedJobCount += 1;
         failureMessages.add(
@@ -2029,6 +2418,14 @@ class OrderPrintJobService {
         documentType: 'kitchen',
         role: 'mutfak',
       );
+      final logicalPrintKey = buildKitchenLogicalPrintKeyFromPayload(
+        restaurantId: restaurantId,
+        payload: kitchenPayload,
+        job: job,
+      );
+      kitchenPayload['logical_print_key'] = logicalPrintKey;
+      kitchenPayload['content_idempotency_key'] = logicalPrintKey;
+      kitchenPayload['idempotency_key'] = logicalPrintKey;
       _logOrderPrintJobPersistedPayload(kitchenPayload);
 
       final tapAt = DateTime.now().toIso8601String();
@@ -2038,6 +2435,32 @@ class OrderPrintJobService {
         job: job,
         payload: kitchenPayload,
       );
+      if (KitchenLanPrintBarrier.alreadyPrinted(logicalPrintKey)) {
+        logPrintDedup(
+          source: 'FALLBACK',
+          orderId: _logValue(job['order_id']),
+          printJobId: printJobId,
+          jobId: printJobId,
+          logicalPrintKey: logicalPrintKey,
+          claim: 'claimed',
+          claimResult: 'success',
+          physicalPrintStarted: false,
+          duplicate: true,
+          skipReason: 'lan_already_printed',
+        );
+        await _markPrintJobCompleted(
+          printJobId,
+          completedAt: DateTime.now(),
+          bridgeResult: const <String, dynamic>{
+            'ok': true,
+            'duplicate': true,
+            'errorCode': 'already_processed',
+          },
+          payload: kitchenPayload,
+        );
+        dispatchedJobCount += 1;
+        continue;
+      }
       try {
         debugPrint(
           '[KITCHEN_PHYSICAL_DISPATCH_ATTEMPT] '
@@ -2060,6 +2483,16 @@ class OrderPrintJobService {
         logKitchenFinalBeforeBridge(
           path: 'print_jobs_garson_fast',
           payload: kitchenPayload,
+        );
+        logPrintDedup(
+          source: 'FALLBACK',
+          orderId: _logValue(job['order_id']),
+          printJobId: printJobId,
+          jobId: printJobId,
+          logicalPrintKey: logicalPrintKey,
+          claim: 'claimed',
+          claimResult: 'success',
+          physicalPrintStarted: true,
         );
         final physicalResult = await _printOrchestrator.printPhysicalToPrinter(
           kitchenPrinter,
@@ -4049,6 +4482,21 @@ class OrderPrintJobService {
         printerPayload['printer_record_id'] ??
         payload['printer_record_id'];
     payload['station_name'] = stationName;
+    // Sync from cached printer.raw only — never await DB on garson hot path.
+    final printSize = printerPayload['print_size'] ?? printer.raw['print_size'];
+    final printScale =
+        printerPayload['print_text_scale'] ?? printer.raw['print_text_scale'];
+    if (printSize != null && printSize.toString().trim().isNotEmpty) {
+      payload['print_size'] = printSize;
+      printerPayload['print_size'] = printSize;
+    }
+    if (printScale != null) {
+      payload['print_text_scale'] = printScale;
+      payload['printTextScale'] = printScale;
+      printerPayload['print_text_scale'] = printScale;
+      printerPayload['printTextScale'] = printScale;
+    }
+    payload['printer'] = printerPayload;
     if (printer.backend == DesktopPrinterBackend.tcp) {
       final host =
           (printerPayload['host'] ??
@@ -4574,63 +5022,20 @@ class OrderPrintJobService {
     Map<String, String>? stationCodesById,
     Map<String, ProductStationMapping>? productStationByProductId,
   }) {
-    final grouped = <String, _KitchenStationPrintGroup>{};
-    for (final item in items) {
-      logKitchenRoutingGroupInput(item);
-      var stationId = item['station_id']?.toString().trim() ?? '';
-      final productId = item['product_id']?.toString().trim() ?? '';
-      final mapping = productId.isEmpty
-          ? null
-          : productStationByProductId?[productId];
-      if (stationId.isEmpty &&
-          mapping != null &&
-          mapping.stationId.isNotEmpty) {
-        stationId = mapping.stationId;
-        item['station_id'] = stationId;
-      }
-      if (mapping != null && mapping.stationCode.isNotEmpty) {
-        item['station_code'] = mapping.stationCode;
-      } else if (stationId.isNotEmpty &&
-          (stationCodesById?[stationId] ?? '').isNotEmpty) {
-        item['station_code'] = stationCodesById![stationId]!;
-      }
-      final key = stationId.isEmpty ? '__general__' : stationId;
-      final stationName =
-          KitchenTicketHeaderResolver.resolveProductionHeaderForItem(
-            item: item,
-            stationNamesById: stationNamesById,
-            stationCodesById: stationCodesById,
-            productStationByProductId: productStationByProductId,
-          );
-      grouped
-          .putIfAbsent(
-            key,
-            () => _KitchenStationPrintGroup(
-              stationId: stationId,
-              stationName: stationName,
-              items: <Map<String, dynamic>>[],
-            ),
-          )
-          .items
-          .add(item);
-      logKitchenRoutingGroupCreated(
-        groupKey: key,
-        stationId: stationId,
-        stationName: stationName,
-        stationCode: item['station_code']?.toString() ?? '',
-        itemCount: grouped[key]!.items.length,
-      );
-    }
-    if (grouped.isEmpty) {
-      return <_KitchenStationPrintGroup>[
-        _KitchenStationPrintGroup(
-          stationId: '',
-          stationName: kKitchenGeneralStationLabel,
-          items: items,
-        ),
-      ];
-    }
-    return grouped.values.toList(growable: false);
+    return groupItemsByProductionStation(
+          items,
+          stationNamesById: stationNamesById,
+          stationCodesById: stationCodesById,
+          productStationByProductId: productStationByProductId,
+        )
+        .map(
+          (group) => _KitchenStationPrintGroup(
+            stationId: group.stationId,
+            stationName: group.stationName,
+            items: group.items,
+          ),
+        )
+        .toList(growable: false);
   }
 
   int _intValue(dynamic value, {int fallback = 0}) {
@@ -4658,61 +5063,477 @@ class OrderPrintJobService {
     }
   }
 
+  Future<void> _markPrintJobsLanPrinted(
+    List<String> printJobIds, {
+    List<String> clientJobIds = const <String>[],
+  }) async {
+    if (printJobIds.isEmpty) return;
+    final now = DateTime.now().toIso8601String();
+    // Keep payload intact — only flip status so hub/sweep skip reprint.
+    for (final printJobId in printJobIds) {
+      try {
+        await _client
+            .from('print_jobs')
+            .update({
+              'status': 'completed',
+              'last_error': null,
+              'printed_at': now,
+              'completed_at': now,
+            })
+            .eq('id', printJobId)
+            .inFilter('status', ['pending', 'claimed']);
+      } catch (e) {
+        debugPrint(
+          '[OrderPrintJobService] lan mark completed failed '
+          'jobId=$printJobId clientIds=${clientJobIds.join(",")} '
+          'error=$e',
+        );
+      }
+    }
+  }
+
+  /// Sync memory/snapshot only — never SharedPreferences, health, or Supabase.
+  UnifiedPrinterModel? _resolveLanKitchenPrinterSync({
+    required String restaurantId,
+  }) {
+    final snap = _printOrchestrator.peekCachedSetupSnapshot(restaurantId);
+    final fromSnap = snap?.localConfig?.kitchenSelection?.printer;
+    if (fromSnap != null) {
+      final host = _printerHostForPayload(fromSnap)?.trim() ?? '';
+      if (host.isNotEmpty &&
+          host != '127.0.0.1' &&
+          host != 'localhost' &&
+          fromSnap.backend == DesktopPrinterBackend.tcp) {
+        return fromSnap;
+      }
+    }
+
+    final cached = LanPrintBridgeLocator.peekKitchenTcpMemory(restaurantId);
+    if (cached == null) return null;
+    final id = 'tcp:${cached.host}:${cached.port}';
+    return UnifiedPrinterModel(
+      id: id,
+      displayName: 'Kitchen TCP ${cached.host}',
+      queueName: id,
+      backend: DesktopPrinterBackend.tcp,
+      os: DesktopPrinterOs.macos,
+      isAvailable: true,
+      canPrint: true,
+      raw: <String, dynamic>{
+        'host': cached.host,
+        'ip_address': cached.host,
+        'ipAddress': cached.host,
+        'port': cached.port,
+        'backend': 'tcp',
+        'transportType': 'ethernet',
+        'source': 'lan_kitchen_tcp_cache',
+      },
+    );
+  }
+
+  /// Mobile/LAN-first kitchen print: resolve bridge → POST /print/kitchen.
+  /// Never awaits Supabase; uses short timeouts and offline printer cache.
+  Future<_LanDirectPrintResult> _attemptLanDirectKitchenPrint({
+    required String restaurantId,
+    required int tableNumber,
+    required List<Map<String, dynamic>> items,
+    String? waiterName,
+    required String pipelineStartedAt,
+    required String traceId,
+    int t0ElapsedMs = 0,
+  }) async {
+    final totalWatch = Stopwatch()..start();
+    final t0 = t0ElapsedMs;
+    try {
+      final locator = LanPrintBridgeLocator();
+      final productMappings = mergedKitchenProductMappingsForRestaurant(
+        restaurantId,
+      );
+      final stationNamesById =
+          KitchenTicketHeaderResolver.sanitizeStationNameMap(
+            _readCachedStationNames(restaurantId),
+          );
+      final stationCodesById = cachedStationCodesForRestaurant(restaurantId);
+      final stationGroups = _groupItemsByProductionStation(
+        items,
+        stationNamesById: stationNamesById,
+        stationCodesById: stationCodesById,
+        productStationByProductId: productMappings,
+      );
+      if (stationGroups.isEmpty) {
+        return _LanDirectPrintResult.failed('no_station_groups');
+      }
+
+      // Memory/snapshot only — no SharedPreferences / health / discovery.
+      var kitchenPrinter = _resolveLanKitchenPrinterSync(
+        restaurantId: restaurantId,
+      );
+
+      // Desktop: localhost bridge (Sistem Alanı ile aynı). Mobile: warm LAN cache.
+      final Uri bridgeUri;
+      if (_canDirectDispatch) {
+        bridgeUri = Uri.parse('http://127.0.0.1:3001');
+      } else {
+        final resolved = await locator
+            .resolve(restaurantId, allowDiscover: false)
+            .timeout(
+              const Duration(milliseconds: 200),
+              onTimeout: () => null,
+            );
+        if (resolved == null) {
+          return _LanDirectPrintResult.failed('bridge_not_found');
+        }
+        bridgeUri = resolved;
+      }
+
+      // Cache miss OK — bridge uses last_kitchen_tcp / network_host.
+      kitchenPrinter ??= UnifiedPrinterModel(
+        id: 'tcp:bridge-default',
+        displayName: 'Kitchen Bridge Default',
+        queueName: 'tcp:bridge-default',
+        backend: DesktopPrinterBackend.tcp,
+        os: DesktopPrinterOs.macos,
+        isAvailable: true,
+        canPrint: true,
+        raw: const <String, dynamic>{
+          'backend': 'tcp',
+          'transportType': 'ethernet',
+          'source': 'bridge_last_kitchen_tcp',
+        },
+      );
+      final t1 = t0 + totalWatch.elapsedMilliseconds;
+
+      final printService = LocalPrintService(
+        baseUri: bridgeUri,
+        timeout: LocalPrintService.ethernetHotPathTimeout,
+      );
+      final clientJobIds = <String>[];
+      final logicalPrintKeys = <String>[];
+      final bridgeWatch = Stopwatch()..start();
+      var t2 = t1;
+      var t3 = t1;
+      var t4 = 0;
+      var t5 = 0;
+      var t6 = 0;
+      var t7 = 0;
+
+      for (final group in stationGroups) {
+        final clientJobId = _generateClientPrintJobId();
+        clientJobIds.add(clientJobId);
+        final logicalKey = buildKitchenLogicalPrintKey(
+          restaurantId: restaurantId,
+          tableNumber: tableNumber.toString(),
+          stationId: group.stationId,
+          stationName: group.stationName,
+          revision: 1,
+          items: group.items,
+        );
+        logicalPrintKeys.add(logicalKey);
+        final kitchenPayload = _buildKitchenPayload(
+          job: <String, dynamic>{
+            'job_type': 'new_order',
+            if (group.stationId.isNotEmpty) 'station_id': group.stationId,
+          },
+          payload: <String, dynamic>{
+            'table_number': tableNumber,
+            'restaurant_id': restaurantId,
+            'station_id': group.stationId.isEmpty ? null : group.stationId,
+            if (group.stationId.isNotEmpty) ...<String, dynamic>{
+              'station_code': stationCodesById[group.stationId] ?? '',
+              'station_name': group.stationName,
+              'kitchen_ticket_header': group.stationName,
+            },
+            if (waiterName != null && waiterName.trim().isNotEmpty)
+              'waiter_name': waiterName.trim(),
+            'print_job_id': clientJobId,
+            'client_print_job_id': clientJobId,
+            'logical_print_key': logicalKey,
+            'content_idempotency_key': logicalKey,
+            'idempotency_key': logicalKey,
+            'revision': 1,
+            'lan_hot_path': true,
+            'render_mode': 'text',
+          },
+          fallbackTableNumber: tableNumber,
+          sourceItems: group.items,
+          stationNamesById: stationNamesById,
+          productStationByProductId: productMappings,
+          stationCodesById: stationCodesById,
+          kitchenTicketHeaderOverride: group.stationName,
+        );
+        stampKitchenOrderNumberFields(kitchenPayload);
+        // Sistem Alanı parity: text ESC/POS — never force image raster on hot path.
+        kitchenPayload['printer_id'] = kitchenPrinter.id;
+        kitchenPayload['printer_name'] = kitchenPrinter.displayName;
+        kitchenPayload['printer_queue'] = kitchenPrinter.queueName;
+        kitchenPayload['printer_backend'] = kitchenPrinter.backend.value;
+        kitchenPayload['document_type'] = 'kitchen';
+        kitchenPayload['flow_type'] = 'kitchen_order';
+        kitchenPayload['print_job_id'] = clientJobId;
+        kitchenPayload['client_print_job_id'] = clientJobId;
+        kitchenPayload['logical_print_key'] = logicalKey;
+        kitchenPayload['content_idempotency_key'] = logicalKey;
+        kitchenPayload['idempotency_key'] = logicalKey;
+        kitchenPayload['restaurant_id'] = restaurantId;
+        kitchenPayload['lan_hot_path'] = true;
+        kitchenPayload['render_mode'] = 'text';
+        kitchenPayload['turkish_guarantee_mode'] = false;
+        _stampResolvedKitchenPrinterPayload(
+          kitchenPayload,
+          printer: kitchenPrinter,
+          stationName: group.stationName,
+        );
+        final host = _textValue(
+          kitchenPayload['host'] ?? kitchenPayload['ip_address'],
+        );
+        final port =
+            int.tryParse(_textValue(kitchenPayload['port'], fallback: '9100')) ??
+            9100;
+        if (host.isNotEmpty) {
+          kitchenPayload['target_host'] = host;
+          kitchenPayload['target_port'] = port;
+        }
+        _printOrchestrator.stampDispatchProfileOnPayload(
+          kitchenPayload,
+          printer: kitchenPrinter,
+          documentType: 'kitchen',
+          role: 'mutfak',
+        );
+        // stampDispatchProfile may re-apply image via turkish defaults — force text.
+        kitchenPayload['lan_hot_path'] = true;
+        kitchenPayload['render_mode'] = 'text';
+        kitchenPayload['turkish_guarantee_mode'] = false;
+        if (host.isNotEmpty) {
+          kitchenPayload['target_host'] = host;
+          kitchenPayload['target_port'] = port;
+        }
+
+        t2 = t0 + totalWatch.elapsedMilliseconds;
+        logPrintDedup(
+          source: 'LAN',
+          printJobId: clientJobId,
+          jobId: clientJobId,
+          logicalPrintKey: logicalKey,
+          claim: 'none',
+          claimResult: 'hot_path',
+          physicalPrintStarted: true,
+        );
+        final result = await printService.printKitchen(kitchenPayload);
+        t3 = t0 + totalWatch.elapsedMilliseconds;
+        t7 = t3;
+        final latency = result?['local_print_latency'];
+        if (latency is Map) {
+          t4 = int.tryParse(latency['t4_tcp_connect_start_ms']?.toString() ?? '') ??
+              t4;
+          t5 = int.tryParse(latency['t5_tcp_connected_ms']?.toString() ?? '') ??
+              t5;
+          t6 = int.tryParse(latency['t6_payload_sent_ms']?.toString() ?? '') ??
+              t6;
+        }
+        final ok =
+            result != null &&
+            (result['ok'] == true || result['duplicate'] == true);
+        if (!ok || result == null) {
+          return _LanDirectPrintResult.failed('bridge_print_failed');
+        }
+        // Remember before RPC/hub can claim — sync, no network.
+        KitchenLanPrintBarrier.remember(logicalKey);
+        final wasDuplicate = result['duplicate'] == true;
+        logPrintDedup(
+          source: 'LAN',
+          printJobId: clientJobId,
+          jobId: clientJobId,
+          logicalPrintKey: logicalKey,
+          claim: 'barrier_remember',
+          claimResult: 'success',
+          alreadyProcessed: wasDuplicate,
+          physicalPrintStarted: true,
+          physicalPrintCompleted: true,
+          duplicate: wasDuplicate,
+        );
+        final actualHost = _textValue(result['actual_host'] ?? host);
+        final actualPort =
+            int.tryParse(
+              _textValue(result['actual_port'], fallback: '$port'),
+            ) ??
+            port;
+        if (actualHost.isNotEmpty) {
+          unawaited(
+            locator.rememberKitchenTcp(
+              restaurantId,
+              host: actualHost,
+              port: actualPort,
+            ),
+          );
+        }
+      }
+
+      if (!_canDirectDispatch) {
+        unawaited(locator.remember(restaurantId, bridgeUri));
+      }
+      final t8 = t0 + totalWatch.elapsedMilliseconds;
+      return _LanDirectPrintResult(
+        ok: true,
+        reason: 'lan_ok',
+        clientJobIds: clientJobIds,
+        logicalPrintKeys: logicalPrintKeys,
+        buttonToBridgeMs: t2,
+        bridgeToPrinterMs: bridgeWatch.elapsedMilliseconds,
+        totalMs: t8,
+        t0: t0,
+        t1: t1,
+        t2: t2,
+        t3: t3,
+        t4: t4,
+        t5: t5,
+        t6: t6,
+        t7: t7,
+        t8: t8,
+      );
+    } catch (e) {
+      debugPrint('[OrderPrintJobService] lan direct print failed: $e');
+      return _LanDirectPrintResult.failed('lan_exception');
+    }
+  }
+
   /// Broadcast print job IDs to the desktop hub via Supabase Realtime.
   ///
-  /// This is the "fast lane" for mobile → desktop print notification.
-  /// Supabase broadcast goes directly through the Realtime server without
-  /// WAL polling, giving <200ms delivery vs 1-5s for postgres_changes.
-  ///
-  /// Fire-and-forget: failures are logged but never block the caller.
+  /// Fast lane for mobile → desktop print notification. Uses a persistent
+  /// sender channel (subscribe once, reuse) so per-job READY waits and the
+  /// artificial 100ms flush delay are avoided. Failures are logged; postgres
+  /// changes + pending sweep remain as fallbacks.
   Future<void> _broadcastPrintJobsReady(
     String restaurantId,
-    List<String> printJobIds,
-  ) async {
-    RealtimeChannel? channel;
+    List<String> printJobIds, {
+    String printJobCreatedAt = '',
+    String orderSavedAt = '',
+    String pipelineStartedAt = '',
+    String traceId = '',
+  }) async {
+    if (printJobIds.isEmpty) return;
+    final t3StartedAt = DateTime.now();
     try {
-      final channelName = 'print_signal:$restaurantId';
-      channel = _client.channel(channelName);
+      await _ensurePrintSignalChannel(restaurantId);
+      final channel = _printSignalChannel;
+      if (channel == null || !_printSignalSubscribed) {
+        debugPrint(
+          '[OrderPrintJobService] broadcast skipped — channel not ready '
+          'restaurantId=$restaurantId',
+        );
+        return;
+      }
 
-      // Subscribe → send → unsubscribe.  The subscribe handshake reuses the
-      // existing Supabase WebSocket so it completes in <100ms.
-      final subscribed = Completer<void>();
-      channel.subscribe((status, [error]) {
-        if (status == RealtimeSubscribeStatus.subscribed &&
-            !subscribed.isCompleted) {
-          subscribed.complete();
-        }
-        if (error != null && !subscribed.isCompleted) {
-          subscribed.completeError(error);
-        }
-      });
-
-      await subscribed.future.timeout(const Duration(seconds: 2));
-
-      channel.sendBroadcastMessage(
+      final sentAt = DateTime.now().toIso8601String();
+      await channel.sendBroadcastMessage(
         event: 'new_print_jobs',
         payload: {
           'job_ids': printJobIds,
           'restaurant_id': restaurantId,
-          'sent_at': DateTime.now().toIso8601String(),
+          'sent_at': sentAt,
+          'print_job_created_at': printJobCreatedAt,
+          'order_saved_at': orderSavedAt,
+          'pipeline_started_at': pipelineStartedAt,
+          'trace_id': traceId,
         },
       );
 
+      final t2 = DateTime.tryParse(printJobCreatedAt);
+      final t2ToT3 = t2 == null
+          ? null
+          : t3StartedAt.difference(t2).inMilliseconds;
       debugPrint(
         '[OrderPrintJobService] broadcast sent: '
-        '${printJobIds.length} job(s) to $channelName',
+        '${printJobIds.length} job(s) to print_signal:$restaurantId',
       );
-
-      // Small delay to ensure message is flushed before cleanup.
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (kDebugMode) {
+        debugPrint(
+          'PRINT_LATENCY trace=${traceId.isEmpty ? '-' : traceId} '
+          'T3_broadcast_sent_at=$sentAt '
+          'T2→T3=${t2ToT3 ?? '-'}ms '
+          'ensure_to_send_ms=${DateTime.now().difference(t3StartedAt).inMilliseconds}',
+        );
+      }
     } catch (e) {
       debugPrint('[OrderPrintJobService] broadcast failed (non-fatal): $e');
-    } finally {
-      if (channel != null) {
-        try {
-          _client.removeChannel(channel);
-        } catch (_) {}
-      }
+      // Drop broken channel so the next job can recreate it without waiting
+      // on a stale subscribe completer.
+      await _disposePrintSignalChannel();
     }
   }
+
+  Future<void> _ensurePrintSignalChannel(String restaurantId) async {
+    final normalized = restaurantId.trim();
+    if (normalized.isEmpty) return;
+
+    if (_printSignalChannel != null &&
+        _printSignalRestaurantId == normalized &&
+        _printSignalSubscribed) {
+      return;
+    }
+
+    // Subscribe already in flight for this restaurant — wait once.
+    if (_printSignalChannel != null &&
+        _printSignalRestaurantId == normalized &&
+        _printSignalReady != null &&
+        !_printSignalReady!.isCompleted) {
+      try {
+        await _printSignalReady!.future.timeout(
+          const Duration(milliseconds: 800),
+        );
+      } catch (_) {}
+      return;
+    }
+
+    if (_printSignalChannel != null) {
+      await _disposePrintSignalChannel();
+    }
+
+    final channelName = 'print_signal:$normalized';
+    final ready = Completer<void>();
+    _printSignalReady = ready;
+    _printSignalRestaurantId = normalized;
+    _printSignalSubscribed = false;
+
+    final channel = _client.channel(channelName);
+    _printSignalChannel = channel;
+    channel.subscribe((status, [error]) {
+      if (status == RealtimeSubscribeStatus.subscribed) {
+        _printSignalSubscribed = true;
+        if (!ready.isCompleted) ready.complete();
+      } else if (error != null && !ready.isCompleted) {
+        ready.completeError(error);
+      }
+    });
+
+    try {
+      // Short wait only on first subscribe for this restaurant — never the
+      // old 2s-per-job handshake. On timeout, leave channel in place so a
+      // later READY can still serve subsequent jobs; this send may no-op.
+      await ready.future.timeout(const Duration(milliseconds: 800));
+    } on TimeoutException {
+      debugPrint(
+        '[OrderPrintJobService] print signal subscribe timeout '
+        'channel=$channelName — fallback to postgres/sweep',
+      );
+    }
+  }
+
+  Future<void> _disposePrintSignalChannel() async {
+    final channel = _printSignalChannel;
+    _printSignalChannel = null;
+    _printSignalRestaurantId = null;
+    _printSignalSubscribed = false;
+    final ready = _printSignalReady;
+    _printSignalReady = null;
+    if (ready != null && !ready.isCompleted) {
+      ready.completeError(StateError('print signal channel disposed'));
+    }
+    if (channel == null) return;
+    try {
+      await _client.removeChannel(channel);
+    } catch (_) {}
+  }
+
+  /// Release persistent broadcast sender resources (logout / app dispose).
+  Future<void> disposeBroadcastSender() => _disposePrintSignalChannel();
 }

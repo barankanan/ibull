@@ -16,6 +16,9 @@ DEFAULT_ALLOWED_ORIGINS = (
     "http://127.0.0.1:3000",
 )
 
+# Loopback by default. Restaurant LAN tablets must set PRINT_BRIDGE_HOST=0.0.0.0.
+DEFAULT_LISTEN_HOST = "127.0.0.1"
+
 _DEFAULT_SAFE_ENCODING = "cp857"
 _DEFAULT_SAFE_CODEPAGE = 13
 _ENCODING_ALIASES = {
@@ -320,6 +323,9 @@ class BridgeSettings:
     min_trailing_blank_lines: int = 8
     receipt_length_preset: str = "normal"
     policy_source: str = "default"
+    # Per-request raster/text size. 1.0 == historical POS80 baseline.
+    print_size: str = "normal"
+    print_text_scale: float = 1.0
 
     @classmethod
     def from_env(cls) -> "BridgeSettings":
@@ -377,7 +383,8 @@ class BridgeSettings:
         layout_min_height = 700 if paper_width_mm <= 58 else 740
         layout_min_trailing = layout_bottom_feed
         return cls(
-            host=os.getenv("PRINT_BRIDGE_HOST", "127.0.0.1").strip() or "127.0.0.1",
+            host=os.getenv("PRINT_BRIDGE_HOST", DEFAULT_LISTEN_HOST).strip()
+            or DEFAULT_LISTEN_HOST,
             port=int(os.getenv("PRINT_BRIDGE_PORT", "3001")),
             printer_queue=os.getenv("PRINT_BRIDGE_PRINTER_QUEUE", "").strip(),
             paper_width_mm=paper_width_mm,

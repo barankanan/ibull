@@ -22,14 +22,13 @@ import 'followed_stores_page.dart';
 import 'my_chats_page.dart';
 import 'coupons_page.dart';
 import 'addresses_page.dart';
-import 'ihiz_home_page.dart';
 import '../features/saved_payment_cards/screens/saved_payment_cards_page.dart';
-import 'home_screen.dart';
+import '../core/home_navigation.dart';
 import 'login_page.dart';
 import 'seller_login_page.dart';
-import '../core/app_motion.dart';
 import '../services/order_service.dart';
 import '../services/auth_service.dart';
+import 'account/account_menu_navigation.dart';
 import 'order_detail_page.dart';
 import 'shipment_tracking_page.dart';
 
@@ -56,8 +55,9 @@ class _AccountPageState extends State<AccountPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch AppState for login changes
-    final appState = Provider.of<AppState>(context);
+    // Watch AppState for login / profile identity only — not cart or favorites.
+    context.select<AppState, int>((s) => s.accountIdentityStamp);
+    final appState = context.read<AppState>();
     final authContext = IbulAuthContextService.instance;
     final hasSupabaseSession = AuthService().currentUser != null;
     AuthDebugLogger.customerHeader(
@@ -1566,7 +1566,6 @@ class _AccountPageState extends State<AccountPage> {
                   );
                 },
               ),
-              _buildMenuItem(Icons.home_outlined, 'Barana Özel İndirimler'),
               _buildMenuItem(
                 Icons.local_offer_outlined,
                 'Kuponlarım',
@@ -1603,8 +1602,6 @@ class _AccountPageState extends State<AccountPage> {
                   );
                 },
               ),
-              _buildMenuItem(Icons.key, 'İabul Premium'),
-
               const SizedBox(height: 16),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
@@ -1621,25 +1618,68 @@ class _AccountPageState extends State<AccountPage> {
               _buildMenuItem(
                 Icons.local_shipping_outlined,
                 'Hızlı Ürün Gönder',
+                subtitle: 'İHIZ ile evden teslim al.',
+                onTap: () => AccountMenuNavigation.openFastSend(context),
               ),
-              _buildMenuItem(Icons.build_outlined, 'Garantili Tamir'),
-              _buildMenuItem(Icons.format_list_bulleted, 'Montaj Hizmeti'),
-              _buildMenuItem(Icons.add_circle_outline, 'Mağaza Başvurusu Yap'),
-              _buildMenuItem(Icons.star_border, 'Uygulama Görüşün'),
+              _buildMenuItem(
+                Icons.add_circle_outline,
+                'Mağaza Başvurusu Yap',
+                onTap: () => AccountMenuNavigation.openStoreApply(context),
+              ),
               _buildMenuItem(
                 Icons.bolt_outlined,
                 'iHız',
                 subtitle: 'iHız hizmetlerini keşfet.',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const IhizHomePage(),
-                    ),
-                  );
-                },
+                onTap: () => AccountMenuNavigation.openNamed(context, '/ihiz'),
               ),
-              _buildMenuItem(Icons.help_outline, 'Yardım'),
+              _buildMenuItem(
+                Icons.help_outline,
+                'Yardım',
+                onTap: () => AccountMenuNavigation.openHelp(context),
+              ),
+
+              const SizedBox(height: 16),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Yakında',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              _buildMenuItem(
+                Icons.hourglass_top_rounded,
+                'Yakında',
+                subtitle: 'Premium, tamir, montaj ve barkod.',
+                onTap: () => AccountMenuNavigation.openShelf(context),
+              ),
+              _buildMenuItem(
+                Icons.key,
+                'iBul Premium',
+                subtitle: 'Üyelik henüz satışta değil.',
+                onTap: () => AccountMenuNavigation.openPremium(context),
+              ),
+              _buildMenuItem(
+                Icons.build_outlined,
+                'Garantili Tamir',
+                subtitle: 'Yakında.',
+                onTap: () => AccountMenuNavigation.openRepair(context),
+              ),
+              _buildMenuItem(
+                Icons.format_list_bulleted,
+                'Montaj Hizmeti',
+                subtitle: 'Yakında.',
+                onTap: () => AccountMenuNavigation.openAssembly(context),
+              ),
+              _buildMenuItem(
+                Icons.star_border,
+                'Uygulama Görüşün',
+                subtitle: 'Mağaza puanı henüz bağlı değil.',
+                onTap: () => AccountMenuNavigation.openAppFeedback(context),
+              ),
 
               const SizedBox(height: 24),
 
@@ -1651,12 +1691,7 @@ class _AccountPageState extends State<AccountPage> {
                     try {
                       await appState.logout();
                       if (!mounted) return;
-                      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                        buildAppPageRoute<void>(
-                          builder: (_) => const HomeScreen(initialIndex: 4),
-                        ),
-                        (route) => false,
-                      );
+                      HomeNavigation.openHome(context, initialIndex: 4);
                     } catch (error) {
                       if (!mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -1735,10 +1770,10 @@ class _AccountPageState extends State<AccountPage> {
     IconData icon,
     String title, {
     String? subtitle,
-    VoidCallback? onTap,
+    required VoidCallback onTap,
   }) {
     return InkWell(
-      onTap: onTap ?? () {},
+      onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(

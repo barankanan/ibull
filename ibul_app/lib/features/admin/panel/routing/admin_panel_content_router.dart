@@ -8,6 +8,7 @@ import '../../../../screens/admin/general_overview_page.dart';
 import '../../../../screens/admin/ihiz_admin_page.dart';
 import '../../../../screens/admin/ihiz_application_approval_page.dart';
 import '../../../../screens/admin/ihiz_pricing_management_page.dart';
+import '../../../ihiz/business/ihiz_business_admin_page.dart';
 import '../../../../screens/admin/map_admin_page.dart';
 import '../../../../screens/admin/permission_system_page.dart';
 import '../../../../screens/admin/product_approval/product_approval_page.dart';
@@ -40,6 +41,10 @@ Widget buildAdminPanelContent({
       return const BrandVerificationAdminPage();
     case 'Ürün Onay':
       return const ProductApprovalPage();
+    case 'Sipariş & İade':
+      return const AdminSupportComplaintsPage();
+    case 'Kampanya & İçerik':
+      return systemLayoutPage;
     case 'Harita & Arama':
       return const MapAdminPage();
     case 'Finans':
@@ -50,6 +55,8 @@ Widget buildAdminPanelContent({
       return const SupportTicketsAdminPage();
     case 'İHIZ':
       return const IhizAdminPage();
+    case 'İHIZ Teslimatları':
+      return const IhizBusinessAdminPage(embedded: true);
     case 'Yetki Sistemi':
       return const PermissionSystemPage();
     case 'Ekip & Görevler':
@@ -65,6 +72,8 @@ Widget buildIhizAdminPanelContent({required String selectedMenu}) {
   switch (selectedMenu) {
     case 'Genel Bakış':
       return const IhizAdminPage();
+    case 'İşletme Teslimatları':
+      return const IhizBusinessAdminPage(embedded: true);
     case 'Ücretlendirme':
       return const IhizPricingManagementPage();
     case 'Veriler':
@@ -72,16 +81,16 @@ Widget buildIhizAdminPanelContent({required String selectedMenu}) {
     case 'Başvuru Onay':
       return const IhizApplicationApprovalPage();
     case 'Finans':
-      return const SizedBox.expand();
+      return const AdminPreparingState(sectionTitle: 'İHIZ Finans');
     case 'Destek & Şikayet':
       return const AdminSupportComplaintsPage(
         scope: AdminSupportScope.ihizCourierOnly,
       );
     case 'Yetki Sistemi':
-      return const SizedBox.expand();
+      return const PermissionSystemPage();
     case 'Log & Güvenlik':
-      return const SizedBox.expand();
+      return const AdminSecurityLogsPage();
     default:
-      return const SizedBox.expand();
+      return AdminPreparingState(sectionTitle: selectedMenu);
   }
 }

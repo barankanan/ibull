@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/build_profile.dart';
+import '../core/constants.dart';
 
 typedef HomeShortcutTapCallback = void Function(String shortcutKey, String label);
 
@@ -37,11 +38,6 @@ class FeatureMenu extends StatelessWidget {
       assetPath: 'assets/images/features/urun-parcala.png',
     ),
     HomeFeatureMenuConfig(
-      key: 'ibul_premium',
-      label: 'İBUL Premium',
-      assetPath: 'assets/images/features/ibul-premium.png',
-    ),
-    HomeFeatureMenuConfig(
       key: 'bana_ozel',
       label: 'Bana Özel',
       assetPath: 'assets/images/features/sana-ozel.png',
@@ -56,12 +52,19 @@ class FeatureMenu extends StatelessWidget {
       label: 'Yapay Zeka',
       assetPath: 'assets/images/features/yapay-zeka.png',
     ),
+    HomeFeatureMenuConfig(
+      key: 'yakinda',
+      label: 'Yakında',
+      assetPath: 'assets/images/features/ibul-premium.png',
+      comingSoon: true,
+      icon: Icons.hourglass_top_rounded,
+    ),
   ];
 
   @override
   Widget build(BuildContext context) {
     return BuildProfileCollector.measure('FeatureMenu', () {
-      final screenWidth = MediaQuery.of(context).size.width;
+      final screenWidth = MediaQuery.sizeOf(context).width;
       final isSmallScreen = screenWidth < 360;
       final Map<String, Map<String, dynamic>> remoteByKey = {
         for (final category in remoteCategories)
@@ -97,8 +100,9 @@ class FeatureMenu extends StatelessWidget {
                   ? remoteUrl
                   : null,
               assetPath: config.assetPath,
+              icon: config.icon,
               label: label,
-              comingSoon: !isActive,
+              comingSoon: config.comingSoon || !isActive,
               onTap: onShortcutTap == null
                   ? null
                   : () => onShortcutTap!(config.key, label),
@@ -115,6 +119,7 @@ class _FeatureTile extends StatefulWidget {
     required this.shortcutKey,
     this.imageUrl,
     required this.assetPath,
+    this.icon,
     required this.label,
     required this.onTap,
     this.comingSoon = false,
@@ -123,6 +128,7 @@ class _FeatureTile extends StatefulWidget {
   final String shortcutKey;
   final String? imageUrl;
   final String assetPath;
+  final IconData? icon;
   final String label;
   final VoidCallback? onTap;
   final bool comingSoon;
@@ -136,14 +142,14 @@ class _FeatureTileState extends State<_FeatureTile> {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isSmallScreen = screenWidth < 360;
     final fontSize = isSmallScreen ? 10.0 : 11.0;
     final onTap = widget.onTap;
 
     return Semantics(
       button: true,
-      label: widget.label,
+      label: widget.comingSoon ? '${widget.label}, Yakında' : widget.label,
       enabled: onTap != null,
       child: Tooltip(
         message: widget.label,
@@ -241,6 +247,14 @@ class _FeatureTileState extends State<_FeatureTile> {
   }
 
   Widget _buildImage() {
+    if (widget.icon != null) {
+      return ColoredBox(
+        color: AppColors.softPurple,
+        child: Center(
+          child: Icon(widget.icon, color: AppColors.primary, size: 32),
+        ),
+      );
+    }
     final fallback = Container(
       color: Colors.grey.shade200,
       child: const Center(
@@ -277,10 +291,14 @@ class HomeFeatureMenuConfig {
   final String key;
   final String label;
   final String assetPath;
+  final bool comingSoon;
+  final IconData? icon;
 
   const HomeFeatureMenuConfig({
     required this.key,
     required this.label,
     required this.assetPath,
+    this.comingSoon = false,
+    this.icon,
   });
 }

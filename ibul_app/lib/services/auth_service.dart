@@ -13,6 +13,7 @@ import 'package:flutter/foundation.dart'
 import '../core/auth/auth_debug_logger.dart';
 import '../core/auth/ibul_auth_context.dart';
 import '../core/config/runtime_config.dart';
+import '../core/runtime_diagnostic_logger.dart';
 import '../core/secure_local_store.dart';
 import 'store_service.dart';
 
@@ -471,7 +472,14 @@ class AuthService {
           'p_metadata': metadata,
         },
       );
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'AuthService',
+        error,
+        stackTrace,
+        context: 'recordAuthLoginAttempt',
+      );
+    }
   }
 
   IbulAuthContextService get _authContext => IbulAuthContextService.instance;
@@ -488,8 +496,13 @@ class AuthService {
 
     try {
       await _googleSignIn?.signOut();
-    } catch (e) {
-      debugPrint('Google sign-out skipped: $e');
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'AuthService',
+        error,
+        stackTrace,
+        context: 'googleSignOut',
+      );
     }
     await _supabase.auth.signOut();
     await clearSellerSwitchBackup();

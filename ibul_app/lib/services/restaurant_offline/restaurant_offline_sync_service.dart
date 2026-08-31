@@ -13,7 +13,8 @@ class RestaurantOfflineSyncService {
     RestaurantConnectivityService? connectivityService,
   }) : _orderQueue = orderQueue ?? RestaurantLocalOrderQueueService(),
        _orderPrintJobService = orderPrintJobService ?? OrderPrintJobService(),
-       _connectivity = connectivityService ?? RestaurantConnectivityService.instance;
+       _connectivity =
+           connectivityService ?? RestaurantConnectivityService.instance;
 
   final RestaurantLocalOrderQueueService _orderQueue;
   final OrderPrintJobService _orderPrintJobService;
@@ -55,6 +56,7 @@ class RestaurantOfflineSyncService {
             jobType: 'new_order',
             garsonDesktopFastKitchen: true,
             skipOfflineFallback: true,
+            localOrderId: order.localOrderId,
           );
           final remoteOrderId = result.orderId ?? '';
           if (remoteOrderId.isEmpty) {
@@ -75,7 +77,9 @@ class RestaurantOfflineSyncService {
           );
           syncedCount++;
         } catch (error, stackTrace) {
-          debugPrint('[RestaurantOfflineSync] failed localOrder=${order.localOrderId} error=$error');
+          debugPrint(
+            '[RestaurantOfflineSync] failed localOrder=${order.localOrderId} error=$error',
+          );
           debugPrintStack(stackTrace: stackTrace);
           await _orderQueue.update(
             restaurantId: restaurantId,

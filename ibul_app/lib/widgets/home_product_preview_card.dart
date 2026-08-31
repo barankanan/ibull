@@ -142,10 +142,12 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
   double _resolveImageHeight() {
     final hasBrand =
         widget.preview.brand != null && widget.preview.brand!.isNotEmpty;
-    final hasStore = widget.showStore &&
+    final hasStore =
+        widget.showStore &&
         widget.preview.storeName != null &&
         widget.preview.storeName!.isNotEmpty;
-    var bodyHeight = _verticalPadding + _nameHeight + 8 + _priceHeight + 8 + _buttonHeight;
+    var bodyHeight =
+        _verticalPadding + _nameHeight + 8 + _priceHeight + 8 + _buttonHeight;
     if (hasBrand) bodyHeight += _brandHeight + 4;
     if (hasStore) bodyHeight += 14 + 4;
     final imageHeight = widget.height - bodyHeight;
@@ -158,9 +160,22 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
         ? null
         : AppImageCdn.buildUrl(widget.preview.imageUrl, AppImageVariant.card);
     final imageHeight = _resolveImageHeight();
+    // Decode boyutlama: product_card.dart ile aynı DPR-aware desen. cacheWidth
+    // fiziksel pikselden büyük olduğundan görünür kalite kaybı yok; tam
+    // çözünürlük decode yerine downsample edilerek image cache RAM'i düşer.
+    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final imageCacheWidth = (widget.width * devicePixelRatio).round().clamp(
+      160,
+      520,
+    );
+    final imageCacheHeight = (imageHeight * devicePixelRatio).round().clamp(
+      160,
+      520,
+    );
     final hasBrand =
         widget.preview.brand != null && widget.preview.brand!.isNotEmpty;
-    final hasStore = widget.showStore &&
+    final hasStore =
+        widget.showStore &&
         widget.preview.storeName != null &&
         widget.preview.storeName!.isNotEmpty;
 
@@ -192,6 +207,8 @@ class _HomeProductPreviewCardState extends State<HomeProductPreviewCard> {
                       OptimizedImage(
                         imageUrlOrPath: imageUrl,
                         fit: BoxFit.contain,
+                        cacheWidth: imageCacheWidth,
+                        cacheHeight: imageCacheHeight,
                         priority: OptimizedImagePriority.high,
                         onFirstFrameReady: () {
                           WebPerfTrace.instance.markImageFirstLoaded();

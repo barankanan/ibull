@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/ibul_chrome.dart';
 import '../screens/home_lazy_routes.dart';
 
 /// Production İBUL web/mobile header — WebHeader görünümü, ağır route import yok.
@@ -63,24 +64,12 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
 
   @override
   Widget build(BuildContext context) {
-    final isWeb = MediaQuery.sizeOf(context).width >= 1100;
+    final isWeb = IbulChrome.isWebOf(context);
     return Column(
       children: [
         Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          padding: EdgeInsets.symmetric(
-            horizontal: isWeb ? 40 : 12,
-            vertical: isWeb ? 16 : 10,
-          ),
+          decoration: IbulChrome.headerBarDecoration,
+          padding: IbulChrome.headerPadding(isWeb: isWeb),
           child: isWeb ? _buildWebTopBar() : _buildMobileTopBar(),
         ),
         if (isWeb) _buildCategoryBar(),
@@ -110,10 +99,12 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
             _buildLogo(compact: true),
             const Spacer(),
             IconButton(
+              tooltip: 'Harita',
               icon: const Icon(Icons.map_outlined, color: AppColors.primary),
               onPressed: () => unawaited(HomeLazyRoutes.openMap(context)),
             ),
             IconButton(
+              tooltip: 'Favorilerim',
               icon: const Icon(Icons.favorite_border, color: AppColors.primary),
               onPressed: () => unawaited(HomeLazyRoutes.openFavorites(context)),
             ),
@@ -126,30 +117,39 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
   }
 
   Widget _buildLogo({bool compact = false}) {
-    return InkWell(
+    return Semantics(
+      button: true,
+      label: 'iBul ana sayfa',
+      child: ExcludeSemantics(
+      child: InkWell(
       onTap: () => widget.onCategorySelected?.call('Ana Sayfa'),
       hoverColor: Colors.transparent,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
             child: Image.asset(
-              'assets/icons/ibul_logo_2.png',
-              width: compact ? 28 : 32,
-              height: compact ? 28 : 32,
-              fit: BoxFit.contain,
+              AppAssets.ibulLogo,
+              width: compact ? 28 : 36,
+              height: compact ? 28 : 36,
+              fit: BoxFit.cover,
               errorBuilder: (_, _, _) => Container(
-                width: compact ? 28 : 32,
-                height: compact ? 28 : 32,
+                width: compact ? 28 : 36,
+                height: compact ? 28 : 36,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(
-                  Icons.shopping_bag_outlined,
-                  color: Colors.white,
-                  size: compact ? 16 : 20,
+                child: Text(
+                  'İ',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: compact ? 14 : 18,
+                    fontWeight: FontWeight.w500,
+                    height: 1,
+                  ),
                 ),
               ),
             ),
@@ -158,13 +158,15 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
           Text(
             'iBul',
             style: TextStyle(
-              fontSize: compact ? 22 : 28,
-              fontWeight: FontWeight.w900,
+              fontSize: compact ? 20 : 24,
+              fontWeight: FontWeight.w500,
               color: AppColors.primary,
-              letterSpacing: -0.5,
+              letterSpacing: 0.2,
             ),
           ),
         ],
+      ),
+      ),
       ),
     );
   }
@@ -202,39 +204,49 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
             ),
           ),
           if (showCamera) ...[
-            InkWell(
-              onTap: () => unawaited(HomeLazyRoutes.openCamera(context)),
-              borderRadius: BorderRadius.circular(8),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Icon(
-                  Icons.photo_camera_outlined,
-                  color: AppColors.primary,
-                  size: 20,
+            Semantics(
+              button: true,
+              label: 'Kamera',
+              child: InkWell(
+                onTap: () => unawaited(HomeLazyRoutes.openCamera(context)),
+                borderRadius: BorderRadius.circular(8),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  child: Icon(
+                    Icons.photo_camera_outlined,
+                    color: AppColors.primary,
+                    size: 20,
+                  ),
                 ),
               ),
             ),
             const SizedBox(width: 8),
           ],
-          InkWell(
-            onTap: () => _submitSearch(),
-            child: Container(
-              margin: const EdgeInsets.all(4),
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Center(
-                child: Text(
-                  'ARA',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
+          Semantics(
+            button: true,
+            label: 'Ara',
+            child: ExcludeSemantics(
+            child: InkWell(
+              onTap: () => _submitSearch(),
+              child: Container(
+                margin: const EdgeInsets.all(4),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Center(
+                  child: Text(
+                    'ARA',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               ),
+            ),
             ),
           ),
         ],
@@ -243,36 +255,40 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
   }
 
   Widget _buildMapLink() {
-    return InkWell(
-      onTap: () => unawaited(HomeLazyRoutes.openMap(context)),
-      child: const Row(
-        children: [
-          Icon(Icons.map, color: AppColors.primary, size: 24),
-          SizedBox(width: 6),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'Konum',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.grey,
-                  fontWeight: FontWeight.w500,
+    return Semantics(
+      button: true,
+      label: 'Harita',
+      child: InkWell(
+        onTap: () => unawaited(HomeLazyRoutes.openMap(context)),
+        child: const Row(
+          children: [
+            Icon(Icons.map, color: AppColors.primary, size: 24),
+            SizedBox(width: 6),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'Konum',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-              SizedBox(height: 2),
-              Text(
-                'Harita',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.black87,
-                  fontWeight: FontWeight.bold,
+                SizedBox(height: 2),
+                Text(
+                  'Harita',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -312,13 +328,10 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE))),
-      ),
+      decoration: IbulChrome.categoryBarDecoration,
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1400),
+          constraints: IbulChrome.contentConstraints,
           child: SizedBox(
             height: 40,
             child: Stack(
@@ -367,7 +380,7 @@ class _HomeHeaderShellState extends State<HomeHeaderShell> {
                             category,
                             style: TextStyle(
                               fontSize: 13,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w500,
                               color:
                                   isSelected ? AppColors.primary : Colors.grey[800],
                             ),
@@ -401,9 +414,13 @@ class _HeaderMenuItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return Semantics(
+      button: true,
+      label: badgeCount == null ? label : '$label, $badgeCount ürün',
+      child: InkWell(
       onTap: onTap,
       hoverColor: Colors.transparent,
+      child: ExcludeSemantics(
       child: Row(
         children: [
           Stack(
@@ -438,10 +455,12 @@ class _HeaderMenuItem extends StatelessWidget {
             style: const TextStyle(
               fontSize: 13,
               color: Colors.black87,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
+      ),
+      ),
       ),
     );
   }

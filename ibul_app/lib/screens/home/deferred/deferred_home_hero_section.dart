@@ -79,9 +79,7 @@ class _DeferredHomeHeroSectionState extends State<DeferredHomeHeroSection> {
     setState(() => _loadFuture = _loadLibrary());
   }
 
-  bool get _shouldHideEntireSection {
-    return !widget.isLoading && widget.bannerImageUrls.isEmpty;
-  }
+  bool get _shouldHideEntireSection => false;
 
   bool get _shouldShowSkeleton {
     if (widget.suppressSkeleton || _skeletonTimedOut) return false;

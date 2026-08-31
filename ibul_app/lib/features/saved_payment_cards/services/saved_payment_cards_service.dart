@@ -39,8 +39,15 @@ class SavedPaymentCardsService {
 
   String? _currentUserId() => _supabase.auth.currentUser?.id;
 
+  /// False until a PSP (iyzico/PayTR) tokenization endpoint is wired.
+  /// Checkout must not treat raw PAN as a successful charge while this is false.
+  static bool get isChargeProviderReady => false;
+
   /// Placeholder until a real payment provider tokenization endpoint is wired.
   Future<CardTokenizationResult?> tokenizeCard(RawCardInput input) async {
+    if (!isChargeProviderReady) {
+      throw const CardTokenizationUnavailable();
+    }
     if (!input.isComplete) {
       throw Exception('Kart bilgileri eksik veya geçersiz.');
     }

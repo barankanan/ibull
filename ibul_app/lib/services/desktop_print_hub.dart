@@ -3,13 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart'
-    show ChangeNotifier, debugPrint, debugPrintStack;
+    show ChangeNotifier, debugPrint, debugPrintStack, kDebugMode;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/desktop_printer_setup_models.dart';
 import '../models/print_job_model.dart';
 import '../models/printer_model.dart';
+import '../utils/kitchen_print_dedup.dart';
 import 'bridge_manager.dart';
 import 'desktop_print_orchestrator.dart';
 import 'kitchen_hub_payload_stamp.dart';
@@ -169,9 +170,12 @@ class DesktopPrintHub extends ChangeNotifier {
 
   // ── Internal ───────────────────────────────────────────────────────────────
 
-  /// In-memory dedup set: prevents re-dispatching the same job if the channel
-  /// resubscribes and replays an event.
+  /// In-memory dedup set: prevents re-dispatching the same job if broadcast,
+  /// postgres_changes, and pending sweep race. Reservation is taken *before*
+  /// atomic DB claim; claim failure clears the reservation so sweep can retry.
+  /// Atomic `pending → claimed` remains the source of truth for print safety.
   final Set<String> _dispatchedJobIds = {};
+  static const int _maxDispatchedJobIds = 250;
 
   /// Prevents concurrent manual retries for the same job.
   final Set<String> _retryingJobIds = {};
@@ -212,8 +216,9 @@ class DesktopPrintHub extends ChangeNotifier {
   static const Duration _healthInterval = Duration(seconds: 30);
   static const Duration _healthTimeout = Duration(milliseconds: 1500);
 
-  /// Aggressive sweep interval tuned for realtime-first pickup; fallback poll
-  /// runs every 1s to reduce CPU/network load while staying responsive.
+  /// Aggressive sweep interval — **fallback only**. Successful broadcast /
+  /// postgres_changes pickup must not wait on this timer. Hot path:
+  /// broadcast → hub → atomic claim → print. Sweep recovers missed jobs.
   static const Duration _pendingSweepInterval = Duration(milliseconds: 1000);
   static const int _pendingSweepLimit = 50;
   static const int _maxPrintAttempts = 2;
@@ -347,6 +352,8 @@ class DesktopPrintHub extends ChangeNotifier {
     _sweepStartedAt = null;
     _channelErrorCount = 0;
     _printerConfigCache.clear();
+    _dispatchedJobIds.clear();
+    _retryingJobIds.clear();
     _reusablePrintService?.dispose();
     _reusablePrintService = null;
     _reusablePrintServiceBaseUri = null;
@@ -713,11 +720,18 @@ class DesktopPrintHub extends ChangeNotifier {
             if (jobIds is! List || jobIds.isEmpty) return;
             debugPrint(
               '[PrintHub] broadcast received: ${jobIds.length} job(s) '
-              'sentAt=${payload['sent_at'] ?? '-'}',
+              'sentAt=${payload['sent_at'] ?? '-'} '
+              'printJobCreatedAt=${payload['print_job_created_at'] ?? '-'}',
             );
-            // Immediately fetch and dispatch the referenced jobs.
+            // Immediately claim+fetch+dispatch. Pickup source tagged for
+            // PRINT_LATENCY (broadcast vs postgres vs sweep).
             _dispatchBroadcastJobs(
               List<String>.from(jobIds.map((e) => e.toString())),
+              broadcastSentAt: payload['sent_at']?.toString(),
+              printJobCreatedAt: payload['print_job_created_at']?.toString(),
+              pipelineStartedAt: payload['pipeline_started_at']?.toString(),
+              orderSavedAt: payload['order_saved_at']?.toString(),
+              traceId: payload['trace_id']?.toString(),
             ).ignore();
           },
         )
@@ -731,16 +745,35 @@ class DesktopPrintHub extends ChangeNotifier {
 
   /// Fetch print jobs by ID and dispatch them immediately.
   /// Called from broadcast listener for lowest-latency pickup.
-  Future<void> _dispatchBroadcastJobs(List<String> jobIds) async {
+  Future<void> _dispatchBroadcastJobs(
+    List<String> jobIds, {
+    String? broadcastSentAt,
+    String? printJobCreatedAt,
+    String? pipelineStartedAt,
+    String? orderSavedAt,
+    String? traceId,
+  }) async {
     if (!_started || _restaurantId == null) return;
-    for (final jobId in jobIds) {
-      if (jobId.isEmpty || _dispatchedJobIds.contains(jobId)) continue;
-      final job = await _fetchJob(jobId);
-      if (job == null) continue;
-      final status = job['status']?.toString() ?? '';
-      if (status != 'pending' && status != 'claimed') continue;
-      _dispatchJobAsync(job);
-    }
+    await Future.wait(
+      jobIds.map((jobId) async {
+        if (jobId.isEmpty || _dispatchedJobIds.contains(jobId)) return;
+        // Optimization: pass a stub without payload so _executeDispatch uses
+        // _claimAndFetchJob in a single round-trip.
+        _dispatchJobAsync({
+          'id': jobId,
+          '_pickup_source': 'broadcast',
+          if (broadcastSentAt != null && broadcastSentAt.isNotEmpty)
+            '_broadcast_sent_at': broadcastSentAt,
+          if (printJobCreatedAt != null && printJobCreatedAt.isNotEmpty)
+            'print_job_created_at': printJobCreatedAt,
+          if (pipelineStartedAt != null && pipelineStartedAt.isNotEmpty)
+            '_pipeline_started_at': pipelineStartedAt,
+          if (orderSavedAt != null && orderSavedAt.isNotEmpty)
+            'order_saved_at': orderSavedAt,
+          if (traceId != null && traceId.isNotEmpty) '_trace_id': traceId,
+        });
+      }),
+    );
   }
 
   void _onJobInserted(Map<String, dynamic> record) {
@@ -763,9 +796,12 @@ class DesktopPrintHub extends ChangeNotifier {
     debugPrint(
       '[PrintPipeline] trace=$trace stage=hub_job_received '
       'at=${now.toIso8601String()} jobId=$jobId '
+      'pickup=postgres_changes '
       'B=${_formatLatencyMs(receiveLagMs)}',
     );
-    _dispatchJobAsync(record);
+    final stamped = Map<String, dynamic>.from(record);
+    stamped['_pickup_source'] = 'postgres_changes';
+    _dispatchJobAsync(stamped);
   }
 
   // ── Dispatch pipeline ──────────────────────────────────────────────────────
@@ -804,9 +840,14 @@ class DesktopPrintHub extends ChangeNotifier {
           .order('created_at', ascending: true)
           .limit(_pendingSweepLimit);
 
-      final pendingJobs = List<Map<String, dynamic>>.from(
-        rows as List,
-      ).map((row) => Map<String, dynamic>.from(row)).toList(growable: false);
+      // Sweep saniyede bir çalışıyor. Ara `List<Map<String,dynamic>>.from(...)`
+      // listesi hemen ardından .map(...).toList() ile atılıyordu — her sweep'te
+      // tüm pending job satırları için ikinci bir liste ayrılıyordu. Job başına
+      // defansif Map kopyası (payload dahil) aynen korunuyor; claim/dedup/
+      // dispatch akışı hiç değişmiyor.
+      final pendingJobs = (rows as List)
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList(growable: false);
 
       if (pendingJobs.isEmpty) {
         _lastSweepCompletedAt = DateTime.now();
@@ -842,7 +883,10 @@ class DesktopPrintHub extends ChangeNotifier {
         if (jobId.isEmpty || _dispatchedJobIds.contains(jobId)) {
           continue;
         }
-        _dispatchJobAsync(job);
+        final stamped = Map<String, dynamic>.from(job);
+        stamped['_pickup_source'] = 'pending_sweep';
+        stamped['_sweep_reason'] = reason;
+        _dispatchJobAsync(stamped);
       }
       _lastSweepCompletedAt = DateTime.now();
     } catch (e) {
@@ -860,14 +904,45 @@ class DesktopPrintHub extends ChangeNotifier {
     final dispatchWatch = Stopwatch()..start();
     final jobId = jobRecord['id']?.toString() ?? '';
     if (jobId.isEmpty) return;
+
+    // In-memory reservation BEFORE atomic claim — collapses broadcast +
+    // postgres_changes + sweep races into a single claim attempt. Does NOT
+    // replace DB claim; failed claim clears the reservation.
+    if (!_tryReserveDispatch(jobId)) {
+      debugPrint('[PrintHub] reservation_skip jobId=$jobId');
+      logPrintDedup(
+        source: 'HUB',
+        printJobId: jobId,
+        jobId: jobId,
+        claim: 'reservation',
+        claimResult: 'already_reserved',
+        duplicate: true,
+        skipReason: 'hub_reservation',
+      );
+      return;
+    }
+    var claimSucceeded = false;
+
     final hubJobReceivedAt = DateTime.now();
-    final trace = _resolveTraceId(jobRecord, fallbackJobId: jobId);
+    final pickupSource =
+        jobRecord['_pickup_source']?.toString() ?? 'unknown';
+    final trace = jobRecord['_trace_id']?.toString().trim().isNotEmpty == true
+        ? jobRecord['_trace_id'].toString()
+        : _resolveTraceId(jobRecord, fallbackJobId: jobId);
+    final broadcastSentAt = _readStageTimestamp(
+      jobRecord,
+      '_broadcast_sent_at',
+    );
+    final pipelineStartedAt = _readStageTimestamp(
+      jobRecord,
+      '_pipeline_started_at',
+    );
 
     // ── Stage 1: Claim + Enrich in PARALLEL ──────────────────────────────
     // Both operations are independent DB calls.  Running them concurrently
     // saves 200-500ms vs. sequential execution.
     final hasFullPayload = jobRecord['payload'] != null;
-    final claimedAt = DateTime.now();
+    final claimStartedAt = DateTime.now();
 
     // Pre-compute payload map for parallel enrich
     final rawPayload = jobRecord['payload'];
@@ -878,59 +953,117 @@ class DesktopPrintHub extends ChangeNotifier {
               : <String, dynamic>{});
     final printerId = jobRecord['printer_id']?.toString();
 
+    // Sync LAN barrier (no network): if LAN already printed this ticket, close
+    // the DB job without a second physical TCP write.
+    final restaurantIdForBarrier = _restaurantId ?? '';
+    final logicalKey = restaurantIdForBarrier.isEmpty
+        ? ''
+        : buildKitchenLogicalPrintKeyFromPayload(
+            restaurantId: restaurantIdForBarrier,
+            payload: payloadMap,
+            job: jobRecord,
+          );
+    if (logicalKey.isNotEmpty &&
+        KitchenLanPrintBarrier.alreadyPrinted(logicalKey)) {
+      logPrintDedup(
+        source: 'HUB',
+        orderId: jobRecord['order_id']?.toString() ?? '-',
+        printJobId: jobId,
+        jobId: jobId,
+        logicalPrintKey: logicalKey,
+        claim: 'skipped',
+        claimResult: 'lan_barrier',
+        physicalPrintStarted: false,
+        physicalPrintCompleted: false,
+        duplicate: true,
+        skipReason: 'lan_already_printed',
+      );
+      await _markCompleted(
+        jobId,
+        completedAt: DateTime.now(),
+        payload: payloadMap,
+      );
+      return;
+    }
+
     late Map<String, dynamic> fullJob;
     Map<String, dynamic> payload;
+    late DateTime claimedAt;
 
-    if (hasFullPayload) {
-      final claimed = await _claimJob(
-        jobId,
-        hubJobReceivedAt: hubJobReceivedAt,
-        claimedAt: claimedAt,
-      );
-      if (!claimed) {
-        debugPrint(
-          '[PrintHub] claim_failed jobId=$jobId '
-          'claimMs=${dispatchWatch.elapsedMilliseconds} fastPath=true',
+    try {
+      if (hasFullPayload) {
+        // Gerçekten paralel: claim (print_jobs update) ve enrich (printers
+        // tablosu/cache okuması) birbirinden bağımsız DB çağrıları — enrich
+        // claim sonucuna bakmıyor. Claim başarısız dönerse (başka bir yol zaten
+        // claim etmiş) enrich sonucu basitçe atılır; hiçbir yazma/dispatch
+        // yapılmadığı için dedup/idempotency etkilenmez.
+        final results = await Future.wait<dynamic>([
+          _claimJob(
+            jobId,
+            hubJobReceivedAt: hubJobReceivedAt,
+            claimedAt: claimStartedAt,
+          ),
+          _enrichPayloadWithPrinterConfig(payloadMap, printerId: printerId),
+        ]);
+        final claimed = results[0] as bool;
+        claimedAt = DateTime.now();
+        if (!claimed) {
+          debugPrint(
+            '[PrintHub] claim_failed jobId=$jobId '
+            'claimMs=${dispatchWatch.elapsedMilliseconds} fastPath=true '
+            'pickup=$pickupSource',
+          );
+          return;
+        }
+        claimSucceeded = true;
+        payload = results[1] as Map<String, dynamic>;
+        fullJob = jobRecord;
+      } else {
+        // Fallback: claim + fetch in one round-trip (broadcast stub path).
+        final fetchedJob = await _claimAndFetchJob(
+          jobId,
+          hubJobReceivedAt: hubJobReceivedAt,
+          claimedAt: claimStartedAt,
         );
-        return;
-      }
-      payload = await _enrichPayloadWithPrinterConfig(
-        payloadMap,
-        printerId: printerId,
-      );
-      fullJob = jobRecord;
-    } else {
-      // Fallback: claim + fetch in one round-trip (legacy path).
-      final fetchedJob = await _claimAndFetchJob(
-        jobId,
-        hubJobReceivedAt: hubJobReceivedAt,
-        claimedAt: claimedAt,
-      );
-      if (fetchedJob == null) {
-        debugPrint(
-          '[PrintHub] claim_failed jobId=$jobId '
-          'claimMs=${dispatchWatch.elapsedMilliseconds}',
+        claimedAt = DateTime.now();
+        if (fetchedJob == null) {
+          debugPrint(
+            '[PrintHub] claim_failed jobId=$jobId '
+            'claimMs=${dispatchWatch.elapsedMilliseconds} '
+            'pickup=$pickupSource',
+          );
+          return;
+        }
+        claimSucceeded = true;
+        fullJob = fetchedJob;
+        // Preserve latency stamps from broadcast stub when DB row lacks them.
+        _mergeLatencyHints(fullJob, jobRecord);
+        final fetchedPayload = fullJob['payload'];
+        payload = await _enrichPayloadWithPrinterConfig(
+          fetchedPayload is Map<String, dynamic>
+              ? fetchedPayload
+              : (fetchedPayload is Map
+                    ? Map<String, dynamic>.from(fetchedPayload)
+                    : <String, dynamic>{}),
+          printerId: fullJob['printer_id']?.toString(),
         );
-        return;
       }
-      fullJob = fetchedJob;
-      // Enrich after fetch (sequential, can't parallelize here).
-      final fetchedPayload = fullJob['payload'];
-      payload = await _enrichPayloadWithPrinterConfig(
-        fetchedPayload is Map<String, dynamic>
-            ? fetchedPayload
-            : (fetchedPayload is Map
-                  ? Map<String, dynamic>.from(fetchedPayload)
-                  : <String, dynamic>{}),
-        printerId: fullJob['printer_id']?.toString(),
-      );
+    } catch (e, st) {
+      debugPrint('[PrintHub] claim/enrich error jobId=$jobId error=$e');
+      debugPrintStack(stackTrace: st);
+      return;
+    } finally {
+      if (!claimSucceeded) {
+        _releaseDispatchReservation(jobId);
+      }
     }
-    _dispatchedJobIds.add(jobId);
+
     final claimMs = dispatchWatch.elapsedMilliseconds;
     debugPrint(
       '[PrintPipeline] trace=$trace stage=claimed '
       'at=${claimedAt.toIso8601String()} '
-      'jobId=$jobId claimMs=$claimMs fastPath=$hasFullPayload',
+      'jobId=$jobId claimMs=$claimMs fastPath=$hasFullPayload '
+      'pickup=$pickupSource',
     );
 
     // ── Stage 2: Payload already enriched — validate and resolve ─────────
@@ -1001,19 +1134,25 @@ class DesktopPrintHub extends ChangeNotifier {
         payload['printer']?['backend']?.toString() ??
         '-';
     if (resolvedRole != 'adisyon') {
-      final expectedKitchenPrinter = await _printerRepository
-          .resolveExpectedKitchenPrinter(
-            restaurantId: _restaurantId!,
-            stationId: _readText(
-              jobRecordForStamp['station_id'] ?? payload['station_id'],
-            ),
-            stationName: _readText(
-              payload['station_name'] ??
-                  payload['kitchen_ticket_header'] ??
-                  area,
-            ),
-          );
-      if (expectedKitchenPrinter != null) {
+      // Fire-and-forget: bu blok yalnız tanılama amaçlı — sonucu (routeMismatch)
+      // hiçbir yerde dispatch/printer seçimini etkilemiyor, yalnız uyuşmazlıkta
+      // _eventLogService'e (zaten .ignore() ile fire-and-forget) log yazıyor.
+      // resolveExpectedKitchenPrinter 1-2 ekstra Supabase sorgusu yapıyor;
+      // await edilmesi her mutfak job'ında fiziksel yazdırmayı geciktiriyordu.
+      unawaited(() async {
+        final expectedKitchenPrinter = await _printerRepository
+            .resolveExpectedKitchenPrinter(
+              restaurantId: _restaurantId!,
+              stationId: _readText(
+                jobRecordForStamp['station_id'] ?? payload['station_id'],
+              ),
+              stationName: _readText(
+                payload['station_name'] ??
+                    payload['kitchen_ticket_header'] ??
+                    area,
+              ),
+            );
+        if (expectedKitchenPrinter == null) return;
         final actualQueue =
             preparedPayload.printer?.queueName ??
             _readText(payload['printer_queue']);
@@ -1057,7 +1196,7 @@ class DesktopPrintHub extends ChangeNotifier {
               )
               .ignore();
         }
-      }
+      }());
     }
     _eventLogService
         .append(
@@ -1425,6 +1564,37 @@ class DesktopPrintHub extends ChangeNotifier {
             payload: printPayload,
             jobStationId: jobRecordForStamp['station_id']?.toString(),
           );
+          final stationLogicalKey = buildKitchenLogicalPrintKeyFromPayload(
+            restaurantId: _restaurantId!,
+            payload: printPayload,
+            job: jobRecordForStamp,
+          );
+          printPayload['logical_print_key'] = stationLogicalKey;
+          printPayload['content_idempotency_key'] = stationLogicalKey;
+          printPayload['idempotency_key'] = stationLogicalKey;
+          // Late barrier: LAN may have finished during claim/enrich.
+          if (KitchenLanPrintBarrier.alreadyPrinted(stationLogicalKey)) {
+            logPrintDedup(
+              source: 'HUB',
+              orderId: fullJob['order_id']?.toString() ?? '-',
+              printJobId: jobId,
+              jobId: jobId,
+              logicalPrintKey: stationLogicalKey,
+              claim: 'claimed',
+              claimResult: 'success',
+              physicalPrintStarted: false,
+              duplicate: true,
+              skipReason: 'lan_already_printed_pre_bridge',
+            );
+            finalError = null;
+            bridgeResult = <String, dynamic>{
+              'ok': true,
+              'duplicate': true,
+              'errorCode': 'already_processed',
+              'skip_reason': 'lan_already_printed_pre_bridge',
+            };
+            continue;
+          }
           area =
               printPayload['station_name']?.toString() ??
               printPayload['area_name']?.toString() ??
@@ -1520,17 +1690,56 @@ class DesktopPrintHub extends ChangeNotifier {
                   )
                   .ignore();
             }
+            final bridgeCallStartedAt = DateTime.now();
+            logPrintDedup(
+              source: 'HUB',
+              orderId: fullJob['order_id']?.toString() ?? '-',
+              printJobId: jobId,
+              jobId: jobId,
+              logicalPrintKey:
+                  printPayload['logical_print_key']?.toString() ?? logicalKey,
+              claim: 'claimed',
+              claimResult: 'success',
+              physicalPrintStarted: true,
+            );
             final physicalResult = await _printOrchestrator
                 .printPhysicalToPrinter(
                   preparedPayload.printer!,
                   PrintPayload.fromQueuedJob(printPayload),
                   restaurantId: _restaurantId!,
                 );
-            bridgeResult = physicalResult.raw;
+            final bridgeCallEndedAt = DateTime.now();
+            final rawBridge = physicalResult.raw;
+            bridgeResult = <String, dynamic>{
+              if (rawBridge != null) ...rawBridge,
+              '_bridge_call_started_at': bridgeCallStartedAt.toIso8601String(),
+              '_bridge_call_ended_at': bridgeCallEndedAt.toIso8601String(),
+              '_bridge_call_ms': bridgeCallEndedAt
+                  .difference(bridgeCallStartedAt)
+                  .inMilliseconds,
+            };
+            logPrintDedup(
+              source: 'HUB',
+              orderId: fullJob['order_id']?.toString() ?? '-',
+              printJobId: jobId,
+              jobId: jobId,
+              logicalPrintKey:
+                  printPayload['logical_print_key']?.toString() ?? logicalKey,
+              claim: 'claimed',
+              claimResult: 'success',
+              alreadyProcessed: bridgeResult['duplicate'] == true ||
+                  bridgeResult['errorCode']?.toString() == 'already_processed',
+              physicalPrintStarted: true,
+              physicalPrintCompleted: physicalResult.ok,
+              duplicate: bridgeResult['duplicate'] == true,
+              skipReason: bridgeResult['duplicate'] == true
+                  ? 'bridge_already_processed'
+                  : '-',
+            );
             final hubVerification = BridgePrintDispatchVerification.verify(
               response: bridgeResult,
               printer: preparedPayload.printer,
-              dispatchUsedFallback: bridgeResult?['used_fallback'] == true,
+              dispatchUsedFallback: bridgeResult['used_fallback'] == true,
             );
             lastDispatchSnapshot = _buildHubObservabilitySnapshot(
               verification: hubVerification,
@@ -1584,6 +1793,57 @@ class DesktopPrintHub extends ChangeNotifier {
           payload: payload,
           dispatchSnapshot: lastDispatchSnapshot,
         ).ignore();
+
+        if (kDebugMode) {
+          final t0 = pipelineStartedAt;
+          final t1 = _readStageTimestamp(fullJob, 'order_saved_at');
+          final t2 = _readStageTimestamp(fullJob, 'print_job_created_at') ??
+              _readStageTimestamp(jobRecord, 'print_job_created_at');
+          final t3 = broadcastSentAt;
+          final t4 = hubJobReceivedAt;
+          final t5 = claimStartedAt;
+          final t6 = claimedAt;
+          final t7 = _readStageTimestamp(
+                bridgeResult ?? const <String, dynamic>{},
+                '_bridge_call_started_at',
+              ) ??
+              dispatchStartedAt;
+          final t8 = _readStageTimestamp(
+            bridgeResult ?? const <String, dynamic>{},
+            '_bridge_call_ended_at',
+          );
+          final t9 = _readStageTimestamp(
+                bridgeResult ?? const <String, dynamic>{},
+                'printer_write_started_at',
+              ) ??
+              t8;
+          final t10 = completedAt;
+
+          int? delta(DateTime? a, DateTime? b) {
+            if (a == null || b == null) return null;
+            return b.difference(a).inMilliseconds;
+          }
+
+          debugPrint(
+            '\n=== PRINT_LATENCY ($jobId) ===\n'
+            'pickup=$pickupSource\n'
+            'T0→T2=${_formatLatencyMs(delta(t0, t2))}\n'
+            'T2→T3=${_formatLatencyMs(delta(t2, t3))}\n'
+            'T3→T4=${_formatLatencyMs(delta(t3, t4))}\n'
+            'T2→T4=${_formatLatencyMs(delta(t2, t4))}\n'
+            'T4→T6=${_formatLatencyMs(delta(t4, t6))}\n'
+            'T5→T6=${_formatLatencyMs(delta(t5, t6))}\n'
+            'T6→T7=${_formatLatencyMs(delta(t6, t7))}\n'
+            'T7→T8=${_formatLatencyMs(delta(t7, t8))}\n'
+            'T8→T9=${_formatLatencyMs(delta(t8, t9))}\n'
+            'T9→T10=${_formatLatencyMs(delta(t9, t10))}\n'
+            'T8→T10=${_formatLatencyMs(delta(t8, t10))}\n'
+            'T0→T10=${_formatLatencyMs(delta(t0, t10))}\n'
+            'T2→T10=${_formatLatencyMs(delta(t2, t10))}\n'
+            'order_saved_at=${t1?.toIso8601String() ?? '-'}\n'
+            '=================================\n',
+          );
+        }
         _eventLogService
             .append(
               restaurantId: _restaurantId!,
@@ -2028,6 +2288,38 @@ class DesktopPrintHub extends ChangeNotifier {
   }
 
   String _readText(Object? value) => value?.toString().trim() ?? '';
+
+  bool _tryReserveDispatch(String jobId) {
+    if (_dispatchedJobIds.contains(jobId)) return false;
+    while (_dispatchedJobIds.length >= _maxDispatchedJobIds) {
+      _dispatchedJobIds.remove(_dispatchedJobIds.first);
+    }
+    return _dispatchedJobIds.add(jobId);
+  }
+
+  void _releaseDispatchReservation(String jobId) {
+    _dispatchedJobIds.remove(jobId);
+  }
+
+  void _mergeLatencyHints(
+    Map<String, dynamic> fullJob,
+    Map<String, dynamic> stub,
+  ) {
+    for (final key in const [
+      'print_job_created_at',
+      'order_saved_at',
+      '_broadcast_sent_at',
+      '_pipeline_started_at',
+      '_trace_id',
+      '_pickup_source',
+    ]) {
+      final existing = fullJob[key]?.toString().trim() ?? '';
+      final hint = stub[key]?.toString().trim() ?? '';
+      if (existing.isEmpty && hint.isNotEmpty) {
+        fullJob[key] = hint;
+      }
+    }
+  }
 
   // ── DB helpers ─────────────────────────────────────────────────────────────
 

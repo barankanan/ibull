@@ -35,6 +35,7 @@ import '../widgets/restaurant_order/product_quick_view_dialog.dart';
 import '../widgets/restaurant_order/weight_selector.dart';
 import '../services/campaign_service.dart';
 import '../core/qr_initial_params.dart';
+import '../core/home_navigation.dart';
 import '../services/waiter_order_request_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../features/seller/achievements/helpers/seller_badge_public_display.dart';
@@ -956,10 +957,7 @@ class _BusinessDetailPageState extends State<BusinessDetailPage>
       '[BDP/QR] home navigation triggered — source=$source '
       'rootNavigator=true route=/home',
     );
-    Navigator.of(
-      context,
-      rootNavigator: true,
-    ).pushNamedAndRemoveUntil('/home', (route) => false);
+    HomeNavigation.openHome(context);
   }
 
   Future<void> _openForcedDiningFlowWhenReady() async {

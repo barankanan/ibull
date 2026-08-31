@@ -4669,7 +4669,9 @@ class AdminService {
           .delete()
           .inFilter('id', chunk)
           .select('id');
-      deleted += List<dynamic>.from(response as List).length;
+      // Sadece adet okunuyor — List.from chunk başına (200'e kadar) satırı
+      // gereksiz kopyalıyordu. Değer birebir aynı.
+      deleted += (response as List).length;
     }
     return deleted;
   }

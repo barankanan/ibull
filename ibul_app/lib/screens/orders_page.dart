@@ -7,6 +7,7 @@ import '../core/app_state.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
+import '../widgets/ibul_page_state.dart';
 import '../features/orders/screens/order_history_page.dart';
 import '../features/orders/widgets/order_history_web_cta.dart';
 import '../services/order_service.dart';
@@ -495,11 +496,14 @@ class _OrdersPageState extends State<OrdersPage> {
     if (filteredOrders.isEmpty) {
       return [
         const SizedBox(height: 40),
-        const Center(
-          child: Text(
-            'Bu kategoride sipariş bulunamadı',
-            style: TextStyle(fontSize: 13, color: Colors.grey),
-          ),
+        const IbulPageState.empty(
+          icon: Icons.receipt_long_outlined,
+          iconSize: 40,
+          iconColor: Colors.grey,
+          title: 'Bu kategoride sipariş bulunamadı',
+          titleSize: 13,
+          titleColor: Colors.grey,
+          padding: EdgeInsets.zero,
         ),
       ];
     }
@@ -789,6 +793,23 @@ class _OrdersPageState extends State<OrdersPage> {
                             child: OptimizedImage(
                               imageUrlOrPath: productImage,
                               fit: BoxFit.cover,
+                              // Decode boyutlama: product_card.dart ile aynı
+                              // DPR-aware desen. Görsel 70-90px kutuda
+                              // gösteriliyordu ama tam çözünürlükte decode
+                              // ediliyordu; downsample ile decode CPU'su ve
+                              // ImageCache RAM'i düşer, görünür kalite aynı.
+                              cacheWidth:
+                                  ((isWeb ? 90 : 70) *
+                                          MediaQuery.devicePixelRatioOf(
+                                            context,
+                                          ))
+                                      .round(),
+                              cacheHeight:
+                                  ((isWeb ? 90 : 70) *
+                                          MediaQuery.devicePixelRatioOf(
+                                            context,
+                                          ))
+                                      .round(),
                             ),
                           )
                         : Icon(

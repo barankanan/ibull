@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../core/constants.dart';
 import '../models/product_model.dart';
 import '../widgets/add_to_cart_button.dart';
-import 'home_screen.dart';
+import '../core/home_navigation.dart';
 
 class TryProductPage extends StatefulWidget {
   final Product product;
@@ -341,12 +341,10 @@ class _TryProductPageState extends State<TryProductPage> {
                         borderRadius: 8,
                         fontSize: 13,
                         onGoToCart: () {
-                          Navigator.pushAndRemoveUntil(
+                          HomeNavigation.openHome(
                             context,
-                            MaterialPageRoute(
-                              builder: (context) => const HomeScreen(initialIndex: 3),
-                            ),
-                            (route) => false,
+                            initialIndex: 3,
+                            replaceStack: true,
                           );
                         },
                       ),

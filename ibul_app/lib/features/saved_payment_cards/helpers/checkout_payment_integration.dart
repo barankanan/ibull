@@ -9,7 +9,11 @@ class CheckoutPaymentIntegration {
     required String? selectedSavedCardId,
     required bool useNewCard,
     required RawCardInput? newCardInput,
+    bool? chargeProviderReady,
   }) {
+    final ready =
+        chargeProviderReady ?? SavedPaymentCardsService.isChargeProviderReady;
+    if (!ready) return false;
     if (!useNewCard && selectedSavedCardId != null) {
       return savedCards.any((c) => c.id == selectedSavedCardId);
     }

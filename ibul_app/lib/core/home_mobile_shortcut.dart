@@ -5,6 +5,7 @@ import '../features/products/models/product_filter_models.dart';
 import '../models/product_model.dart';
 import '../screens/ai_chat_page.dart';
 import '../screens/category_products_page.dart';
+import '../screens/coming_soon/coming_soon_catalog.dart';
 import '../screens/feature_coming_soon_page.dart';
 import '../screens/lists_page.dart';
 import '../screens/map_page.dart';
@@ -16,7 +17,7 @@ enum HomeMobileShortcutType {
   createList,
   visualSearch,
   productBreakdown,
-  premium,
+  comingSoonShelf,
   personalized,
   fastFood,
   aiAssistant,
@@ -74,10 +75,15 @@ abstract final class HomeMobileShortcutRegistry {
       title: 'Ürün Parçala',
       type: HomeMobileShortcutType.productBreakdown,
     ),
+    'yakinda': HomeMobileShortcutAction(
+      id: 'yakinda',
+      title: 'Yakında',
+      type: HomeMobileShortcutType.comingSoonShelf,
+    ),
     'ibul_premium': HomeMobileShortcutAction(
       id: 'ibul_premium',
       title: 'İBUL Premium',
-      type: HomeMobileShortcutType.premium,
+      type: HomeMobileShortcutType.comingSoonShelf,
     ),
     'bana_ozel': HomeMobileShortcutAction(
       id: 'bana_ozel',
@@ -170,19 +176,9 @@ abstract final class HomeMobileShortcutNavigator {
             builder: (_) => const VisualSearchSelectionPage(),
           ),
         );
-      case HomeMobileShortcutType.premium:
-        logTap(action, target: 'FeatureComingSoonPage');
-        await Navigator.of(context, rootNavigator: true).push(
-          MaterialPageRoute<void>(
-            builder: (_) => const FeatureComingSoonPage(
-              title: 'İBUL Premium',
-              description:
-                  'Premium üyelik ile öncelikli teslimat, özel kampanyalar '
-                  've kişisel alışveriş deneyimi yakında sizinle.',
-              icon: Icons.workspace_premium_rounded,
-            ),
-          ),
-        );
+      case HomeMobileShortcutType.comingSoonShelf:
+        logTap(action, target: 'ComingSoonShelfPage');
+        await ComingSoonCatalog.openShelf(context);
       case HomeMobileShortcutType.personalized:
         logTap(action, target: 'scrollPersonalized');
         callbacks.scrollToPersonalizedSection?.call();

@@ -40,7 +40,11 @@ from .network_scan import (
     scan_no_device_reason,
     suggest_ethernet_network_settings,
 )
-from .network_transport import DEFAULT_TCP_PORT, NetworkTcpTransport
+from .network_transport import (
+    DEFAULT_TCP_PORT,
+    DEFAULT_TIMEOUT_SECONDS,
+    NetworkTcpTransport,
+)
 from .printers import (
     PrinterRecord,
     annotate_duplicate_physical_printers,
@@ -50,6 +54,7 @@ from .printers import (
 from .queue_autoselect import pick_auto_windows_printer_queue
 from .pillow_probe import probe_pillow
 from .print_layout import (
+    resolve_print_text_scale,
     resolve_tail_padding_policy,
     resolve_min_receipt_height_px,
     resolve_min_trailing_blank_lines,
@@ -84,7 +89,38 @@ _AUTOSTART_LABEL = "com.ibul.localprint"
 
 
 def _local_ipv4_addresses() -> list[str]:
+    """Active non-loopback IPv4 addresses of this host (for /24 scan).
+
+    Prefer the outbound interface via UDP connect (no packets sent). Fall back
+    to hostname resolution and a short ``ifconfig`` parse on macOS/Linux.
+    Never hardcode a subnet.
+    """
     results: list[str] = []
+
+    def _add(ip: str) -> None:
+        text = (ip or "").strip()
+        if not text or text.startswith("127.") or text in results:
+            return
+        try:
+            addr = ipaddress.ip_address(text)
+        except ValueError:
+            return
+        if addr.version != 4 or addr.is_loopback or addr.is_link_local:
+            return
+        results.append(text)
+
+    for dest in (("1.1.1.1", 80), ("8.8.8.8", 80)):
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.settimeout(0.15)
+            try:
+                probe.connect(dest)
+                _add(probe.getsockname()[0])
+            finally:
+                probe.close()
+        except OSError:
+            pass
+
     try:
         hostname = socket.gethostname()
         for family, _socktype, _proto, _canonname, sockaddr in socket.getaddrinfo(
@@ -94,29 +130,306 @@ def _local_ipv4_addresses() -> list[str]:
         ):
             if family != socket.AF_INET:
                 continue
-            ip = str(sockaddr[0]).strip()
-            if not ip or ip.startswith("127."):
-                continue
-            if ip not in results:
-                results.append(ip)
+            _add(str(sockaddr[0]))
     except OSError:
         pass
-    try:
-        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    if not results:
         try:
-            probe.connect(("8.8.8.8", 80))
-            outbound_ip = probe.getsockname()[0]
-            if (
-                outbound_ip
-                and not outbound_ip.startswith("127.")
-                and outbound_ip not in results
+            import re
+            import subprocess
+
+            completed = subprocess.run(
+                ["ifconfig"],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+                check=False,
+            )
+            for match in re.finditer(
+                r"inet (?:addr:)?(\d+\.\d+\.\d+\.\d+)",
+                completed.stdout or "",
             ):
-                results.append(outbound_ip)
-        finally:
-            probe.close()
-    except OSError:
-        pass
+                _add(match.group(1))
+        except (OSError, subprocess.SubprocessError):
+            pass
     return results
+
+
+def _is_lan_or_loopback_client(ip: str) -> bool:
+    """Allow only loopback / RFC1918 / link-local peers (defense-in-depth)."""
+    text = (ip or "").strip()
+    if not text:
+        return False
+    # Proxies may pass IPv4-mapped IPv6 (::ffff:x.x.x.x).
+    if text.startswith("::ffff:"):
+        text = text[7:]
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return bool(
+        addr.is_loopback
+        or addr.is_private
+        or addr.is_link_local
+    )
+
+
+def _is_loopback_client(ip: str) -> bool:
+    text = (ip or "").strip()
+    if not text:
+        return False
+    if text.startswith("::ffff:"):
+        text = text[7:]
+    try:
+        return bool(ipaddress.ip_address(text).is_loopback)
+    except ValueError:
+        return text in {"localhost", "127.0.0.1", "::1"}
+
+
+def print_station_env_updates_from_http(
+    body: dict[str, object],
+    client_ip: str,
+    field_map: dict[str, str],
+) -> dict[str, str]:
+    """Map Flutter configure body to env keys with session-token guardrails.
+
+    Refresh tokens are never accepted over HTTP. Access tokens are accepted
+    only from loopback, so a LAN-exposed bridge cannot harvest the seller
+    session.
+    """
+    loopback = _is_loopback_client(client_ip)
+    env_updates: dict[str, str] = {}
+    for field, env_key in field_map.items():
+        if field not in body or body[field] is None:
+            continue
+        if field == "refresh_token":
+            continue
+        if field == "access_token" and not loopback:
+            continue
+        env_updates[env_key] = str(body[field])
+    return env_updates
+
+
+# HTTP /print/* short-lived idempotency (survives only while process is up).
+_HTTP_PRINT_IDEM_LOCK = threading.Lock()
+_HTTP_PRINT_RECENT_JOBS: dict[str, float] = {}
+_HTTP_PRINT_IDEM_TTL_S = 15 * 60.0
+_HTTP_PRINT_IDEM_MAX = 500
+
+# Last successful kitchen TCP target (LAN hot-path fallback; not a public endpoint).
+_LAST_KITCHEN_TCP_LOCK = threading.Lock()
+_LAST_KITCHEN_TCP: tuple[str, int] | None = None
+_LAST_KITCHEN_TCP_PATH = Path(__file__).resolve().parent / ".last_kitchen_tcp"
+
+
+def _load_last_kitchen_tcp() -> tuple[str, int] | None:
+    global _LAST_KITCHEN_TCP
+    with _LAST_KITCHEN_TCP_LOCK:
+        if _LAST_KITCHEN_TCP is not None:
+            return _LAST_KITCHEN_TCP
+        try:
+            raw = _LAST_KITCHEN_TCP_PATH.read_text(encoding="utf-8").strip()
+            if not raw:
+                return None
+            host, _, port_s = raw.partition(":")
+            host = host.strip()
+            port = int(port_s.strip() or "9100")
+            if not host or host in {"127.0.0.1", "localhost", "::1"}:
+                return None
+            _LAST_KITCHEN_TCP = (host, port if port > 0 else 9100)
+            return _LAST_KITCHEN_TCP
+        except Exception:
+            return None
+
+
+def _remember_last_kitchen_tcp(host: str | None, port: int | None) -> None:
+    global _LAST_KITCHEN_TCP
+    normalized = (host or "").strip()
+    if not normalized or normalized in {"127.0.0.1", "localhost", "::1"}:
+        return
+    safe_port = int(port or 9100)
+    if safe_port <= 0:
+        safe_port = 9100
+    with _LAST_KITCHEN_TCP_LOCK:
+        _LAST_KITCHEN_TCP = (normalized, safe_port)
+        try:
+            _LAST_KITCHEN_TCP_PATH.write_text(
+                f"{normalized}:{safe_port}\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+
+def _http_print_idempotency_cleanup(now: float | None = None) -> None:
+    current = time.monotonic() if now is None else now
+    expiry = current - _HTTP_PRINT_IDEM_TTL_S
+    stale = [key for key, stamped in _HTTP_PRINT_RECENT_JOBS.items() if stamped < expiry]
+    for key in stale:
+        _HTTP_PRINT_RECENT_JOBS.pop(key, None)
+    while len(_HTTP_PRINT_RECENT_JOBS) > _HTTP_PRINT_IDEM_MAX:
+        oldest = min(_HTTP_PRINT_RECENT_JOBS, key=_HTTP_PRINT_RECENT_JOBS.get)
+        _HTTP_PRINT_RECENT_JOBS.pop(oldest, None)
+
+
+def _http_print_already_processed(job_id: str) -> bool:
+    key = (job_id or "").strip()
+    if not key:
+        return False
+    with _HTTP_PRINT_IDEM_LOCK:
+        _http_print_idempotency_cleanup()
+        return key in _HTTP_PRINT_RECENT_JOBS
+
+
+def _http_print_record_processed(job_id: str) -> None:
+    key = (job_id or "").strip()
+    if not key:
+        return
+    with _HTTP_PRINT_IDEM_LOCK:
+        _http_print_idempotency_cleanup()
+        _HTTP_PRINT_RECENT_JOBS[key] = time.monotonic()
+
+
+def _extract_http_print_job_id(raw_payload: dict[str, object] | None) -> str:
+    body = raw_payload or {}
+    for key in (
+        "print_job_id",
+        "client_print_job_id",
+        "job_id",
+        "request_id",
+        "idempotency_key",
+    ):
+        value = str(body.get(key) or "").strip()
+        if value:
+            return value
+    embedded = body.get("printer")
+    if isinstance(embedded, dict):
+        value = str(embedded.get("print_job_id") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _normalize_kitchen_items_for_idem(items: object) -> str:
+    """Match Flutter ``buildKitchenItemsHash`` — ignore volatile item fields."""
+    if not isinstance(items, list) or not items:
+        return "no_items"
+    normalized: list[dict[str, object]] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        qty_raw = raw.get("quantity")
+        if qty_raw is None:
+            qty_raw = raw.get("qty")
+        try:
+            qty = int(qty_raw) if qty_raw is not None else 1
+        except (TypeError, ValueError):
+            qty = 1
+        if qty <= 0:
+            qty = 1
+        normalized.append(
+            {
+                "product_id": str(raw.get("product_id") or "").strip(),
+                "name": str(raw.get("name") or "").strip(),
+                "display_label": str(raw.get("display_label") or "").strip(),
+                "quantity": qty,
+                "station_id": str(raw.get("station_id") or "").strip(),
+                "station_name": str(raw.get("station_name") or "").strip(),
+                "amount_label": str(raw.get("amount_label") or "").strip(),
+                "note": str(raw.get("note") or "").strip(),
+            }
+        )
+    if not normalized:
+        return "no_items"
+    normalized.sort(key=lambda row: json.dumps(row, ensure_ascii=False, sort_keys=True))
+    return json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+
+
+def _http_kitchen_content_idem_key(raw_payload: dict[str, object] | None) -> str:
+    """Stable content key so LAN client-id and hub DB-id still dedupe.
+
+    Intentionally omits order_id: LAN path may use a placeholder (lan-*) while
+    the hub later sends the Supabase UUID for the same kitchen ticket.
+    Prefers client ``logical_print_key`` when present (Flutter stamps the same
+    value on both LAN and hub paths).
+    """
+    body = raw_payload or {}
+    for key_name in ("logical_print_key", "content_idempotency_key"):
+        supplied = str(body.get(key_name) or "").strip()
+        if supplied:
+            if supplied.startswith("logical:") or supplied.startswith("content:"):
+                return supplied
+            return f"logical:{supplied}"
+    restaurant = str(
+        body.get("restaurant_id") or body.get("seller_id") or ""
+    ).strip()
+    table = str(
+        body.get("table_no")
+        or body.get("table_number")
+        or body.get("display_table_label")
+        or body.get("table_name")
+        or ""
+    ).strip()
+    station_id = str(body.get("station_id") or "").strip()
+    station_name = str(
+        body.get("station_name")
+        or body.get("kitchen_ticket_header")
+        or body.get("area_name")
+        or ""
+    ).strip().lower()
+    station = station_id if station_id else station_name
+    revision = str(body.get("revision") or body.get("order_revision") or "1").strip()
+    items_blob = _normalize_kitchen_items_for_idem(body.get("items"))
+    if not any((restaurant, table, station, items_blob != "no_items")):
+        return ""
+    # No order_id / daily_order_no: LAN may mint placeholders while hub uses
+    # DB ids and a separately incremented daily counter.
+    return f"content:{restaurant}|{table}|{station}|{revision}|{items_blob}"
+
+
+def _http_print_idem_keys(raw_payload: dict[str, object] | None) -> list[str]:
+    keys: list[str] = []
+    body = raw_payload or {}
+    # Prefer shared logical key before volatile lan-*/uuid job ids.
+    for key_name in ("logical_print_key", "content_idempotency_key", "idempotency_key"):
+        supplied = str(body.get(key_name) or "").strip()
+        if supplied:
+            logical = (
+                supplied
+                if supplied.startswith("logical:") or supplied.startswith("content:")
+                else f"logical:{supplied}"
+            )
+            if logical not in keys:
+                keys.append(logical)
+            break
+    job_id = _extract_http_print_job_id(raw_payload)
+    if job_id:
+        job_key = f"job:{job_id}"
+        if job_key not in keys:
+            keys.append(job_key)
+    content = _http_kitchen_content_idem_key(raw_payload)
+    if content and content not in keys:
+        keys.append(content)
+    return keys
+
+
+def _http_print_any_processed(keys: list[str]) -> bool:
+    if not keys:
+        return False
+    with _HTTP_PRINT_IDEM_LOCK:
+        _http_print_idempotency_cleanup()
+        return any(key in _HTTP_PRINT_RECENT_JOBS for key in keys)
+
+
+def _http_print_record_keys(keys: list[str]) -> None:
+    if not keys:
+        return
+    with _HTTP_PRINT_IDEM_LOCK:
+        _http_print_idempotency_cleanup()
+        now = time.monotonic()
+        for key in keys:
+            _HTTP_PRINT_RECENT_JOBS[key] = now
 
 
 def _same_subnet_hint(host: str, local_ips: list[str]) -> tuple[bool | None, str]:
@@ -794,8 +1107,12 @@ class _SmartTransport:
         target_host: str | None = None,
         target_port: int | None = None,
         selected_printer: dict[str, object] | None = None,
+        connect_timeout: float | None = None,
+        write_timeout: float | None = None,
     ) -> object:
         # Per-request network override (e.g. print to a specific IP from the job payload)
+        timeout = float(connect_timeout) if connect_timeout is not None else None
+        send_timeout = float(write_timeout) if write_timeout is not None else None
         if target_host:
             port = target_port or 9100
             LOGGER.info(
@@ -804,7 +1121,12 @@ class _SmartTransport:
                 port,
                 job_name,
             )
-            net = NetworkTcpTransport(host=target_host, port=port)
+            net = NetworkTcpTransport(
+                host=target_host,
+                port=port,
+                timeout=timeout if timeout is not None else DEFAULT_TIMEOUT_SECONDS,
+                write_timeout=send_timeout,
+            )
             return net.print_bytes(payload, job_name=job_name)
 
         if selected_printer:
@@ -830,7 +1152,14 @@ class _SmartTransport:
             ):
                 host, port = _tcp_host_port_from_printer(selected_printer)
                 if host:
-                    return NetworkTcpTransport(host=host, port=port).print_bytes(
+                    return NetworkTcpTransport(
+                        host=host,
+                        port=port,
+                        timeout=(
+                            timeout if timeout is not None else DEFAULT_TIMEOUT_SECONDS
+                        ),
+                        write_timeout=send_timeout,
+                    ).print_bytes(
                         payload,
                         job_name=job_name,
                     )
@@ -980,6 +1309,8 @@ def build_ethernet_test_payload(
     auto_cut: bool = True,
     role_label: str | None = None,
     printer_name: str | None = None,
+    print_size: str | None = None,
+    print_text_scale: float | None = None,
 ) -> ReceiptPayload:
     """ESC/POS test receipt tailored for Ethernet / TCP 9100 printers.
 
@@ -1005,6 +1336,19 @@ def build_ethernet_test_payload(
     safe_port = int(port) if isinstance(port, int) else 9100
     safe_role = (role_label or "Adisyon").strip() or "Adisyon"
     safe_name = (printer_name or "Ethernet Yazıcı").strip() or "Ethernet Yazıcı"
+    size_label = (print_size or "normal").strip().lower() or "normal"
+    try:
+        scale_label = (
+            f"{float(print_text_scale):.2f}"
+            if print_text_scale is not None
+            else {
+                "small": "0.85",
+                "large": "1.20",
+                "xlarge": "1.40",
+            }.get(size_label, "1.00")
+        )
+    except (TypeError, ValueError):
+        scale_label = "1.00"
 
     return ReceiptPayload.from_dict(
         {
@@ -1040,6 +1384,12 @@ def build_ethernet_test_payload(
                 },
                 {
                     "name": f"Rol: {safe_role}",
+                    "qty": 1,
+                    "total": "0.00",
+                    "price": "0.00",
+                },
+                {
+                    "name": f"Baskı Boyutu: {size_label} (x{scale_label})",
                     "qty": 1,
                     "total": "0.00",
                     "price": "0.00",
@@ -1757,6 +2107,16 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found."})
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._client_allowed_for_print_api():
+            self._send_json(
+                HTTPStatus.FORBIDDEN,
+                {
+                    "ok": False,
+                    "error": "Print bridge yalnızca yerel / özel ağ istemcilerine açıktır.",
+                    "errorCode": "lan_only",
+                },
+            )
+            return
         origin = self.headers.get("Origin")
         if origin and not self._origin_allowed(origin):
             self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "Origin not allowed."})
@@ -1940,6 +2300,24 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 "queue": queue_summary,
                 "print_station": self._queue_status_payload(),
                 "log_count": self.log_store.count(),
+                "listen_host": self.settings.host,
+                "listen_port": self.settings.port,
+                "lan_addresses": _local_ipv4_addresses(),
+                "lan_listen_enabled": self.settings.host
+                in {"0.0.0.0", "::", ""}
+                or not str(self.settings.host).startswith("127."),
+                "last_kitchen_tcp": (
+                    {"host": last_tcp[0], "port": last_tcp[1]}
+                    if (last_tcp := _load_last_kitchen_tcp())
+                    else (
+                        {
+                            "host": self.settings.network_host,
+                            "port": self.settings.network_port or 9100,
+                        }
+                        if self.settings.network_host
+                        else None
+                    )
+                ),
             },
         )
 
@@ -2290,11 +2668,18 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 }
             )
         elif test_mode in {"ethernet", "ethernet_test", "tcp_test"}:
-            # Ethernet test receipt uses an image render so the Türkçe block
-            # and the cut command are emitted regardless of the printer's
-            # active codepage; this matches the operator-facing spec.
-            raw_body["render_mode"] = "image"
+            # Same fast path as Sistem Alanı escpos text tests: CONNECT→WRITE→CLOSE.
+            # Image raster adds multi-second render latency and caused intermittent
+            # Flutter client_timeout / tcp_timeout on Area "Test Fişi".
+            # When Baskı Boyutu != normal, force image so raster scale is visible.
+            _, print_text_scale = resolve_print_text_scale(raw_body)
+            if abs(float(print_text_scale) - 1.0) > 0.01:
+                raw_body["render_mode"] = "image"
+                raw_body["turkish_guarantee_mode"] = True
+            else:
+                raw_body.setdefault("render_mode", "text")
             raw_body.setdefault("test_mode", "ethernet_test")
+            raw_body["lan_hot_path"] = True
         target_host, target_port = self._extract_target(raw_body)
         selected_printer = self._resolve_selected_printer(raw_body)
         if test_mode in {"ethernet_connection", "tcp_connection", "connection"}:
@@ -2421,6 +2806,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 or raw_body.get("printer_name")
                 or "Ethernet Yazıcı"
             ).strip()
+            size_preset, size_scale = resolve_print_text_scale(raw_body)
             payload = build_ethernet_test_payload(
                 host=host_for_receipt or "",
                 port=port_for_receipt,
@@ -2428,6 +2814,8 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 auto_cut=auto_cut_flag,
                 role_label=role_label or "Adisyon",
                 printer_name=printer_name or "Ethernet Yazıcı",
+                print_size=size_preset,
+                print_text_scale=size_scale,
             )
         elif test_mode in {
             "pos58_raster_gs_v0",
@@ -2469,8 +2857,29 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         selected_backend = ""
         if selected_printer:
             selected_backend = str(selected_printer.get("backend") or "").strip().lower()
-        fast_test = test_mode in {"escpos_short", "escpos_text", "escpos", "raw", "text"} and (
-            selected_backend == "windows-spool" or selected_backend == ""
+        selected_transport = ""
+        if selected_printer:
+            selected_transport = str(
+                selected_printer.get("transportType")
+                or selected_printer.get("transport_type")
+                or ""
+            ).strip().lower()
+        ethernet_path = bool(target_host) or selected_backend in {
+            "tcp",
+            "network-tcp",
+        } or selected_transport == "ethernet" or test_mode in {
+            "ethernet",
+            "ethernet_test",
+            "tcp_test",
+            "escpos_short",
+            "escpos_text",
+            "escpos",
+            "raw",
+            "text",
+        }
+        fast_test = ethernet_path or (
+            test_mode in {"escpos_short", "escpos_text", "escpos", "raw", "text"}
+            and (selected_backend == "windows-spool" or selected_backend == "")
         )
         self._submit_receipt(
             payload,
@@ -2580,7 +2989,12 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             selected_printer=selected_printer,
         )
         try:
-            result = NetworkTcpTransport(host=host or "", port=port).health()
+            # Match TCP print connect budget (DEFAULT_TIMEOUT_SECONDS) — never 5s.
+            result = NetworkTcpTransport(
+                host=host or "",
+                port=port,
+                timeout=DEFAULT_TIMEOUT_SECONDS,
+            ).health()
         except TransportError as exc:
             result = {
                 "ok": False,
@@ -2599,6 +3013,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 host,
                 port,
             )
+            _remember_last_kitchen_tcp(host, port)
             self._send_json(
                 HTTPStatus.OK,
                 {
@@ -2635,14 +3050,18 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             )
             return
 
+        # Keep the real TCP reason (timeout/refused/unreachable). same_subnet stays
+        # in the JSON for UI guidance — do not overwrite the transport error code.
         error_code = str(result.get("error_code") or "tcp_unreachable").strip() or "tcp_unreachable"
-        if same_subnet is False:
-            error_code = "network_mismatch"
         error_message = str(
             result.get("reason")
             or result.get("error")
             or "Ethernet yazıcıya bağlantı kurulamadı."
         ).strip() or "Ethernet yazıcıya bağlantı kurulamadı."
+        if same_subnet is False and not suggested_message:
+            suggested_message = (
+                "Mac ve yazıcı farklı alt ağda görünüyor; IP/ağ ayarını kontrol edin."
+            )
         LOGGER.error(
             "[EthernetPrinter][connection_test_error] code=%s host=%s port=%d",
             error_code,
@@ -2727,7 +3146,13 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         ).strip()
         local_ips = _local_ipv4_addresses()
         started = time.monotonic()
-        result = scan_local_network_printers(local_ips, port=port)
+        result = scan_local_network_printers(
+            local_ips,
+            port=port,
+            printer_host_hint=printer_host_hint,
+            budget_s=2.0,
+            timeout=0.18,
+        )
         duration_ms = int((time.monotonic() - started) * 1000)
         network_fields = _ethernet_network_fields(
             local_ips,
@@ -3267,10 +3692,30 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             return
         try:
             raw_payload = self._read_json_body()
+            idem_keys = _http_print_idem_keys(raw_payload)
+            job_id = _extract_http_print_job_id(raw_payload)
+            if _http_print_any_processed(idem_keys):
+                LOGGER.info(
+                    "[KITCHEN_IDEMPOTENCY] duplicate suppressed job_id=%s keys=%s",
+                    job_id or "-",
+                    idem_keys,
+                )
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "duplicate": True,
+                        "errorCode": "already_processed",
+                        "print_job_id": job_id or "",
+                        "message": "Job already processed by this bridge.",
+                    },
+                )
+                return
             LOGGER.info(
                 "[KITCHEN_REQUEST_HEADER] "
                 "raw.printed_at=%s raw.kitchen_printed_at=%s raw.order_created_at=%s raw.created_at=%s "
-                "raw.date_time=%s raw.datetime=%s raw.daily_order_no=%s raw.table_name=%s raw.display_table_label=%s",
+                "raw.date_time=%s raw.datetime=%s raw.daily_order_no=%s raw.table_name=%s raw.display_table_label=%s "
+                "print_job_id=%s",
                 raw_payload.get("printed_at", ""),
                 raw_payload.get("kitchen_printed_at", ""),
                 raw_payload.get("order_created_at", ""),
@@ -3280,6 +3725,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 raw_payload.get("daily_order_no", ""),
                 raw_payload.get("table_name", ""),
                 raw_payload.get("display_table_label", ""),
+                job_id or "-",
             )
             payload = KitchenPayload.from_dict(raw_payload)
         except PayloadError as exc:
@@ -3291,6 +3737,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             return
         target_host, target_port = self._extract_target(raw_payload)
         selected_printer = self._resolve_selected_printer(raw_payload)
+        _http_print_record_keys(idem_keys)
         self._handle_direct_kitchen_print(
             payload,
             raw_payload=raw_payload,
@@ -3542,10 +3989,12 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             )
             return
 
-        env_updates: dict[str, str] = {}
-        for field, env_key in self._PRINT_STATION_FIELD_MAP.items():
-            if field in body and body[field] is not None:
-                env_updates[env_key] = str(body[field])
+        client_ip = (self.client_address[0] if self.client_address else "") or ""
+        env_updates = print_station_env_updates_from_http(
+            body,
+            client_ip,
+            self._PRINT_STATION_FIELD_MAP,
+        )
 
         if not env_updates:
             self._send_json(
@@ -3900,13 +4349,42 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 or selected_printer.get("queueName")
                 or printer_id
             )
+            backend = str(selected_printer.get("backend") or "").strip().lower()
+            transport = str(
+                selected_printer.get("transportType")
+                or selected_printer.get("transport_type")
+                or ""
+            ).strip().lower()
+            is_tcp = backend in {"tcp", "network-tcp", "ethernet"} or transport in {
+                "ethernet",
+                "tcp",
+                "network-tcp",
+            } or printer_id.lower().startswith("tcp:")
+            if is_tcp:
+                host = str(
+                    selected_printer.get("host")
+                    or selected_printer.get("ip_address")
+                    or selected_printer.get("ipAddress")
+                    or target_host
+                    or ""
+                ).strip()
+                try:
+                    port = int(
+                        selected_printer.get("port")
+                        or target_port
+                        or 9100
+                    )
+                except (TypeError, ValueError):
+                    port = int(target_port or 9100)
+                if host:
+                    return f"tcp:{host}:{port}", printer_name, "tcp"
             transport_type = str(selected_printer.get("backend") or settings.transport_mode)
             return printer_id, printer_name, transport_type
         if target_host:
             return (
-                f"network:{target_host}:{target_port or 9100}",
+                f"tcp:{target_host}:{target_port or 9100}",
                 f"{target_host}:{target_port or 9100}",
-                "network-tcp",
+                "tcp",
             )
         queue_name = settings.printer_queue or "<default>"
         backend = "windows-spool" if platform.system().lower() == "windows" else "cups"
@@ -4159,18 +4637,48 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 )
                 return
         try:
+            lan_hot = str(
+                (raw_request or {}).get("lan_hot_path") or ""
+            ).strip().lower() in {"1", "true", "yes"}
+            ethernet_dispatch = bool(target_host) or (
+                isinstance(selected_printer, dict)
+                and (
+                    str(selected_printer.get("backend") or "").strip().lower()
+                    in {"tcp", "network-tcp"}
+                    or str(
+                        selected_printer.get("transportType")
+                        or selected_printer.get("transport_type")
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                    == "ethernet"
+                )
+            )
+            # ESC/POS Ethernet: short CONNECT/WRITE only — never 5s read waits.
+            if lan_hot:
+                connect_timeout = 0.2
+                write_timeout = 0.3
+            elif ethernet_dispatch:
+                connect_timeout = 0.3
+                write_timeout = 0.45
+            else:
+                connect_timeout = None
+                write_timeout = None
             queue_result, result = self.queue_manager.run_job(
                 printer_key=printer_id,
                 printer_name=printer_name,
                 transport_type=transport_type,
                 document_type=document_type,
                 job_name=job_name,
-                execute=lambda: self.transport.print_bytes(
+                execute=lambda ct=connect_timeout, wt=write_timeout: self.transport.print_bytes(
                     raw_bytes,
                     job_name=job_name,
                     target_host=target_host,
                     target_port=target_port,
                     selected_printer=selected_printer,
+                    connect_timeout=ct,
+                    write_timeout=wt,
                 ),
                 is_transient_error=self._is_transient_transport_error,
                 max_retries=1,
@@ -4578,6 +5086,21 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             "transport_mismatch": transport_mismatch,
             "backend_match_expected": used_fallback,
         }
+        remember_host = str(actual_host or tcp_dispatch_host or "").strip()
+        remember_port = int(actual_port or tcp_dispatch_port or 9100)
+        if remember_host and str(document_type).lower().startswith("kitchen"):
+            _remember_last_kitchen_tcp(remember_host, remember_port)
+        meta = result_metadata if isinstance(result_metadata, dict) else {}
+        response["local_print_latency"] = {
+            "t3_bridge_received_ms": 0,
+            "t4_tcp_connect_start_ms": meta.get("t4_tcp_connect_start_ms", 0),
+            "t5_tcp_connected_ms": meta.get("t5_tcp_connected_ms", 0),
+            "t6_payload_sent_ms": meta.get("t6_payload_sent_ms", 0),
+            "t7_bridge_success_ms": elapsed_ms,
+            "transport_ms": elapsed_ms,
+            "host": remember_host or None,
+            "port": remember_port if remember_host else None,
+        }
         if isinstance(queue_snapshot, dict):
             response["queue_has_active_job"] = queue_snapshot.get("queue_has_active_job")
             response["active_job_id"] = queue_snapshot.get("active_job_id")
@@ -4779,6 +5302,7 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         )
         request_queue = _request_printer_queue_name(requested)
         tail_policy = resolve_tail_padding_policy(paper_width_mm, requested)
+        print_size, print_text_scale = resolve_print_text_scale(requested)
         effective_settings = replace(
             self.settings,
             encoding=profile.encoding,
@@ -4800,10 +5324,13 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             min_trailing_blank_lines=tail_policy.min_trailing_blank_lines,
             receipt_length_preset=tail_policy.receipt_length_preset,
             policy_source=tail_policy.policy_source,
+            print_size=print_size,
+            print_text_scale=print_text_scale,
         )
         LOGGER.info(
             "[PrintRender][tail_policy] job=%s bottom_feed=%d cut_feed=%d "
-            "bottom_padding_px=%d min_height_px=%d min_trailing=%d preset=%s source=%s",
+            "bottom_padding_px=%d min_height_px=%d min_trailing=%d preset=%s source=%s "
+            "print_size=%s print_text_scale=%.2f",
             job_name,
             tail_policy.bottom_feed_lines,
             tail_policy.cut_feed_lines,
@@ -4812,6 +5339,8 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
             tail_policy.min_trailing_blank_lines,
             tail_policy.receipt_length_preset,
             tail_policy.policy_source,
+            print_size,
+            print_text_scale,
         )
         LOGGER.info(
             "[PrintRender][request_profile] job=%s backend=%s printer_profile=%s "
@@ -5019,14 +5548,52 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
     ) -> tuple[str | None, int | None]:
         raw_body = body or {}
         target_host = raw_body.get("target_host")
+        if not target_host:
+            for key in (
+                "host",
+                "ip_address",
+                "ipAddress",
+                "selected_printer_host",
+                "printer_ip_address",
+            ):
+                value = raw_body.get(key)
+                if value is not None and str(value).strip():
+                    target_host = value
+                    break
+        if not target_host:
+            embedded = raw_body.get("printer")
+            if isinstance(embedded, dict):
+                for key in ("host", "ip_address", "ipAddress"):
+                    value = embedded.get(key)
+                    if value is not None and str(value).strip():
+                        target_host = value
+                        break
         raw_target_port = raw_body.get("target_port")
+        if raw_target_port is None:
+            raw_target_port = raw_body.get("port")
+        if raw_target_port is None:
+            embedded = raw_body.get("printer")
+            if isinstance(embedded, dict):
+                raw_target_port = embedded.get("port") or embedded.get("tcp_port")
         target_port = None
         if raw_target_port is not None:
             try:
                 target_port = int(raw_target_port)
             except (TypeError, ValueError):
                 target_port = None
-        return (str(target_host) if target_host else None, target_port)
+        host_text = str(target_host).strip() if target_host else ""
+        if not host_text:
+            # LAN hot path: reuse last successful kitchen TCP or configured network host.
+            last = _load_last_kitchen_tcp()
+            if last is not None:
+                return last[0], last[1]
+            if self.settings.network_host:
+                return (
+                    self.settings.network_host,
+                    int(self.settings.network_port or 9100),
+                )
+            return None, None
+        return host_text, target_port
 
     def _resolve_selected_printer(
         self,
@@ -5045,6 +5612,59 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
         ).strip()
         vendor_id = raw_body.get("vendorId", raw_body.get("vendor_id"))
         product_id = raw_body.get("productId", raw_body.get("product_id"))
+        target_host, target_port = self._extract_target(raw_body)
+
+        def _as_tcp_printer(
+            *,
+            host: str,
+            port: int,
+            name: str = "",
+            source: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            base = dict(source or {})
+            base.update(
+                {
+                    "id": str(base.get("id") or f"tcp:{host}:{port}"),
+                    "name": str(base.get("name") or name or f"Ethernet {host}"),
+                    "displayName": str(
+                        base.get("displayName")
+                        or base.get("name")
+                        or name
+                        or f"Ethernet {host}"
+                    ),
+                    "backend": "tcp",
+                    "transportType": "ethernet",
+                    "transport_type": "ethernet",
+                    "host": host,
+                    "ip_address": host,
+                    "port": port,
+                }
+            )
+            return base
+
+        def _looks_like_tcp(data: dict[str, object] | None) -> bool:
+            if not data:
+                return False
+            backend = str(data.get("backend") or "").strip().lower()
+            transport = str(
+                data.get("transportType") or data.get("transport_type") or ""
+            ).strip().lower()
+            host = str(
+                data.get("host")
+                or data.get("ip_address")
+                or data.get("ipAddress")
+                or ""
+            ).strip()
+            pid = str(data.get("id") or "").strip().lower()
+            return (
+                backend in {"tcp", "network-tcp", "ethernet"}
+                or transport in {"ethernet", "tcp", "network-tcp"}
+                or pid.startswith("tcp:")
+                or (
+                    bool(host)
+                    and backend not in {"cups", "windows-spool", "usb", "usb-direct"}
+                )
+            )
 
         # Ethernet printer id pattern: "tcp:host:port" — synthesize the
         # selected_printer dict so callers that only know the id can still
@@ -5063,14 +5683,50 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                     )
                 except (TypeError, ValueError):
                     parsed_port = 9100
-                printer_data = {
-                    "id": printer_id,
-                    "name": printer_name or f"Ethernet {host}",
-                    "backend": "tcp",
-                    "transportType": "ethernet",
-                    "host": host,
-                    "port": parsed_port,
-                }
+                printer_data = _as_tcp_printer(
+                    host=host,
+                    port=parsed_port,
+                    name=printer_name,
+                )
+
+        explicit_tcp_request = _is_tcp_ethernet_request(raw_body) or _looks_like_tcp(
+            printer_data
+        ) or printer_id.lower().startswith("tcp:")
+
+        # Explicit TCP/ethernet payload must never fall through to CUPS-by-name.
+        if _looks_like_tcp(printer_data):
+            host = str(
+                (printer_data or {}).get("host")
+                or (printer_data or {}).get("ip_address")
+                or (printer_data or {}).get("ipAddress")
+                or (target_host if explicit_tcp_request else None)
+                or ""
+            ).strip()
+            try:
+                port = int(
+                    (printer_data or {}).get("port")
+                    or (target_port if explicit_tcp_request else None)
+                    or 9100
+                )
+            except (TypeError, ValueError):
+                port = int(target_port or 9100) if explicit_tcp_request else 9100
+            if host:
+                return _as_tcp_printer(
+                    host=host,
+                    port=port,
+                    name=printer_name,
+                    source=printer_data,
+                )
+
+        # Only synthesize TCP from target_host for explicit ethernet requests.
+        # Never steal last-kitchen-tcp into Windows/CUPS jobs.
+        if explicit_tcp_request and target_host:
+            return _as_tcp_printer(
+                host=target_host,
+                port=int(target_port or 9100),
+                name=printer_name,
+                source=printer_data,
+            )
 
         resolver = getattr(self.transport, "resolve_printer", None)
         selected = None
@@ -5081,6 +5737,23 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 printer_name=printer_name or None,
             )
         if selected:
+            if explicit_tcp_request and _looks_like_tcp(printer_data):
+                host = str(
+                    (printer_data or {}).get("host")
+                    or target_host
+                    or ""
+                ).strip()
+                if host:
+                    return _as_tcp_printer(
+                        host=host,
+                        port=int(
+                            (printer_data or {}).get("port")
+                            or target_port
+                            or 9100
+                        ),
+                        name=printer_name,
+                        source=printer_data or selected,
+                    )
             return selected
 
         parsed_vendor = _parse_hex_int(vendor_id)
@@ -5105,7 +5778,8 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
                 backend="windows-spool",
                 queue=printer_name,
             ).as_dict()
-        if printer_name:
+        # Do not invent a CUPS queue for Ethernet/TCP requests.
+        if printer_name and not explicit_tcp_request:
             return PrinterRecord(
                 id=f"cups:{printer_name}",
                 name=printer_name,
@@ -5224,6 +5898,17 @@ class PrintBridgeHandler(BaseHTTPRequestHandler):
 
     def _origin_allowed(self, origin: str) -> bool:
         return origin in self.settings.allowed_origins
+
+    def _client_allowed_for_print_api(self) -> bool:
+        """Reject non-private remote peers when bridge is LAN-exposed."""
+        client = (self.client_address[0] if self.client_address else "") or ""
+        if _is_lan_or_loopback_client(client):
+            return True
+        LOGGER.warning(
+            "Rejected print API client from non-private address: %s",
+            client,
+        )
+        return False
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, object] | None) -> None:
         body = b""

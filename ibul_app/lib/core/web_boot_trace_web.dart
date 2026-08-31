@@ -6,6 +6,8 @@ import 'web_boot_trace.dart';
 
 const _storageKey = 'ibul_web_boot_trace_v1';
 
+bool _isReleaseBuild() => const bool.fromEnvironment('dart.vm.product');
+
 bool _isBootTerminalSuccess(String? stage, Map<String, dynamic> patch) {
   if (patch['bootComplete'] == true) return true;
   if (stage == null || stage.isEmpty) return false;
@@ -25,7 +27,12 @@ void persistWebBootTrace(
       if (detail != null && detail.isNotEmpty) 'detail': detail,
       'userAgent': html.window.navigator.userAgent,
     };
-    html.window.localStorage[_storageKey] = jsonEncode(payload);
+    final persistToStorage = !_isReleaseBuild() ||
+        _isBootTerminalSuccess(snapshot.stage, payload) ||
+        (snapshot.lastError != null && snapshot.lastError!.isNotEmpty);
+    if (persistToStorage) {
+      html.window.localStorage[_storageKey] = jsonEncode(payload);
+    }
 
     final update = (html.window as dynamic).__ibulUpdateHomeBootTrace;
     if (update != null) {

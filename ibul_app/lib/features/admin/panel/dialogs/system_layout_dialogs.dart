@@ -2,8 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
-import 'package:image_picker/image_picker.dart';
 
+import '../../../../utils/pick_image_file.dart';
 import '../../../../widgets/image_cropper_widget.dart';
 import 'category_edit_dialog.dart';
 
@@ -38,19 +38,12 @@ Future<Uint8List?> pickAndCropSystemLayoutImageBytes({
   required double suggestedWidth,
 }) async {
   try {
-    final picker = ImagePicker();
-    final image = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 2000,
-      maxHeight: 2000,
-      imageQuality: 90,
-    );
-
-    if (image == null) {
+    final pickedFile = await pickImageFile();
+    if (pickedFile == null) {
       return null;
     }
 
-    final imageBytes = await image.readAsBytes();
+    final imageBytes = pickedFile.bytes;
     Uint8List? croppedBytes;
 
     if (!context.mounted) {
@@ -73,9 +66,19 @@ Future<Uint8List?> pickAndCropSystemLayoutImageBytes({
   } catch (e) {
     debugPrint('Error picking/cropping image: $e');
     if (context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Görsel yükleme hatası: $e')));
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Görsel Yükleme Hatası'),
+          content: Text(e.toString()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Tamam'),
+            ),
+          ],
+        ),
+      );
     }
     return null;
   }
@@ -342,7 +345,7 @@ Future<void> showCampaignImageDetailsDialog({
                                 newDesktopBytes == null) &&
                             (desktopImagePath == null ||
                                 desktopImagePath.isEmpty)) {
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
                             const SnackBar(
                               content: Text(
                                 'Lütfen en az bir masaüstü görseli yükleyin.',

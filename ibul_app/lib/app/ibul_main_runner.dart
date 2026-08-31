@@ -2,8 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config/runtime_config.dart';
@@ -13,11 +11,11 @@ import '../core/runtime_diagnostic_logger.dart';
 import '../core/web_boot.dart';
 import '../core/web_boot_step_profiler.dart';
 import '../core/web_perf_logger.dart';
-import '../firebase_options.dart';
-import '../services/push_notification_service.dart';
 import 'app_navigator.dart';
 import 'app_providers.dart';
 import 'customer_app.dart';
+import 'firebase_native_boot_stub.dart'
+    if (dart.library.io) 'firebase_native_boot_io.dart' as firebase_boot;
 import 'full_app.dart';
 import 'ibul_app_boot.dart';
 import 'ibul_boot_shell_app.dart';
@@ -60,7 +58,7 @@ Future<void> _mainImpl(IbulAppMode mode) async {
   await runIbulAppBootstrap(
     bootWatch: bootWatch,
     initServicesBackground: initIbulServicesBackground,
-    afterCoreInit: kIsWeb ? null : _initFirebaseNative,
+    afterCoreInit: kIsWeb ? null : firebase_boot.initFirebaseNative,
     runAppWidget: () {
       WebBootStepProfiler.start('provider_tree');
       final providerCount = countMountedProviders(mode);
@@ -74,7 +72,9 @@ Future<void> _mainImpl(IbulAppMode mode) async {
         'app boot ms=${bootWatch.elapsedMilliseconds}',
       );
       if (!kIsWeb) {
-        unawaited(_initPushNotifications());
+        unawaited(
+          firebase_boot.initPushNotifications(navigatorKey: appNavigatorKey),
+        );
       }
     },
   );
@@ -139,21 +139,4 @@ void _configureBootErrorWidget(IbulAppMode mode) {
       ),
     );
   };
-}
-
-Future<void> _initFirebaseNative() async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-}
-
-Future<void> _initPushNotifications() async {
-  RuntimeDiagnosticLogger.fcm('token sync deferred (background init)');
-  try {
-    await PushNotificationService.instance.initialize(
-      navigatorKey: appNavigatorKey,
-    );
-  } catch (error, stackTrace) {
-    debugPrint('PushNotificationService initialize failed: $error');
-    debugPrintStack(stackTrace: stackTrace);
-  }
 }

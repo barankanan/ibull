@@ -178,6 +178,61 @@ class RasterPrintTests(unittest.TestCase):
         self.assertNotEqual(final_table_line.strip(), "Masa")
         self.assertIn("Masa:", final_table_line)
 
+    def test_print_text_scale_grows_height_keeps_pos80_width(self) -> None:
+        pos80 = BridgeSettings(
+            **{
+                **self.settings.__dict__,
+                "paper_width_mm": 80,
+                "chars_per_line": 48,
+                "raster_width_px": 576,
+                "min_receipt_height_px": 0,
+                "raster_bottom_padding_px": 20,
+            }
+        )
+        kitchen = KitchenPayload.from_dict(
+            {
+                "title": "MUTFAK SİPARİŞİ",
+                "store_name": "IBUL",
+                "job_type": "new_order",
+                "order_no": "1",
+                "table_no": "1",
+                "table_name": "Bahçe 1",
+                "items": [
+                    {
+                        "id": str(i),
+                        "name": f"Çiğ Köfte ğüşıöç İĞÜŞÖÇ uzun ürün adı testi {i}",
+                        "quantity": 2,
+                        "note": "az pişmiş",
+                    }
+                    for i in range(1, 6)
+                ],
+            }
+        )
+        try:
+            normal_renderer = KitchenBitmapRenderer(pos80)
+            self.assertEqual(normal_renderer._scaled_size(24), 24)
+            large_settings = BridgeSettings(
+                **{**pos80.__dict__, "print_size": "large", "print_text_scale": 1.20}
+            )
+            xlarge_settings = BridgeSettings(
+                **{**pos80.__dict__, "print_size": "xlarge", "print_text_scale": 1.40}
+            )
+            large_renderer = KitchenBitmapRenderer(large_settings)
+            xlarge_renderer = KitchenBitmapRenderer(xlarge_settings)
+            self.assertEqual(large_renderer._scaled_size(24), 29)
+            self.assertEqual(xlarge_renderer._scaled_size(24), 34)
+            normal = normal_renderer.render(kitchen)
+            large = large_renderer.render(kitchen)
+            xlarge = xlarge_renderer.render(kitchen)
+        except (RuntimeError, BundledFontMissingError) as exc:
+            self.skipTest(str(exc))
+            return
+        self.assertEqual(normal.size[0], 576)
+        self.assertEqual(large.size[0], 576)
+        self.assertEqual(xlarge.size[0], 576)
+        self.assertGreater(large.size[1], normal.size[1])
+        self.assertGreater(xlarge.size[1], large.size[1])
+
     def test_receipt_bitmap_header_lines_include_date_and_grand_total(self) -> None:
         payload = ReceiptPayload.from_dict(
             {

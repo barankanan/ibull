@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,8 +6,10 @@ import '../core/home_navigation.dart';
 import '../core/providers/connectivity_provider.dart';
 import '../core/qr_initial_params.dart';
 import '../core/web_seo.dart';
+import '../features/investor/investor_route_paths.dart';
 import '../screens/qr_entry_screen.dart';
 import 'app_bootstrap.dart';
+import 'seller_routes.dart';
 
 class OfflineListener extends StatelessWidget {
   const OfflineListener({super.key, required this.child});
@@ -82,6 +85,20 @@ Widget buildQrEntry({required String source}) {
   return const QrEntryScreen();
 }
 
+/// Initial [MaterialApp.home] for all three shells.
+Widget buildLaunchHome() {
+  final launchQrHome = kIsWeb &&
+      QrInitialParams.isQrPath &&
+      !QrInitialParams.wasResetAfterQrExit;
+  if (launchQrHome) {
+    return buildQrEntry(source: 'MaterialApp.home');
+  }
+  if (kIsWeb && InvestorRoutePaths.isLaunchPath()) {
+    return SellerRoutes.buildInvestorPage();
+  }
+  return buildSafeHome(source: 'MaterialApp.home');
+}
+
 class SeoRouteObserver extends NavigatorObserver {
   SeoRouteObserver({this.includeSellerRoutes = true});
 
@@ -125,6 +142,14 @@ class SeoRouteObserver extends NavigatorObserver {
   }
 
   _SeoRouteConfig _seoForRoute(String? routeName) {
+    final path = (routeName ?? '').split('?').first;
+    if (path.startsWith('/ihiz/track/')) {
+      return const _SeoRouteConfig(
+        title: 'İHIZ Teslimat Takibi',
+        description: 'Teslimat kodunuzla İHIZ gönderinizi takip edin.',
+        path: '/ihiz',
+      );
+    }
     switch (routeName) {
       case '/map':
         return const _SeoRouteConfig(
@@ -140,12 +165,19 @@ class SeoRouteObserver extends NavigatorObserver {
               'İbul satıcı başvuru formunu doldurarak mağazanızı platforma taşıyın.',
           path: '/become-seller',
         );
+      case '/yatirimci':
+        return const _SeoRouteConfig(
+          title: 'İBUL Yatırımcı İlişkileri | Yerel Ticaretin Dijital Altyapısı',
+          description:
+              'İBUL’un ürün ekosistemini, gelir modellerini, büyüme stratejisini, İHIZ teslimat altyapısını ve uzun vadeli vizyonunu keşfedin.',
+          path: '/yatirimci',
+        );
       case '/ihiz':
         if (!includeSellerRoutes) break;
         return const _SeoRouteConfig(
-          title: 'İHız Kurye | Hızlı Kurye Teslimatı',
+          title: 'İHIZ | Hızlı Teslimat Platformu',
           description:
-              'İHız ile bölgesel kurye hizmetlerini ve hızlı teslimat seçeneklerini görüntüleyin.',
+              'Mağazalardan müşterilere hızlı, güvenli ve takip edilebilir teslimat.',
           path: '/ihiz',
         );
       case '/admin':

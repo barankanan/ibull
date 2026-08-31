@@ -187,3 +187,6 @@ logs/
 ibul_app/android/key.properties
 ibul_app/android/*.jks
 ibul_app/android/*.keystore
+
+# Local print bridge runtime state (LAN kitchen TCP cache)
+local_print_bridge/.last_kitchen_tcp

@@ -31,8 +31,10 @@ from .transport import PrintResult, TransportError
 LOGGER = logging.getLogger("local_print_bridge.network")
 
 DEFAULT_TCP_PORT = 9100
-DEFAULT_TIMEOUT_SECONDS = 5.0
-_SEND_TIMEOUT_S = 10
+# ESC/POS Ethernet printers accept CONNECT→WRITE→CLOSE with no response.
+# Long connect/read waits cause Flutter client_timeout (5000ms) false failures.
+DEFAULT_TIMEOUT_SECONDS = 0.35
+_SEND_TIMEOUT_S = 0.5
 _MIN_PORT = 1
 _MAX_PORT = 65535
 
@@ -84,7 +86,7 @@ def _classify_oserror(exc: OSError, host: str, port: int) -> TcpTransportError:
     if isinstance(exc, socket.timeout):
         return TcpTransportError(
             "tcp_timeout",
-            f"Yazıcı yanıt vermedi ({host}:{port}) — zaman aşımı. "
+            f"TCP bağlantı/yazma zaman aşımı ({host}:{port}). "
             "Yazıcının açık ve aynı ağda olduğundan emin olun.",
         )
     if err_no in (errno.ECONNREFUSED,):
@@ -116,16 +118,12 @@ def print_tcp(
     data: bytes = b"",
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    write_timeout: float | None = None,
 ) -> int:
     """Send ``data`` to ``host:port`` over a raw TCP socket.
 
-    Mirrors the small helper described in the spec::
-
-        with socket.create_connection((host, int(port)), timeout=timeout) as sock:
-            sock.sendall(data)
-
-    Returns the number of bytes written. Raises :class:`TcpTransportError` for
-    every failure path with a stable ``code``.
+    Success = CONNECT → WRITE → CLOSE. ESC/POS printers do not return an
+    HTTP-like response; we never wait to read from the printer.
     """
     normalized_host = _normalize_host(host)
     if not normalized_host:
@@ -135,6 +133,12 @@ def print_tcp(
         )
     normalized_port = _normalize_port(port)
     payload = data or b""
+    connect_timeout = max(0.05, float(timeout))
+    send_timeout = (
+        max(0.05, float(write_timeout))
+        if write_timeout is not None
+        else max(connect_timeout, float(_SEND_TIMEOUT_S))
+    )
 
     LOGGER.info(
         "[TCP_PRINT][start] host=%s port=%d bytes=%d",
@@ -145,11 +149,12 @@ def print_tcp(
     started = time.monotonic()
     try:
         with socket.create_connection(
-            (normalized_host, normalized_port), timeout=timeout
+            (normalized_host, normalized_port), timeout=connect_timeout
         ) as sock:
-            sock.settimeout(max(float(timeout), float(_SEND_TIMEOUT_S)))
+            sock.settimeout(send_timeout)
             if payload:
                 sock.sendall(payload)
+            # No recv()/read — raw ESC/POS has nothing to acknowledge.
     except OSError as exc:
         error = _classify_oserror(exc, normalized_host, normalized_port)
         LOGGER.error(
@@ -177,6 +182,7 @@ class NetworkTcpTransport:
         port: int = DEFAULT_TCP_PORT,
         *,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        write_timeout: float | None = None,
     ) -> None:
         normalized_host = _normalize_host(host)
         if not normalized_host:
@@ -186,7 +192,12 @@ class NetworkTcpTransport:
             )
         self.host = normalized_host
         self.port = _normalize_port(port)
-        self.timeout = max(0.5, float(timeout))
+        self.timeout = max(0.05, float(timeout))
+        self.write_timeout = (
+            max(0.05, float(write_timeout))
+            if write_timeout is not None
+            else max(self.timeout, float(_SEND_TIMEOUT_S))
+        )
 
     # ------------------------------------------------------------------
     # Public interface
@@ -220,6 +231,9 @@ class NetworkTcpTransport:
         """Open a TCP connection and send the raw ESC/POS payload."""
         bytes_to_send = bytes(payload or b"")
         started = time.monotonic()
+        t_connect_start = started
+        t_connected = started
+        t_sent = started
         LOGGER.info(
             "[TCP_PRINT][start] host=%s port=%d bytes=%d job=%s",
             self.host,
@@ -231,6 +245,7 @@ class NetworkTcpTransport:
             sock = socket.create_connection(
                 (self.host, self.port), timeout=self.timeout
             )
+            t_connected = time.monotonic()
         except OSError as exc:
             error = _classify_oserror(exc, self.host, self.port)
             LOGGER.error(
@@ -241,7 +256,7 @@ class NetworkTcpTransport:
             raise error from exc
 
         try:
-            sock.settimeout(max(self.timeout, float(_SEND_TIMEOUT_S)))
+            sock.settimeout(self.write_timeout)
             total = 0
             if bytes_to_send:
                 view = memoryview(bytes_to_send)
@@ -254,6 +269,7 @@ class NetworkTcpTransport:
                             f"({self.host}:{self.port}).",
                         )
                     total += sent
+            t_sent = time.monotonic()
         except TcpTransportError as exc:
             LOGGER.error(
                 "[TCP_PRINT][error] code=%s message=%s",
@@ -296,5 +312,8 @@ class NetworkTcpTransport:
                 "target_host": self.host,
                 "target_port": self.port,
                 "duration_ms": duration_ms,
+                "t4_tcp_connect_start_ms": int((t_connect_start - started) * 1000),
+                "t5_tcp_connected_ms": int((t_connected - started) * 1000),
+                "t6_payload_sent_ms": int((t_sent - started) * 1000),
             },
         )

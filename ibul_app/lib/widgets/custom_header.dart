@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
 import '../core/route_observer.dart';
-import '../screens/camera_page.dart';
+import '../screens/home_lazy_routes.dart';
 import '../screens/notifications_page.dart';
 import '../screens/product_detail_page.dart';
 import '../services/auth_service.dart';
@@ -11,6 +11,8 @@ import '../services/order_service.dart';
 import 'search_overlay.dart';
 
 class CustomHeader extends StatefulWidget {
+  /// Mobile marketplace chrome. Paired with [WebHeader] when
+  /// [IbulChrome.isWebOf] is true.
   final ValueChanged<String> onSearch;
 
   const CustomHeader({super.key, required this.onSearch});
@@ -113,10 +115,13 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
         _searchKey.currentContext!.findRenderObject() as RenderBox;
     final size = renderBox.size;
     final searchLeft = renderBox.localToGlobal(Offset.zero).dx;
-    final mediaQuery = MediaQuery.of(context);
-    final safeLeft = mediaQuery.padding.left;
-    final safeRight = mediaQuery.padding.right;
-    final overlayWidth = mediaQuery.size.width - safeLeft - safeRight;
+    // sizeOf/paddingOf: MediaQuery.of burada header element'ini TÜM
+    // MediaQueryData'ya bağlıyordu. Arama alanına dokunulunca klavye açılır ve
+    // viewInsets değişir → header (ve altındaki arama overlay'i) gereksiz
+    // rebuild olurdu. Okunan değerler (padding.left/right, size.width) aynı.
+    final safeLeft = MediaQuery.paddingOf(context).left;
+    final safeRight = MediaQuery.paddingOf(context).right;
+    final overlayWidth = MediaQuery.sizeOf(context).width - safeLeft - safeRight;
     final overlayOffsetX = safeLeft - searchLeft;
 
     _overlayEntry = OverlayEntry(
@@ -292,10 +297,14 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
                           }
                           _searchFocusNode.requestFocus();
                         },
-                        child: const Icon(
-                          Icons.search_rounded,
-                          color: AppColors.primary,
-                          size: 18,
+                        child: Semantics(
+                          button: true,
+                          label: 'Ara',
+                          child: const Icon(
+                            Icons.search_rounded,
+                            color: AppColors.primary,
+                            size: 18,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -366,12 +375,11 @@ class _CustomHeaderState extends State<CustomHeader> with RouteAware {
             const SizedBox(width: 10),
             _buildActionButton(
               icon: Icons.camera_alt_outlined,
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const CameraPage()),
-                );
-              },
+              // HomeLazyRoutes: kamera sayfasını deferred chunk'tan açar.
+              // Doğrudan import, camera_page ağacını (→ home_screen →
+              // admin_service, → product_search_page → package:image) Customer
+              // Home chunk'ına çekiyordu. Push davranışı aynı.
+              onPressed: () => HomeLazyRoutes.openCamera(context),
               tooltip: 'Kamera',
               accent: true,
             ),

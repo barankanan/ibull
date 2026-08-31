@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/runtime_diagnostic_logger.dart';
@@ -17,6 +18,33 @@ import 'search_results_page.dart' deferred as search_page;
 
 /// Deferred route helpers — keeps map/detail/checkout out of initial home chunk.
 abstract final class HomeLazyRoutes {
+  static bool _hotPrefetchStarted = false;
+
+  /// Downloads search/cart/PDP/account chunks after first paint.
+  /// Sequential so hero/product images keep the network.
+  static Future<void> prefetchHotPaths() async {
+    if (_hotPrefetchStarted) return;
+    _hotPrefetchStarted = true;
+    await _prefetchQuiet(search_page.loadLibrary);
+    await _prefetchQuiet(cart_page.loadLibrary);
+    await _prefetchQuiet(product_detail_page.loadLibrary);
+    await _prefetchQuiet(account_page.loadLibrary);
+  }
+
+  static Future<void> _prefetchQuiet(Future<void> Function() load) async {
+    try {
+      await load();
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[HomeLazyRoutes] prefetch failed: $error');
+      }
+    }
+  }
+
+  @visibleForTesting
+  static void resetPrefetchForTests() {
+    _hotPrefetchStarted = false;
+  }
   static Future<Widget> categoriesTab() async {
     await categories_page.loadLibrary();
     return categories_page.CategoriesPage();

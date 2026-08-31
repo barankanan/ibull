@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
-import '../core/app_state.dart';
+import '../core/favorite_state.dart';
 import '../models/product_model.dart';
 import '../widgets/web_header.dart';
 import 'compare_features_page.dart';
@@ -31,8 +31,8 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
   }
 
   void _loadProducts() {
-    final appState = Provider.of<AppState>(context, listen: false);
-    _applyFavorites(appState.favorites);
+    final favorites = Provider.of<FavoriteState>(context, listen: false).favorites;
+    _applyFavorites(favorites);
   }
 
   void _applyFavorites(List<Product> favorites) {
@@ -71,12 +71,12 @@ class _CompareProductsPageState extends State<CompareProductsPage> {
   Widget build(BuildContext context) {
     final isWeb = MediaQuery.of(context).size.width >= 800;
 
-    return Consumer<AppState>(
-      builder: (context, appState, _) {
-        if (_categories.isEmpty && appState.favorites.isNotEmpty) {
+    return Consumer<FavoriteState>(
+      builder: (context, favoriteState, _) {
+        if (_categories.isEmpty && favoriteState.favorites.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
-              _applyFavorites(appState.favorites);
+              _applyFavorites(favoriteState.favorites);
             }
           });
         }

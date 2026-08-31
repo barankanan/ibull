@@ -1,15 +1,16 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../app/ibul_router.dart';
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/ibul_chrome.dart';
 import '../screens/notifications_page.dart';
 import '../core/route_observer.dart';
 import 'web_header_menu_items.dart';
 import 'search_overlay.dart';
-import '../screens/map_page.dart';
 import '../screens/product_detail_page.dart';
-import '../screens/camera_page.dart';
+import '../screens/home_lazy_routes.dart';
 
 class WebHeader extends StatefulWidget {
   final ValueChanged<String> onSearch;
@@ -17,6 +18,7 @@ class WebHeader extends StatefulWidget {
   final String? selectedCategory;
   final String? initialQuery;
   final String? activeMenu;
+  final bool showBackButton;
 
   const WebHeader({
     super.key,
@@ -25,6 +27,7 @@ class WebHeader extends StatefulWidget {
     this.selectedCategory,
     this.initialQuery,
     this.activeMenu,
+    this.showBackButton = false,
   });
 
   @override
@@ -214,20 +217,14 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
       children: [
         // Üst Bar (Logo, Arama, Menüler)
         Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+          decoration: IbulChrome.headerBarDecoration,
+          padding: IbulChrome.headerPadding(isWeb: true),
           child: Row(
             children: [
-              // 1. Logo
+              if (widget.showBackButton) ...[
+                _buildBackButton(),
+                const SizedBox(width: 4),
+              ],
               _buildLogo(),
 
               const SizedBox(width: 48),
@@ -254,13 +251,43 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
     );
   }
 
+  void _onHeaderBack() {
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.pop();
+      return;
+    }
+    if (widget.onCategorySelected != null) {
+      widget.onCategorySelected!('Ana Sayfa');
+      return;
+    }
+    IbulRouter.go(context, '/');
+  }
+
+  Widget _buildBackButton() {
+    return Tooltip(
+      message: 'Geri',
+      child: IconButton(
+        icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+        color: AppColors.primary,
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+        onPressed: _onHeaderBack,
+      ),
+    );
+  }
+
   Widget _buildLogo() {
-    return InkWell(
+    return Semantics(
+      button: true,
+      label: 'iBul ana sayfa',
+      child: InkWell(
       onTap: () {
         if (widget.onCategorySelected != null) {
           widget.onCategorySelected!('Ana Sayfa');
         } else {
-          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+          IbulRouter.go(context, '/');
         }
       },
       hoverColor: Colors.transparent,
@@ -268,23 +295,28 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
         mainAxisSize: MainAxisSize.min,
         children: [
           ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
             child: Image.asset(
-              'assets/icons/ibul_logo_2.png',
-              width: 32,
-              height: 32,
-              fit: BoxFit.contain,
+              AppAssets.ibulLogo,
+              width: 36,
+              height: 36,
+              fit: BoxFit.cover,
               errorBuilder: (_, _, _) => Container(
-                width: 32,
-                height: 32,
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
-                  Icons.shopping_bag_outlined,
-                  color: Colors.white,
-                  size: 20,
+                child: const Text(
+                  'İ',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w500,
+                    height: 1,
+                  ),
                 ),
               ),
             ),
@@ -293,14 +325,15 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
           Text(
             'iBul',
             style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
+              fontSize: 24,
+              fontWeight: FontWeight.w500,
               color: AppColors.primary,
-              letterSpacing: -0.5,
+              letterSpacing: 0.2,
               fontFamily: 'Montserrat',
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -308,7 +341,9 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
   Widget _buildSearchBar() {
     return Row(
       children: [
-        InkWell(
+        Tooltip(
+          message: 'Bildirimler',
+          child: InkWell(
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const NotificationsPage()),
@@ -335,6 +370,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
               size: 20,
             ),
           ),
+        ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -377,13 +413,16 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
 
                   const SizedBox(width: 8),
 
-                  InkWell(
+                  Semantics(
+                    button: true,
+                    label: 'Kamera',
+                    child: InkWell(
                     onTap: () {
                       _searchFocusNode.unfocus();
                       _hideOverlay();
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const CameraPage()),
-                      );
+                      // HomeLazyRoutes: deferred chunk'tan açılır (bkz.
+                      // custom_header.dart'taki aynı desen). Push aynı.
+                      HomeLazyRoutes.openCamera(context);
                     },
                     borderRadius: BorderRadius.circular(8),
                     child: const Padding(
@@ -395,10 +434,14 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                       ),
                     ),
                   ),
+                  ),
 
                   const SizedBox(width: 8),
 
-                  InkWell(
+                  Semantics(
+                    button: true,
+                    label: 'Ara',
+                    child: InkWell(
                     onTap: () => _submitSearch(),
                     child: Container(
                       margin: const EdgeInsets.all(4),
@@ -419,6 +462,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                       ),
                     ),
                   ),
+                  ),
                 ],
               ),
             ),
@@ -431,11 +475,8 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
   Widget _buildLocation() {
     return InkWell(
       onTap: () {
-        // Navigate to MapPage
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const MapPage()),
-        );
+        // Navigate to MapPage (deferred)
+        HomeLazyRoutes.openMap(context);
       },
       child: Row(
         children: [
@@ -461,7 +502,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                     style: TextStyle(
                       fontSize: 14,
                       color: Colors.black87,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
@@ -493,13 +534,10 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE))),
-      ),
+      decoration: IbulChrome.categoryBarDecoration,
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1400),
+          constraints: IbulChrome.contentConstraints,
           child: SizedBox(
             height: 40,
             child: Stack(
@@ -526,12 +564,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                       return InkWell(
                         onTap: () {
                           if (category == 'Yakın Lokasyon') {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const MapPage(),
-                              ),
-                            );
+                            HomeLazyRoutes.openMap(context);
                           } else {
                             widget.onCategorySelected?.call(category);
                           }
@@ -555,7 +588,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                             category,
                             style: TextStyle(
                               fontSize: 13,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w500,
                               color: isSelected
                                   ? AppColors.primary
                                   : Colors.grey[800],
@@ -594,6 +627,7 @@ class _WebHeaderState extends State<WebHeader> with RouteAware {
                       ),
                       child: IconButton(
                         padding: EdgeInsets.zero,
+                        tooltip: 'Daha fazla kategori',
                         icon: const Icon(
                           Icons.chevron_right,
                           color: AppColors.primary,
@@ -666,6 +700,7 @@ class _NotificationsPopupState extends State<_NotificationsPopup> {
                   ),
                   IconButton(
                     onPressed: widget.onClose,
+                    tooltip: 'Kapat',
                     icon: const Icon(Icons.close, size: 20),
                     splashRadius: 18,
                   ),

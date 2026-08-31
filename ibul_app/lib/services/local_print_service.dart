@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../core/platform_capabilities.dart';
 import '../core/runtime_diagnostic_logger.dart';
+import '../models/printer_model.dart';
 import '../models/printer_profile.dart';
 import '../models/turkish_encoding_calibration.dart';
 
@@ -80,7 +81,7 @@ class LocalPrintService {
     this.allowWebAgent = false,
   })  : _client = client ?? http.Client(),
         _baseUri = baseUri ?? Uri.parse('http://127.0.0.1:3001'),
-        _timeout = timeout ?? const Duration(seconds: 5) {
+        _timeout = timeout ?? const Duration(milliseconds: 2500) {
     _log(
       'Init',
       'baseUrl=$_baseUri timeoutMs=${_timeout.inMilliseconds} '
@@ -97,6 +98,12 @@ class LocalPrintService {
   /// destekli) bilinçli olarak bağlanabilir. Varsayılan false: müşteri web
   /// sayfaları localhost'u probe etmez. Native mobil HER ZAMAN engellenir.
   final bool allowWebAgent;
+
+  /// Ethernet / LAN hot-path: CONNECT→WRITE→CLOSE, never wait 5s for a response.
+  static const Duration ethernetHotPathTimeout = Duration(milliseconds: 600);
+
+  /// Scan may cover a /24; keep UI responsive (<=2s bridge budget + HTTP slack).
+  static const Duration ethernetScanClientTimeout = Duration(seconds: 4);
 
   static const Map<String, String> _headers = <String, String>{
     'Content-Type': 'application/json',
@@ -120,19 +127,58 @@ class LocalPrintService {
 
   static bool _loggedMobileSkip = false;
 
-  /// Defense-in-depth: never touch the local bridge from the mobile customer
-  /// app. Callers should already be gated, but this guarantees no
-  /// `http://127.0.0.1:3001` request is made on iOS/Android phones.
-  static bool get _shouldSkipOnMobile =>
-      PlatformCapabilities.shouldSkipLocalPrintBridge;
+  Duration _timeoutForBody(Map<String, dynamic>? body, Duration? override) {
+    if (override != null) return override;
+    if (body == null) return _timeout;
+    final hot = body['lan_hot_path'] == true ||
+        body['lan_hot_path']?.toString().toLowerCase() == 'true' ||
+        body['lan_hot_path']?.toString() == '1';
+    final host = (body['target_host'] ??
+            body['host'] ??
+            body['ip_address'] ??
+            body['ipAddress'])
+        ?.toString()
+        .trim();
+    final backend = (body['backend'] ??
+            body['printer_backend'] ??
+            body['selected_printer_backend'] ??
+            '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final transport = (body['transportType'] ?? body['transport_type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final testMode = body['test_mode']?.toString().trim().toLowerCase() ?? '';
+    if (hot ||
+        (host != null && host.isNotEmpty) ||
+        backend == 'tcp' ||
+        backend == 'network-tcp' ||
+        transport == 'ethernet' ||
+        testMode == 'ethernet_test' ||
+        testMode == 'ethernet' ||
+        testMode == 'tcp_test') {
+      return ethernetHotPathTimeout;
+    }
+    return _timeout;
+  }
 
   /// Instance bazlı atlama kararı: web + [allowWebAgent] ise agent'a izin
-  /// verilir; native mobil telefonlarda daima atlanır.
+  /// verilir. Native mobilde yalnızca localhost bridge engellenir; LAN bridge
+  /// (garson → mutfak bilgisayarı) izinlidir.
   bool get _skipBridgeRequests {
     if (allowWebAgent && kIsWeb && !PlatformCapabilities.isMobileNative) {
       return false;
     }
-    return _shouldSkipOnMobile;
+    if (!PlatformCapabilities.isMobileNative) {
+      return false;
+    }
+    final host = _baseUri.host.toLowerCase();
+    return host == '127.0.0.1' ||
+        host == 'localhost' ||
+        host == '::1' ||
+        host.isEmpty;
   }
 
   static void _logMobileSkipOnce() {
@@ -477,7 +523,7 @@ class LocalPrintService {
     String? printerHost,
     Duration? timeout,
   }) async {
-    final effectiveTimeout = timeout ?? const Duration(seconds: 45);
+    final effectiveTimeout = timeout ?? ethernetScanClientTimeout;
     final body = <String, dynamic>{
       'port': port,
       if (printerHost != null && printerHost.trim().isNotEmpty)
@@ -512,17 +558,33 @@ class LocalPrintService {
     Map<String, dynamic>? printer,
     Duration? timeout,
   }) async {
-    final effectiveTimeout = timeout ?? const Duration(seconds: 8);
-    final probeBody = _mergePrintOptions(
-      <String, dynamic>{
-        'target_host': host,
-        'target_port': port,
-        if (printer != null && printer.isNotEmpty)
-          'printer': Map<String, dynamic>.from(printer),
+    // Short TCP connect check only — never wait on CUPS/spool/render.
+    final effectiveTimeout = timeout ?? const Duration(seconds: 2);
+    final leanPrinter = <String, dynamic>{
+      'backend': PrinterModel.ethernetBridgeBackend,
+      'transportType': PrinterModel.ethernetBridgeTransport,
+      'transport_type': PrinterModel.ethernetBridgeTransport,
+      'host': host,
+      'ip_address': host,
+      'port': port,
+      if (printer != null) ...<String, dynamic>{
+        if (printer['id'] != null) 'id': printer['id'],
+        if (printer['name'] != null) 'name': printer['name'],
+        if (printer['printer_name'] != null)
+          'printer_name': printer['printer_name'],
       },
-      targetHost: host,
-      targetPort: port,
-    );
+    };
+    final probeBody = <String, dynamic>{
+      'target_host': host,
+      'target_port': port,
+      'host': host,
+      'port': port,
+      'backend': PrinterModel.ethernetBridgeBackend,
+      'transportType': PrinterModel.ethernetBridgeTransport,
+      'transport_type': PrinterModel.ethernetBridgeTransport,
+      'printer': leanPrinter,
+      'printer_id': leanPrinter['id'] ?? 'tcp:$host:$port',
+    };
 
     try {
       return await _send(
@@ -535,6 +597,11 @@ class LocalPrintService {
         requireOk: false,
       );
     } on LocalPrintServiceException catch (error) {
+      // Soft-fail: return JSON body so UI can show refused/timeout/unreachable.
+      final details = error.details;
+      if (details is Map) {
+        return Map<String, dynamic>.from(details);
+      }
       if (error.statusCode != 404) rethrow;
       _log(
         'Ethernet',
@@ -719,6 +786,7 @@ class LocalPrintService {
       method: 'POST',
       path: '/print/receipt',
       body: payload,
+      timeout: _timeoutForBody(payload, null),
     );
     _throwIfQueuePaused(result);
     return result;
@@ -1023,16 +1091,30 @@ class LocalPrintService {
     Map<String, dynamic> payload, {
     String path = '/print/kitchen',
   }) async {
+    final body = Map<String, dynamic>.from(payload);
     final host =
-        payload['host'] ?? payload['ip_address'] ?? payload['ipAddress'];
-    final port = payload['port'];
+        body['target_host'] ??
+        body['host'] ??
+        body['ip_address'] ??
+        body['ipAddress'];
+    final port = body['target_port'] ?? body['port'];
+    if (host != null &&
+        host.toString().trim().isNotEmpty &&
+        (body['target_host'] == null ||
+            body['target_host'].toString().trim().isEmpty)) {
+      body['target_host'] = host.toString().trim();
+    }
+    if (port != null && body['target_port'] == null) {
+      body['target_port'] = port;
+    }
     try {
       final result = await _send(
         section: 'Kitchen',
         branch: 'print_kitchen',
         method: 'POST',
         path: path,
-        body: payload,
+        body: body,
+        timeout: _timeoutForBody(body, null),
       );
       if (result != null) {
         final writeStarted = result['printer_write_started_at'];
@@ -1167,7 +1249,7 @@ class LocalPrintService {
     bool requireOk = true,
     Duration? timeout,
   }) async {
-    final effectiveTimeout = timeout ?? _timeout;
+    final effectiveTimeout = _timeoutForBody(body, timeout);
     final url = _endpoint(path);
     final watch = Stopwatch()..start();
     final encodedBody = body == null ? null : jsonEncode(body);
@@ -1292,6 +1374,10 @@ class LocalPrintService {
         'itemCount=$itemCount serviceCount=$serviceCount plateCount=$plateCount tableNo=$tableNo',
         error: message,
       );
+      // Soft probes (requireOk=false) need the JSON body for refused/timeout UI.
+      if (!requireOk && jsonBody != null) {
+        return jsonBody;
+      }
       throw LocalPrintServiceException(
         message,
         statusCode: response.statusCode,

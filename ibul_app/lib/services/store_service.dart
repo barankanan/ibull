@@ -5,13 +5,18 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config/runtime_config.dart';
 import '../core/home_load_audit.dart';
+import '../core/runtime_diagnostic_logger.dart';
 import '../models/seller_product.dart';
 import '../models/store_sub_category.dart';
 import '../models/sub_admin.dart';
 import '../utils/product_create_log.dart';
 import '../utils/product_edit_log.dart';
 import '../utils/product_visibility_helper.dart';
-import 'map_store_emergency_pipeline.dart';
+// deferred: bu import müşteri web'inin ilk chunk'ına tüm reklam alt ağacını
+// (ads/repositories, ads/preview, ads/models, ads/enums … 24 dosya) çekiyordu.
+// Tek kullanıcısı aşağıdaki getStoresForMap() ve o da yalnız harita/admin
+// ekranlarından çağrılıyor — ikisi de zaten deferred chunk'ta.
+import 'map_store_emergency_pipeline.dart' deferred as map_store_emergency;
 import 'store/store_media_service.dart';
 import 'store/store_mapping_helpers.dart';
 import 'store_notification_trigger_service.dart';
@@ -76,7 +81,13 @@ class StoreService {
     try {
       final info = await getStorePublicInfoByBusinessName(businessName);
       return info?['logoUrl'] as String?;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'getStoreLogoUrlByBusinessName',
+      );
       return null;
     }
   }
@@ -178,7 +189,13 @@ class StoreService {
       };
       _setCachedStorePublicInfo(businessName, data);
       return data;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'getStorePublicInfoByBusinessName',
+      );
       return null;
     }
   }
@@ -226,7 +243,14 @@ class StoreService {
         _setCachedStorePublicInfo(businessName, info);
         results[businessName] = info;
       }
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'getStorePublicInfoByBusinessNames',
+      );
+    }
 
     return results;
   }
@@ -276,7 +300,13 @@ class StoreService {
       };
       _setCachedStorePublicInfoBySellerId(sellerId, data);
       return data;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'getStorePublicInfoById',
+      );
       return null;
     }
   }
@@ -332,7 +362,14 @@ class StoreService {
         _setCachedStorePublicInfoBySellerId(sellerId, info);
         results[sellerId] = info;
       }
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'getStorePublicInfoByIds',
+      );
+    }
 
     return results;
   }
@@ -524,7 +561,8 @@ class StoreService {
 
   /// Haritada gösterilecek mağazalar — acil çok kaynaklı pipeline.
   Future<List<Map<String, dynamic>>> getStoresForMap() async {
-    final result = await MapStoreEmergencyPipeline().load();
+    await map_store_emergency.loadLibrary();
+    final result = await map_store_emergency.MapStoreEmergencyPipeline().load();
     return result.rows;
   }
 
@@ -749,8 +787,13 @@ class StoreService {
           .maybeSingle();
       final directSellerId = storeRow?['seller_id']?.toString().trim() ?? '';
       if (directSellerId.isNotEmpty) return directSellerId;
-    } catch (_) {
-      // Fall through to sub-admin resolution.
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'resolveStoreOwnerDirect',
+      );
     }
 
     final authUser = _supabase.auth.currentUser;
@@ -774,8 +817,13 @@ class StoreService {
           .maybeSingle();
       final ownerId = subAdminRow?['store_id']?.toString().trim() ?? '';
       if (ownerId.isNotEmpty) return ownerId;
-    } catch (_) {
-      // Keep prior auth-id fallback behavior.
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'resolveStoreOwnerSubAdmin',
+      );
     }
 
     return userId;
@@ -2607,7 +2655,13 @@ class StoreService {
           .limit(1)
           .maybeSingle();
       return res?['seller_id'] as String?;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'getSellerIdByBusinessName',
+      );
       return null;
     }
   }
@@ -2631,7 +2685,13 @@ class StoreService {
         'logo': row['logo_url']?.toString(),
         'rating': row['rating'],
       };
-    } catch (_) {
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'getBusinessSummaryBySellerId',
+      );
       return null;
     }
   }
@@ -2656,7 +2716,13 @@ class StoreService {
         'logo': row['logo_url']?.toString(),
         'rating': row['rating'],
       };
-    } catch (_) {
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'getBusinessSummaryByBusinessName',
+      );
       return null;
     }
   }
@@ -2719,7 +2785,13 @@ class StoreService {
       final name = row?['business_name']?.toString().trim() ?? '';
       if (name.isNotEmpty) _cachedBusinessName = name;
       return name.isNotEmpty ? name : 'Mağaza';
-    } catch (_) {
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'StoreService',
+        error,
+        stackTrace,
+        context: 'currentStoreBusinessName',
+      );
       return 'Mağaza';
     }
   }

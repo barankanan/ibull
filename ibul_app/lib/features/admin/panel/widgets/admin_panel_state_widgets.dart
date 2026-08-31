@@ -31,9 +31,9 @@ class AdminAccessDeniedState extends StatelessWidget {
   Widget build(BuildContext context) {
     return const _AdminPanelStatusState(
       icon: Icons.lock_outline_rounded,
-      title: 'Bu modul icin erisiminiz yok',
+      title: 'Bu modül için erişiminiz yok',
       description:
-          'Rol katalogunda bu hesaba atanmis moduller gorunur durumdadir.',
+          'Rol kataloğunda bu hesaba atanmış modüller görünür durumdadır.',
     );
   }
 }

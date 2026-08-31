@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import '../app/ibul_router.dart';
 import '../core/runtime_diagnostic_logger.dart';
 import '../firebase_options.dart';
 
@@ -640,9 +641,10 @@ class PushNotificationService {
         : data['term']?.toString().trim();
     final navigator = _navigatorKey?.currentState;
     if (navigator == null) return;
-    navigator.pushNamed(
+    IbulRouter.pushFromNavigator(
+      navigator,
       '/map',
-      arguments: {
+      extra: {
         'targetStoreName': storeName,
         if (productQuery != null && productQuery.trim().isNotEmpty)
           'initialStoreProductQuery': productQuery.trim(),

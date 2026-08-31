@@ -197,7 +197,7 @@ class _CustomerSupportTicketFormState extends State<CustomerSupportTicketForm> {
 
   @override
   Widget build(BuildContext context) {
-    final loggedIn = context.watch<AppState>().isLoggedIn;
+    final loggedIn = context.select<AppState, bool>((s) => s.isLoggedIn);
     if (!loggedIn) {
       return _card(
         child: const Padding(
@@ -437,6 +437,14 @@ class _CustomerSupportTicketFormState extends State<CustomerSupportTicketForm> {
                           width: 78,
                           height: 78,
                           fit: BoxFit.cover,
+                          // Tam çözünürlüklü ek dosya 78pt kutuya sığdırılıyor;
+                          // decode boyutunu fiziksel piksele indiriyoruz.
+                          cacheWidth:
+                              (78 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                          cacheHeight:
+                              (78 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
                         ),
                       ),
                       Positioned(

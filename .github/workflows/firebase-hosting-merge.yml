@@ -7,7 +7,19 @@ on:
     branches:
       - Y
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Critical Flutter tests
+        run: bash scripts/ci_quality.sh
+
   build_and_deploy:
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

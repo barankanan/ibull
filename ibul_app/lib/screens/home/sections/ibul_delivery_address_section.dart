@@ -12,10 +12,15 @@ class IbulDeliveryAddressSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AppState>(
-      builder: (context, appState, _) {
-        final currentAddress =
-            appState.currentDeliveryAddress ?? 'Teslimat Adresi Seçin';
+    // Selector: bu satır AppState'ten yalnız teslimat adresini okuyor.
+    // Consumer, AppState'in geniş notifyListeners yüzeyinde (sepete ekleme,
+    // favori, arama geçmişi vb.) her seferinde rebuild oluyordu — oysa
+    // gösterilen metin değişmiyordu. home_screen_sections.dart'taki adres
+    // çubuğuyla aynı desen; UI ve davranış aynı.
+    return Selector<AppState, String>(
+      selector: (context, appState) =>
+          appState.currentDeliveryAddress ?? 'Teslimat Adresi Seçin',
+      builder: (context, currentAddress, _) {
         return Container(
           width: double.infinity,
           height: 50,

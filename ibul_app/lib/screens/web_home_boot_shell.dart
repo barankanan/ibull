@@ -66,32 +66,19 @@ class _HeaderShell extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
+      // Açılış kabuğunda ikon ve spinner YOK.
+      // HTML loader ilk frame'de silindiği için kullanıcının gerçekte gördüğü
+      // "yükleniyor" ekranı burasıydı: mor gradient storefront ikonu +
+      // CircularProgressIndicator. İkisi de kaldırıldı — geriye yalnız sade
+      // "İbul" kelime-markası ve içerik iskeleti kalıyor.
+      // Kart yüksekliği (64), beyaz zemin, köşe yarıçapı ve gölge aynen
+      // korundu; layout/responsive davranış değişmiyor.
+      child: const Row(
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              gradient: const LinearGradient(
-                colors: [Color(0xFF7B2FBE), Color(0xFF5B1FBF)],
-              ),
-            ),
-            child: const Icon(Icons.storefront, color: Colors.white, size: 20),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Text(
               'İbul',
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-            ),
-          ),
-          SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.5,
-              color: Color(0xFF7B2FBE),
             ),
           ),
         ],

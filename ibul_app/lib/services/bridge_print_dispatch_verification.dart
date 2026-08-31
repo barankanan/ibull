@@ -117,6 +117,22 @@ class BridgePrintDispatchVerification {
     final errorCode = _readText(
       response?['error_code'] ?? response?['errorCode'],
     );
+    // LAN direct + hub race: bridge short-lived cache returns ok+duplicate.
+    if (bridgeOk &&
+        (response?['duplicate'] == true || errorCode == 'already_processed')) {
+      return const BridgePrintDispatchVerification(
+        ok: true,
+        countsAsJobCompleted: true,
+        status: 'duplicate_suppressed',
+        message: 'Job already printed by bridge (idempotent).',
+        errorCode: 'already_processed',
+        logSnapshot: <String, dynamic>{
+          'ok': true,
+          'duplicate': true,
+          'countsAsJobCompleted': true,
+        },
+      );
+    }
     final usedFallback = response?['used_fallback'] == true || dispatchUsedFallback;
     final warningMessage = _readText(response?['warning']);
     final requestedBackend = _normalizeBackend(

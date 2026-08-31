@@ -17,6 +17,7 @@ class DeferredModuleScreen extends StatefulWidget {
     this.loading,
     this.timeout = const Duration(seconds: 90),
     this.trace,
+    this.isAlreadyLoaded = false,
   });
 
   final String moduleName;
@@ -25,6 +26,17 @@ class DeferredModuleScreen extends StatefulWidget {
   final Widget? loading;
   final Duration timeout;
   final WebBootTraceNotifier? trace;
+
+  /// Modülün bu widget mount edilmeden ÖNCE yüklendiği biliniyorsa `true`.
+  ///
+  /// `loadLibrary()` her zaman asenkron tamamlandığı için, modül hazır olsa
+  /// bile ilk build'de [loading] gösterilir ve bir kare sonra gerçek içerikle
+  /// değiştirilir. Bu bayrak verildiğinde [loading] hiç kurulmaz, ilk build
+  /// doğrudan [builder] sonucunu döner.
+  ///
+  /// Varsayılan `false` — bayrağı geçmeyen çağrı noktalarının davranışı aynen
+  /// korunur.
+  final bool isAlreadyLoaded;
 
   @override
   State<DeferredModuleScreen> createState() => _DeferredModuleScreenState();
@@ -35,21 +47,54 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
   late Future<void> _loadFuture = _startLoad();
   bool _libraryLoaded = false;
   Object? _forcedError;
+  Timer? _elapsedTickerStarter;
   Timer? _elapsedTicker;
   Timer? _watchdogTimer;
 
   @override
   void initState() {
     super.initState();
+    // Modül hazırsa `_loadFuture` (late) hiç okunmaz → _startLoad() çalışmaz,
+    // FutureBuilder kurulmaz, `loading` widget'ı build/layout/paint edilmez.
+    // Trace zinciri değişmiyor: build() yine _TracedDeferredChild döndürüyor,
+    // dolayısıyla markFirstBuildOnce/markComplete aynen çalışır.
+    _libraryLoaded = widget.isAlreadyLoaded;
     if (widget.trace != null) {
-      _elapsedTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-        widget.trace?.tickElapsed();
+      // Elapsed ticker ilk 2 saniye boyunca KURULMAZ.
+      //
+      // Her tick `trace.tickElapsed()` çağırıyor; bu da saniye değişmişse
+      // copyWith + jsonEncode + SENKRON localStorage.setItem + notifyListeners
+      // yapıyor. Bu widget ilk frame'de mount olduğu için timer tam da kritik
+      // açılış penceresinde ana thread'i meşgul ediyordu — index.html'deki boot
+      // watchdog ile aynı desen.
+      //
+      // Hızlı açılışta modül 2 sn dolmadan yüklenir ve ticker hiç kurulmaz.
+      // `elapsedSeconds` her `setStage()` çağrısında zaten tazeleniyor,
+      // `markComplete()` de final snapshot'ı yazıyor; dolayısıyla tanılama
+      // doğruluğu korunur, yalnız ilk 2 sn'deki saniyelik ara güncellemeler
+      // atlanır.
+      _elapsedTickerStarter = Timer(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        final trace = widget.trace;
+        if (trace == null || trace.isComplete) return;
+        _elapsedTicker = Timer.periodic(const Duration(seconds: 1), (timer) {
+          // Boot tamamlandığında ticker kendini durdurur; aksi hâlde bu State
+          // dispose edilmediği için (modül yüklendikten sonra da mount kalır)
+          // timer ana sayfa açık kaldığı sürece boşuna uyanıyordu.
+          final activeTrace = widget.trace;
+          if (activeTrace == null || activeTrace.isComplete) {
+            timer.cancel();
+            return;
+          }
+          activeTrace.tickElapsed();
+        });
       });
     }
   }
 
   @override
   void dispose() {
+    _elapsedTickerStarter?.cancel();
     _elapsedTicker?.cancel();
     _watchdogTimer?.cancel();
     super.dispose();
@@ -76,7 +121,7 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
           'Ana sayfa modülü yüklenemedi (${widget.timeout.inSeconds} sn).',
         );
       },
-    ).then((_) async {
+    ).then((_) {
       if (attempt != _attempt) return;
       _watchdogTimer?.cancel();
       debugPrint(
@@ -86,8 +131,6 @@ class _DeferredModuleScreenState extends State<DeferredModuleScreen> {
       widget.trace?.setStage(WebBootTraceStage.loadLibraryCompleted);
       WebPerfTrace.instance.mark(WebPerfTraceStage.homeDeferredLoadCompleted);
       clearWebBootError();
-      // Yield one frame so shell can paint, then mount home core.
-      await Future<void>.delayed(Duration.zero);
       if (!mounted || attempt != _attempt) return;
       setState(() => _libraryLoaded = true);
     }).catchError((Object error, StackTrace stack) {

@@ -3,6 +3,7 @@ import 'package:ibul_app/widgets/optimized_image.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../widgets/ibul_page_state.dart';
 import 'list_detail_page.dart';
 
 class ListsPage extends StatefulWidget {
@@ -111,45 +112,22 @@ class _ListsPageState extends State<ListsPage> {
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.bookmark_border, size: 80, color: Colors.grey[300]),
-          const SizedBox(height: 16),
-          Text(
-            'Henüz bir listeniz yok',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[600],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Beğendiğiniz ürünleri listelerinize ekleyin',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-          ),
-          const SizedBox(height: 24),
-          ElevatedButton(
-            onPressed: _showCreateListDialog,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-            child: const Text(
-              'Yeni Liste Oluştur',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
+    return IbulPageState.empty(
+      icon: Icons.bookmark_border,
+      iconSize: 80,
+      iconColor: Colors.grey[300],
+      title: 'Henüz bir listeniz yok',
+      titleSize: 18,
+      titleWeight: FontWeight.w600,
+      titleColor: Colors.grey[600],
+      message: 'Beğendiğiniz ürünleri listelerinize ekleyin',
+      messageSize: 14,
+      messageColor: Colors.grey[500],
+      actionLabel: 'Yeni Liste Oluştur',
+      onAction: _showCreateListDialog,
+      actionPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+      actionRadius: 20,
+      gapBeforeAction: 24,
     );
   }
 

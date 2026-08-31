@@ -35,8 +35,9 @@ void main() {
       final rail =
           File('lib/screens/home/sections/home_section_full_rail.dart')
               .readAsStringSync();
-      expect(rail, contains('product_card.ProductCard'));
+      expect(rail, contains('ProductCard('));
       expect(rail, isNot(contains('HomeProductPreviewCard')));
+      expect(rail, isNot(contains('deferred as product_card')));
       expect(rail, contains('HomeUiDiagnostics.realProductCard'));
     });
 
@@ -59,7 +60,13 @@ void main() {
           File('lib/screens/home_screen_core.dart').readAsStringSync();
       expect(core, contains('_buildHomeSections'));
       expect(core, contains('IbulOpportunityShortcutsSection'));
+      expect(core, contains('IbulMobileHomeChrome'));
+      expect(core, contains('IbulHeroCampaignRow'));
       expect(core, contains('DeferredHomeFullRailSection'));
+      final mobileChrome = File(
+        'lib/screens/home/sections/ibul_mobile_home_chrome.dart',
+      ).readAsStringSync();
+      expect(mobileChrome, contains('FeatureMenu'));
     });
   });
 }

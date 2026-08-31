@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
 import '../core/chat_state.dart';
+import '../widgets/ibul_page_state.dart';
 import 'chat_page.dart';
 
 class MyChatsPage extends StatefulWidget {
@@ -35,18 +36,13 @@ class _MyChatsPageState extends State<MyChatsPage> {
         centerTitle: true,
       ),
       body: chats.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey.shade300),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Henüz hiç sohbetiniz yok',
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                  ),
-                ],
-              ),
+          ? IbulPageState.empty(
+              icon: Icons.chat_bubble_outline,
+              iconSize: 64,
+              iconColor: Colors.grey.shade300,
+              title: 'Henüz hiç sohbetiniz yok',
+              titleSize: 14,
+              titleColor: Colors.grey.shade600,
             )
           : ListView.separated(
               padding: const EdgeInsets.all(16),

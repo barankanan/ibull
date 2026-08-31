@@ -115,8 +115,45 @@ void main() {
           selectedSavedCardId: 'card-1',
           useNewCard: false,
           newCardInput: null,
+          chargeProviderReady: true,
         ),
         isTrue,
+      );
+    });
+
+    test('hasValidPayment is false when charge provider is not ready', () {
+      const card = SavedPaymentCard(
+        id: 'card-1',
+        userId: 'u1',
+        provider: 'pending',
+        providerCardToken: 'tok',
+        cardLast4: '1111',
+      );
+      const input = RawCardInput(
+        cardNumber: '4111111111111111',
+        expiry: '08/28',
+        cvv: '123',
+        holderName: 'Test User',
+      );
+
+      expect(SavedPaymentCardsService.isChargeProviderReady, isFalse);
+      expect(
+        CheckoutPaymentIntegration.hasValidPayment(
+          savedCards: const [card],
+          selectedSavedCardId: 'card-1',
+          useNewCard: false,
+          newCardInput: null,
+        ),
+        isFalse,
+      );
+      expect(
+        CheckoutPaymentIntegration.hasValidPayment(
+          savedCards: const [],
+          selectedSavedCardId: null,
+          useNewCard: true,
+          newCardInput: input,
+        ),
+        isFalse,
       );
     });
   });
@@ -249,5 +286,7 @@ void main() {
 
     expect(find.text('Kartlarım'), findsWidgets);
     expect(find.textContaining('Güvenli ödeme'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 8));
   });
 }

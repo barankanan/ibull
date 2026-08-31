@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../core/ad_product_trace.dart';
 import '../core/home_data_diagnostics.dart';
+import '../core/ibul_chrome.dart';
 import '../ads/enums/ad_enums.dart';
 import '../ads/helpers/home_feature_ad_display_text.dart';
 import '../ads/helpers/home_feature_ad_helper.dart';
@@ -280,7 +281,7 @@ class _HomeCardBlockState extends State<_HomeCardBlock> {
 
   double _productCardWidth() {
     final screenWidth = MediaQuery.sizeOf(context).width;
-    if (screenWidth >= 1100) return 200;
+    if (IbulChrome.isWeb(screenWidth)) return 200;
     if (screenWidth >= 600) return 180;
     return 160;
   }
@@ -633,7 +634,11 @@ class _HomeCategoryCardSectionsSkeleton extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           SizedBox(
-            height: screenWidth >= 1100 ? 310 : screenWidth >= 600 ? 279 : 248,
+            height: IbulChrome.isWeb(screenWidth)
+                ? 310
+                : screenWidth >= 600
+                    ? 279
+                    : 248,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               physics: const NeverScrollableScrollPhysics(),
@@ -641,7 +646,7 @@ class _HomeCategoryCardSectionsSkeleton extends StatelessWidget {
               itemCount: 3,
               separatorBuilder: (context, index) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
-                final cardWidth = screenWidth >= 1100
+                final cardWidth = IbulChrome.isWeb(screenWidth)
                     ? 200.0
                     : screenWidth >= 600
                     ? 180.0

@@ -43,16 +43,31 @@ class KitchenRenderer:
     def __init__(self, settings: BridgeSettings) -> None:
         self.settings = settings
         self.width = settings.chars_per_line
+        try:
+            self.print_text_scale = float(
+                getattr(settings, "print_text_scale", 1.0) or 1.0
+            )
+        except (TypeError, ValueError):
+            self.print_text_scale = 1.0
+
+    def _body_text_size(self) -> tuple[int, int]:
+        # ESC/POS only supports integer width/height multipliers.
+        if self.print_text_scale >= 1.30:
+            return (2, 2)
+        if self.print_text_scale >= 1.10:
+            return (1, 2)
+        return (1, 1)
 
     def render(self, payload: KitchenPayload) -> bytes:
         chunks: list[bytes] = [_begin_document(self.settings)]
+        body_w, body_h = self._body_text_size()
 
         # ── Header ──────────────────────────────────────────────────────────
         # Job type label — large, centred (e.g. "YENİ SİPARİŞ")
         chunks += [_set_alignment("center"), _set_bold(True), _set_text_size(2, 2)]
         title = _JOB_TYPE_LABELS.get(payload.job_type, payload.title or "MUTFAK SİPARİŞİ")
         chunks += self._lines(title)
-        chunks += [_set_text_size(1, 1), _set_bold(False)]
+        chunks += [_set_text_size(body_w, body_h), _set_bold(False)]
 
         # Area / station name — bold, centred
         if payload.area_name:
@@ -137,6 +152,8 @@ class KitchenRenderer:
 
     def _render_item(self, item: KitchenItem) -> list[bytes]:
         output: list[bytes] = []
+        body_w, body_h = self._body_text_size()
+        output += [_set_text_size(body_w, body_h)]
         # Item name — normal weight (same as receipt item lines).
         # Quantity is shown as "Nx  Name [amount_label]".
         label = f"{item.quantity}x  {item.name}"

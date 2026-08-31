@@ -13,6 +13,7 @@ import 'product_detail_page.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
+import '../widgets/ibul_page_state.dart';
 
 class FollowedStoresPage extends StatefulWidget {
   const FollowedStoresPage({super.key});
@@ -288,72 +289,23 @@ class _FollowedStoresPageState extends State<FollowedStoresPage> {
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(32),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withValues(alpha: 0.1),
-                  blurRadius: 10,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-            child: Icon(
-              Icons.store_outlined,
-              size: 60,
-              color: AppColors.primary,
-            ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            'Henüz Takip Ettiğiniz Mağaza Yok',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey[800],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: Text(
-              'Beğendiğiniz mağazaları takip ederek özel tekliflerden haberdar olun',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[600],
-                height: 1.4,
-              ),
-            ),
-          ),
-          const SizedBox(height: 32),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 0,
-            ),
-            child: const Text(
-              'Mağazaları Keşfet',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
+    return IbulPageState.empty(
+      icon: Icons.store_outlined,
+      iconSize: 60,
+      iconColor: AppColors.primary,
+      title: 'Henüz Takip Ettiğiniz Mağaza Yok',
+      titleSize: 18,
+      titleWeight: FontWeight.bold,
+      titleColor: Colors.grey[800],
+      message:
+          'Beğendiğiniz mağazaları takip ederek özel tekliflerden haberdar olun',
+      messageSize: 14,
+      messageColor: Colors.grey[600],
+      actionLabel: 'Mağazaları Keşfet',
+      onAction: () => Navigator.pop(context),
+      actionPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+      actionRadius: 12,
+      gapBeforeAction: 32,
     );
   }
 

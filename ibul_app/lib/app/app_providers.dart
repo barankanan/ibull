@@ -6,7 +6,6 @@ import '../core/app_state.dart';
 import '../core/cart_state.dart';
 import '../core/favorite_state.dart';
 import '../core/ibul_app_mode.dart';
-import '../core/providers/cart_provider.dart';
 import '../core/providers/connectivity_provider.dart';
 import '../core/review_state.dart';
 import '../core/runtime_diagnostic_logger.dart';
@@ -27,7 +26,6 @@ List<SingleChildWidget> buildCustomerProviders() {
     ChangeNotifierProvider.value(value: FavoriteState()),
     ChangeNotifierProvider.value(value: ReviewState()),
     ChangeNotifierProvider(create: (_) => AppState()),
-    ChangeNotifierProvider(create: (_) => CartProvider()),
     ChangeNotifierProvider(create: (_) => ConnectivityProvider()),
   ];
 }
@@ -54,7 +52,7 @@ List<SingleChildWidget> buildProvidersForMode(IbulAppMode mode) {
 }
 
 int countMountedProviders(IbulAppMode mode) {
-  const customerCount = 6;
+  const customerCount = 5;
   if (mode == IbulAppMode.customer) return customerCount;
   if (kIsWeb) return customerCount;
   // IO full/seller/restaurant: +restaurant connectivity +desktop print hub

@@ -36,4 +36,29 @@ void main() {
     expect(summary.reviews, isEmpty);
     expect(summary.averageRating, 4.2);
   });
+
+  test('reviewsMatchingLookup batches by product and store', () {
+    final mapped = [
+      {'productName': 'Süt', 'storeName': 'A Market', 'rating': 5},
+      {'productName': 'Süt', 'storeName': 'B Market', 'rating': 3},
+      {'productName': 'Ekmek', 'storeName': 'A Market', 'rating': 4},
+    ];
+    final milkA = reviewsMatchingLookup(
+      mappedReviews: mapped,
+      lookup: const ProductReviewLookup(
+        productName: 'süt',
+        storeName: 'a market',
+      ),
+      limit: 10,
+    );
+    expect(milkA, hasLength(1));
+    expect(milkA.single['storeName'], 'A Market');
+
+    final milkAll = reviewsMatchingLookup(
+      mappedReviews: mapped,
+      lookup: const ProductReviewLookup(productName: 'Süt'),
+      limit: 10,
+    );
+    expect(milkAll, hasLength(2));
+  });
 }

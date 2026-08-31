@@ -7,6 +7,7 @@ import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/address_edit_sheet.dart';
+import '../widgets/ibul_page_state.dart';
 
 class AddressesPage extends StatefulWidget {
   const AddressesPage({super.key});
@@ -341,24 +342,15 @@ class _AddressesPageState extends State<AddressesPage> {
     }
 
     if (displayList.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(40),
-          child: Column(
-            children: [
-              Icon(
-                Icons.location_off_outlined,
-                size: 64,
-                color: Colors.grey.shade300,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Kayıtlı ${_selectedTab == 0 ? 'adres' : 'fatura bilgisi'} bulunamadı',
-                style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
-              ),
-            ],
-          ),
-        ),
+      return IbulPageState.empty(
+        icon: Icons.location_off_outlined,
+        iconSize: 64,
+        iconColor: Colors.grey.shade300,
+        title:
+            'Kayıtlı ${_selectedTab == 0 ? 'adres' : 'fatura bilgisi'} bulunamadı',
+        titleSize: 16,
+        titleColor: Colors.grey.shade600,
+        padding: const EdgeInsets.all(40),
       );
     }
 

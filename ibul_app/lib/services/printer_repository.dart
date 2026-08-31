@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show debugPrint, debugPrintStack;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/printer_model.dart';
+import 'printer_print_size_settings.dart';
 import 'printer_receipt_length_settings.dart';
 import '../models/station_printer_model.dart';
 import '../models/printer_profile.dart';
@@ -104,6 +105,7 @@ class PrinterRepository implements PrinterRepositoryPort {
     List<PrinterRole> assignedRoles = const [],
     String? printerProfileId,
     PrinterReceiptLengthSettings? receiptLengthSettings,
+    PrinterPrintSizeSettings? printSizeSettings,
   }) async {
     final normalizedHost = ipAddress.trim();
     final normalizedPort = port > 0 ? port : PrinterModel.ethernetDefaultPort;
@@ -140,6 +142,7 @@ class PrinterRepository implements PrinterRepositoryPort {
       assignedRoles: assignedRoles,
       printerProfileId: canonicalProfileId,
       receiptLengthSettings: receiptLengthSettings,
+      printSizeSettings: printSizeSettings,
     );
   }
 
@@ -228,6 +231,7 @@ class PrinterRepository implements PrinterRepositoryPort {
     List<PrinterRole> assignedRoles = const [],
     String? printerProfileId,
     PrinterReceiptLengthSettings? receiptLengthSettings,
+    PrinterPrintSizeSettings? printSizeSettings,
   }) async {
     final encodingSelection = PrinterEncodingSelection.normalize(
       charset: charset,
@@ -265,15 +269,11 @@ class PrinterRepository implements PrinterRepositoryPort {
       'assigned_roles': assignedRoles.map((r) => r.value).toList(),
       'printer_profile_id': normalizedMetadata.profileId,
       ...?receiptLengthSettings?.toDbFields(),
+      ...?printSizeSettings?.toDbFields(),
     };
 
     try {
-      final row = await _client
-          .from('printers')
-          .upsert(payload, onConflict: 'restaurant_id,code')
-          .select()
-          .single();
-      return PrinterModel.fromMap(Map<String, dynamic>.from(row as Map));
+      return await _upsertPrinterPayload(payload);
     } on PostgrestException catch (error, stackTrace) {
       if (_isDuplicatePrinterCodeError(error)) {
         final normalizedRestaurantId = restaurantId.trim();
@@ -288,15 +288,29 @@ class PrinterRepository implements PrinterRepositoryPort {
           final existingId = existing['id']?.toString().trim() ?? '';
           final updatePayload = Map<String, dynamic>.from(payload)
             ..remove('id');
-          final updated = await _client
-              .from('printers')
-              .update(updatePayload)
-              .eq('id', existingId)
-              .select()
-              .single();
-          return PrinterModel.fromMap(
-            Map<String, dynamic>.from(updated as Map),
-          );
+          try {
+            final updated = await _client
+                .from('printers')
+                .update(updatePayload)
+                .eq('id', existingId)
+                .select()
+                .single();
+            return _printerWithRequestedPrintSize(
+              PrinterModel.fromMap(Map<String, dynamic>.from(updated as Map)),
+              printSizeSettings,
+            );
+          } on PostgrestException catch (updateError) {
+            if (_isPrintSizeMigrationMissing(updateError) &&
+                printSizeSettings != null) {
+              final saved = await _upsertWithoutPrintSizeColumn(
+                Map<String, dynamic>.from(updatePayload)..remove('id'),
+                printSizeSettings: printSizeSettings,
+                existingId: existingId,
+              );
+              throw PrinterPrintSizeMigrationRequiredException(saved);
+            }
+            rethrow;
+          }
         }
       }
       if (deviceIdentifier != null &&
@@ -310,16 +324,46 @@ class PrinterRepository implements PrinterRepositoryPort {
         if (existing != null) {
           final updatePayload = Map<String, dynamic>.from(payload)
             ..remove('id');
-          final updated = await _client
-              .from('printers')
-              .update(updatePayload)
-              .eq('id', existing.id)
-              .select()
-              .single();
-          return PrinterModel.fromMap(
-            Map<String, dynamic>.from(updated as Map),
-          );
+          try {
+            final updated = await _client
+                .from('printers')
+                .update(updatePayload)
+                .eq('id', existing.id)
+                .select()
+                .single();
+            return _printerWithRequestedPrintSize(
+              PrinterModel.fromMap(Map<String, dynamic>.from(updated as Map)),
+              printSizeSettings,
+            );
+          } on PostgrestException catch (updateError) {
+            if (_isPrintSizeMigrationMissing(updateError) &&
+                printSizeSettings != null) {
+              final saved = await _upsertWithoutPrintSizeColumn(
+                updatePayload,
+                printSizeSettings: printSizeSettings,
+                existingId: existing.id,
+              );
+              throw PrinterPrintSizeMigrationRequiredException(saved);
+            }
+            rethrow;
+          }
         }
+      }
+      if (_isPrintSizeMigrationMissing(error) && printSizeSettings != null) {
+        // Printer kaydı bozulmasın: print_size hariç kaydet, migration uyarısı ver.
+        _logPrinterSettings(
+          'Error',
+          'source=upsertPrinter print_size_column_missing '
+              'restaurantId=$restaurantId printerId=${printerId ?? "-"} '
+              'code=${code.trim().toUpperCase()} — retrying without print_size',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        final saved = await _upsertWithoutPrintSizeColumn(
+          payload,
+          printSizeSettings: printSizeSettings,
+        );
+        throw PrinterPrintSizeMigrationRequiredException(saved);
       }
       _logPrinterSettings(
         'Error',
@@ -329,11 +373,51 @@ class PrinterRepository implements PrinterRepositoryPort {
       );
       if (_isReceiptLengthMigrationMissing(error)) {
         throw StateError(
-          'Fiş uzunluğu ayarları için veritabanı güncellemesi gerekli.',
+          'Fiş uzunluğu ayarları için veritabanı güncellemesi gerekli. '
+          'SUPABASE_PRINTER_RECEIPT_LENGTH_SETTINGS.sql dosyasını çalıştırın.',
         );
       }
       rethrow;
     }
+  }
+
+  Future<PrinterModel> _upsertPrinterPayload(Map<String, dynamic> payload) async {
+    final row = await _client
+        .from('printers')
+        .upsert(payload, onConflict: 'restaurant_id,code')
+        .select()
+        .single();
+    return PrinterModel.fromMap(Map<String, dynamic>.from(row as Map));
+  }
+
+  Future<PrinterModel> _upsertWithoutPrintSizeColumn(
+    Map<String, dynamic> payload, {
+    required PrinterPrintSizeSettings printSizeSettings,
+    String? existingId,
+  }) async {
+    final stripped = Map<String, dynamic>.from(payload)..remove('print_size');
+    if (existingId != null && existingId.trim().isNotEmpty) {
+      final updated = await _client
+          .from('printers')
+          .update(stripped)
+          .eq('id', existingId)
+          .select()
+          .single();
+      return _printerWithRequestedPrintSize(
+        PrinterModel.fromMap(Map<String, dynamic>.from(updated as Map)),
+        printSizeSettings,
+      );
+    }
+    final saved = await _upsertPrinterPayload(stripped);
+    return _printerWithRequestedPrintSize(saved, printSizeSettings);
+  }
+
+  PrinterModel _printerWithRequestedPrintSize(
+    PrinterModel printer,
+    PrinterPrintSizeSettings? printSizeSettings,
+  ) {
+    if (printSizeSettings == null) return printer;
+    return printer.copyWith(printSize: printSizeSettings.preset.bridgeValue);
   }
 
   bool _isDuplicatePrinterCodeError(PostgrestException error) {
@@ -362,6 +446,13 @@ class PrinterRepository implements PrinterRepositoryPort {
         combined.contains('receipt_bottom_feed_lines') ||
         combined.contains('receipt_bottom_padding_px') ||
         combined.contains('receipt_min_receipt_height_px');
+  }
+
+  bool _isPrintSizeMigrationMissing(PostgrestException error) {
+    final combined =
+        '${error.message} ${error.details ?? ''} ${error.hint ?? ''}'
+            .toLowerCase();
+    return combined.contains('print_size');
   }
 
   @override

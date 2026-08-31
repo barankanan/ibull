@@ -23,6 +23,12 @@ class StoreFollowService {
 
   String? get currentUserId => _supabase.auth.currentUser?.id;
 
+  Set<String> _cachedFollowedStoreIds = {};
+
+  /// Sync snapshot for home scoring — empty until the first successful fetch.
+  Set<String> get cachedFollowedStoreIds =>
+      Set<String>.unmodifiable(_cachedFollowedStoreIds);
+
   static String userFriendlyError(Object error) {
     final raw = error.toString();
     if (raw.contains('not_authenticated')) {
@@ -176,7 +182,9 @@ class StoreFollowService {
           .eq('user_id', userId)
           .eq('store_id', storeId.trim())
           .eq('is_read', false);
-      return List.from(rows as List).length;
+      // Sadece adet okunuyor — List.from tüm satır listesini gereksiz
+      // kopyalıyordu. Değer birebir aynı.
+      return (rows as List).length;
     } catch (_) {
       return 0;
     }
@@ -254,20 +262,25 @@ class StoreFollowService {
 
   Future<Set<String>> fetchFollowedStoreIds() async {
     final userId = currentUserId;
-    if (userId == null) return {};
+    if (userId == null) {
+      _cachedFollowedStoreIds = {};
+      return {};
+    }
 
     try {
       final rows = await _supabase
           .from('store_followers')
           .select('store_id')
           .eq('user_id', userId);
-      return List<Map<String, dynamic>>.from(rows as List)
+      final ids = List<Map<String, dynamic>>.from(rows as List)
           .map((row) => row['store_id']?.toString() ?? '')
           .where((id) => id.isNotEmpty)
           .toSet();
+      _cachedFollowedStoreIds = ids;
+      return ids;
     } catch (error) {
       debugPrint('StoreFollowService.fetchFollowedStoreIds: $error');
-      return {};
+      return _cachedFollowedStoreIds;
     }
   }
 

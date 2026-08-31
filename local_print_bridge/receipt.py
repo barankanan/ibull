@@ -243,9 +243,23 @@ class ReceiptRenderer:
     def __init__(self, settings: BridgeSettings) -> None:
         self.settings = settings
         self.width = settings.chars_per_line
+        try:
+            self.print_text_scale = float(
+                getattr(settings, "print_text_scale", 1.0) or 1.0
+            )
+        except (TypeError, ValueError):
+            self.print_text_scale = 1.0
+
+    def _body_text_size(self) -> tuple[int, int]:
+        if self.print_text_scale >= 1.30:
+            return (2, 2)
+        if self.print_text_scale >= 1.10:
+            return (1, 2)
+        return (1, 1)
 
     def render(self, payload: ReceiptPayload) -> bytes:
         chunks: list[bytes] = [_begin_document(self.settings)]
+        body_w, body_h = self._body_text_size()
 
         (
             parsed_table_no,
@@ -272,7 +286,7 @@ class ReceiptRenderer:
             ]
         )
         chunks.extend(self._lines(payload.store_name.upper()))
-        chunks.extend([_set_text_size(1, 1), _set_bold(False)])
+        chunks.extend([_set_text_size(body_w, body_h), _set_bold(False)])
 
         if payload.branch:
             chunks.extend(self._lines(payload.branch))

@@ -8,7 +8,9 @@ import '../../models/printer_model.dart';
 import '../../models/printer_profile.dart';
 import '../../services/desktop_print_orchestrator.dart';
 import '../../services/local_print_service.dart';
+import '../../features/seller/panel/printer_center/widgets/printer_print_size_settings_section.dart';
 import '../../features/seller/panel/printer_center/widgets/printer_receipt_length_settings_section.dart';
+import '../../services/printer_print_size_settings.dart';
 import '../../services/printer_receipt_length_settings.dart';
 import '../../widgets/bridge_error_dialog.dart';
 import '../../services/printer_event_log_service.dart';
@@ -122,6 +124,7 @@ class _PrinterWizardState extends State<PrinterWizard> {
   // ── receipt length ──
   PrinterReceiptLengthSettings _receiptLengthSettings =
       PrinterReceiptLengthSettings.normal;
+  PrinterPrintSizeSettings _printSizeSettings = PrinterPrintSizeSettings.normal;
   bool _abTestRunning = false;
 
   // ── saving ──
@@ -163,6 +166,7 @@ class _PrinterWizardState extends State<PrinterWizard> {
       if (p.testPrintStatus == 'ok') _testPassed = true;
       _receiptLengthSettings =
           PrinterReceiptLengthSettings.fromPrinterModel(p);
+      _printSizeSettings = PrinterPrintSizeSettings.fromPrinterModel(p);
     }
   }
 
@@ -313,15 +317,19 @@ class _PrinterWizardState extends State<PrinterWizard> {
       final sanitizedDevice = rawDevice.contains(' (') && rawDevice.endsWith(')')
           ? rawDevice.split(' (').first.trim()
           : rawDevice;
-      final tailFields = _receiptLengthSettings.toLiveBridgeFields(
-        paperWidthMm: _paperWidth,
-      );
+      final tailFields = <String, dynamic>{
+        ..._receiptLengthSettings.toLiveBridgeFields(
+          paperWidthMm: _paperWidth,
+        ),
+        ..._printSizeSettings.toLiveBridgeFields(),
+      };
       debugPrint(
         '[ReceiptLength][ui_test] '
         'preset=${_receiptLengthSettings.preset.bridgeValue} '
         'bottom_feed_lines=${tailFields['bottom_feed_lines']} '
         'bottom_padding_px=${tailFields['bottom_padding_px']} '
-        'min_receipt_height_px=${tailFields['min_receipt_height_px']}',
+        'min_receipt_height_px=${tailFields['min_receipt_height_px']} '
+        'print_size=${_printSizeSettings.preset.bridgeValue}',
       );
       final result = await _printOrchestrator
           .printBridgeTest(
@@ -637,24 +645,32 @@ class _PrinterWizardState extends State<PrinterWizard> {
       final encodingSelection = _selectedEncodingSelection;
       _showEncodingGuardMessageIfNeeded(encodingSelection);
 
-      final saved = await _repo.upsertPrinter(
-        restaurantId: widget.restaurantId,
-        printerId: widget.existing?.id,
-        name: _nameCtrl.text.trim(),
-        code: _codeCtrl.text.trim(),
-        connectionType: normalizedConnectionType,
-        ipAddress: normalizedHost,
-        port: normalizedPort,
-        deviceIdentifier: normalizedDevice,
-        paperWidthMm: _paperWidth,
-        isActive: _testPassed,
-        supportsCut: _supportsCut,
-        charset: encodingSelection.charset,
-        codePage: encodingSelection.codePage,
-        assignedRoles: _selectedRoles.toList(),
-        printerProfileId: _selectedProfileId,
-        receiptLengthSettings: _receiptLengthSettings,
-      );
+      PrinterModel saved;
+      var printSizeMigrationWarning = false;
+      try {
+        saved = await _repo.upsertPrinter(
+          restaurantId: widget.restaurantId,
+          printerId: widget.existing?.id,
+          name: _nameCtrl.text.trim(),
+          code: _codeCtrl.text.trim(),
+          connectionType: normalizedConnectionType,
+          ipAddress: normalizedHost,
+          port: normalizedPort,
+          deviceIdentifier: normalizedDevice,
+          paperWidthMm: _paperWidth,
+          isActive: _testPassed,
+          supportsCut: _supportsCut,
+          charset: encodingSelection.charset,
+          codePage: encodingSelection.codePage,
+          assignedRoles: _selectedRoles.toList(),
+          printerProfileId: _selectedProfileId,
+          receiptLengthSettings: _receiptLengthSettings,
+          printSizeSettings: _printSizeSettings,
+        );
+      } on PrinterPrintSizeMigrationRequiredException catch (migrationError) {
+        saved = migrationError.printer;
+        printSizeMigrationWarning = true;
+      }
 
       // Record test result in DB if we tested
       if (_testState == _TestState.success) {
@@ -668,6 +684,17 @@ class _PrinterWizardState extends State<PrinterWizard> {
       }
 
       if (!mounted) return;
+      if (printSizeMigrationWarning) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Yazıcı kaydedildi. Baskı boyutu için Supabase migration gerekli: '
+              'SUPABASE_PRINTER_PRINT_SIZE_SETTINGS.sql',
+            ),
+            duration: Duration(seconds: 6),
+          ),
+        );
+      }
       Navigator.of(context).pop(saved);
     } catch (e) {
       if (!mounted) return;
@@ -817,6 +844,9 @@ class _PrinterWizardState extends State<PrinterWizard> {
           receiptLengthSettings: _receiptLengthSettings,
           onReceiptLengthChanged: (settings) =>
               setState(() => _receiptLengthSettings = settings),
+          printSizeSettings: _printSizeSettings,
+          onPrintSizeChanged: (settings) =>
+              setState(() => _printSizeSettings = settings),
           onPaperWidthChanged: (v) => setState(() => _paperWidth = v),
           onSupportsCutChanged: (v) => setState(() => _supportsCut = v),
           onCharsetChanged: (v) => setState(() => _charset = v),
@@ -1862,6 +1892,8 @@ class _Step4Features extends StatelessWidget {
     required this.codePageCtrl,
     required this.receiptLengthSettings,
     required this.onReceiptLengthChanged,
+    required this.printSizeSettings,
+    required this.onPrintSizeChanged,
     required this.onPaperWidthChanged,
     required this.onSupportsCutChanged,
     required this.onCharsetChanged,
@@ -1880,6 +1912,8 @@ class _Step4Features extends StatelessWidget {
   final TextEditingController codePageCtrl;
   final PrinterReceiptLengthSettings receiptLengthSettings;
   final ValueChanged<PrinterReceiptLengthSettings> onReceiptLengthChanged;
+  final PrinterPrintSizeSettings printSizeSettings;
+  final ValueChanged<PrinterPrintSizeSettings> onPrintSizeChanged;
   final ValueChanged<int> onPaperWidthChanged;
   final ValueChanged<bool> onSupportsCutChanged;
   final ValueChanged<PrinterCharset> onCharsetChanged;
@@ -1983,6 +2017,11 @@ class _Step4Features extends StatelessWidget {
           abTesting: abTestRunning,
           onAbMinimumTest: onAbMinimumTest,
           onAbMaximumTest: onAbMaximumTest,
+        ),
+        const SizedBox(height: 20),
+        PrinterPrintSizeSettingsSection(
+          settings: printSizeSettings,
+          onChanged: onPrintSizeChanged,
         ),
         const SizedBox(height: 20),
         const Text(

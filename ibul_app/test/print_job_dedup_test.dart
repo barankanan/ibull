@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/utils/kitchen_print_dedup.dart';
 
 void main() {
+  tearDown(KitchenLanPrintBarrier.clearForTest);
+
   group('kitchen print idempotency', () {
     test('same order station revision yields stable key', () {
       final items = <Map<String, dynamic>>[
@@ -97,5 +99,49 @@ void main() {
         expect(deduped.duplicateOfByJobId, <String, String>{'job-2': 'job-1'});
       },
     );
+
+    test('logical print key omits order_id so LAN and hub collide', () {
+      final items = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'product_id': 'p-1',
+          'name': 'Adana',
+          'quantity': 1,
+          'station_id': 'ocak',
+        },
+      ];
+      final lanKey = buildKitchenLogicalPrintKey(
+        restaurantId: 'rest-1',
+        tableNumber: '12',
+        stationId: 'station-ocak',
+        stationName: 'Ocak',
+        revision: 1,
+        items: items,
+      );
+      final hubKey = buildKitchenLogicalPrintKey(
+        restaurantId: 'rest-1',
+        tableNumber: '12',
+        stationId: 'station-ocak',
+        stationName: 'Ocak',
+        revision: 1,
+        items: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'product_id': 'p-1',
+            'name': 'Adana',
+            'qty': 1,
+            'station_id': 'ocak',
+            'volatile': true,
+          },
+        ],
+      );
+      expect(lanKey, hubKey);
+      expect(lanKey.startsWith('logical:'), isTrue);
+    });
+
+    test('LAN barrier blocks second physical print for same logical key', () {
+      const key = 'logical:rest|12|ocak|1|hash';
+      expect(KitchenLanPrintBarrier.alreadyPrinted(key), isFalse);
+      KitchenLanPrintBarrier.remember(key);
+      expect(KitchenLanPrintBarrier.alreadyPrinted(key), isTrue);
+    });
   });
 }

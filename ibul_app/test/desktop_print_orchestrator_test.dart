@@ -433,7 +433,9 @@ void main() {
       expect(fakePrint.lastKitchenPayload?['transportType'], 'ethernet');
       expect(fakePrint.lastKitchenPayload?['transport_type'], 'ethernet');
       expect(fakePrint.lastKitchenPayload?['printer_target_host'], isNull);
-      expect(fakePrint.lastKitchenPayload?['target_host'], isNull);
+      // TCP hot path stamps target_host/port for bridge NetworkTcpTransport.
+      expect(fakePrint.lastKitchenPayload?['target_host'], '192.168.1.100');
+      expect(fakePrint.lastKitchenPayload?['target_port'], 9100);
       expect(fakePrint.lastKitchenPayload?['host'], '192.168.1.100');
       expect(fakePrint.lastKitchenPayload?['ip_address'], '192.168.1.100');
       expect(fakePrint.lastKitchenPayload?['port'], 9100);
@@ -495,8 +497,9 @@ void main() {
       );
       expect(fakePrint.lastKitchenPayload?['vendorId'], isNull);
       expect(fakePrint.lastKitchenPayload?['productId'], isNull);
-      expect(fakePrint.lastKitchenPayload?['target_host'], isNull);
-      expect(fakePrint.lastKitchenPayload?['target_port'], isNull);
+      // Stale target cleared then restamped with mapped TCP printer endpoint.
+      expect(fakePrint.lastKitchenPayload?['target_host'], '192.168.1.100');
+      expect(fakePrint.lastKitchenPayload?['target_port'], 9100);
       expect(fakePrint.lastKitchenPayload?['host'], '192.168.1.100');
       expect(fakePrint.lastKitchenPayload?['port'], 9100);
       final printerPayload =
@@ -1961,7 +1964,7 @@ void main() {
   );
 
   test(
-    'ethernet kitchen print uses raster image mode with 80mm profile metadata',
+    'ethernet kitchen print uses text hot-path with 80mm profile metadata',
     () async {
       final fakeRepo = _FakePrinterRepository();
       final fakeStation = _FakePrintStationService();
@@ -2005,7 +2008,8 @@ void main() {
       );
 
       expect(result.ok, isTrue);
-      expect(fakePrint.lastKitchenPayload?['render_mode'], 'image');
+      expect(fakePrint.lastKitchenPayload?['render_mode'], 'text');
+      expect(fakePrint.lastKitchenPayload?['lan_hot_path'], isTrue);
       expect(fakePrint.lastKitchenPayload?['paper_width_mm'], 80);
       expect(
         fakePrint.lastKitchenPayload?['printer_profile'],
@@ -2014,6 +2018,7 @@ void main() {
       expect(fakePrint.lastKitchenPayload?['raster_width_px'], 576);
       expect(fakePrint.lastKitchenPayload?['host'], '192.168.1.100');
       expect(fakePrint.lastKitchenPayload?['port'], 9100);
+      expect(fakePrint.lastKitchenPayload?['target_host'], '192.168.1.100');
     },
   );
 

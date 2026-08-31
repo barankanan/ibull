@@ -79,6 +79,15 @@ class SupportChatComposer extends StatelessWidget {
                             width: 72,
                             height: 72,
                             fit: BoxFit.cover,
+                            // Ek dosyalar galeriden/kameradan tam çözünürlükte
+                            // geliyor; 72pt'lik önizleme için tam boy decode
+                            // image cache'i gereksiz şişiriyordu. Fiziksel
+                            // piksel kadar decode → görünür kalite aynı.
+                            cacheWidth: (72 * MediaQuery.devicePixelRatioOf(context))
+                                .round(),
+                            cacheHeight:
+                                (72 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
                           ),
                         ),
                         Positioned(

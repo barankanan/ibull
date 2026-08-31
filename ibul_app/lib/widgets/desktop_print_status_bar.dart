@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../app/ibul_router.dart';
 import '../services/desktop_print_hub.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,7 +50,7 @@ class _PrintChip extends StatelessWidget {
       shadowColor: Colors.black12,
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        onTap: () => Navigator.of(context).pushNamed('/printer-setup'),
+        onTap: () => IbulRouter.push(context, '/printer-setup'),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(

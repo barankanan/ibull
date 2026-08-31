@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../ads/enums/ad_enums.dart';
 import '../../core/constants.dart';
+import '../../core/catalog_image_priority.dart';
 import '../../viewmodels/product_detail_viewmodel.dart';
 import '../product_card.dart';
 import '../skeleton_loading.dart';
@@ -101,6 +102,7 @@ class _SimilarProductsSectionState extends State<SimilarProductsSection> {
                       controller: _scrollController,
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
+                      cacheExtent: 280,
                       itemCount: similarProducts.length,
                       separatorBuilder: (context, index) =>
                           const SizedBox(width: 12),
@@ -112,6 +114,8 @@ class _SimilarProductsSectionState extends State<SimilarProductsSection> {
                             width: 220,
                             compact: false,
                             margin: const EdgeInsets.symmetric(vertical: 8),
+                            imagePriority:
+                                CatalogImagePriority.forRailIndex(index),
                           ),
                         );
                       },

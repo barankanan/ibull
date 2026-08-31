@@ -36,7 +36,7 @@ class _CustomerSupportTicketsListPageState
 
   @override
   Widget build(BuildContext context) {
-    final isLoggedIn = context.watch<AppState>().isLoggedIn;
+    final isLoggedIn = context.select<AppState, bool>((s) => s.isLoggedIn);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F4FA),

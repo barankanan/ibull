@@ -27,6 +27,7 @@ import 'kitchen_routing_service.dart';
 import 'restaurant_printer_dispatch_resolver.dart';
 import 'bridge_print_dispatch_verification.dart';
 import 'print_tail_padding_policy.dart';
+import 'printer_print_size_settings.dart';
 import 'printer_receipt_length_settings.dart';
 
 typedef LocalPrintServiceFactory = LocalPrintService Function();
@@ -756,6 +757,7 @@ class DesktopPrintOrchestrator {
     Map<String, dynamic>? extraBody,
     String renderMode = 'text',
     String testMode = 'escpos_short',
+    Duration? timeout,
   }) {
     final dispatchTarget = _dispatchTargetFromPrinter(
       printer: printer,
@@ -817,6 +819,16 @@ class DesktopPrintOrchestrator {
           printer: printer,
           liveOverride: liveOverride,
         );
+        final hasLivePrintSize =
+            normalizedExtra['print_size_live_override'] == true ||
+            normalizedExtra['print_size_source'] == 'live_form';
+        _stampPrintSizePolicy(
+          normalizedExtra,
+          printer: printer,
+          liveOverride: hasLivePrintSize
+              ? PrinterPrintSizeSettings.fromMap(normalizedExtra)
+              : null,
+        );
       } else {
         final paperWidth = int.tryParse(
               normalizedExtra['paper_width_mm']?.toString() ??
@@ -830,6 +842,11 @@ class DesktopPrintOrchestrator {
           payload: normalizedExtra,
         );
         _applyTailPolicyToPayload(normalizedExtra, policy);
+        final printSize = PrinterPrintSizeSettings.resolveForDispatch(
+          printerRaw: const <String, dynamic>{},
+          payload: normalizedExtra,
+        );
+        _applyPrintSizeToPayload(normalizedExtra, printSize);
       }
     }
     final bridgePrinter = printer == null ? null : _bridgePrinterPayload(printer);
@@ -844,6 +861,16 @@ class DesktopPrintOrchestrator {
       bridgePrinter: bridgePrinter,
       extraBody: normalizedExtra,
     );
+    final tcpHot =
+        printer?.backend == DesktopPrinterBackend.tcp ||
+        (resolvedHost?.trim().isNotEmpty ?? false) ||
+        testMode == 'ethernet_test' ||
+        testMode == 'ethernet' ||
+        testMode == 'tcp_test';
+    final effectiveExtra = <String, dynamic>{
+      if (normalizedExtra != null) ...normalizedExtra,
+      if (tcpHot) 'lan_hot_path': true,
+    };
     return service.printTest(
       targetHost: targetHost,
       targetPort: targetPort,
@@ -852,9 +879,13 @@ class DesktopPrintOrchestrator {
       printerId: printer?.id ?? printerId,
       printerName: printer?.queueName ?? printerName,
       printer: bridgePrinter,
-      extraBody: normalizedExtra,
+      extraBody: effectiveExtra.isEmpty ? null : effectiveExtra,
       renderMode: renderMode,
       testMode: testMode,
+      timeout: timeout ??
+          (tcpHot
+              ? LocalPrintService.ethernetHotPathTimeout
+              : null),
     );
   }
 
@@ -1843,8 +1874,11 @@ class DesktopPrintOrchestrator {
           if (productionResolution?.backend != null)
             'backend': productionResolution!.backend!.value,
         },
-        renderMode: isTcpOnlyTest ? 'image' : 'text',
+        renderMode: 'text',
         testMode: isTcpOnlyTest ? 'ethernet_test' : 'escpos_short',
+        timeout: isTcpOnlyTest
+            ? const Duration(milliseconds: 1500)
+            : null,
       );
       final verification = _verifyBridgeTestResult(
         printer: resolvedPrinter,
@@ -8553,6 +8587,7 @@ class DesktopPrintOrchestrator {
       printer: printer,
       productionFinal: isProductionFlow,
     );
+    _stampPrintSizePolicy(requestPayload, printer: printer);
   }
 
   /// Forces receipt tail padding on every production/test restaurant ticket.
@@ -8730,6 +8765,37 @@ class DesktopPrintOrchestrator {
     final policy = PrinterReceiptLengthSettings.fromPrinterModel(saved)
         .resolvePolicy(paperWidthMm: saved.paperWidthMm);
     raw.addAll(policy.toBridgeFields());
+    raw.addAll(PrinterPrintSizeSettings.fromPrinterModel(saved).toBridgeFields());
+  }
+
+  /// Stamps print text size from cached printer.raw (no network).
+  void _stampPrintSizePolicy(
+    Map<String, dynamic> payload, {
+    required UnifiedPrinterModel printer,
+    PrinterPrintSizeSettings? liveOverride,
+  }) {
+    final settings = PrinterPrintSizeSettings.resolveForDispatch(
+      printerRaw: printer.raw,
+      payload: payload,
+      liveOverride: liveOverride,
+    );
+    _applyPrintSizeToPayload(payload, settings);
+  }
+
+  void _applyPrintSizeToPayload(
+    Map<String, dynamic> payload,
+    PrinterPrintSizeSettings settings,
+  ) {
+    final fields = settings.toBridgeFields();
+    payload.addAll(fields);
+    for (final key in <String>['printer', 'selected_printer']) {
+      final nested = payload[key];
+      if (nested is Map) {
+        final printerMap = Map<String, dynamic>.from(nested);
+        printerMap.addAll(fields);
+        payload[key] = printerMap;
+      }
+    }
   }
 
   void _applyPrinterProfileMetadata(
@@ -9190,8 +9256,14 @@ class DesktopPrintOrchestrator {
     payload['ip_address'] = host;
     payload['ipAddress'] = host;
     payload['port'] = port;
+    payload['target_host'] = host;
+    payload['target_port'] = port;
     payload['transportType'] = PrinterModel.ethernetBridgeTransport;
     payload['transport_type'] = PrinterModel.ethernetBridgeTransport;
+    // Canonical Ethernet hot path: CONNECT→WRITE→CLOSE with short timeouts.
+    // Prefer text ESC/POS (Sistem Alanı parity) — image raster caused 5s client timeouts.
+    payload['lan_hot_path'] = true;
+    payload['render_mode'] = 'text';
     payload['printer'] = _buildTcpBridgePrinterPayload(printer);
     payload['paper_width_mm'] =
         payload['paper_width_mm'] ?? printer.raw['paper_width_mm'] ?? 80;

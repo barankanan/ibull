@@ -18,7 +18,6 @@ class MarketListPage extends StatefulWidget {
 
 class _MarketListPageState extends State<MarketListPage> {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
-  List<DBProduct> _allProducts = [];
   // Market Kategorileri (Screenshot'a göre)
   final List<Map<String, dynamic>> _marketCategories = [
     {'name': 'Donmuş Gıda', 'icon': '🍕', 'color': Color(0xFFE3F2FD)},
@@ -61,20 +60,6 @@ class _MarketListPageState extends State<MarketListPage> {
     },
   ];
 
-  @override
-  void initState() {
-    super.initState();
-    _loadProducts();
-  }
-
-  Future<void> _loadProducts() async {
-    try {
-      _allProducts = await _dbHelper.getAllProducts();
-    } catch (e) {
-      debugPrint('Ürünler yüklenirken hata: $e');
-    }
-  }
-
   Product _convertToProduct(DBProduct dbProduct) {
     List<String> images = [];
     if (dbProduct.imageUrls != null && dbProduct.imageUrls!.isNotEmpty) {
@@ -114,11 +99,19 @@ class _MarketListPageState extends State<MarketListPage> {
     );
   }
 
-  void _showMarketProducts(String market) {
-    final filteredProducts = _allProducts.where((product) {
-      return product.store?.toLowerCase() == market.toLowerCase();
-    }).toList();
-    
+  void _showMarketProducts(String market) async {
+    List<DBProduct> filteredProducts;
+    try {
+      filteredProducts = await _dbHelper.getProductsPage(
+        limit: 80,
+        searchQuery: market,
+      );
+    } catch (e) {
+      debugPrint('Ürünler yüklenirken hata: $e');
+      filteredProducts = const [];
+    }
+    if (!mounted) return;
+
     final products = filteredProducts.map((dbProduct) => _convertToProduct(dbProduct)).toList();
 
     final business = {

@@ -4,12 +4,13 @@ import 'package:provider/provider.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/review_state.dart';
 import '../models/product_model.dart';
 import '../widgets/account_search_filter_row.dart';
 import '../widgets/account_sidebar.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
-import 'home_screen.dart';
+import '../core/home_navigation.dart';
 import 'product_detail_page.dart';
 import 'search_results_page.dart';
 
@@ -35,6 +36,7 @@ class _ReviewsPageState extends State<ReviewsPage> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<ReviewState>();
     final isWeb = MediaQuery.of(context).size.width >= 900;
     if (isWeb) {
       return _buildWebView();
@@ -98,11 +100,7 @@ class _ReviewsPageState extends State<ReviewsPage> {
               );
             },
             onCategorySelected: (_) {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (_) => const HomeScreen()),
-                (route) => false,
-              );
+              HomeNavigation.openHome(context, replaceStack: true);
             },
           ),
           Expanded(

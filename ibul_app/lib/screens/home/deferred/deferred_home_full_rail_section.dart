@@ -25,6 +25,9 @@ class DeferredHomeFullRailSection extends StatefulWidget {
     this.maxSkeletonDuration = const Duration(seconds: 4),
   });
 
+  /// Overlap rail-chunk download with product fetch / first frame.
+  static Future<void> prefetchLibrary() => full_rail_section.loadLibrary();
+
   final Duration delay;
   final String title;
   final List<DBProduct> products;
@@ -42,8 +45,7 @@ class DeferredHomeFullRailSection extends StatefulWidget {
 }
 
 class _DeferredHomeFullRailSectionState extends State<DeferredHomeFullRailSection> {
-  Future<void>? _loadFuture;
-  bool _scheduled = false;
+  late Future<void> _loadFuture;
   bool _renderStartedLogged = false;
   bool _skeletonTimedOut = false;
   Timer? _skeletonTimer;
@@ -51,32 +53,19 @@ class _DeferredHomeFullRailSectionState extends State<DeferredHomeFullRailSectio
   @override
   void initState() {
     super.initState();
+    _loadFuture = _loadLibrary();
     _skeletonTimer = Timer(widget.maxSkeletonDuration, () {
       if (!mounted || _skeletonTimedOut) return;
       setState(() => _skeletonTimedOut = true);
       HomeSkeletonDiagnostics.timeout(source: 'full_rail_${widget.title}');
       HomeSectionDiagnostics.state(section: widget.title, state: 'hidden');
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleLoad());
   }
 
   @override
   void dispose() {
     _skeletonTimer?.cancel();
     super.dispose();
-  }
-
-  Future<void> _scheduleLoad() async {
-    if (_scheduled) return;
-    _scheduled = true;
-    final effectiveDelay = widget.products.isNotEmpty && !widget.isLoading
-        ? Duration.zero
-        : widget.delay;
-    if (effectiveDelay > Duration.zero) {
-      await Future<void>.delayed(effectiveDelay);
-    }
-    if (!mounted) return;
-    setState(() => _loadFuture = _loadLibrary());
   }
 
   Future<void> _loadLibrary() async {
@@ -122,47 +111,26 @@ class _DeferredHomeFullRailSectionState extends State<DeferredHomeFullRailSectio
     }
   }
 
-  bool get _shouldShowSkeleton {
-    if (widget.suppressSkeleton || _skeletonTimedOut) return false;
-    if (widget.products.isNotEmpty && !widget.isLoading) return false;
-    return true;
-  }
+  static const _placeholder = Padding(
+    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    child: SkeletonLoading(
+      width: double.infinity,
+      height: 312,
+      borderRadius: 12,
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
-    const placeholder = Padding(
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: SkeletonLoading(
-        width: double.infinity,
-        height: 280,
-        borderRadius: 12,
-      ),
-    );
-
-    final future = _loadFuture;
-    if (future == null) {
-      if (!_shouldShowSkeleton) {
-        return const SizedBox.shrink();
-      }
-      HomeSkeletonDiagnostics.show(
-        source: 'full_rail',
-        reason: 'library_pending',
-      );
-      return placeholder;
-    }
-
     return FutureBuilder<void>(
-      future: future,
+      future: _loadFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          if (!_shouldShowSkeleton) {
-            return const SizedBox.shrink();
-          }
           HomeSkeletonDiagnostics.show(
             source: 'full_rail',
             reason: 'library_loading',
           );
-          return placeholder;
+          return _placeholder;
         }
         if (snapshot.hasError) {
           HomeSectionDiagnostics.state(section: widget.title, state: 'error');

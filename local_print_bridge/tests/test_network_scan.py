@@ -5,6 +5,7 @@ import unittest
 from contextlib import contextmanager
 
 from local_print_bridge.network_scan import (
+    _prioritize_hosts,
     ipv4_subnet_cidr,
     scan_local_network_printers,
     scan_no_device_reason,
@@ -77,6 +78,38 @@ class NetworkScanTests(unittest.TestCase):
         self.assertEqual(result["subnets"], ["192.168.10.0/24"])
         self.assertEqual(len(result["devices"]), 1)
         self.assertEqual(result["devices"][0]["host"], "192.168.10.55")
+
+    def test_scan_prioritizes_hint_and_common_suffixes(self) -> None:
+        ordered = _prioritize_hosts(
+            ["192.168.10.55", "192.168.10.100", "192.168.10.20"],
+            hint="192.168.10.100",
+        )
+        self.assertEqual(ordered[0], "192.168.10.100")
+        self.assertLess(ordered.index("192.168.10.20"), ordered.index("192.168.10.55"))
+
+    def test_scan_connect_only_no_response_required(self) -> None:
+        """CONNECT success without banner/read is enough for discovery."""
+        open_hosts = {"192.168.10.100"}
+
+        @contextmanager
+        def fake_connect(address: tuple[str, int], timeout: float):
+            host, _port = address
+            if host in open_hosts:
+                yield _FakeSocket(host, _port)
+            else:
+                raise OSError("refused")
+
+        found = scan_subnet_for_port(
+            "192.168.10.0/24",
+            9100,
+            timeout=0.05,
+            max_workers=32,
+            connect_fn=fake_connect,
+            skip_hosts={"192.168.10.158"},
+            printer_host_hint="192.168.10.100",
+            budget_s=1.0,
+        )
+        self.assertEqual([item["host"] for item in found], ["192.168.10.100"])
 
     def test_suggest_ethernet_network_settings_from_local_ip(self) -> None:
         settings = suggest_ethernet_network_settings(

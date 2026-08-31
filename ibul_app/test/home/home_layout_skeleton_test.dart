@@ -9,13 +9,14 @@ void main() {
           File('lib/screens/home_screen_deferred_entry.dart').readAsStringSync();
       expect(entry, contains('ResponsiveHomeScreen'));
       expect(entry, contains('HomeScreenCore'));
-      expect(entry, contains('desktopBreakpoint = 1100'));
+      expect(entry, contains('desktopBreakpoint = IbulChrome.web'));
     });
 
-    test('responsive entry routes mobile viewport to legacy HomeScreen', () {
+    test('responsive entry uses HomeScreenCore on mobile viewports too', () {
       final entry =
           File('lib/screens/home_screen_deferred_entry.dart').readAsStringSync();
-      expect(entry, contains('legacy_home.HomeScreen'));
+      expect(entry, contains('HomeScreenCore('));
+      expect(entry, isNot(contains('legacy_home.HomeScreen')));
       expect(entry, contains('mobileDesignActive: !isDesktop'));
     });
 
@@ -24,6 +25,7 @@ void main() {
           File('lib/screens/home_screen_core.dart').readAsStringSync();
       expect(core, contains('if (isWeb)'));
       expect(core, contains('IbulHeroCampaignRow'));
+      expect(core, contains('IbulMobileHomeChrome'));
       expect(core, isNot(contains('_isLoadingHero || _heroBannerUrls.isNotEmpty')));
     });
 
@@ -40,12 +42,13 @@ void main() {
       expect(sponsored, contains('_shouldShowSkeleton'));
     });
 
-    test('full rail does not skeleton when products already loaded', () {
+    test('full rail paints cards as soon as products exist', () {
       final section =
           File('lib/screens/home/sections/home_section_full_rail.dart')
               .readAsStringSync();
-      expect(section, contains('widget.products.isNotEmpty'));
-      expect(section, contains('SizedBox.shrink'));
+      expect(section, contains('widget.isLoading && widget.products.isEmpty'));
+      expect(section, contains('ProductCard('));
+      expect(section, isNot(contains('deferred as product_card')));
     });
 
     test('hero fetch logs raw active rendered counts', () {

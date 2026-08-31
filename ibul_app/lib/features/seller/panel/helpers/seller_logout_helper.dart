@@ -2,11 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../../app/ibul_router.dart';
 import '../../../../core/app_motion.dart';
 import '../../../../core/app_state.dart';
 import '../../../../core/auth/ibul_auth_context.dart';
 import '../../../../core/home_navigation.dart';
-import '../../../../screens/home_screen.dart';
+import '../../../../screens/home_screen_gate.dart';
 import '../../../../services/auth_service.dart';
 import 'seller_exit_destination.dart';
 
@@ -79,20 +80,19 @@ class SellerLogoutGuard {
       );
       debugPrint('[SellerLogout] navigate_start route=${destination.logLabel}');
 
-      final navigator = Navigator.of(context, rootNavigator: true);
       try {
-        await navigator.pushNamedAndRemoveUntil(
+        IbulRouter.go(
+          context,
           destination.route,
-          (route) => false,
-          arguments: destination.arguments,
+          extra: destination.arguments,
         );
       } catch (_) {
         final tabIndex = destination.arguments is HomeRouteArgs
             ? (destination.arguments! as HomeRouteArgs).initialIndex
             : 0;
-        await navigator.pushAndRemoveUntil(
+        await Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
           buildAppPageRoute<void>(
-            builder: (_) => HomeScreen(initialIndex: tabIndex),
+            builder: (_) => HomeScreenGate(initialIndex: tabIndex),
           ),
           (route) => false,
         );

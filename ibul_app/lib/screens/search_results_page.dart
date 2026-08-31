@@ -19,7 +19,8 @@ import '../widgets/web_header.dart';
 import '../widgets/web_footer.dart';
 import '../core/constants.dart';
 import '../utils/text_normalizer.dart';
-import 'home_screen.dart';
+import '../core/home_navigation.dart';
+import '../widgets/ibul_page_state.dart';
 
 class SearchResultsPage extends StatefulWidget {
   final String query;
@@ -630,12 +631,10 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
               );
             },
             onCategorySelected: (category) {
-              Navigator.pushAndRemoveUntil(
+              HomeNavigation.openHome(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => HomeScreen(initialCategory: category),
-                ),
-                (route) => false,
+                initialCategory: category,
+                replaceStack: true,
               );
             },
           ),
@@ -658,12 +657,10 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
               );
             },
             onCategorySelected: (category) {
-              Navigator.pushAndRemoveUntil(
+              HomeNavigation.openHome(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => HomeScreen(initialCategory: category),
-                ),
-                (route) => false,
+                initialCategory: category,
+                replaceStack: true,
               );
             },
           ),
@@ -711,12 +708,10 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                 );
               },
               onCategorySelected: (category) {
-                Navigator.pushAndRemoveUntil(
+                HomeNavigation.openHome(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => HomeScreen(initialCategory: category),
-                  ),
-                  (route) => false,
+                  initialCategory: category,
+                  replaceStack: true,
                 );
               },
             ),
@@ -943,29 +938,22 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
-          const SizedBox(height: 16),
-          Text(
-            'Aramana uygun ürün bulunamadı.',
-            style: TextStyle(color: Colors.grey[600], fontSize: 16),
-          ),
-          if (_activeFilters.isNotEmpty)
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _activeFilters = {};
-                  _filteredResults = _baseResults;
-                  _visibleCount = (_filteredResults.length).clamp(0, 20);
-                });
-              },
-              child: const Text('Filtreleri Temizle'),
-            ),
-        ],
-      ),
+    return IbulPageState.empty(
+      icon: Icons.search_off,
+      title: 'Aramana uygun ürün bulunamadı.',
+      actionLabel: _activeFilters.isNotEmpty ? 'Filtreleri Temizle' : null,
+      onAction: _activeFilters.isEmpty
+          ? null
+          : () {
+              setState(() {
+                _activeFilters = {};
+                _filteredResults = _baseResults;
+                _visibleCount = (_filteredResults.length).clamp(0, 20);
+              });
+            },
+      outlinedAction: true,
+      useTextAction: true,
+      padding: EdgeInsets.zero,
     );
   }
 
@@ -1060,37 +1048,31 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
         ],
       ),
       body: _filteredResults.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Aramana uygun ürün bulunamadı.',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 16),
-                  ),
-                  if (_activeFilters.isNotEmpty)
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _activeFilters = {};
-                          _filteredResults = _baseResults;
-                          _visibleCount = (_filteredResults.length).clamp(
-                            0,
-                            20,
-                          );
-                        });
-                      },
-                      child: const Text('Filtreleri Temizle'),
-                    ),
-                ],
-              ),
+          ? IbulPageState.empty(
+              icon: Icons.search_off,
+              title: 'Aramana uygun ürün bulunamadı.',
+              actionLabel:
+                  _activeFilters.isNotEmpty ? 'Filtreleri Temizle' : null,
+              onAction: _activeFilters.isEmpty
+                  ? null
+                  : () {
+                      setState(() {
+                        _activeFilters = {};
+                        _filteredResults = _baseResults;
+                        _visibleCount = (_filteredResults.length).clamp(
+                          0,
+                          20,
+                        );
+                      });
+                    },
+              outlinedAction: true,
+              useTextAction: true,
+              padding: EdgeInsets.zero,
             )
           : GridView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              cacheExtent: 900,
+              cacheExtent: 280,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
                 childAspectRatio: 0.70,

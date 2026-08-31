@@ -153,7 +153,7 @@ Future<void> showManagedCategoryEditDialog({
                             existing?.orderIndex ??
                             1;
                         if (name.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
                             const SnackBar(
                               content: Text('Kategori adı boş bırakılamaz.'),
                             ),
@@ -314,7 +314,7 @@ Future<void> showAppCategoryEditDialog({
                     : () async {
                         final newName = nameController.text.trim();
                         if (newName.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
                             const SnackBar(
                               content: Text('Kategori adı boş olamaz.'),
                             ),

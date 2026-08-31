@@ -50,6 +50,26 @@ class ProductReviewLookup {
   final String? storeName;
 }
 
+@visibleForTesting
+List<Map<String, dynamic>> reviewsMatchingLookup({
+  required List<Map<String, dynamic>> mappedReviews,
+  required ProductReviewLookup lookup,
+  required int limit,
+}) {
+  final product = lookup.productName.trim().toLowerCase();
+  final store = (lookup.storeName ?? '').trim().toLowerCase();
+  return mappedReviews
+      .where((row) {
+        final name = (row['productName'] as String? ?? '').trim().toLowerCase();
+        if (name != product) return false;
+        if (store.isEmpty) return true;
+        return (row['storeName'] as String? ?? '').trim().toLowerCase() ==
+            store;
+      })
+      .take(limit)
+      .toList(growable: false);
+}
+
 class _ReviewCacheEntry {
   const _ReviewCacheEntry(
     this.future,
@@ -77,6 +97,8 @@ class ReviewRepository {
 
   static const Duration _cacheTtl = Duration(minutes: 10);
   static const int _maxEntries = 80;
+  static const String _productReviewSelect =
+      'id,user_id,user_name,product_name,store_name,seller_id,product_image_url,product_code,rating,comment,image_urls,likes,created_at';
 
   final SupabaseClient _supabase = Supabase.instance.client;
   final Map<String, _ReviewCacheEntry> _summaryCache = {};
@@ -139,27 +161,79 @@ class ReviewRepository {
     Iterable<ProductReviewLookup> lookups, {
     int limit = 50,
   }) async {
-    final requests = <Future<ReviewSummary>>[];
-    final seen = <String>{};
-
+    final unique = <String, ProductReviewLookup>{};
     for (final lookup in lookups) {
-      final key = buildProductLookupKey(
-        productName: lookup.productName,
-        storeName: lookup.storeName,
-      );
-      if (!seen.add(key)) continue;
-
-      requests.add(
-        getProductReviewSummary(
-          productName: lookup.productName,
+      final productName = lookup.productName.trim();
+      if (productName.isEmpty) continue;
+      unique.putIfAbsent(
+        buildProductLookupKey(
+          productName: productName,
           storeName: lookup.storeName,
-          limit: limit,
+        ),
+        () => ProductReviewLookup(
+          productName: productName,
+          storeName: lookup.storeName?.trim(),
         ),
       );
     }
+    if (unique.isEmpty) return;
 
-    if (requests.isEmpty) return;
-    await Future.wait(requests);
+    final pending = unique.values.where((lookup) {
+      return peekProductReviewSummary(
+            productName: lookup.productName,
+            storeName: lookup.storeName,
+            limit: limit,
+          ) ==
+          null;
+    }).toList(growable: false);
+    if (pending.isEmpty) return;
+
+    final names = pending
+        .map((lookup) => lookup.productName.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (names.isEmpty) return;
+
+    try {
+      final rowLimit = names.length * limit;
+      final cappedLimit = rowLimit > 200
+          ? 200
+          : (rowLimit < limit ? limit : rowLimit);
+      final rows = await _supabase
+          .from('product_reviews')
+          .select(_productReviewSelect)
+          .inFilter('product_name', names)
+          .order('created_at', ascending: false)
+          .limit(cappedLimit);
+      final mapped = List<Map<String, dynamic>>.from(rows as List)
+          .map(_mapProductReviewRow)
+          .toList(growable: false);
+      for (final lookup in pending) {
+        final matched = reviewsMatchingLookup(
+          mappedReviews: mapped,
+          lookup: lookup,
+          limit: limit,
+        );
+        _seedProductSummary(
+          productName: lookup.productName,
+          storeName: lookup.storeName,
+          limit: limit,
+          summary: ReviewSummary.fromReviews(matched),
+        );
+      }
+    } catch (e) {
+      debugPrint('ReviewRepository.preloadProductReviewSummaries warn: $e');
+      await Future.wait(
+        pending.map(
+          (lookup) => getProductReviewSummary(
+            productName: lookup.productName,
+            storeName: lookup.storeName,
+            limit: limit,
+          ),
+        ),
+      );
+    }
   }
 
   Future<ReviewSummary> getProductReviewSummary({
@@ -180,9 +254,7 @@ class ReviewRepository {
       try {
         var query = _supabase
             .from('product_reviews')
-            .select(
-              'id,user_id,user_name,product_name,store_name,seller_id,product_image_url,product_code,rating,comment,image_urls,likes,created_at',
-            )
+            .select(_productReviewSelect)
             .ilike('product_name', trimmedProductName);
         if (trimmedStoreName.isNotEmpty) {
           query = query.ilike('store_name', trimmedStoreName);
@@ -282,6 +354,27 @@ class ReviewRepository {
     int limit = 50,
   }) {
     return '${buildProductLookupKey(productName: productName, storeName: storeName)}::$limit';
+  }
+
+  void _seedProductSummary({
+    required String productName,
+    String? storeName,
+    required int limit,
+    required ReviewSummary summary,
+  }) {
+    final key = _buildProductSummaryCacheKey(
+      productName: productName,
+      storeName: storeName,
+      limit: limit,
+    );
+    final now = DateTime.now();
+    _summaryCache[key] = _ReviewCacheEntry(
+      Future<ReviewSummary>.value(summary),
+      now.add(_cacheTtl),
+      now,
+      value: summary,
+    );
+    _trimCacheIfNeeded();
   }
 
   void _trimCacheIfNeeded() {

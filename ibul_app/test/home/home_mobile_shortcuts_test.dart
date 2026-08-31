@@ -11,6 +11,7 @@ void main() {
         'urun_listele',
         'gorsel_zeka',
         'urun_parcala',
+        'yakinda',
         'ibul_premium',
         'bana_ozel',
         'hizli_yemek',
@@ -35,6 +36,17 @@ void main() {
     test('Hızlı Yemek Yemek kategorisine map edilir', () {
       final action = HomeMobileShortcutRegistry.fromKey('hizli_yemek');
       expect(action!.categorySlug, 'Yemek');
+    });
+
+    test('Premium ve Yakında kısayolları rafa gider', () {
+      expect(
+        HomeMobileShortcutRegistry.fromKey('yakinda')!.type,
+        HomeMobileShortcutType.comingSoonShelf,
+      );
+      expect(
+        HomeMobileShortcutRegistry.fromKey('ibul_premium')!.type,
+        HomeMobileShortcutType.comingSoonShelf,
+      );
     });
   });
 
@@ -106,6 +118,26 @@ void main() {
         FeatureMenu.featureConfigs.every((config) => config.key.isNotEmpty),
         isTrue,
       );
+      final yakinda = FeatureMenu.featureConfigs.firstWhere(
+        (config) => config.key == 'yakinda',
+      );
+      expect(yakinda.comingSoon, isTrue);
+      expect(
+        FeatureMenu.featureConfigs.any((c) => c.key == 'ibul_premium'),
+        isFalse,
+      );
+    });
+
+    testWidgets('Yakında kartı rozet gösterir, Premium ayrı kart değildir',
+        (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(body: FeatureMenu()),
+        ),
+      );
+
+      expect(find.text('Yakında'), findsWidgets);
+      expect(find.text('İBUL Premium'), findsNothing);
     });
   });
 }

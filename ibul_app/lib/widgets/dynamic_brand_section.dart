@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/db_product.dart';
 import '../models/product_model.dart';
+import '../core/catalog_image_priority.dart';
 import '../services/store_service.dart';
 import 'optimized_image.dart';
 import 'product_card.dart';
@@ -312,7 +313,7 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
               itemCount: 2,
               separatorBuilder: (context, index) => const SizedBox(width: 12),
               itemBuilder: (context, index) => SkeletonLoading(
-                width: MediaQuery.of(context).size.width * 0.85,
+                width: MediaQuery.sizeOf(context).width * 0.85,
                 height: 134,
                 borderRadius: 12,
               ),
@@ -328,7 +329,7 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
               itemBuilder: (context, index) {
                 return RepaintBoundary(
                   child: Container(
-                    width: MediaQuery.of(context).size.width * 0.85,
+                    width: MediaQuery.sizeOf(context).width * 0.85,
                     margin: const EdgeInsets.only(right: 12),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
@@ -370,7 +371,10 @@ class _DynamicBrandSectionState extends State<DynamicBrandSection> {
                 final dbProduct = _displayedProducts[index];
                 return SizedBox(
                   width: 198,
-                  child: ProductCard(product: _convertToProduct(dbProduct)),
+                  child: ProductCard(
+                    product: _convertToProduct(dbProduct),
+                    imagePriority: CatalogImagePriority.forRailIndex(index),
+                  ),
                 );
               },
             ),

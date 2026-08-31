@@ -30,13 +30,19 @@ class HomeHeroBannerSection extends StatelessWidget {
     }
 
     final urls = _effectiveUrls;
-    if (urls.isEmpty) return const SizedBox.shrink();
-
-    WebPerfTrace.instance.mark(WebPerfTraceStage.deferredHeroLoaded);
-
     final height = embedded
         ? 412.0
         : (preferMobile ? 160.0 : 180.0);
+
+    if (urls.isEmpty) {
+      return HomeHeroSlotPlaceholder(
+        height: height,
+        preferMobile: preferMobile,
+        embedded: embedded,
+      );
+    }
+
+    WebPerfTrace.instance.mark(WebPerfTraceStage.deferredHeroLoaded);
 
     final carousel = CarouselSlider(
       options: CarouselOptions(
@@ -82,6 +88,78 @@ class HomeHeroBannerSection extends StatelessWidget {
               borderRadius: 12,
             ),
           );
+  }
+}
+
+/// Painted campaign chrome when `campaign_images` is empty — not a product fake.
+class HomeHeroSlotPlaceholder extends StatelessWidget {
+  const HomeHeroSlotPlaceholder({
+    super.key,
+    required this.height,
+    required this.preferMobile,
+    required this.embedded,
+  });
+
+  final double height;
+  final bool preferMobile;
+  final bool embedded;
+
+  @override
+  Widget build(BuildContext context) {
+    final panel = ClipRRect(
+      borderRadius: BorderRadius.circular(embedded ? 16 : 12),
+      child: SizedBox(
+        height: height,
+        width: double.infinity,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: preferMobile
+                  ? const [Color(0xFF5B21B6), Color(0xFF7C3AED)]
+                  : const [Color(0xFF4C1D95), Color(0xFF6D28D9)],
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(preferMobile ? 16 : 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  preferMobile
+                      ? 'Yakınındaki Mağazaları Anında Keşfet'
+                      : '1 SAATTE KAPINDA!',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: preferMobile ? 18 : 32,
+                    fontWeight: FontWeight.w800,
+                    height: 1.15,
+                  ),
+                ),
+                SizedBox(height: preferMobile ? 6 : 12),
+                Text(
+                  preferMobile
+                      ? 'Yakındaki mağaza ve restoranları tek ekranda gör.'
+                      : 'Yakınınızdaki mağazadan hızlı, güvenli teslimat',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.88),
+                    fontSize: preferMobile ? 12 : 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (embedded) return panel;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: panel,
+    );
   }
 }
 

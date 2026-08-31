@@ -1,0 +1,21 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - Y
+      - main
+      - master
+
+jobs:
+  flutter-critical:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Critical Flutter tests
+        run: bash scripts/ci_quality.sh

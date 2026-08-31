@@ -13,7 +13,6 @@ extension _AppStateAuthDomain on AppState {
             localFavorites.whereType<Map>().map(
               (e) => Product.fromJson(Map<String, dynamic>.from(e)),
             ),
-            notify: false,
           );
         }
 
@@ -28,7 +27,6 @@ extension _AppStateAuthDomain on AppState {
                 normalizeProductCartItem(Map<String, dynamic>.from(e)),
               ),
             ),
-            notify: false,
           );
           await _resolveLegacyCartProductIds(requestVersion: requestVersion);
         }
@@ -221,7 +219,14 @@ extension _AppStateAuthDomain on AppState {
               ..addAll(remoteLists.map(_decorateProductList));
             productListsLoadedFromSocialTables = true;
           }
-        } catch (_) {}
+        } catch (error, stackTrace) {
+          RuntimeDiagnosticLogger.logFailure(
+            'AppStateAuth',
+            error,
+            stackTrace,
+            context: 'loadOwnedProductLists',
+          );
+        }
 
         if (!productListsLoadedFromSocialTables) {
           final productListsData = await _authService.getUserDataField(

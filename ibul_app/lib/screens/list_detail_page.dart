@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../core/app_state.dart';
 import '../core/constants.dart';
+import '../core/review_state.dart';
 import '../models/product_list_model.dart';
 import '../models/product_list_price_change.dart';
 import '../models/product_model.dart';
@@ -30,6 +31,7 @@ class ListDetailPage extends StatefulWidget {
 
 class _ListDetailPageState extends State<ListDetailPage> {
   final AppState _appState = AppState();
+  final ReviewState _reviewState = ReviewState();
   final StoreService _storeService = StoreService();
   int _selectedTabIndex = 0;
   late Future<List<ProductListPriceChange>> _priceChangesFuture;
@@ -38,12 +40,14 @@ class _ListDetailPageState extends State<ListDetailPage> {
   void initState() {
     super.initState();
     _appState.addListener(_handleAppStateChanged);
+    _reviewState.addListener(_handleAppStateChanged);
     _priceChangesFuture = _loadPriceChanges();
   }
 
   @override
   void dispose() {
     _appState.removeListener(_handleAppStateChanged);
+    _reviewState.removeListener(_handleAppStateChanged);
     super.dispose();
   }
 

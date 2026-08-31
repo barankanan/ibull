@@ -1,6 +1,7 @@
 import unittest
 
 from local_print_bridge.print_layout import (
+    PRINT_SIZE_SCALES,
     default_bottom_feed_lines,
     default_cut_feed_lines,
     default_policy_for_paper,
@@ -10,6 +11,7 @@ from local_print_bridge.print_layout import (
     resolve_bottom_feed_lines,
     resolve_cut_feed_lines,
     resolve_min_receipt_height_px,
+    resolve_print_text_scale,
     resolve_raster_bottom_padding_px,
     resolve_tail_padding_policy,
 )
@@ -71,6 +73,24 @@ class PrintLayoutTests(unittest.TestCase):
         policy = resolve_tail_padding_policy(80, {"receipt_length": "short"})
         self.assertEqual(policy.receipt_length_preset, "short")
         self.assertEqual(policy.policy_source, "preset")
+
+    def test_print_size_defaults_to_normal(self) -> None:
+        preset, scale = resolve_print_text_scale({})
+        self.assertEqual(preset, "normal")
+        self.assertEqual(scale, 1.0)
+        self.assertEqual(PRINT_SIZE_SCALES["normal"], 1.0)
+
+    def test_print_size_presets(self) -> None:
+        self.assertEqual(resolve_print_text_scale({"print_size": "small"}), ("small", 0.85))
+        self.assertEqual(resolve_print_text_scale({"print_size": "large"}), ("large", 1.20))
+        self.assertEqual(resolve_print_text_scale({"print_size": "xlarge"}), ("xlarge", 1.40))
+
+    def test_print_size_from_nested_printer(self) -> None:
+        preset, scale = resolve_print_text_scale(
+            {"printer": {"print_size": "large", "print_text_scale": 1.20}}
+        )
+        self.assertEqual(preset, "large")
+        self.assertEqual(scale, 1.20)
 
     def test_append_trailing_feed_before_cut(self) -> None:
         chunks: list[bytes] = [b"CONTENT"]

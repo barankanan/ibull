@@ -44,6 +44,21 @@ class RestaurantOfflineOrderRouter {
     return _cacheService.hasCache(restaurantId);
   }
 
+  /// Hot-path offline hint: last-known connectivity only (no refresh await).
+  /// Call [shouldRouteOffline] / refresh in background when this returns false.
+  Future<bool> shouldRouteOfflineFast({
+    required String restaurantId,
+    required String? storeCategory,
+    bool skipOfflineFallback = false,
+  }) async {
+    if (skipOfflineFallback) return false;
+    if (!canUseRestaurantPrinterSystem(storeCategory)) return false;
+    if (_connectivity.hasNetwork && _connectivity.supabaseReachable) {
+      return false;
+    }
+    return _cacheService.hasCache(restaurantId);
+  }
+
   Future<OrderPrintJobDispatchResult> dispatchOfflineOrder({
     required String restaurantId,
     required int tableNumber,

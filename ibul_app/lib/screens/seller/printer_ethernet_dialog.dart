@@ -31,7 +31,9 @@ import '../../services/printer_error_messages.dart';
 import '../../services/printer_repository.dart';
 import '../../services/restaurant_offline/restaurant_connectivity_service.dart';
 import '../../services/restaurant_offline/restaurant_offline_snapshot_sync.dart';
+import '../../features/seller/panel/printer_center/widgets/printer_print_size_settings_section.dart';
 import '../../features/seller/panel/printer_center/widgets/printer_receipt_length_settings_section.dart';
+import '../../services/printer_print_size_settings.dart';
 import '../../services/printer_receipt_length_settings.dart';
 
 /// Opens the Ethernet printer dialog and returns the saved [PrinterModel]
@@ -169,6 +171,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
   String? _portError;
   PrinterReceiptLengthSettings _receiptLengthSettings =
       PrinterReceiptLengthSettings.normal;
+  PrinterPrintSizeSettings _printSizeSettings = PrinterPrintSizeSettings.normal;
 
   PrinterProfile get _selectedPrinterProfile =>
       PrinterProfile.resolveForEthernetSetup(
@@ -282,6 +285,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       }
       _receiptLengthSettings =
           PrinterReceiptLengthSettings.fromPrinterModel(existing);
+      _printSizeSettings = PrinterPrintSizeSettings.fromPrinterModel(existing);
     }
   }
 
@@ -445,7 +449,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     try {
       final raw = await _localPrintService
           .scanEthernetPrinters(port: port, printerHost: hostHint)
-          .timeout(const Duration(seconds: 45));
+          .timeout(LocalPrintService.ethernetScanClientTimeout);
       if (!mounted) return;
       final result = parseEthernetScanResult(raw);
       setState(() {
@@ -695,6 +699,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
         'render_mode': 'image',
         'turkish_guarantee_mode': true,
         'source': 'ethernet_dialog_form',
+        ..._printSizeSettings.toBridgeFields(),
       },
     );
   }
@@ -719,13 +724,18 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       ..._ethernetProfileFields(),
       'render_mode': 'image',
       'turkish_guarantee_mode': true,
-      'document_type': 'test',
+      // Role-aware document so mutfak/adisyon test paths both honor print_size.
+      'document_type': switch (_role) {
+        EthernetPrinterRole.mutfak => 'kitchen',
+        _ => 'receipt',
+      },
       'printer_role': switch (_role) {
         EthernetPrinterRole.mutfak => 'mutfak',
         _ => 'adisyon',
       },
       'source': 'ethernet_dialog_form',
       ..._receiptLengthSettings.toLiveBridgeFields(paperWidthMm: _paperWidth),
+      ..._printSizeSettings.toLiveBridgeFields(),
     };
   }
 
@@ -818,9 +828,24 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       return;
     }
     try {
+      // Lean TCP-only probe — never send receipt/render payload or CUPS fields.
       final result = await _localPrintService
-          .probeTcpPrinter(host: host, port: port, printer: payload)
-          .timeout(const Duration(seconds: 8));
+          .probeTcpPrinter(
+            host: host,
+            port: port,
+            printer: <String, dynamic>{
+              'id': payload['printer_id'],
+              'backend': PrinterModel.ethernetBridgeBackend,
+              'transportType': PrinterModel.ethernetBridgeTransport,
+              'transport_type': PrinterModel.ethernetBridgeTransport,
+              'host': host,
+              'ip_address': host,
+              'port': port,
+              'name': form.name,
+            },
+            timeout: const Duration(seconds: 2),
+          )
+          .timeout(const Duration(seconds: 3));
       if (!mounted) return;
       final diagnostic = resolveEthernetConnectionProbeResult(
         result,
@@ -919,7 +944,9 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       'preset=${_receiptLengthSettings.preset.bridgeValue} '
       'bottom_feed_lines=${payload['bottom_feed_lines']} '
       'bottom_padding_px=${payload['bottom_padding_px']} '
-      'min_receipt_height_px=${payload['min_receipt_height_px']}',
+      'min_receipt_height_px=${payload['min_receipt_height_px']} '
+      'print_size=${payload['print_size']} '
+      'print_text_scale=${payload['print_text_scale']}',
     );
     setState(() {
       _printTesting = true;
@@ -1125,20 +1152,29 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
     }
     try {
       final repo = widget.repository ?? PrinterRepository();
-      final saved = await repo.upsertEthernetPrinter(
-        restaurantId: widget.restaurantId,
-        printerId: widget.existing?.id,
-        name: name,
-        code: 'eth_${host.replaceAll('.', '_')}_$port',
-        ipAddress: host,
-        port: port,
-        paperWidthMm: _paperWidth,
-        supportsCut: _autoCut,
-        isActive: true,
-        assignedRoles: _role.assignedRoles,
-        printerProfileId: _selectedPrinterProfile.id,
-        receiptLengthSettings: _receiptLengthSettings,
-      );
+      PrinterModel saved;
+      var printSizeMigrationWarning = false;
+      try {
+        saved = await repo.upsertEthernetPrinter(
+          restaurantId: widget.restaurantId,
+          printerId: widget.existing?.id,
+          name: name,
+          code: 'eth_${host.replaceAll('.', '_')}_$port',
+          ipAddress: host,
+          port: port,
+          paperWidthMm: _paperWidth,
+          supportsCut: _autoCut,
+          isActive: true,
+          assignedRoles: _role.assignedRoles,
+          printerProfileId: _selectedPrinterProfile.id,
+          receiptLengthSettings: _receiptLengthSettings,
+          printSizeSettings: _printSizeSettings,
+        );
+      } on PrinterPrintSizeMigrationRequiredException catch (migrationError) {
+        // Yazıcı kaydı oluştu; sadece print_size kolonu DB'de yok.
+        saved = migrationError.printer;
+        printSizeMigrationWarning = true;
+      }
       if (_connectionOk) {
         await repo.recordTestPrintResult(
           printerId: saved.id,
@@ -1148,11 +1184,18 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
       if (!mounted) return;
       setState(() {
         _savedToDb = true;
-        _saveStatusMessage = 'Kaydedildi';
+        _saveStatusMessage = printSizeMigrationWarning
+            ? 'Kaydedildi (baskı boyutu migration gerekli)'
+            : 'Kaydedildi';
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(isUpdate ? 'Yazıcı güncellendi.' : 'Yazıcı kaydedildi.'),
+          content: Text(
+            printSizeMigrationWarning
+                ? 'Yazıcı kaydedildi. Baskı boyutu için Supabase migration gerekli: SUPABASE_PRINTER_PRINT_SIZE_SETTINGS.sql'
+                : (isUpdate ? 'Yazıcı güncellendi.' : 'Yazıcı kaydedildi.'),
+          ),
+          duration: Duration(seconds: printSizeMigrationWarning ? 6 : 3),
         ),
       );
       Navigator.of(context).pop(saved);
@@ -1186,6 +1229,7 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                     ),
                 'assigned_roles':
                     _role.assignedRoles.map((role) => role.value).toList(),
+                'print_size': _printSizeSettings.preset.bridgeValue,
               },
             ],
           );
@@ -1199,9 +1243,11 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
           // fall through to DB error message
         }
       }
+      final detail = e.toString().replaceFirst('Exception: ', '').trim();
       setState(() {
-        _formError =
-            'Yazıcı kaydedilemedi. Profil ve bağlantı bilgilerini kontrol edin.';
+        _formError = detail.contains('Baskı boyutu') || detail.contains('print_size')
+            ? detail
+            : 'Yazıcı kaydedilemedi. Profil ve bağlantı bilgilerini kontrol edin.';
         _technicalError = e.toString();
         _saveStatusMessage = 'Kaydedilemedi';
       });
@@ -1344,6 +1390,12 @@ class _AddEthernetPrinterScreenState extends State<AddEthernetPrinterScreen> {
                 showTestButton: _connectionOk,
                 testing: _printTesting,
                 onTestReceipt: _connectionOk ? _runPrintTest : null,
+              ),
+              const SizedBox(height: 14),
+              PrinterPrintSizeSettingsSection(
+                settings: _printSizeSettings,
+                onChanged: (PrinterPrintSizeSettings settings) =>
+                    setState(() => _printSizeSettings = settings),
               ),
               const SizedBox(height: 14),
               _RoleSelector(

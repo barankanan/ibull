@@ -112,7 +112,7 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                           viewModel.totalPrice,
                           style: const TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w500,
                             color: Color(0xFF673AB7), // Purple
                           ),
                         ),
@@ -129,18 +129,20 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                   ],
                 ),
                 const Spacer(),
-
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     if (isFoodCategory) ...[
                       SizedBox(
                         height: 40,
-                        width: 120,
                         child: ElevatedButton(
                           onPressed: () => _onDiningMode(context, viewModel),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF6200EA),
                             foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            minimumSize: const Size(0, 40),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
                             ),
@@ -148,22 +150,26 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                           ),
                           child: const Text(
                             'MEKANDA',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.3,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0,
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       SizedBox(
                         height: 40,
-                        width: 105,
                         child: OutlinedButton(
                           onPressed: () => _onOnlineOrder(context, viewModel),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF6200EA),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            minimumSize: const Size(0, 40),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             side: const BorderSide(
                               color: Color(0xFF6200EA),
                               width: 1.5,
@@ -174,10 +180,12 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                           ),
                           child: const Text(
                             'ONLINE',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.3,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0,
                             ),
                           ),
                         ),
@@ -185,7 +193,6 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                     ] else ...[
                       SizedBox(
                         height: 40,
-                        width: 120,
                         child: ElevatedButton(
                           onPressed: viewModel.isAddToCartInProgress
                               ? null
@@ -240,6 +247,9 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                                 ? Colors.green
                                 : const Color(0xFF6200EA),
                             foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            minimumSize: const Size(0, 40),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
                             ),
@@ -256,18 +266,21 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                                 )
                               : Text(
                             viewModel.isAddedToCart ? 'SEPETTE' : 'SEPETE EKLE',
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.3,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0,
+                              height: 1.1,
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       SizedBox(
                         height: 40,
-                        width: 105,
                         child: OutlinedButton(
                           onPressed: () async {
                             final appState = AppState();
@@ -322,6 +335,9 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                           },
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF6200EA),
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            minimumSize: const Size(0, 40),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             side: const BorderSide(
                               color: Color(0xFF6200EA),
                               width: 1.5,
@@ -332,10 +348,13 @@ class _ProductBottomBarState extends State<ProductBottomBar> {
                           ),
                           child: const Text(
                             'ŞİMDİ AL',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.3,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0,
+                              height: 1.1,
                             ),
                           ),
                         ),

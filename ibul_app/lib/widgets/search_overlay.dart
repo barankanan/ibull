@@ -169,7 +169,8 @@ class _SearchOverlayState extends State<SearchOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
+    context.select<AppState, int>((s) => s.searchOverlayStamp);
+    final appState = context.read<AppState>();
     final history = appState.searchHistory;
     final recentProducts = appState.recentlyViewedProducts;
 

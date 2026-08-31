@@ -61,6 +61,11 @@ void main() {
       expect(cardIdx, greaterThan(-1));
       expect(catalogIdx, lessThan(cardIdx));
       expect(service, contains('approvalFilterRetry'));
+      expect(service, contains('cachedFollowedStoreIds'));
+      expect(
+        service.contains('await StoreFollowService.instance.fetchFollowedStoreIds()'),
+        isFalse,
+      );
     });
 
     test('home fetch retries when approval projection filters all rows', () {

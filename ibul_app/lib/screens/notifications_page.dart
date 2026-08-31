@@ -9,6 +9,7 @@ import '../core/constants.dart';
 import '../services/auth_service.dart';
 import '../services/order_service.dart';
 import '../widgets/common/video_player_widget.dart';
+import '../widgets/ibul_page_state.dart';
 import 'addresses_page.dart';
 import 'ask_product_question_page.dart';
 import 'cancel_appeal_page.dart';
@@ -963,25 +964,17 @@ class _NotificationsPageState extends State<NotificationsPage>
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: const Color(0xFFE7EAF0)),
             ),
-            child: const Column(
-              children: [
-                Icon(
-                  Icons.notifications_none_rounded,
-                  size: 56,
-                  color: Color(0xFFB9C0CC),
-                ),
-                SizedBox(height: 12),
-                Text(
-                  'Henüz bildiriminiz yok',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-                SizedBox(height: 6),
-                Text(
+            child: IbulPageState.empty(
+              icon: Icons.notifications_none_rounded,
+              iconSize: 56,
+              iconColor: const Color(0xFFB9C0CC),
+              title: 'Henüz bildiriminiz yok',
+              titleSize: 18,
+              titleWeight: FontWeight.w600,
+              message:
                   'Sipariş hazırlama ve kargo güncellemeleri burada görünecek.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFF667085)),
-                ),
-              ],
+              messageColor: const Color(0xFF667085),
+              padding: EdgeInsets.zero,
             ),
           ),
         ],

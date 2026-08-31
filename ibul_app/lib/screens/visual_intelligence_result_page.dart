@@ -3,12 +3,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
+import '../core/catalog_image_priority.dart';
 import '../models/product_model.dart';
 import '../models/db_product.dart';
 import '../services/database_helper.dart';
 import '../services/visual_matcher_service.dart';
 import '../widgets/product_card.dart';
-import 'home_screen.dart';
+import '../core/home_navigation.dart';
 import 'categories_page.dart';
 import 'map_page.dart';
 import 'cart_page.dart';
@@ -203,10 +204,10 @@ class _VisualIntelligenceResultPageState
     setState(() => _isLoading = true);
 
     try {
-      // 1. Simulate AI Analysis Delay
-      await Future.delayed(const Duration(seconds: 2));
-
-      final dbProducts = await _dbHelper.getAllProducts();
+      final query = widget.missingPart.trim();
+      final dbProducts = query.isEmpty
+          ? await _dbHelper.getProductsPage(limit: 80)
+          : await _dbHelper.searchProducts(query);
 
       if (dbProducts.isEmpty) {
         setState(() {
@@ -648,6 +649,11 @@ class _VisualIntelligenceResultPageState
                                       product: _relatedProducts[index],
                                       margin: EdgeInsets.zero,
                                       tight: true,
+                                      imagePriority:
+                                          CatalogImagePriority.forGridIndex(
+                                        index,
+                                        crossAxisCount: isWebLayout ? 4 : 2,
+                                      ),
                                     );
                                   },
                                 ),
@@ -676,13 +682,7 @@ class _VisualIntelligenceResultPageState
                 currentIndex: 0,
                 onTap: (index) {
                   if (index == 0) {
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const HomeScreen(),
-                      ),
-                      (route) => false,
-                    );
+                    HomeNavigation.openHome(context, replaceStack: true);
                   } else if (index == 1) {
                     Navigator.pushAndRemoveUntil(
                       context,
@@ -702,12 +702,10 @@ class _VisualIntelligenceResultPageState
                       MaterialPageRoute(builder: (context) => const CartPage()),
                     );
                   } else if (index == 4) {
-                    Navigator.pushAndRemoveUntil(
+                    HomeNavigation.openHome(
                       context,
-                      MaterialPageRoute(
-                        builder: (context) => const HomeScreen(initialIndex: 4),
-                      ),
-                      (route) => false,
+                      initialIndex: 4,
+                      replaceStack: true,
                     );
                   }
                 },

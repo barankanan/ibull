@@ -336,9 +336,22 @@ class _BitmapRendererBase:
             else (700 if settings.paper_width_mm <= 58 else 740)
         )
         self.content_width = self.width_px - (self.margin_x * 2)
+        scale_raw = getattr(settings, "print_text_scale", 1.0)
+        try:
+            self.print_text_scale = float(scale_raw) if scale_raw is not None else 1.0
+        except (TypeError, ValueError):
+            self.print_text_scale = 1.0
+        if self.print_text_scale < 0.5 or self.print_text_scale > 2.5:
+            self.print_text_scale = 1.0
+
+    def _scaled_size(self, size: int) -> int:
+        return max(8, int(round(size * self.print_text_scale)))
+
+    def _scaled_spacing(self, spacing: int) -> int:
+        return max(0, int(round(spacing * self.print_text_scale)))
 
     def _font(self, size: int, *, bold: bool = False) -> "ImageFont.FreeTypeFont":
-        return _load_font(size, bold=bold, settings=self.settings)
+        return _load_font(self._scaled_size(size), bold=bold, settings=self.settings)
 
     def _wrap_text(
         self,
@@ -412,13 +425,14 @@ class _BitmapRendererBase:
         for block in blocks:
             font = self._font(block.size, bold=block.bold)
             line_height = self._line_height(probe_draw, font)
+            spacing_after = self._scaled_spacing(block.spacing_after)
             if block.kind == "rule":
-                height += 6 + block.spacing_after
+                height += 6 + spacing_after
                 prepared.append((block, [], 6, font))
                 continue
             if block.kind == "space":
-                height += block.spacing_after
-                prepared.append((block, [], block.spacing_after, font))
+                height += spacing_after
+                prepared.append((block, [], spacing_after, font))
                 continue
             if block.kind == "pair":
                 lines = self._pair_lines(
@@ -427,7 +441,7 @@ class _BitmapRendererBase:
                     block.right_text,
                     font=font,
                 )
-                height += (len(lines) * line_height) + block.spacing_after
+                height += (len(lines) * line_height) + spacing_after
                 prepared.append((block, lines, line_height, font))
                 continue
             lines = self._wrap_text(
@@ -436,7 +450,7 @@ class _BitmapRendererBase:
                 font=font,
                 max_width=self.content_width,
             )
-            height += (len(lines) * line_height) + block.spacing_after
+            height += (len(lines) * line_height) + spacing_after
             prepared.append((block, lines, line_height, font))
 
         image = Image.new("L", (self.width_px, max(height, 32)), color=255)
@@ -444,8 +458,9 @@ class _BitmapRendererBase:
         y = self.top_padding
 
         for block, lines, line_height, font in prepared:
+            spacing_after = self._scaled_spacing(block.spacing_after)
             if block.kind == "space":
-                y += block.spacing_after
+                y += spacing_after
                 continue
             if block.kind == "rule":
                 y += 2
@@ -454,7 +469,7 @@ class _BitmapRendererBase:
                     fill=0,
                     width=1,
                 )
-                y += 4 + block.spacing_after
+                y += 4 + spacing_after
                 continue
             if block.kind == "pair":
                 for left, right in lines:  # type: ignore[assignment]
@@ -468,7 +483,7 @@ class _BitmapRendererBase:
                             fill=0,
                         )
                     y += line_height
-                y += block.spacing_after
+                y += spacing_after
                 continue
 
             for line in lines:  # type: ignore[assignment]
@@ -481,7 +496,7 @@ class _BitmapRendererBase:
                     x = self.margin_x
                 draw.text((x, y), line, font=font, fill=0)
                 y += line_height
-            y += block.spacing_after
+            y += spacing_after
         return self._finalize_ticket_image(image)
 
     def _finalize_ticket_image(self, image: "Image.Image") -> "Image.Image":

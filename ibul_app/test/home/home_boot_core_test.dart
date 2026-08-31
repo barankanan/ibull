@@ -26,12 +26,14 @@ void main() {
       expect(buildBody.contains('_fetchPreviewProducts()'), isFalse);
     });
 
-    test('staged reveal has failsafe and sections default visible', () {
+    test('staged reveal paints immediately without timer failsafe', () {
       final source =
           File('lib/screens/home_screen_core.dart').readAsStringSync();
       expect(source, contains('_sectionsRevealed = true'));
       expect(source, contains('_ensureSectionsVisible'));
-      expect(source, contains('failsafe_2s'));
+      expect(source, contains('kProductsRevealDelay = Duration.zero'));
+      expect(source, contains('kCategoryRevealDelay = Duration.zero'));
+      expect(source, isNot(contains('failsafe_2s')));
     });
 
     test('product fetch uses SingleFlightGuard', () {
@@ -64,15 +66,16 @@ void main() {
     test('customer app does not mount seller/admin/print providers', () {
       IbulAppModeRegistry.current = IbulAppMode.customer;
       final providers = buildCustomerProviders();
-      expect(providers.length, 6);
-      expect(countMountedProviders(IbulAppMode.customer), 6);
+      expect(providers.length, 5);
+      expect(countMountedProviders(IbulAppMode.customer), 5);
     });
 
-    test('home deferred entry routes desktop to core and mobile to legacy', () {
+    test('home deferred entry uses HomeScreenCore on all viewports', () {
       final entry =
           File('lib/screens/home_screen_deferred_entry.dart').readAsStringSync();
       expect(entry, contains('HomeScreenCore('));
-      expect(entry, contains('legacy_home.HomeScreen'));
+      expect(entry, isNot(contains('legacy_home.HomeScreen')));
+      expect(entry, isNot(contains('home_screen.dart')));
       expect(entry, isNot(contains('home_screen_legacy_full.dart')));
     });
 
@@ -87,6 +90,19 @@ void main() {
       final source =
           File('lib/screens/home_screen_core.dart').readAsStringSync();
       expect(source, contains('kPreviewBatchSize = 8'));
+    });
+
+    test('web home does not stall hero or sponsored behind artificial delays', () {
+      final source =
+          File('lib/screens/home_screen_core.dart').readAsStringSync();
+      expect(source, contains('kHeroDelay = Duration.zero'));
+      expect(source, contains('kSideDelay = Duration.zero'));
+      expect(source, contains('kSponsoredDelay = Duration.zero'));
+      expect(source, contains('kProductsRevealDelay = Duration.zero'));
+      expect(source, isNot(contains('milliseconds: 800')));
+      expect(source, isNot(contains('milliseconds: 1000')));
+      expect(source, isNot(contains('milliseconds: 500')));
+      expect(source, isNot(contains('milliseconds: 300')));
     });
 
     testWidgets('HomeBootTimeoutBanner renders non-blocking message', (

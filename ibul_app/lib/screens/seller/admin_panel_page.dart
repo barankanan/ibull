@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../app/ibul_router.dart';
 import '../../models/admin_permissions.dart';
 import '../../services/admin_service.dart';
 import '../../services/auth_service.dart';
@@ -144,7 +145,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       final restored = await _authService.restoreUserSessionAfterSellerExit();
       if (!mounted) return;
       if (restored) {
-        Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+        IbulRouter.go(context, '/');
         return;
       }
     } catch (_) {}
@@ -154,7 +155,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       Navigator.of(context).pop();
       return;
     }
-    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+    IbulRouter.go(context, '/');
   }
 
   @override

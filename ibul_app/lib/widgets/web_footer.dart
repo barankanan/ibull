@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../app/site_info_routes.dart';
+import '../app/ibul_router.dart';
 import '../core/constants.dart';
+import '../core/ibul_chrome.dart';
 import '../screens/become_seller_page.dart';
 import '../screens/seller_login_page.dart';
-import '../utils/external_navigation.dart';
 
 class WebFooter extends StatelessWidget {
   const WebFooter({super.key});
@@ -12,17 +14,17 @@ class WebFooter extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isCompact = constraints.maxWidth < 920;
+        final isCompact = IbulChrome.isFooterCompact(constraints.maxWidth);
 
         return Container(
           decoration: const BoxDecoration(
-            color: Color(0xFF1A1A2E),
+            color: IbulChrome.footerInk,
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           padding: EdgeInsets.fromLTRB(
-            isCompact ? 20 : 40,
+            isCompact ? 20 : IbulChrome.webHorizontalPadding,
             isCompact ? 22 : 36,
-            isCompact ? 20 : 40,
+            isCompact ? 20 : IbulChrome.webHorizontalPadding,
             18,
           ),
           child: Column(
@@ -117,9 +119,9 @@ class WebFooter extends StatelessWidget {
                       spacing: 18,
                       runSpacing: 10,
                       children: [
-                        _buildFooterLink('Gizlilik Politikası'),
-                        _buildFooterLink('Kullanım Koşulları'),
-                        _buildFooterLink('KVKK Aydınlatma Metni'),
+                        _buildFooterLink(context, 'Gizlilik Politikası'),
+                        _buildFooterLink(context, 'Kullanım Koşulları'),
+                        _buildFooterLink(context, 'KVKK Aydınlatma Metni'),
                         _buildActionLink(
                           label: 'İhız',
                           color: const Color(0xFF7FE3C4),
@@ -172,9 +174,9 @@ class WebFooter extends StatelessWidget {
                         spacing: 20,
                         runSpacing: 8,
                         children: [
-                          _buildFooterLink('Gizlilik Politikası'),
-                          _buildFooterLink('Kullanım Koşulları'),
-                          _buildFooterLink('KVKK Aydınlatma Metni'),
+                          _buildFooterLink(context, 'Gizlilik Politikası'),
+                          _buildFooterLink(context, 'Kullanım Koşulları'),
+                          _buildFooterLink(context, 'KVKK Aydınlatma Metni'),
                           _buildActionLink(
                             label: 'İhız',
                             color: const Color(0xFF7FE3C4),
@@ -300,23 +302,9 @@ class WebFooter extends StatelessWidget {
           (link) => Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: GestureDetector(
-              onTap: () {
-                if (link == 'Satıcı Ol') {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const BecomeSellerPage()),
-                  );
-                } else if (link == 'Satıcı Girişi') {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SellerLoginPage()),
-                  );
-                } else if (link == 'İhız') {
-                  _openIhiz(context);
-                }
-              },
+              onTap: () => _openFooterLabel(context, link),
               child: MouseRegion(
-                cursor: _isClickable(link)
-                    ? SystemMouseCursors.click
-                    : SystemMouseCursors.basic,
+                cursor: SystemMouseCursors.click,
                 child: Text(
                   link,
                   style: TextStyle(
@@ -327,9 +315,7 @@ class WebFooter extends StatelessWidget {
                     fontWeight: link == 'İhız'
                         ? FontWeight.w700
                         : FontWeight.w400,
-                    decoration: _isClickable(link)
-                        ? TextDecoration.underline
-                        : null,
+                    decoration: TextDecoration.underline,
                   ),
                 ),
               ),
@@ -340,12 +326,21 @@ class WebFooter extends StatelessWidget {
     );
   }
 
-  bool _isClickable(String link) {
-    return link == 'Satıcı Ol' || link == 'Satıcı Girişi' || link == 'İhız';
-  }
-
-  Widget _buildFooterLink(String text) {
-    return Text(text, style: TextStyle(color: Colors.grey[500], fontSize: 12));
+  Widget _buildFooterLink(BuildContext context, String text) {
+    return GestureDetector(
+      onTap: () => _openFooterLabel(context, text),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Text(
+          text,
+          style: TextStyle(
+            color: Colors.grey[500],
+            fontSize: 12,
+            decoration: TextDecoration.underline,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildActionLink({
@@ -367,10 +362,32 @@ class WebFooter extends StatelessWidget {
     );
   }
 
-  void _openIhiz(BuildContext context) {
-    final openedExternally = ExternalNavigation.openIhizSite();
-    if (openedExternally) return;
+  void _openFooterLabel(BuildContext context, String link) {
+    if (link == 'Satıcı Ol') {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const BecomeSellerPage()),
+      );
+      return;
+    }
+    if (link == 'Satıcı Girişi') {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const SellerLoginPage()),
+      );
+      return;
+    }
+    if (link == 'İhız') {
+      _openIhiz(context);
+      return;
+    }
+    if (link == 'Yatırımcı İlişkileri') {
+      IbulRouter.push(context, '/yatirimci');
+      return;
+    }
+    SiteInfoRoutes.openFooterLabel(context, link);
+  }
 
-    Navigator.of(context, rootNavigator: true).pushNamed('/ihiz');
+  void _openIhiz(BuildContext context) {
+    // İHIZ kendi ürün shell'inde açılır (/ihiz).
+    IbulRouter.push(context, '/ihiz');
   }
 }

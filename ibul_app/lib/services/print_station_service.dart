@@ -300,8 +300,10 @@ class PrintStationService implements PrintStationServicePort {
         'restaurant_id': restaurantId.trim(),
         'supabase_url': AppRuntimeConfig.supabaseUrl,
         'supabase_anon_key': AppRuntimeConfig.supabaseAnonKey,
+        // Access token only — never ship the refresh token over HTTP to the
+        // local bridge (LAN bind / another process). Station refresh stays
+        // in PRINT_STATION_REFRESH_TOKEN on disk if an operator set it.
         'access_token': session.accessToken,
-        'refresh_token': session.refreshToken,
         'user_id': session.user.id,
         'device_name': deviceName.trim(),
         'device_platform': platformName.trim(),

@@ -260,6 +260,7 @@ class PrinterModel {
     this.receiptMinTrailingBlankLines,
     this.receiptBottomPaddingPx,
     this.receiptMinReceiptHeightPx,
+    this.printSize = 'normal',
   });
 
   static const String localConnectionType = 'local';
@@ -326,6 +327,9 @@ class PrinterModel {
   final int? receiptMinTrailingBlankLines;
   final int? receiptBottomPaddingPx;
   final int? receiptMinReceiptHeightPx;
+
+  /// Baskı yazı boyutu: small | normal | large | xlarge
+  final String printSize;
 
   String get _normalizedConnectionType => connectionType.trim().toLowerCase();
 
@@ -645,6 +649,9 @@ class PrinterModel {
           (map['receipt_bottom_padding_px'] as num?)?.toInt(),
       receiptMinReceiptHeightPx:
           (map['receipt_min_receipt_height_px'] as num?)?.toInt(),
+      printSize: map['print_size']?.toString().trim().isNotEmpty == true
+          ? map['print_size'].toString().trim()
+          : 'normal',
     );
   }
 
@@ -675,6 +682,7 @@ class PrinterModel {
       'receipt_min_trailing_blank_lines': receiptMinTrailingBlankLines,
       'receipt_bottom_padding_px': receiptBottomPaddingPx,
       'receipt_min_receipt_height_px': receiptMinReceiptHeightPx,
+      'print_size': printSize,
     };
   }
 
@@ -783,6 +791,7 @@ class PrinterModel {
     int? receiptMinTrailingBlankLines,
     int? receiptBottomPaddingPx,
     int? receiptMinReceiptHeightPx,
+    String? printSize,
   }) {
     return PrinterModel(
       id: id ?? this.id,
@@ -814,6 +823,7 @@ class PrinterModel {
           receiptBottomPaddingPx ?? this.receiptBottomPaddingPx,
       receiptMinReceiptHeightPx:
           receiptMinReceiptHeightPx ?? this.receiptMinReceiptHeightPx,
+      printSize: printSize ?? this.printSize,
     );
   }
 }

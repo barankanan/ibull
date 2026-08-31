@@ -16,6 +16,8 @@ import 'checkout_page.dart';
 import 'product_detail_page.dart';
 import '../widgets/web_header.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
+import '../widgets/ibul_page_state.dart';
+import 'cart/cart_premium_banner.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -1394,6 +1396,7 @@ class _CartPageState extends State<CartPage>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<CartState>();
     context.watch<AppState>();
 
     final isWeb = MediaQuery.of(context).size.width >= 900;
@@ -1434,13 +1437,16 @@ class _CartPageState extends State<CartPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(
+                    child: Semantics(
+                      header: true,
+                      child: Text(
                       isNarrow ? 'Alışveriş\nSepetim' : 'Alışveriş Sepetim',
                       style: _softTextStyle(
                         size: isVeryNarrow ? 18 : 22,
                         weight: FontWeight.w700,
                         height: 1.05,
                       ),
+                    ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -1578,25 +1584,15 @@ class _CartPageState extends State<CartPage>
     final stores = foodItems;
     final orders = _appState.foodOrders;
     if (stores.isEmpty && orders.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(
-                Icons.restaurant_menu_outlined,
-                size: 40,
-                color: Colors.grey,
-              ),
-              SizedBox(height: 8),
-              Text(
-                'Henüz yemek siparişin yok',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
+      return const IbulPageState.empty(
+        icon: Icons.restaurant_menu_outlined,
+        iconSize: 40,
+        iconColor: Colors.grey,
+        title: 'Henüz yemek siparişin yok',
+        titleSize: 14,
+        titleColor: Colors.grey,
+        padding: EdgeInsets.all(16),
+        gapAfterIcon: 8,
       );
     }
 
@@ -1631,22 +1627,11 @@ class _CartPageState extends State<CartPage>
     required IconData emptyIcon,
   }) {
     if (stores.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(emptyIcon, size: 44, color: Colors.grey.shade400),
-              const SizedBox(height: 10),
-              Text(
-                emptyTitle,
-                style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
+      return IbulPageState.empty(
+        icon: emptyIcon,
+        iconSize: 44,
+        title: emptyTitle,
+        titleSize: 14,
       );
     }
 
@@ -3019,34 +3004,21 @@ class _CartPageState extends State<CartPage>
     return Container(
       padding: const EdgeInsets.all(40),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        border: Border.all(color: AppColors.border),
       ),
-      child: Center(
-        child: Column(
-          children: [
-            Icon(
-              Icons.shopping_cart_outlined,
-              size: 64,
-              color: Colors.grey.shade300,
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Sepetin şu an boş',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Alışverişe başlamak için ana sayfaya gidebilirsin.',
-              style: TextStyle(color: Colors.grey),
-            ),
-          ],
-        ),
+      child: const IbulPageState.empty(
+        icon: Icons.shopping_cart_outlined,
+        iconSize: 64,
+        iconColor: AppColors.iconFaint,
+        title: 'Sepetin şu an boş',
+        titleSize: 18,
+        titleWeight: FontWeight.bold,
+        titleColor: Colors.grey,
+        message: 'Alışverişe başlamak için ana sayfaya gidebilirsin.',
+        messageColor: Colors.grey,
+        padding: EdgeInsets.zero,
       ),
     );
   }
@@ -3952,85 +3924,7 @@ class _CartPageState extends State<CartPage>
   }
 
   Widget _buildWebBanner() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        gradient: LinearGradient(
-          colors: [Colors.purple.shade400, Colors.deepPurple.shade600],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.purple.withValues(alpha: 0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.diamond_outlined,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                'İBul Premium',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Premium ayrıcalıkları ile tasarruf et',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.95),
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            height: 36,
-            child: ElevatedButton(
-              onPressed: () {},
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.deepPurple.shade700,
-                elevation: 0,
-                padding: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              child: const Text(
-                'Premium\'a Geç',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+    return const CartPremiumBanner();
   }
 
   Widget _buildCartAttentionBanner() {

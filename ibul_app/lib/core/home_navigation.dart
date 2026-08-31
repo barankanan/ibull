@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app/ibul_router.dart';
+
 /// Route arguments for opening [HomeScreenGate] without importing home_screen.
 class HomeRouteArgs {
   const HomeRouteArgs({this.initialIndex = 0, this.initialCategory});
@@ -35,11 +37,10 @@ abstract final class HomeNavigation {
       initialIndex: initialIndex,
       initialCategory: initialCategory,
     );
-    final navigator = Navigator.of(context);
     if (replaceStack) {
-      navigator.pushNamedAndRemoveUntil(routeName, (_) => false, arguments: args);
+      IbulRouter.go(context, routeName, extra: args);
       return;
     }
-    navigator.pushNamed(routeName, arguments: args);
+    IbulRouter.push(context, routeName, extra: args);
   }
 }

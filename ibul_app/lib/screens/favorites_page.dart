@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
 import '../core/constants.dart';
 import '../core/app_state.dart';
+import '../core/favorite_state.dart';
 import '../core/app_motion.dart';
 import '../core/interaction_feedback.dart';
 import '../models/product_model.dart';
 import '../models/product_list_model.dart';
 import '../responsive/breakpoints.dart';
-import 'home_screen.dart';
+import '../core/home_navigation.dart';
 import 'list_detail_page.dart';
 import 'product_detail_page.dart';
 import 'login_page.dart';
@@ -18,6 +19,7 @@ import '../widgets/product_card.dart';
 import '../widgets/premium_interactions.dart';
 import '../widgets/restaurant_order/product_quick_view_dialog.dart';
 import '../widgets/account_sidebar.dart';
+import '../widgets/ibul_page_state.dart';
 
 class FavoritesPage extends StatefulWidget {
   const FavoritesPage({super.key});
@@ -31,6 +33,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
   final List<String> _tabs = ['Beğeniler', 'Listelerim', 'Öneriler'];
   final AppState _appState = AppState();
+  final FavoriteState _favoriteState = FavoriteState();
 
   void _showLoginRequiredDialog(BuildContext context) {
     showDialog(
@@ -85,12 +88,14 @@ class _FavoritesPageState extends State<FavoritesPage> {
   void initState() {
     super.initState();
     _appState.addListener(_onAppStateChanged);
+    _favoriteState.addListener(_onAppStateChanged);
     _appState.refreshCommunityLists();
   }
 
   @override
   void dispose() {
     _appState.removeListener(_onAppStateChanged);
+    _favoriteState.removeListener(_onAppStateChanged);
     super.dispose();
   }
 
@@ -419,58 +424,38 @@ class _FavoritesPageState extends State<FavoritesPage> {
     final favorites = _appState.favorites;
 
     if (favorites.isEmpty) {
-      // Empty state remains the same
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(60),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey.shade200),
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadii.lg),
+          border: Border.all(color: AppColors.border),
         ),
-        child: Column(
-          children: [
-            Icon(Icons.favorite_border, size: 80, color: Colors.grey[300]),
-            const SizedBox(height: 24),
-            Text(
-              'Henüz favori ürünün yok',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[800],
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
+        child: IbulPageState.empty(
+          icon: Icons.favorite_border,
+          iconSize: 80,
+          iconColor: Colors.grey[300],
+          title: 'Henüz favori ürünün yok',
+          titleSize: 20,
+          titleWeight: FontWeight.bold,
+          titleColor: Colors.grey[800],
+          message:
               'Beğendiğin ürünleri kalp ikonuna tıklayarak buraya ekleyebilirsin.',
-              style: TextStyle(fontSize: 16, color: Colors.grey[500]),
-            ),
-            const SizedBox(height: 32),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HomeScreen()),
-                  (route) => false,
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 16,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Alışverişe Başla',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
+          messageSize: 16,
+          messageColor: Colors.grey[500],
+          actionLabel: 'Alışverişe Başla',
+          onAction: () {
+            HomeNavigation.openHome(context, replaceStack: true);
+          },
+          actionPadding: const EdgeInsets.symmetric(
+            horizontal: 32,
+            vertical: 16,
+          ),
+          actionRadius: AppRadii.md,
+          gapAfterIcon: 24,
+          gapBeforeAction: 32,
+          padding: EdgeInsets.zero,
         ),
       );
     }
@@ -479,7 +464,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      cacheExtent: 800,
+      cacheExtent: 280,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 250, // Match Home Page
         childAspectRatio: 0.78,
@@ -503,7 +488,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.all(8),
-      cacheExtent: 800,
+      cacheExtent: 280,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 350,
         childAspectRatio: 0.85, // Kart oranı
@@ -928,18 +913,10 @@ class _FavoritesPageState extends State<FavoritesPage> {
     final favorites = _appState.favorites;
 
     if (favorites.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.favorite_border, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'Henüz beğenilen ürün yok',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-            ),
-          ],
-        ),
+      return const IbulPageState.empty(
+        icon: Icons.favorite_border,
+        title: 'Henüz beğenilen ürün yok',
+        padding: EdgeInsets.zero,
       );
     }
 
@@ -973,27 +950,15 @@ class _FavoritesPageState extends State<FavoritesPage> {
     final displayLists = _appState.userLists;
 
     if (displayLists.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.list_alt, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'Henüz listeniz yok',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _showCreateListDialog,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Yeni Liste Oluştur'),
-            ),
-          ],
-        ),
+      return IbulPageState.empty(
+        icon: Icons.list_alt,
+        iconSize: 64,
+        iconColor: Colors.grey[400],
+        title: 'Henüz listeniz yok',
+        titleSize: 16,
+        titleColor: Colors.grey[600],
+        actionLabel: 'Yeni Liste Oluştur',
+        onAction: _showCreateListDialog,
       );
     }
 

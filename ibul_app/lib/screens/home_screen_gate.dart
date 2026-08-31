@@ -19,10 +19,31 @@ class HomeScreenGate extends StatefulWidget {
 
   static const String moduleName = 'home_screen_deferred_entry';
 
+  static bool _moduleReady = false;
+
+  /// Deferred home chunk daha önce başarıyla yüklendiyse `true`.
+  ///
+  /// Senkron okunabilmesi kritik: `loadLibrary()` her zaman bir Future döner ve
+  /// `.then()` en erken microtask'ta çalışır, dolayısıyla [DeferredModuleScreen]
+  /// ilk build'inde modülün hazır olduğunu ASLA öğrenemez — modül dakikalardır
+  /// yüklü olsa bile bir kare boyunca [WebHomeShell] build/layout/paint edilir.
+  /// Bu bayrak o kareyi atlamayı mümkün kılıyor.
+  static bool get isModuleReady => _moduleReady;
+
+  /// Deferred home modülünü yükler ve başarıda [isModuleReady]'i işaretler.
+  ///
+  /// `loadLibrary()` Dart tarafında zaten idempotent (tekrar çağrılar aynı
+  /// yüklemeyi paylaşır, başarıdan sonra anında tamamlanır), bu yüzden Future
+  /// ayrıca cache'lenmiyor — hata sonrası retry doğal olarak yeniden dener.
+  static Future<void> loadModule() {
+    return home_entry.loadLibrary().then((_) {
+      _moduleReady = true;
+    });
+  }
+
   /// Start downloading the home chunk as early as possible (web cold start).
   static void prefetch() {
-    // ignore: discarded_futures
-    home_entry.loadLibrary();
+    unawaited(loadModule());
   }
 
   @override
@@ -32,23 +53,16 @@ class HomeScreenGate extends StatefulWidget {
 class _HomeScreenGateState extends State<HomeScreenGate> {
   late final WebBootTraceNotifier _trace =
       WebBootTraceNotifier(module: HomeScreenGate.moduleName);
-  Timer? _shellTicker;
 
   @override
   void initState() {
     super.initState();
     WebPerfTrace.instance.mark(WebPerfTraceStage.homeShellVisible);
     _trace.setStage(WebBootTraceStage.shellStarted);
-    _shellTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _trace.isComplete) return;
-      _trace.tickElapsed();
-    });
-  }
-
-  @override
-  void dispose() {
-    _shellTicker?.cancel();
-    super.dispose();
+    // Elapsed ticker kasıtlı olarak yok: aşağıdaki DeferredModuleScreen'e
+    // `trace: _trace` veriliyor ve o widget aynı notifier için zaten 1 sn'lik
+    // Timer.periodic başlatıyordu. İki timer aynı `tickElapsed()`i çağırıyor,
+    // web cold-boot'un en kritik penceresinde işi ikiye katlıyordu.
   }
 
   Widget _buildDeferredHome() {
@@ -76,9 +90,14 @@ class _HomeScreenGateState extends State<HomeScreenGate> {
         Positioned.fill(
           child: DeferredModuleScreen(
             moduleName: HomeScreenGate.moduleName,
-            loadLibrary: home_entry.loadLibrary,
+            loadLibrary: HomeScreenGate.loadModule,
             timeout: const Duration(seconds: 90),
             trace: _trace,
+            // Modül hazırsa shell hiç kurulmasın: home route'u her
+            // navigasyonda yeniden mount olduğu için (buildSafeHome →
+            // MaterialApp.home / '/home' / onGenerateRoute) modül çoktan
+            // yüklüyken bile bir kare WebHomeShell çiziliyordu.
+            isAlreadyLoaded: HomeScreenGate.isModuleReady,
             loading: const WebHomeShell(),
             builder: _buildDeferredHome,
           ),

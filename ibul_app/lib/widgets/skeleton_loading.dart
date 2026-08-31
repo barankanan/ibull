@@ -44,41 +44,42 @@ class _SkeletonLoadingState extends State<SkeletonLoading>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) {
-        return Container(
-          width: widget.width,
-          height: widget.height,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(widget.borderRadius),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: const [
-                Color(0xFFEBEBF4),
-                Color(0xFFF4F4F4),
-                Color(0xFFEBEBF4),
-              ],
-              stops: [
-                0.1,
-                0.3 + (_animation.value * 0.3), // Dynamic shimmer movement
-                0.9,
-              ],
+    // RepaintBoundary: shimmer AnimationController sürekli repeat() eder ve her
+    // frame repaint tetikler. İzolasyon olmadan yükleme ekranında tüm ata layer
+    // (SliverToBoxAdapter home içeriği) her frame yeniden rasterlanır.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _animation,
+        builder: (context, child) {
+          return Container(
+            width: widget.width,
+            height: widget.height,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(widget.borderRadius),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: const [
+                  Color(0xFFEBEBF4),
+                  Color(0xFFF4F4F4),
+                  Color(0xFFEBEBF4),
+                ],
+                stops: [
+                  0.1,
+                  0.3 + (_animation.value * 0.3), // Dynamic shimmer movement
+                  0.9,
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
 
 class ProductCardSkeleton extends StatelessWidget {
-  const ProductCardSkeleton({
-    super.key,
-    this.tight = false,
-    this.margin,
-  });
+  const ProductCardSkeleton({super.key, this.tight = false, this.margin});
 
   final bool tight;
   final EdgeInsetsGeometry? margin;
@@ -101,13 +102,17 @@ class ProductCardSkeleton extends StatelessWidget {
         ? constraints.maxWidth
         : fallbackWidth;
     final horizontalPadding = _horizontalPadding(tight);
-    final contentWidth = math.max(0.0, availableWidth - (horizontalPadding * 2));
+    final contentWidth = math.max(
+      0.0,
+      availableWidth - (horizontalPadding * 2),
+    );
     final imageRatio = tight ? 0.70 : 0.72;
     final minHeight = tight ? 72.0 : 100.0;
     final maxHeight = 132.0;
 
-    final naturalImageHeight =
-        (contentWidth * imageRatio).clamp(minHeight, maxHeight).toDouble();
+    final naturalImageHeight = (contentWidth * imageRatio)
+        .clamp(minHeight, maxHeight)
+        .toDouble();
 
     if (!constraints.maxHeight.isFinite) {
       return naturalImageHeight;
@@ -141,7 +146,8 @@ class ProductCardSkeleton extends StatelessWidget {
           width: constraints.maxWidth.isFinite ? constraints.maxWidth : 198,
           height: fillCellHeight ? constraints.maxHeight : null,
           margin:
-              margin ?? (tight ? EdgeInsets.zero : const EdgeInsets.only(right: 12)),
+              margin ??
+              (tight ? EdgeInsets.zero : const EdgeInsets.only(right: 12)),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(borderRadius),
@@ -157,8 +163,9 @@ class ProductCardSkeleton extends StatelessWidget {
             padding: EdgeInsets.all(padding),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize:
-                  fillCellHeight ? MainAxisSize.max : MainAxisSize.min,
+              mainAxisSize: fillCellHeight
+                  ? MainAxisSize.max
+                  : MainAxisSize.min,
               children: [
                 if (fillCellHeight)
                   Expanded(
@@ -168,10 +175,7 @@ class ProductCardSkeleton extends StatelessWidget {
                     ),
                   )
                 else
-                  _buildImageSkeleton(
-                    tight: tight,
-                    imageHeight: imageHeight!,
-                  ),
+                  _buildImageSkeleton(tight: tight, imageHeight: imageHeight!),
                 SizedBox(height: tight ? 3 : 5),
                 const SkeletonLoading(
                   width: double.infinity,
@@ -194,7 +198,11 @@ class ProductCardSkeleton extends StatelessWidget {
                 if (!tight) ...[
                   const SkeletonLoading(width: 96, height: 11, borderRadius: 4),
                   const SizedBox(height: 2),
-                  const SkeletonLoading(width: 118, height: 18, borderRadius: 4),
+                  const SkeletonLoading(
+                    width: 118,
+                    height: 18,
+                    borderRadius: 4,
+                  ),
                   const SizedBox(height: 6),
                 ] else ...[
                   const SkeletonLoading(

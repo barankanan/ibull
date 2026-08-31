@@ -81,9 +81,11 @@ class EscPosDocumentRenderer:
             explicit_feed = int(doc_feed) if doc_feed is not None else None
         except (TypeError, ValueError):
             explicit_feed = None
+        settings_feed = int(getattr(self.settings, "bottom_feed_lines", 0) or 0)
+        bottom_feed = explicit_feed if explicit_feed is not None else settings_feed
         trailing = max(
             bottom_feed,
-            getattr(self.settings, "min_trailing_blank_lines", bottom_feed),
+            int(getattr(self.settings, "min_trailing_blank_lines", bottom_feed) or 0),
         )
         append_text_tail_blank_lines(chunks, min_trailing_blank_lines=trailing)
         append_trailing_feed_and_cut(

@@ -59,6 +59,10 @@ class RuntimeDiagnosticLogger {
     _emit('Images', message);
   }
 
+  static void investor(String message) {
+    _emit('Investor', message);
+  }
+
   static void logFailure(
     String channel,
     Object error,
@@ -66,12 +70,13 @@ class RuntimeDiagnosticLogger {
     String? context,
   }) {
     final prefix = context == null || context.isEmpty ? '' : ' context=$context';
-    _emit(channel, 'failed: ${_describeError(error)}$prefix');
+    _emit(channel, 'failed: ${_describeError(error)}$prefix', force: true);
     if (error is PostgrestException) {
       _emit(
         channel,
         'PostgrestException code=${error.code ?? '-'} '
         'message=${error.message} details=${error.details} hint=${error.hint}',
+        force: true,
       );
     }
     if (stackTrace != null && (kDebugMode || kProfileMode)) {
@@ -92,7 +97,8 @@ class RuntimeDiagnosticLogger {
     return '${error.runtimeType}: $error';
   }
 
-  static void _emit(String channel, String message) {
+  static void _emit(String channel, String message, {bool force = false}) {
+    if (kReleaseMode && !force) return;
     final line = '[$channel] $message';
     // ignore: avoid_print
     print(line);

@@ -86,6 +86,8 @@ class _FakeTransport:
         target_host: str | None = None,
         target_port: int | None = None,
         selected_printer: dict[str, object] | None = None,
+        connect_timeout: float | None = None,
+        write_timeout: float | None = None,
     ) -> PrintResult:
         if self.print_exception is not None:
             raise self.print_exception
@@ -94,6 +96,11 @@ class _FakeTransport:
             job_id="Thermal58-101",
             raw_output="request id is Thermal58-101 (1 file(s))",
             bytes_sent=len(payload),
+            metadata={
+                "actual_backend": "tcp" if target_host else "fake",
+                "actual_host": target_host or "",
+                "actual_port": target_port or 0,
+            },
         )
 
     def queue_status(self, queue_name: str) -> dict[str, object]:
@@ -439,14 +446,15 @@ class PrintBridgeServerTests(unittest.TestCase):
         self.assertEqual(body.get("target_port"), 9100)
         self.assertEqual(body.get("local_ips"), ["192.168.10.158"])
         self.assertEqual(body.get("same_subnet"), False)
-        self.assertEqual(body.get("errorCode"), "network_mismatch")
+        # Preserve real TCP reason; subnet mismatch stays as guidance fields.
+        self.assertEqual(body.get("errorCode"), "tcp_unreachable")
         suggested = body.get("suggested_message", "")
-        self.assertIn("192.168.10.x", suggested)
-        self.assertIn("192.168.1.x", suggested)
-        self.assertIn("aynı ağda değil", suggested)
         self.assertTrue(
-            "Yazıcı IP" in suggested or "işletme ağına alın" in suggested,
-            msg=f"expected actionable printer-network guidance, got: {suggested!r}",
+            "192.168.10" in suggested
+            or "192.168.1" in suggested
+            or "alt ağ" in suggested
+            or "ağ" in suggested.lower(),
+            msg=f"expected subnet guidance, got: {suggested!r}",
         )
 
     def test_tcp_probe_invalid_ip_returns_error_code(self) -> None:

@@ -6,6 +6,11 @@ library;
 /// MediaQuery.of(context).size.width ile karşılaştırarak kullanın.
 
 class ScreenBreakpoints {
+  /// Marketplace chrome (WebHeader / home web vs CustomHeader).
+  /// Raised to 1100 to keep the web header from overflowing on small laptops.
+  /// İHIZ desktop is 1024 via IhizBrand — do not reuse this for courier landing.
+  static const double marketplaceWeb = 1100;
+
   /// Mobil cihaz maksimum genişliği
   /// Telefon ve küçük devicelar
   static const double mobile = 599;

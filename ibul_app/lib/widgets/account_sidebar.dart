@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../app/ibul_router.dart';
 import '../core/app_motion.dart';
 import '../core/constants.dart';
 import '../screens/orders_page.dart';
@@ -59,7 +60,7 @@ class AccountSidebar extends StatelessWidget {
         final appState = Provider.of<AppState>(context, listen: false);
         await appState.logout();
         if (context.mounted) {
-          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+          IbulRouter.go(context, '/');
         }
       }
     }
@@ -67,7 +68,8 @@ class AccountSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
+    context.select<AppState, int>((s) => s.accountIdentityStamp);
+    final appState = context.read<AppState>();
     final user = appState.currentUser;
     final displayName = UserIdentity.resolveDisplayName(
       currentUser: user,

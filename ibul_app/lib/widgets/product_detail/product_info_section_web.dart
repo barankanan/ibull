@@ -30,7 +30,7 @@ class ProductInfoSectionWeb extends StatelessWidget {
             style: const TextStyle(
               fontSize: 14,
               color: AppColors.primary,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ),
@@ -39,7 +39,7 @@ class ProductInfoSectionWeb extends StatelessWidget {
           product.name,
           style: const TextStyle(
             fontSize: 20,
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w400,
             color: Colors.black87,
             height: 1.3,
           ),
@@ -69,7 +69,7 @@ class ProductInfoSectionWeb extends StatelessWidget {
                   rating.toStringAsFixed(1),
                   style: const TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w500,
                     color: Colors.black87,
                   ),
                 ),

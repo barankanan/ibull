@@ -316,20 +316,14 @@ void main() {
     });
 
     test('kök uygulama /home route\'unu HomeRouteArgs ile çözer', () {
+      final table = File('lib/app/app_route_table.dart').readAsStringSync();
+      final shared = File('lib/app/shared_app_widgets.dart').readAsStringSync();
       final rootMain = File('../lib/main.dart');
-      if (!rootMain.existsSync()) {
-        // Paket monorepo dışında tek başına çalıştırılıyorsa atla.
-        return;
+      expect(table.contains("case '/home':"), isTrue);
+      expect(shared.contains('HomeRouteArgs.from'), isTrue);
+      if (rootMain.existsSync()) {
+        expect(rootMain.readAsStringSync(), contains('IbulMaterialApp'));
       }
-      final source = rootMain.readAsStringSync();
-      expect(
-        source.contains("case '/home':"),
-        isTrue,
-        reason:
-            'Kök MaterialApp /home tanımlamazsa seller logout tab argümanı '
-            '(Hesabım=4) onUnknownRoute içinde kaybolur',
-      );
-      expect(source.contains('HomeRouteArgs.from(settings.arguments)'), isTrue);
     });
   });
 }

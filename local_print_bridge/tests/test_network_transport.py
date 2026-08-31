@@ -177,7 +177,7 @@ class SmartTransportTcpRoutingTests(unittest.TestCase):
         sent: dict[str, object] = {}
 
         class _FakeTcp:
-            def __init__(self, host: str, port: int) -> None:
+            def __init__(self, host: str, port: int, **kwargs) -> None:
                 sent["host"] = host
                 sent["port"] = port
 
@@ -212,7 +212,7 @@ class SmartTransportTcpRoutingTests(unittest.TestCase):
         seen: dict[str, object] = {}
 
         class _FakeTcp:
-            def __init__(self, host: str, port: int) -> None:
+            def __init__(self, host: str, port: int, **kwargs) -> None:
                 seen["host"] = host
                 seen["port"] = port
 
@@ -255,7 +255,7 @@ class SmartTransportTcpRoutingTests(unittest.TestCase):
         seen: dict[str, object] = {}
 
         class _FakeTcp:
-            def __init__(self, host: str, port: int) -> None:
+            def __init__(self, host: str, port: int, **kwargs) -> None:
                 seen["host"] = host
                 seen["port"] = port
 

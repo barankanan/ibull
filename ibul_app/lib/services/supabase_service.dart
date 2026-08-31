@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -135,8 +136,11 @@ class SupabaseService {
     for (var attempt = 0; attempt <= optionalProductColumns.length; attempt++) {
       try {
         final response = await action(currentSelect);
-        return List<Map<String, dynamic>>.from(response as List)
-            .map((row) => Map<String, dynamic>.from(row))
+        // Tek kopya: `List<...>.from(...)` ara listesi hemen ardından
+        // .map(...).toList() ile atılıyordu. Satır başına defansif
+        // Map kopyası korunuyor — sonuç birebir aynı.
+        return (response as List)
+            .map((row) => Map<String, dynamic>.from(row as Map))
             .toList(growable: false);
       } catch (e) {
         lastError = e;
@@ -302,7 +306,8 @@ class SupabaseService {
     }
 
     final followedStoreIds =
-        await StoreFollowService.instance.fetchFollowedStoreIds();
+        StoreFollowService.instance.cachedFollowedStoreIds;
+    unawaited(StoreFollowService.instance.fetchFollowedStoreIds());
     final fetchLimit = followedStoreIds.isEmpty
         ? homeInitialPageSize
         : (homeInitialPageSize * 3).clamp(homeInitialPageSize, 48);
@@ -314,8 +319,6 @@ class SupabaseService {
     final selectCandidates = <String>[
       _homeProductCatalogSelectFields,
       _homeProductCatalogSelectFieldsSansStore,
-      _homeProductCardSelectFields,
-      _homeProductCardSelectFieldsSansStore,
       _homeProductSelectFieldsSansStore,
     ];
 
@@ -468,8 +471,11 @@ class SupabaseService {
             .inFilter('status', publicCatalogProductStatuses)
             .order('created_at', ascending: false)
             .range(0, fetchLimit - 1);
-        final rawRows = List<Map<String, dynamic>>.from(response as List)
-            .map((row) => Map<String, dynamic>.from(row))
+        // Ana sayfa ürün fetch'i — kritik yol. Ara `List<...>.from(...)`
+        // listesi gereksizdi (tüm ürün satırları için ikinci bir liste
+        // ayırıyordu). Satır başına Map kopyası aynen korunuyor.
+        final rawRows = (response as List)
+            .map((row) => Map<String, dynamic>.from(row as Map))
             .toList(growable: false);
         final audit = ProductFilterAudit.fromRows(rawRows);
         final filtered = ProductVisibilityHelper.filterPublicProductMaps(rawRows);

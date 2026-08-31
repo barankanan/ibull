@@ -18,7 +18,7 @@ class ProductListThumbnail extends StatelessWidget {
     this.fallbackIconSize = 32,
     this.cacheWidth,
     this.cacheHeight,
-    this.priority = OptimizedImagePriority.high,
+    this.priority = OptimizedImagePriority.lazy,
     this.onFirstFrameReady,
   });
 

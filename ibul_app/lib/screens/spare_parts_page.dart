@@ -45,16 +45,21 @@ class _SparePartsPageState extends State<SparePartsPage> {
     }
     return total;
   }
-  
+
   Future<void> _loadProducts() async {
     try {
-      final products = await _dbHelper.getAllProducts();
+      final model = _extractDeviceModel(widget.product.name).trim();
+      final products = model.isEmpty
+          ? await _dbHelper.getProductsPage(limit: 80)
+          : await _dbHelper.searchProducts(model);
+      if (!mounted) return;
       setState(() {
         _allDBProducts = products;
         _isLoading = false;
       });
     } catch (e) {
       debugPrint('Error loading products: $e');
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });

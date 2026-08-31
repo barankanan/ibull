@@ -144,7 +144,8 @@ class SellerDesktopApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [Locale('tr'), Locale('en')],
+      locale: kIbulLocale,
+      supportedLocales: kIbulSupportedLocales,
       // ── Home: session restore gate ──────────────────────────────────────
       home: const _SellerSessionGate(),
       // ── Named routes ────────────────────────────────────────────────────

@@ -11,28 +11,34 @@ void main() {
     });
 
     test('customer app registers login route', () {
-      final routes = File('lib/app/customer_app.dart').readAsStringSync();
-      expect(routes, contains("'/login'"));
-      expect(routes, contains('CustomerRoutes.buildLoginPage'));
+      final app = File('lib/app/customer_app.dart').readAsStringSync();
+      final table = File('lib/app/app_route_table.dart').readAsStringSync();
+      expect(app, contains('includeAuthRoutes: true'));
+      expect(table, contains("case '/login':"));
+      expect(table, contains('CustomerRoutes.buildLoginPage'));
     });
 
     test('customer app registers seller-login route', () {
-      final routes = File('lib/app/customer_app.dart').readAsStringSync();
-      expect(routes, contains("'/seller-login'"));
-      expect(routes, contains('buildSellerLoginPage'));
+      final app = File('lib/app/customer_app.dart').readAsStringSync();
+      final table = File('lib/app/app_route_table.dart').readAsStringSync();
+      expect(app, contains('includeAuthRoutes: true'));
+      expect(table, contains("case '/seller-login':"));
+      expect(table, contains('buildSellerLoginPage'));
     });
 
     test('customer app registers lazy seller panel route', () {
-      final routes = File('lib/app/customer_app.dart').readAsStringSync();
-      expect(routes, contains("'/seller'"));
-      expect(routes, contains('CustomerRoutes.buildSellerPanel'));
+      final app = File('lib/app/customer_app.dart').readAsStringSync();
+      final table = File('lib/app/app_route_table.dart').readAsStringSync();
+      expect(app, contains('IbulMaterialApp'));
+      expect(table, contains("case '/seller':"));
+      expect(table, contains('SellerRoutes.buildSellerPanel'));
     });
 
     test('customer app mounts auth-capable providers without seller modules', () {
       IbulAppModeRegistry.current = IbulAppMode.customer;
       final providers = buildCustomerProviders();
-      expect(providers.length, 6);
-      expect(countMountedProviders(IbulAppMode.customer), 6);
+      expect(providers.length, 5);
+      expect(countMountedProviders(IbulAppMode.customer), 5);
       final source = providers.map((p) => p.toString()).join('\n');
       expect(source, isNot(contains('DesktopPrintHub')));
     });
@@ -53,9 +59,16 @@ void main() {
     });
 
     test('unknown auth route falls back to home not blank', () {
-      final routes = File('lib/app/customer_app.dart').readAsStringSync();
-      expect(routes, contains('onUnknownRoute'));
-      expect(routes, contains('buildSafeHome(source: \'onUnknownRoute\')'));
+      final app = File('lib/app/customer_app.dart').readAsStringSync();
+      final table = File('lib/app/app_route_table.dart').readAsStringSync();
+      final shell = File('lib/app/ibul_material_app.dart').readAsStringSync();
+      final router = File('lib/app/ibul_go_router.dart').readAsStringSync();
+      expect(app, contains('IbulMaterialApp'));
+      expect(shell, contains('createIbulGoRouter'));
+      expect(router, contains('errorBuilder'));
+      expect(router, contains("source: 'go_router:unknown'"));
+      expect(table, contains('generateUnknownHomeRoute'));
+      expect(table, contains("buildSafeHome(source: 'onUnknownRoute')"));
     });
 
     test('session listener logs mount in AppState', () {
@@ -78,12 +91,10 @@ void main() {
   });
 
   group('Customer home skeleton and ads', () {
-    test('products loaded suppresses below-fold skeleton on legacy home', () {
-      final home = File('lib/screens/home_screen.dart').readAsStringSync();
-      final sections =
-          File('lib/screens/home_screen_sections.dart').readAsStringSync();
-      expect(home, contains('_suppressBelowFoldSkeleton'));
-      expect(sections, contains('_suppressBelowFoldSkeleton'));
+    test('products loaded suppresses below-fold skeleton on live home', () {
+      final core = File('lib/screens/home_screen_core.dart').readAsStringSync();
+      expect(core, contains('_suppressBelowFoldSkeleton'));
+      expect(core, contains('suppressSkeleton: _suppressBelowFoldSkeleton'));
     });
 
     test('sponsored section empty hides instead of skeleton when suppressed', () {

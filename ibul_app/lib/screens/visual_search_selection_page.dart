@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../core/constants.dart';
+import 'coming_soon/coming_soon_catalog.dart';
 import 'visual_intelligence_result_page.dart';
 
 class VisualSearchSelectionPage extends StatelessWidget {
@@ -81,13 +82,10 @@ class VisualSearchSelectionPage extends StatelessWidget {
               _buildOptionTile(
                 context,
                 title: 'Barkod Okut',
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Barkod okuma özelliği yakında eklenecek.'),
-                    ),
-                  );
-                },
+                onTap: () => ComingSoonCatalog.open(
+                  context,
+                  ComingSoonCatalog.barcode,
+                ),
               ),
               const Divider(height: 1, color: Color(0xFFEEEEEE)),
             ],

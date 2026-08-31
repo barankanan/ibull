@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ibul_app/widgets/optimized_image.dart';
+import '../app/ibul_router.dart';
 import '../core/constants.dart';
 import '../widgets/web_sticky_footer_scroll_view.dart';
 import '../widgets/web_header.dart';
@@ -209,9 +210,7 @@ class OrderConfirmationPage extends StatelessWidget {
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () => Navigator.of(
-                  context,
-                ).pushNamedAndRemoveUntil('/', (route) => false),
+                onPressed: () => IbulRouter.go(context, '/'),
                 icon: const Icon(Icons.home_outlined),
                 label: const Text('Ana Sayfa'),
                 style: OutlinedButton.styleFrom(

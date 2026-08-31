@@ -96,6 +96,13 @@ const List<AdminPanelMenuDefinition> ibulAdminMenuDefinitions = [
     moduleKey: AdminModules.ihiz,
   ),
   AdminPanelMenuDefinition(
+    icon: Icons.local_shipping_outlined,
+    title: 'İHIZ Teslimatları',
+    groupLabel: 'Yönetim',
+    groupIcon: Icons.admin_panel_settings_outlined,
+    moduleKey: AdminModules.ihiz,
+  ),
+  AdminPanelMenuDefinition(
     icon: Icons.admin_panel_settings_outlined,
     title: 'Yetki Sistemi',
     groupLabel: 'Yönetim',
@@ -122,6 +129,12 @@ const List<AdminPanelMenuDefinition> ihizAdminMenuDefinitions = [
   AdminPanelMenuDefinition(
     icon: Icons.dashboard_outlined,
     title: 'Genel Bakış',
+    groupLabel: 'Kurye Operasyonları',
+    groupIcon: Icons.delivery_dining_outlined,
+  ),
+  AdminPanelMenuDefinition(
+    icon: Icons.storefront_outlined,
+    title: 'İşletme Teslimatları',
     groupLabel: 'Kurye Operasyonları',
     groupIcon: Icons.delivery_dining_outlined,
   ),

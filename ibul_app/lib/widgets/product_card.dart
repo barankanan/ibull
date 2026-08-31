@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../core/app_image_cdn.dart';
 import '../models/product_model.dart';
 import '../screens/product_detail_page.dart';
-import '../screens/home_screen.dart';
+import '../core/home_navigation.dart';
 import '../core/app_state.dart';
 import '../core/cart_state.dart';
 import '../core/favorite_state.dart';
@@ -53,7 +53,7 @@ class ProductCard extends StatefulWidget {
     this.tight = false,
     this.forceFoodOrderButton = false,
     this.pinActionsBottom = false,
-    this.imagePriority = OptimizedImagePriority.high,
+    this.imagePriority = OptimizedImagePriority.lazy,
   });
 
   @override
@@ -580,11 +580,17 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   // Compact image section with AspectRatio (for seller page)
+  //
+  // NOT (perf): bu dosyadaki tüm ekran-genişliği okumaları MediaQuery.sizeOf
+  // kullanır. MediaQuery.of(context) kartı TÜM MediaQueryData'ya abone eder;
+  // klavye açılış/kapanışı (viewInsets), safe-area veya textScale değişiminde
+  // grid'deki her ProductCard yeniden build olurdu. sizeOf yalnız `size`
+  // aspect'ine abone olur — okunan değer ve görsel çıktı birebir aynıdır.
   Widget _buildImageSection({
     required bool isFavorite,
     required double imageHeight,
   }) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isSmallScreen = screenWidth < 360;
 
     return Stack(
@@ -648,7 +654,7 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Widget _buildCampaignBadge() {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isMobile = screenWidth < 600;
     final verticalPadding = widget.compact
         ? 4.0
@@ -685,7 +691,7 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Widget _buildTitle() {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isSmallScreen = screenWidth < 360;
     final fontSize = widget.compact
         ? (isSmallScreen ? 9.0 : 10.0)
@@ -719,7 +725,7 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Widget _buildRating(ProductRatingSummary ratingData) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isSmallScreen = screenWidth < 360;
     final rating = ratingData.rating;
     final reviewCount = ratingData.reviewCount;
@@ -801,7 +807,7 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Widget _buildPrice() {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isSmallScreen = screenWidth < 360;
     final priceText = widget.product.price.contains('TL')
         ? widget.product.price
@@ -986,7 +992,7 @@ class _ProductCardState extends State<ProductCard> {
   }
 
   Widget _buildButton(BuildContext context, bool isAddedToCart) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isMobile = screenWidth < 600;
     final category = (widget.product.category ?? '').toLowerCase();
     final subCategory = (widget.product.subCategory ?? '').toLowerCase();
@@ -1131,12 +1137,10 @@ class _ProductCardState extends State<ProductCard> {
                       InteractionFeedbackType.mainCta,
                       channel: 'product_card_open_cart',
                     );
-                    Navigator.pushAndRemoveUntil(
+                    HomeNavigation.openHome(
                       context,
-                      MaterialPageRoute(
-                        builder: (context) => const HomeScreen(initialIndex: 3),
-                      ),
-                      (route) => false,
+                      initialIndex: 3,
+                      replaceStack: true,
                     );
                   },
                   style: premiumButtonInteractionStyle(
@@ -1418,12 +1422,6 @@ class _ProductCardState extends State<ProductCard> {
       return;
     }
     _appState.addToCart(widget.product);
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const HomeScreen(initialIndex: 3),
-      ),
-      (route) => false,
-    );
+    HomeNavigation.openHome(context, initialIndex: 3, replaceStack: true);
   }
 }

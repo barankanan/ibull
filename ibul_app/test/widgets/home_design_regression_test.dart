@@ -12,8 +12,6 @@ void main() {
           File('lib/screens/home_screen_deferred_entry.dart').readAsStringSync();
       final core =
           File('lib/screens/home_screen_core.dart').readAsStringSync();
-      final legacy =
-          File('lib/screens/home_screen_legacy_full.dart').readAsStringSync();
 
       expect(entry, contains('home_screen_core.dart'));
       expect(entry, contains('HomeScreenCore('));
@@ -24,9 +22,6 @@ void main() {
       expect(core, contains('AppAnimatedIndexedStack'));
       expect(core, contains('HomeLazyRoutes.mapTab'));
       expect(core, contains('kPreviewBatchSize = 8'));
-
-      expect(legacy, contains('web_header.dart'));
-      expect(legacy, contains('custom_header.dart'));
     });
 
     test('CustomHeader source keeps bell, search and camera layout', () {
@@ -39,7 +34,8 @@ void main() {
     test('legacy web home uses bounded max width layout', () {
       final core =
           File('lib/screens/home_screen_core.dart').readAsStringSync();
-      expect(core, contains('BoxConstraints(maxWidth: 1400)'));
+      expect(core, contains('IbulChrome.contentConstraints'));
+      expect(core, contains('IbulChrome.isWebOf'));
       expect(core, contains('WebStickyFooterScrollView'));
     });
 

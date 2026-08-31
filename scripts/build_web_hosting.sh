@@ -81,4 +81,36 @@ flutter build web --release \
   --target lib/main.dart \
   --pwa-strategy=none \
   --no-web-resources-cdn \
+  --no-wasm-dry-run \
   "${DART_DEFINES[@]}"
+
+WEB_DIR="$PROJECT_DIR/ibul_app/build/web"
+SW_FILE="$WEB_DIR/flutter_service_worker.js"
+if [[ -f "$SW_FILE" ]] && [[ ! -s "$SW_FILE" ]]; then
+  rm -f "$SW_FILE"
+  echo "✓ Removed empty flutter_service_worker.js (pwa-strategy=none)"
+fi
+
+MAIN_JS="$WEB_DIR/main.dart.js"
+BOOTSTRAP_JS="$WEB_DIR/flutter_bootstrap.js"
+INDEX_HTML="$WEB_DIR/index.html"
+if [[ -f "$MAIN_JS" && -f "$BOOTSTRAP_JS" && -f "$INDEX_HTML" ]]; then
+  HASH="$(shasum -a 256 "$MAIN_JS" | awk '{print substr($1,1,16)}')"
+  HASHED="app.${HASH}.js"
+  mv "$MAIN_JS" "$WEB_DIR/$HASHED"
+  python3 - "$WEB_DIR" "$HASHED" <<'PY'
+import pathlib, sys
+web, hashed = pathlib.Path(sys.argv[1]), sys.argv[2]
+boot = web / "flutter_bootstrap.js"
+html = web / "index.html"
+boot.write_text(
+    boot.read_text().replace('"mainJsPath":"main.dart.js"', f'"mainJsPath":"{hashed}"'),
+    encoding="utf-8",
+)
+html.write_text(
+    html.read_text().replace('href="main.dart.js"', f'href="{hashed}"'),
+    encoding="utf-8",
+)
+PY
+  echo "✓ Fingerprinted JS: $HASHED (immutable cache)"
+fi

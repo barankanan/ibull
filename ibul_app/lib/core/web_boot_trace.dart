@@ -256,13 +256,18 @@ class WebBootTraceNotifier extends ChangeNotifier {
   }
 
   void _refreshElapsed() {
+    // Boot bittiğinde trace terminaldir (setStage de `_complete` sonrası
+    // `completed` dışındaki her şeyi reddeder). Bu guard olmadan
+    // DeferredModuleScreen'in 1 sn'lik ticker'ı ana sayfa açık kaldığı sürece
+    // her saniye copyWith + jsonEncode + senkron localStorage.setItem +
+    // notifyListeners çalıştırmaya devam ediyordu.
+    if (_complete) return;
     final next = elapsedSeconds;
     if (next == _snapshot.elapsedSeconds) return;
     _snapshot = _snapshot.copyWith(
       elapsedSeconds: next,
       timestamp: DateTime.now().toIso8601String(),
     );
-    _persist();
     notifyListeners();
   }
 

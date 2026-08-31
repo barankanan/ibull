@@ -2,33 +2,43 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ibul_app/screens/ihiz_courier_page.dart';
 import 'package:ibul_app/screens/ihiz_home_page.dart';
+import 'package:ibul_app/widgets/custom_header.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
-  testWidgets('IhizHomePage shows service cards and prototype entry', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: IhizHomePage()),
-    );
+  const testSupabaseUrl = String.fromEnvironment(
+    'IBUL_SUPABASE_URL',
+    defaultValue: 'https://example.supabase.co',
+  );
+  const testSupabaseAnonKey = String.fromEnvironment(
+    'IBUL_SUPABASE_ANON_KEY',
+    defaultValue: 'test-anon-key',
+  );
 
-    expect(find.text('iHız'), findsOneWidget);
-    expect(
-      find.text('Hızlı teslimat ve hizmet çözümleri yakında burada.'),
-      findsOneWidget,
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await Supabase.initialize(
+      url: testSupabaseUrl,
+      anonKey: testSupabaseAnonKey,
     );
-    expect(find.text('Teslimat Prototipi'), findsOneWidget);
-    expect(find.text('Hızlı Ürün Gönder'), findsOneWidget);
-    expect(find.text('Garantili Tamir'), findsOneWidget);
-    expect(find.text('Montaj Hizmeti'), findsOneWidget);
-    expect(find.text('Yakında'), findsNWidgets(3));
   });
 
-  testWidgets('IhizHomePage prototype card opens courier page', (tester) async {
+  testWidgets('IhizHomePage opens the live landing, not coming-soon cards',
+      (tester) async {
     await tester.pumpWidget(
       const MaterialApp(home: IhizHomePage()),
     );
 
-    await tester.tap(find.text('Teslimat Prototipi'));
-    await tester.pumpAndSettle();
-
     expect(find.byType(IhizCourierPage), findsOneWidget);
+    expect(find.byType(CustomHeader), findsNothing);
+    expect(find.textContaining('Teslimatın yeni hızı'), findsWidgets);
+    expect(find.text('NEDEN İHIZ?'), findsOneWidget);
+    expect(find.text('Teslimat Prototipi'), findsNothing);
+    expect(
+      find.text('Hızlı teslimat ve hizmet çözümleri yakında burada.'),
+      findsNothing,
+    );
   });
 }

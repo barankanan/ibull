@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/constants.dart';
+import '../../../core/home_quick_action.dart';
 import '../../../widgets/skeleton_loading.dart';
+import '../../coupons_page.dart';
 
 /// Sağ sütun: Günün Fırsatı + Kupon alanı (legacy görünüm, hafif).
 class HomeCouponDealColumn extends StatelessWidget {
@@ -12,86 +14,112 @@ class HomeCouponDealColumn extends StatelessWidget {
     return Column(
       children: [
         Expanded(
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  AppColors.primary.withValues(alpha: 0.92),
-                  AppColors.primary,
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                final action =
+                    HomeQuickActionRegistry.fromHomeShortcutTitle('Süper Fırsat');
+                if (action == null) return;
+                HomeQuickActionNavigator.open(context, action);
+              },
               borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Günün Fırsatı',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+              child: Ink(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppColors.primary.withValues(alpha: 0.92),
+                      AppColors.primary,
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                SizedBox(height: 8),
-                Text(
-                  'Bugünün en iyi indirimlerini kaçırma',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Günün Fırsatı',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'Bugünün en iyi indirimlerini kaçırma',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    Spacer(),
+                    Icon(Icons.local_offer_outlined, color: Colors.white, size: 40),
+                  ],
                 ),
-                Spacer(),
-                Icon(Icons.local_offer_outlined, color: Colors.white, size: 40),
-              ],
+              ),
             ),
           ),
         ),
         const SizedBox(height: 12),
         SizedBox(
           height: 150,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF8E7),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const CouponsPage()),
+                );
+              },
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFFFE082)),
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Kuponlarım',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF5D4037),
-                  ),
+              child: Ink(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF8E7),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFFFE082)),
                 ),
-                SizedBox(height: 6),
-                Text(
-                  'Sepette kullanabileceğin kuponları gör',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF8D6E63)),
-                ),
-                Spacer(),
-                Row(
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.confirmation_number_outlined,
-                        color: AppColors.primary, size: 22),
-                    SizedBox(width: 6),
                     Text(
-                      'Kuponları Keşfet',
+                      'Kuponlarım',
                       style: TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 12,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF5D4037),
                       ),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      'Sepette kullanabileceğin kuponları gör',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF8D6E63)),
+                    ),
+                    Spacer(),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.confirmation_number_outlined,
+                          color: AppColors.primary,
+                          size: 22,
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'Kuponları Keşfet',
+                          style: TextStyle(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
         ),

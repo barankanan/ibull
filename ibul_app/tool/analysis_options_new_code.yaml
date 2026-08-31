@@ -1,0 +1,16 @@
+# Stricter analyzer for directories created in the Hız / Tasarım / Kod slices.
+# Do not copy these error promotions into ibul_app/analysis_options.yaml —
+# that would light up ~1770 debugPrint call sites and ~420 empty catches
+# in seller_panel, models, and print code.
+
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    empty_catches: error
+    avoid_print: error
+
+linter:
+  rules:
+    avoid_print: true
+    empty_catches: true

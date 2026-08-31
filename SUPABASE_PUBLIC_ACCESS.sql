@@ -1,3 +1,13 @@
+-- QUARANTINED. Do not apply.
+-- This script opened pending_approval products to anonymous SELECT.
+-- Use ibul_app/SUPABASE_PUBLIC_PRODUCT_VISIBILITY_FIX.sql / migrations instead.
+
+do $$
+begin
+  raise exception
+    'QUARANTINED: SUPABASE_PUBLIC_ACCESS.sql must not be applied in any environment';
+end $$;
+
 -- DANGER: Legacy/dev-only. Do not run in production.
 -- Allows anonymous reads of pending_approval products (status IN ('Aktif', 'pending_approval')).
 -- Use ibul_app/SUPABASE_PUBLIC_PRODUCT_VISIBILITY_FIX.sql instead. 1

@@ -102,9 +102,23 @@ class DatabaseHelper {
     );
   }
 
-  // Ürün ara
   Future<List<DBProduct>> searchProducts(String query) async {
-    return await _supabase.searchProducts(query);
+    final page = await _supabase.searchProductsPaged(query: query, limit: 30);
+    return page.items;
+  }
+
+  Future<PagedResult<DBProduct>> searchProductsPaged({
+    required String query,
+    Map<String, dynamic>? filters,
+    int limit = SupabaseService.defaultPageSize,
+    String? cursor,
+  }) {
+    return _supabase.searchProductsPaged(
+      query: query,
+      filters: filters,
+      limit: limit,
+      cursor: cursor,
+    );
   }
 
   Future<List<DBProduct>> getProductSuggestions({

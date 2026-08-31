@@ -5,19 +5,20 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('Home demo removal and real ads', () {
     test('mobile home does not render hair_care DynamicBrandLayoutsSection', () {
-      final sections =
-          File('lib/screens/home_screen_sections.dart').readAsStringSync();
-      expect(sections, isNot(contains('_DynamicBrandLayoutsSection(')));
-      expect(sections, contains('HomeCategoryCardSections'));
-      expect(sections, isNot(contains('_hairCareLayoutsForHome.isNotEmpty')));
+      final core =
+          File('lib/screens/home_screen_core.dart').readAsStringSync();
+      expect(core, isNot(contains('_DynamicBrandLayoutsSection(')));
+      expect(core, contains('HomeCategoryCardSections'));
+      expect(core, isNot(contains('_hairCareLayoutsForHome.isNotEmpty')));
     });
 
     test('mobile home loads HomeFeatureAdService category cards', () {
-      final home = File('lib/screens/home_screen.dart').readAsStringSync();
-      expect(home, contains('HomeFeatureAdService'));
-      expect(home, contains('_loadHomeCategoryCards'));
-      expect(home, contains('HomeAdsDiagnostics.demoDisabled'));
-      expect(home, isNot(contains('_loadHairCareLayoutConfig(),')));
+      final core =
+          File('lib/screens/home_screen_core.dart').readAsStringSync();
+      expect(core, contains('HomeFeatureAdService'));
+      expect(core, contains('_fetchHomeFeatureAds'));
+      expect(core, contains('HomeAdsDiagnostics.demoDisabled'));
+      expect(core, isNot(contains('_loadHairCareLayoutConfig(),')));
     });
 
     test('desktop core renders real feature ads and hero fetch', () {
@@ -72,22 +73,18 @@ void main() {
     });
 
     test('Black Friday and Mega Discount not in home screens', () {
-      for (final path in [
-        'lib/screens/home_screen_core.dart',
-        'lib/screens/home_screen_sections.dart',
-        'lib/screens/home_screen.dart',
-      ]) {
-        final content = File(path).readAsStringSync();
-        expect(content, isNot(contains('Black Friday')));
-        expect(content, isNot(contains('Mega Discount')));
-        expect(content, isNot(contains('reallygreatsite')));
-      }
+      final content =
+          File('lib/screens/home_screen_core.dart').readAsStringSync();
+      expect(content, isNot(contains('Black Friday')));
+      expect(content, isNot(contains('Mega Discount')));
+      expect(content, isNot(contains('reallygreatsite')));
     });
 
-    test('responsive routing keeps mobile on legacy HomeScreen', () {
+    test('responsive routing uses HomeScreenCore on all viewports', () {
       final entry =
           File('lib/screens/home_screen_deferred_entry.dart').readAsStringSync();
-      expect(entry, contains('legacy_home.HomeScreen'));
+      expect(entry, contains('HomeScreenCore('));
+      expect(entry, isNot(contains('legacy_home.HomeScreen')));
       expect(entry, contains('legacyDemoSectionDisabled: true'));
     });
   });

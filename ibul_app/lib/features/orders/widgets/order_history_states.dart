@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants.dart';
 import '../../../screens/cart_page.dart';
+import '../../../widgets/ibul_page_state.dart';
 import '../models/order_history_models.dart';
 
 class OrderHistoryEmptyState extends StatelessWidget {
@@ -11,38 +12,17 @@ class OrderHistoryEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.receipt_long_outlined, size: 56, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            const Text(
-              'Henüz eski siparişin yok',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'İBUL’da alışveriş yaptıkça sipariş geçmişin burada görünecek.',
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade600, height: 1.4),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: onShop,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              ),
-              child: const Text('Alışverişe Başla'),
-            ),
-          ],
-        ),
-      ),
+    return IbulPageState.empty(
+      icon: Icons.receipt_long_outlined,
+      iconSize: 56,
+      title: 'Henüz eski siparişin yok',
+      titleSize: 18,
+      titleWeight: FontWeight.w700,
+      titleColor: AppColors.onSurface,
+      message: 'İBUL’da alışveriş yaptıkça sipariş geçmişin burada görünecek.',
+      actionLabel: 'Alışverişe Başla',
+      onAction: onShop,
+      padding: const EdgeInsets.all(32),
     );
   }
 }
@@ -54,29 +34,10 @@ class OrderHistoryErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_off_outlined, size: 52, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            const Text(
-              'Siparişler yüklenemedi',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Bağlantını kontrol edip tekrar deneyebilirsin.',
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            OutlinedButton(onPressed: onRetry, child: const Text('Tekrar Dene')),
-          ],
-        ),
-      ),
+    return IbulPageState.error(
+      title: 'Siparişler yüklenemedi',
+      message: 'Bağlantını kontrol edip tekrar deneyebilirsin.',
+      onAction: onRetry,
     );
   }
 }

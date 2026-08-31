@@ -6,7 +6,7 @@ import '../core/review_state.dart';
 import '../screens/photo_review_detail_page.dart';
 import '../services/review_repository.dart';
 import '../widgets/web_header.dart';
-import 'home_screen.dart';
+import '../core/home_navigation.dart';
 import 'search_results_page.dart';
 
 class AllReviewsPage extends StatefulWidget {
@@ -153,11 +153,7 @@ class _AllReviewsPageState extends State<AllReviewsPage> {
               );
             },
             onCategorySelected: (_) {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (_) => const HomeScreen()),
-                (route) => false,
-              );
+              HomeNavigation.openHome(context, replaceStack: true);
             },
           ),
           Expanded(

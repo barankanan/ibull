@@ -225,7 +225,7 @@ class _CustomerSupportChatPageState extends State<CustomerSupportChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    final loggedIn = context.watch<AppState>().isLoggedIn;
+    final loggedIn = context.select<AppState, bool>((s) => s.isLoggedIn);
     final composerEnabled =
         loggedIn && isSupportComposerEnabled(_detail?.ticket.status);
 

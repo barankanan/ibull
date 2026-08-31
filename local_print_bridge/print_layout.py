@@ -285,6 +285,71 @@ def resolve_min_trailing_blank_lines(
     return resolve_tail_padding_policy(paper_width_mm, requested).min_trailing_blank_lines
 
 
+# Raster / ESC-POS text scale presets. `normal` == current POS80 baseline.
+PRINT_SIZE_SCALES: dict[str, float] = {
+    "small": 0.85,
+    "normal": 1.0,
+    "large": 1.20,
+    "xlarge": 1.40,
+}
+
+
+def _normalize_print_size(raw: Any) -> str:
+    preset = str(raw or "normal").strip().lower()
+    if preset in {"small", "kucuk", "küçük", "kisa", "kısa"}:
+        return "small"
+    if preset in {"large", "buyuk", "büyük"}:
+        return "large"
+    if preset in {"xlarge", "x-large", "cok_buyuk", "çok büyük", "cok buyuk"}:
+        return "xlarge"
+    return "normal"
+
+
+def _parse_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+        return parsed if 0.5 <= parsed <= 2.5 else None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return None
+    return parsed if 0.5 <= parsed <= 2.5 else None
+
+
+def resolve_print_text_scale(
+    requested: Mapping[str, Any] | None,
+) -> tuple[str, float]:
+    """Return (print_size preset, text scale). Default normal/1.0 preserves output."""
+    merged = _merge_tail_request_sources(requested)
+    explicit_scale = _parse_float(
+        merged.get("print_text_scale")
+        if merged.get("print_text_scale") is not None
+        else merged.get("printTextScale")
+    )
+    if explicit_scale is not None:
+        # Prefer named preset when present; otherwise synthesize from scale.
+        preset = _normalize_print_size(
+            merged.get("print_size") or merged.get("printSize")
+        )
+        if preset == "normal" and abs(explicit_scale - 1.0) > 0.01:
+            if explicit_scale <= 0.92:
+                preset = "small"
+            elif explicit_scale >= 1.30:
+                preset = "xlarge"
+            elif explicit_scale >= 1.10:
+                preset = "large"
+        return preset, explicit_scale
+    preset = _normalize_print_size(
+        merged.get("print_size") or merged.get("printSize") or merged.get("print_font_size")
+    )
+    return preset, PRINT_SIZE_SCALES.get(preset, 1.0)
+
+
 def receipt_length_ab_min_fields() -> dict[str, Any]:
     """A/B minimum — all tail padding zero for physical length proof."""
     return {

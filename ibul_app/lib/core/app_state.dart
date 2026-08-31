@@ -9,6 +9,7 @@ import 'auth/ibul_auth_context.dart';
 import 'auth/auth_listener_guard.dart';
 import 'auth/auth_debug_logger.dart';
 import 'auth/auth_flow_logger.dart';
+import 'runtime_diagnostic_logger.dart';
 import 'cart_state.dart';
 import 'favorite_state.dart';
 import 'review_state.dart';
@@ -51,8 +52,9 @@ class AppState extends ChangeNotifier {
     _loadLocalCollections(requestVersion: _authStateVersion);
     _scheduleStartupHydration();
     _cartState.addListener(_handleCartStateChanged);
-    _favoriteState.addListener(notifyListeners);
-    _reviewState.addListener(notifyListeners);
+    // Cart/favorite/review already have their own ChangeNotifiers in the
+    // provider tree. Forwarding them through AppState rebuilt account, search,
+    // checkout chrome, and every other AppState listener on a heart tap.
   }
 
   final AuthService _authService = AuthService();
@@ -136,6 +138,30 @@ class AppState extends ChangeNotifier {
       IbulAuthContextService.instance.isCustomerContext;
   bool get isLoggedIn => isCustomerLoggedIn;
 
+  /// Account chrome (login + profile identity). Cart/favorite/review
+  /// mutations must not change this.
+  int get accountIdentityStamp => Object.hash(
+        isLoggedIn,
+        _currentUser?['id'],
+        _currentUser?['uid'],
+        _currentUser?['name'],
+        _currentUser?['fullName'],
+        _currentUser?['email'],
+        _currentUser?['photo_url'],
+        _currentUser?['profilePhotoUrl'],
+      );
+
+  /// Search overlay history + recently viewed. Cart/favorite must not
+  /// change this.
+  int get searchOverlayStamp => Object.hash(
+        _searchHistory.length,
+        _searchHistory.isEmpty ? null : _searchHistory.first,
+        _recentlyViewedProducts.length,
+        _recentlyViewedProducts.isEmpty
+            ? null
+            : _recentlyViewedProducts.first.name,
+      );
+
   /// Eager customer session after login form success — unblocks UI before the
   /// auth listener finishes profile hydration.
   Future<void> applyCustomerSessionFromSignIn({String? role}) async {
@@ -152,7 +178,14 @@ class AppState extends ChangeNotifier {
       profile = await _authService
           .getUserProfile()
           .timeout(const Duration(seconds: 3));
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      RuntimeDiagnosticLogger.logFailure(
+        'AppState',
+        error,
+        stackTrace,
+        context: 'applyCustomerSessionProfile',
+      );
+    }
 
     _currentUser = UserIdentity.buildAuthUserMap(
       uid: user.id,
@@ -958,7 +991,6 @@ class AppState extends ChangeNotifier {
 
   void _handleCartStateChanged() {
     cartCountNotifier.value = _cartState.cart.length;
-    notifyListeners();
   }
 
   Future<void> _resolveLegacyCartProductIds({int? requestVersion}) async {
@@ -995,9 +1027,9 @@ class AppState extends ChangeNotifier {
     }
 
     if (didResolveAny || _cartAttentionKeys.isNotEmpty) {
-      _cartState.replaceCart(cartItems, notify: false);
-      _handleCartStateChanged();
+      _cartState.replaceCart(cartItems);
       await _persistCartState();
+      notifyListeners();
     }
   }
 
@@ -1473,7 +1505,7 @@ class AppState extends ChangeNotifier {
       );
       if (requestId != _cartRevalidationRequestId) return null;
 
-      _cartState.replaceCart(result.updatedProducts, notify: false);
+      _cartState.replaceCart(result.updatedProducts);
       _cartAttentionKeys
         ..clear()
         ..addAll(result.removedProducts.map(_productIdentity));

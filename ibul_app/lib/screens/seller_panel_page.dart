@@ -15,12 +15,9 @@ import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
-import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -38,6 +35,10 @@ import '../services/auth_service.dart';
 import '../services/support_service.dart';
 import '../services/campaign_service.dart';
 import '../services/order_service.dart';
+import '../features/seller/panel/cargo/seller_cargo_entry_area.dart';
+import '../features/seller/panel/cargo/seller_cargo_dialog.dart';
+import '../features/seller/panel/cargo/seller_cargo_dialog_config.dart';
+import '../features/seller/panel/widgets/store_location_change_dialog.dart';
 import '../utils/dynamic_value_helpers.dart';
 import '../services/kitchen_print_trace_log.dart';
 import '../services/order_print_job_service.dart';
@@ -69,7 +70,7 @@ import '../widgets/garson/garson_compact_layout.dart';
 import '../models/mixed_service_order.dart';
 import '../models/seller_product.dart';
 import '../models/product_pricing.dart';
-import 'home_screen.dart';
+import '../core/home_navigation.dart';
 import 'seller_login_page.dart';
 import 'seller/add_product_page.dart';
 import '../models/sub_admin.dart';
@@ -100,6 +101,10 @@ import '../features/seller/dashboard/widgets/seller_dashboard_primitives.dart';
 import '../features/seller/dashboard/widgets/seller_dashboard_overview_widgets.dart';
 import '../features/seller/panel/helpers/seller_panel_lifecycle_guards.dart';
 import '../features/seller/panel/helpers/restaurant_printer_eligibility.dart';
+import '../features/seller/panel/printer_center/printer_receipt_routing.dart';
+import '../features/seller/panel/printer_center/printer_service_status.dart';
+import '../features/seller/panel/printer_center/printer_workflow_messages.dart';
+import '../features/seller/panel/printer_center/widgets/printer_service_view.dart';
 import '../features/seller/panel/helpers/seller_desktop_app_banner_prefs.dart';
 import '../features/seller/panel/helpers/seller_logout_helper.dart';
 import '../services/restaurant_offline/restaurant_offline_snapshot_sync.dart';
@@ -113,6 +118,7 @@ import '../features/seller/panel/widgets/seller_panel_detail_widgets.dart';
 import '../features/seller/panel/widgets/seller_panel_shell.dart';
 import '../features/seller/panel/widgets/seller_feedback_dashboard_widgets.dart';
 import '../features/seller/panel/widgets/seller_store_profile_dashboard_widgets.dart';
+import '../features/seller/panel/widgets/ihiz_store_profile_card.dart';
 import '../ads/presentation/pages/seller_ads_manager_content.dart';
 import '../features/seller/finance/screens/finance_shell.dart';
 import '../features/seller/achievements/models/seller_badge_models.dart';
@@ -206,51 +212,7 @@ String _normalizePrinterWorkflowMessageValue(
   Object error, {
   required String fallback,
 }) {
-  // Fast path: LocalPrintServiceException with a structured errorCode.
-  if (error is LocalPrintServiceException &&
-      error.details is Map<String, dynamic>) {
-    final details = error.details! as Map<String, dynamic>;
-    final errorCode = details['errorCode']?.toString().trim() ?? '';
-    if (errorCode == 'cups_queue_busy' || errorCode == 'cups_queue_stuck') {
-      final queue =
-          details['printer_queue']?.toString().trim() ??
-          details['queue']?.toString().trim() ??
-          '';
-      // Show a concise, actionable message — not the raw JSON blob.
-      return queue.isNotEmpty
-          ? 'Yazıcı kuyruğu meşgul ($queue). '
-                "Sistem Ayarları > Yazıcılar'dan kuyruğu temizleyin veya USB'yi çıkarıp takın."
-          : 'Yazıcı kuyruğu meşgul. '
-                "Sistem Ayarları > Yazıcılar'dan kuyruğu temizleyin veya USB'yi çıkarıp takın.";
-    }
-  }
-  final rawMessage = error.toString().replaceFirst('Exception: ', '').trim();
-  if (rawMessage.isEmpty) {
-    return fallback;
-  }
-  final normalized = rawMessage.toLowerCase();
-  if (normalized.contains('macos yazıcıyı kilitledi')) {
-    return 'macOS yazıcıyı kilitledi. Sistem Ayarları > Yazıcılar içinde '
-        'POS58/CUPS kaydini kaldirin, sonra gelen izin penceresinden USB '
-        'kilidini acin.';
-  }
-  // cups_queue_busy/stuck can also surface as a plain string (e.g. from
-  // the job-failed row in the queue tracking table).
-  if (normalized.contains('cups_queue_busy') ||
-      normalized.contains('cups_queue_stuck') ||
-      normalized.contains('kuyruğunda bekleyen işler var')) {
-    return 'Yazıcı kuyruğu meşgul. '
-        "Sistem Ayarları > Yazıcılar'dan kuyruğu temizleyin veya USB'yi çıkarıp takın.";
-  }
-  if (normalized.contains('aktif yazdirma yetkisi yok') ||
-      normalized.contains('bu restoranda aktif') ||
-      normalized.contains('bu restoran için işlem yetkiniz yok') ||
-      normalized.contains('permission denied') ||
-      normalized.contains('row-level security') ||
-      normalized.contains('42501')) {
-    return rawMessage;
-  }
-  return rawMessage;
+  return normalizePrinterWorkflowMessage(error, fallback: fallback);
 }
 
 class _SellerDashboardSnapshot {
@@ -5471,12 +5433,7 @@ class _SellerPanelPageState extends State<SellerPanelPage>
               debugPrint(
                 '[SellerExit] store deleted — navigating to / via rootNavigator',
               );
-              Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                buildAppPageRoute<void>(
-                  builder: (_) => const HomeScreen(initialIndex: 4),
-                ),
-                (route) => false,
-              );
+              HomeNavigation.openHome(context, initialIndex: 4);
             }
           }
           return;
@@ -7433,7 +7390,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   Future<void> _openLocationChangeDialog() async {
     final result = await showDialog<Map<String, double>>(
       context: context,
-      builder: (_) => _StoreLocationChangeDialog(
+      builder: (_) => StoreLocationChangeDialog(
         initialLat: _storeLat,
         initialLng: _storeLng,
       ),
@@ -13063,21 +13020,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     }
   }
 
-  /// Human-readable relative time, max precision minutes
   String _timeAgoShort(DateTime past) {
-    final diff = DateTime.now().difference(past);
-    if (diff.inSeconds < 60) return 'şimdi';
-    if (diff.inMinutes < 60) return '${diff.inMinutes} dk önce';
-    if (diff.inHours < 24) return '${diff.inHours} sa önce';
-    return '${diff.inDays} gün önce';
+    return printerServiceTimeAgoShort(past);
   }
 
   Color _localPrintStatusColor(bool? isAvailable) {
-    return isAvailable == true
-        ? const Color(0xFF16A34A)
-        : isAvailable == false
-        ? const Color(0xFFDC2626)
-        : const Color(0xFF6B7280);
+    return printerServiceStatusColor(isAvailable);
   }
 
   void _setLocalPrintPanelBusy({bool? refreshing, bool? testing}) {
@@ -13161,182 +13109,61 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Widget _buildLocalPrintServicePanel({required String uiBranch}) {
-    return ValueListenableBuilder<int>(
-      valueListenable: _localPrintUiRevision,
-      builder: (context, value, child) {
-        return _buildLocalPrintServicePanelBody(uiBranch: uiBranch);
-      },
+  PrinterServiceSnapshot _printerServiceSnapshot() {
+    return PrinterServiceSnapshot(
+      isAvailable: _isLocalPrintAvailable,
+      label: _localPrintStatusLabel,
+      message: _localPrintStatusMessage,
+      lastSuccessAgo: _lastLocalPrintSuccessAt != null
+          ? printerServiceTimeAgoShort(_lastLocalPrintSuccessAt!)
+          : null,
+      refreshing: _isLocalPrintRefreshing,
+      testing: _isLocalPrintTesting,
     );
   }
 
-  Widget _buildLocalPrintServicePanelBody({required String uiBranch}) {
-    final isAvailable = _isLocalPrintAvailable;
-    final statusColor = _localPrintStatusColor(isAvailable);
-    final statusDetail = _localPrintStatusMessage;
+  void _logLocalPrintPanelBuild(String uiBranch) {
+    final snapshot = _printerServiceSnapshot();
     final signature =
-        '$uiBranch|${isAvailable ?? 'unknown'}|$_localPrintStatusLabel|'
-        '$statusDetail|$_isLocalPrintRefreshing|$_isLocalPrintTesting';
+        '$uiBranch|${snapshot.isAvailable ?? 'unknown'}|${snapshot.label}|'
+        '${snapshot.message}|${snapshot.refreshing}|${snapshot.testing}';
     if (_localPrintPanelRenderSignatures[uiBranch] != signature) {
       _localPrintPanelRenderSignatures[uiBranch] = signature;
       debugPrint(
         '[LocalPrint][Panel] build uiBranch=$uiBranch '
-        'available=${isAvailable ?? 'unknown'} '
-        'label=$_localPrintStatusLabel '
-        'refreshing=$_isLocalPrintRefreshing testing=$_isLocalPrintTesting',
+        'available=${snapshot.isAvailable ?? 'unknown'} '
+        'label=${snapshot.label} '
+        'refreshing=${snapshot.refreshing} testing=${snapshot.testing}',
       );
     }
-    final isBusy = _isLocalPrintRefreshing || _isLocalPrintTesting;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0F0F172A),
-            blurRadius: 18,
-            offset: Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                alignment: Alignment.center,
-                child: Icon(Icons.print_outlined, color: statusColor, size: 20),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Yazıcı Servisi',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF111827),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Durum ve kısa test işlemleri',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (isBusy)
-                SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(statusColor),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: statusColor.withValues(alpha: 0.18)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Durum',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _localPrintStatusLabel,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: statusColor,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  statusDetail,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade700,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: isBusy
-                      ? null
-                      : () => _handleLocalPrintPanelRefresh(uiBranch: uiBranch),
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text('Yenile'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: isBusy
-                      ? null
-                      : () => _handleLocalPrintPanelTest(uiBranch: uiBranch),
-                  icon: const Icon(Icons.receipt_long_outlined, size: 18),
-                  label: const Text('Test Yazdır'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Bu bilgisayarda yazıcı servisi açık olmalıdır.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade700,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Servis kapalıysa kurulum dökümanındaki tek seferlik başlatma adımlarını uygulayın.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade700,
-              height: 1.35,
-            ),
-          ),
-        ],
-      ),
+  }
+
+  void _logLocalPrintBadgeBuild(String uiBranch) {
+    final snapshot = _printerServiceSnapshot();
+    final signature =
+        '$uiBranch|${snapshot.isAvailable ?? 'unknown'}|${snapshot.label}|${snapshot.message}';
+    if (_localPrintStatusRenderSignatures[uiBranch] != signature) {
+      _localPrintStatusRenderSignatures[uiBranch] = signature;
+      debugPrint(
+        '[LocalPrint][Status] uiUpdated reason=build '
+        'uiBranch=$uiBranch available=${snapshot.isAvailable ?? 'unknown'} '
+        'label=${snapshot.label} message=${snapshot.message} '
+        'stateUpdated=false',
+      );
+    }
+  }
+
+  Widget _buildLocalPrintServicePanel({required String uiBranch}) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _localPrintUiRevision,
+      builder: (context, value, child) {
+        _logLocalPrintPanelBuild(uiBranch);
+        return PrinterServicePanel(
+          snapshot: _printerServiceSnapshot(),
+          onRefresh: () => _handleLocalPrintPanelRefresh(uiBranch: uiBranch),
+          onTest: () => _handleLocalPrintPanelTest(uiBranch: uiBranch),
+        );
+      },
     );
   }
 
@@ -13344,281 +13171,37 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
     return ValueListenableBuilder<int>(
       valueListenable: _localPrintUiRevision,
       builder: (context, value, child) {
-        return _buildLocalPrintStatusBadgeBody(uiBranch: uiBranch);
+        _logLocalPrintBadgeBuild(uiBranch);
+        return PrinterServiceStatusBadge(snapshot: _printerServiceSnapshot());
       },
     );
   }
 
-  Widget _buildLocalPrintStatusBadgeBody({required String uiBranch}) {
-    final isAvailable = _isLocalPrintAvailable;
-    final color = _localPrintStatusColor(isAvailable);
-    final signature =
-        '$uiBranch|${isAvailable ?? 'unknown'}|$_localPrintStatusLabel|$_localPrintStatusMessage';
-    if (_localPrintStatusRenderSignatures[uiBranch] != signature) {
-      _localPrintStatusRenderSignatures[uiBranch] = signature;
-      debugPrint(
-        '[LocalPrint][Status] uiUpdated reason=build '
-        'uiBranch=$uiBranch available=${isAvailable ?? 'unknown'} '
-        'label=$_localPrintStatusLabel message=$_localPrintStatusMessage '
-        'stateUpdated=false',
-      );
-    }
-    return Tooltip(
-      message: _localPrintStatusMessage,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: color.withValues(alpha: 0.24)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              _localPrintStatusLabel,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: color,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Compact single-row bar shown in the garson page instead of the big panel.
   Widget _buildPrinterServiceCompactBar({required String uiBranch}) {
     return ValueListenableBuilder<int>(
       valueListenable: _localPrintUiRevision,
       builder: (context, value, child) {
-        return _buildPrinterServiceCompactBarBody(uiBranch: uiBranch);
+        return PrinterServiceCompactBar(
+          snapshot: _printerServiceSnapshot(),
+          statusBadge: _buildLocalPrintStatusBadge(uiBranch: '${uiBranch}_bar'),
+          onOpen: () => _showPrinterServiceSheet(uiBranch: uiBranch),
+        );
       },
-    );
-  }
-
-  Widget _buildPrinterServiceCompactBarBody({required String uiBranch}) {
-    final isAvailable = _isLocalPrintAvailable;
-    final isChecking = isAvailable == null;
-    final color = _localPrintStatusColor(isAvailable);
-    return GestureDetector(
-      onTap: () => _showPrinterServiceSheet(uiBranch: uiBranch),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-        ),
-        child: Row(
-          children: [
-            if (isChecking)
-              SizedBox(
-                width: 12,
-                height: 12,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.5,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    const Color(0xFF9CA3AF),
-                  ),
-                ),
-              )
-            else
-              Icon(Icons.print_outlined, size: 14, color: color),
-            const SizedBox(width: 6),
-            const Text(
-              'Yazıcı Servisi',
-              style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-            ),
-            const SizedBox(width: 8),
-            _buildLocalPrintStatusBadge(uiBranch: '${uiBranch}_bar'),
-            const Spacer(),
-            const Text(
-              'Detay',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF9CA3AF),
-              ),
-            ),
-            const SizedBox(width: 2),
-            const Icon(
-              Icons.chevron_right_rounded,
-              size: 14,
-              color: Color(0xFF9CA3AF),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
   void _showPrinterServiceSheet({required String uiBranch}) {
-    final isAvailable = _isLocalPrintAvailable;
-    final statusColor = _localPrintStatusColor(isAvailable);
-    final statusLabel = _localPrintStatusLabel;
-    // Use the rich detailed message produced by _localPrintHealthMessage,
-    // not a hardcoded fallback.
-    final statusDetail = _localPrintStatusMessage;
-    final lastSuccessStr = _lastLocalPrintSuccessAt != null
-        ? _timeAgoShort(_lastLocalPrintSuccessAt!)
-        : null;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    unawaited(
+      showPrinterServiceSheet(
+        context: context,
+        snapshot: _printerServiceSnapshot(),
+        onRefresh: () => _handleLocalPrintPanelRefresh(
+          uiBranch: '${uiBranch}_sheet',
+        ),
+        onTest: () => _handleLocalPrintPanelTest(
+          uiBranch: '${uiBranch}_sheet',
+        ),
       ),
-      builder: (ctx) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.print_outlined, color: statusColor, size: 20),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Yazıcı Servisi',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    icon: const Icon(Icons.close_rounded),
-                    iconSize: 20,
-                    tooltip: 'Kapat',
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(32, 32),
-                      padding: EdgeInsets.zero,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: statusColor.withValues(alpha: 0.20),
-                  ),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      margin: const EdgeInsets.only(top: 4),
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            statusLabel,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: statusColor,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            statusDetail,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade700,
-                              height: 1.35,
-                            ),
-                          ),
-                          if (lastSuccessStr != null &&
-                              isAvailable != true) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              'Son başarılı bağlantı: $lastSuccessStr',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Color(0xFF6B7280),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _handleLocalPrintPanelRefresh(
-                          uiBranch: '${uiBranch}_sheet',
-                        );
-                      },
-                      icon: const Icon(Icons.refresh_rounded, size: 16),
-                      label: const Text('Yenile'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _handleLocalPrintPanelTest(
-                          uiBranch: '${uiBranch}_sheet',
-                        );
-                      },
-                      icon: const Icon(Icons.receipt_long_outlined, size: 16),
-                      label: const Text('Test Yazdır'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Bu bilgisayarda yazıcı servisi açık olmalıdır. '
-                'Kapalıysa kurulum dökümanındaki başlatma adımlarını uygulayın. '
-                'Servis durumu 30 saniyede bir otomatik kontrol edilir.',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.grey.shade600,
-                  height: 1.35,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -13765,97 +13348,17 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 
   bool _hasConfiguredAdisyonPrinter(Map<String, dynamic>? stationConfig) {
-    if (stationConfig == null) return false;
-    final roleMappings = stationConfig['role_mappings'];
-    if (roleMappings is Map) {
-      final adisyon = roleMappings['adisyon'];
-      if (adisyon is Map) {
-        final bridgeId =
-            adisyon['id']?.toString().trim() ??
-            adisyon['bridgePrinterId']?.toString().trim() ??
-            '';
-        if (bridgeId.isNotEmpty) return true;
-      }
-    }
-    final printerId =
-        stationConfig['adisyon_printer_id']?.toString().trim() ?? '';
-    return printerId.isNotEmpty;
+    return hasConfiguredAdisyonPrinter(stationConfig);
   }
 
   Map<String, dynamic> _enrichQueuedReceiptPayloadWithPrinterRouting(
     Map<String, dynamic> payload, {
     required Map<String, dynamic>? stationConfig,
   }) {
-    final nextPayload = Map<String, dynamic>.from(payload)
-      ..['printer_role'] = 'adisyon'
-      ..['document_type'] = 'receipt'
-      ..['job_type'] = 'receipt';
-
-    final roleMappings = stationConfig?['role_mappings'];
-    if (roleMappings is Map) {
-      final receiptRole = roleMappings['adisyon'];
-      if (receiptRole is Map) {
-        final printer = Map<String, dynamic>.from(receiptRole);
-        final bridgePrinterId =
-            printer['id']?.toString().trim() ??
-            printer['bridgePrinterId']?.toString().trim() ??
-            '';
-        final printerRecordId =
-            printer['printerRecordId']?.toString().trim() ??
-            printer['printer_record_id']?.toString().trim() ??
-            '';
-        final printerName =
-            printer['displayName']?.toString().trim() ??
-            printer['name']?.toString().trim() ??
-            '';
-        final printerQueue =
-            printer['queueName']?.toString().trim() ??
-            printer['queue']?.toString().trim() ??
-            '';
-        final printerBackend =
-            printer['backend']?.toString().trim() ??
-            printer['transportType']?.toString().trim() ??
-            '';
-        final deviceIdentifier =
-            printer['deviceIdentifier']?.toString().trim() ??
-            printer['device_identifier']?.toString().trim() ??
-            '';
-        nextPayload['printer'] = printer;
-        if (bridgePrinterId.isNotEmpty) {
-          nextPayload['printer_id'] = bridgePrinterId;
-        }
-        if (printerRecordId.isNotEmpty) {
-          nextPayload['printer_record_id'] = printerRecordId;
-        }
-        if (printerName.isNotEmpty) {
-          nextPayload['printer_name'] = printerName;
-        }
-        if (printerQueue.isNotEmpty) {
-          nextPayload['printer_queue'] = printerQueue;
-        }
-        if (printerBackend.isNotEmpty) {
-          nextPayload['printer_backend'] = printerBackend;
-        }
-        if (deviceIdentifier.isNotEmpty) {
-          nextPayload['printer_device_identifier'] = deviceIdentifier;
-        }
-        return nextPayload;
-      }
-    }
-
-    final printerId =
-        stationConfig?['adisyon_printer_id']?.toString().trim() ?? '';
-    final printerName =
-        stationConfig?['adisyon_printer_name']?.toString().trim() ?? '';
-    if (printerId.isNotEmpty) {
-      nextPayload['printer_id'] = printerId;
-      nextPayload['printer_record_id'] = printerId;
-    }
-    if (printerName.isNotEmpty) {
-      nextPayload['printer_name'] = printerName;
-    }
-
-    return nextPayload;
+    return enrichQueuedReceiptPayloadWithPrinterRouting(
+      payload,
+      stationConfig: stationConfig,
+    );
   }
 
   String _normalizePrinterWorkflowMessage(
@@ -16274,6 +15777,12 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
               const SizedBox(height: 10),
               StoreProfileCompletionCard(snapshot: completion),
               const SizedBox(height: 10),
+              if ((_authService.currentUser?.id ?? '').trim().isNotEmpty)
+                IhizStoreProfileCard(
+                  storeId: _authService.currentUser!.id.trim(),
+                ),
+              if ((_authService.currentUser?.id ?? '').trim().isNotEmpty)
+                const SizedBox(height: 10),
               _buildStoreInfoCard(),
               const SizedBox(height: 10),
               _buildContactInfoCard(),
@@ -19496,1312 +19005,108 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         : _sellerWalletReady
         ? 'Cuzdan: ${_formatDashboardCurrency(_sellerWalletAvailableBalance)} (rezerve: ${_formatDashboardCurrency(_sellerWalletReservedBalance)})'
         : (_sellerWalletError ?? 'Cuzdan durumu bilinmiyor');
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF4F8FF),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFD7E4FF)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Kargo Cik Alani',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF1F2A44),
-                  ),
-                ),
-                SizedBox(height: 6),
-                const Text(
-                  'Dis kaynakli siparisleri buradan ekleyip dogrudan IHIZ teslimat akisina aktarabilirsiniz.',
-                  style: TextStyle(fontSize: 12, color: Color(0xFF475467)),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  walletText,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: _sellerWalletReady
-                        ? const Color(0xFF1D4ED8)
-                        : const Color(0xFFB42318),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Not: Kargo siparisi acmak icin satıcı cüzdaninda bakiye bulunmasi zorunludur.',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF667085)),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _showSellerWalletTopupDialog,
-                icon: const Icon(Icons.account_balance_wallet_outlined),
-                label: const Text('Bakiye Yukle'),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(0, 40),
-                  side: const BorderSide(color: Color(0xFFD0DBFF)),
-                  foregroundColor: const Color(0xFF1D4ED8),
-                ),
-              ),
-              const SizedBox(height: 8),
-              FilledButton.icon(
-                onPressed: _showSellerExternalCargoDialog,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('Kargo Siparisi Ekle'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(0, 44),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+    return SellerCargoEntryArea(
+      walletText: walletText,
+      walletReady: _sellerWalletReady,
+      onTopup: () {
+        unawaited(_showSellerWalletTopupDialog());
+      },
+      onAddOrder: () {
+        unawaited(_showSellerExternalCargoDialog());
+      },
     );
   }
 
   Future<void> _showSellerExternalCargoDialog() async {
     await _loadSellerWalletBalance(silent: true);
     if (!mounted) return;
-    final formKey = GlobalKey<FormState>();
-    final customerNameController = TextEditingController();
-    final customerPhoneController = TextEditingController();
-    final addressController = TextEditingController();
-    final buildingController = TextEditingController();
-    final productNameController = TextEditingController();
-    final quantityController = TextEditingController(text: '1');
-    final unitPriceController = TextEditingController();
-    final noteController = TextEditingController();
-    final previewMapController = MapController();
-
-    String selectedProvince = _selectedCity.trim();
-    if (!_cargoProvinceOptions.contains(selectedProvince)) {
-      selectedProvince = 'İstanbul';
-    }
-    String selectedDistrict = _selectedDistrict.trim().isNotEmpty
-        ? _selectedDistrict.trim()
-        : _cargoDefaultDistrictForProvince(selectedProvince);
-    bool showProvinceOptions = false;
-    bool showDistrictOptions = false;
-
-    double? selectedLat;
-    double? selectedLng;
-    LatLng previewCenter =
-        _cargoProvinceCenters[selectedProvince] ?? const LatLng(39.0, 35.0);
-    bool isAddressVerified = false;
-    String? verifiedAddressText;
-    bool isSearchingAddress = false;
-    bool isResolvingRegionCenter = false;
-    bool isDetectingLocationRegion = false;
-    bool didRequestLocationRegionPrefill = false;
-    Timer? addressLookupDebounce;
-    int addressLookupRequestId = 0;
-    List<_SellerCargoGeocodeSuggestion> addressSuggestions =
-        <_SellerCargoGeocodeSuggestion>[];
-
-    try {
-      final created = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) {
-          bool isSubmitting = false;
-          return StatefulBuilder(
-            builder: (context, setModalState) {
-              Future<void> submit() async {
-                if (!(formKey.currentState?.validate() ?? false)) return;
-                final sellerId = _authService.currentUser?.id ?? '';
-                if (sellerId.isEmpty) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    const SnackBar(
-                      content: Text('Satıcı oturumu doğrulanamadı.'),
-                    ),
-                  );
-                  return;
-                }
-                final quantity =
-                    int.tryParse(quantityController.text.trim()) ?? 0;
-                final unitPrice = _parseSellerCurrencyInput(
-                  unitPriceController.text,
-                );
-                if (quantity <= 0 || unitPrice < 0) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Adet ve birim tutar bilgilerini kontrol edin.',
-                      ),
-                    ),
-                  );
-                  return;
-                }
-                if (_sellerWalletReady && _sellerWalletAvailableBalance <= 0) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Kargo siparisi icin once satıcı cüzdanina bakiye yukleyin.',
-                      ),
-                    ),
-                  );
-                  return;
-                }
-
-                setModalState(() {
-                  isSubmitting = true;
-                });
-                try {
-                  final normalizedPhone = customerPhoneController.text
-                      .replaceAll(RegExp(r'[^0-9]'), '')
-                      .trim();
-                  if (normalizedPhone.length < 10 ||
-                      normalizedPhone.length > 11) {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Telefon numarası 10 veya 11 haneli olmalıdır.',
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-                  if (selectedProvince.trim().isEmpty ||
-                      selectedDistrict.trim().isEmpty) {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(content: Text('Lütfen il ve ilçe seçin.')),
-                    );
-                    return;
-                  }
-                  if (selectedLat == null ||
-                      selectedLng == null ||
-                      !isAddressVerified) {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'İHIZ teslimatı için adresi haritada doğrulamanız gerekir.',
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-
-                  final finalAddress = <String>[
-                    addressController.text.trim(),
-                    if (buildingController.text.trim().isNotEmpty)
-                      buildingController.text.trim(),
-                  ].join(', ');
-
-                  final mergedNoteParts = <String>[
-                    if (noteController.text.trim().isNotEmpty)
-                      noteController.text.trim(),
-                    if (verifiedAddressText != null &&
-                        verifiedAddressText!.trim().isNotEmpty)
-                      'Map: ${verifiedAddressText!.trim()}',
-                  ];
-
-                  await OrderService.instance.createSellerExternalCargoOrder(
-                    sellerId: sellerId,
-                    customerName: customerNameController.text.trim(),
-                    customerPhone: normalizedPhone,
-                    customerAddress: finalAddress,
-                    city: selectedProvince,
-                    district: selectedDistrict,
-                    customerLat: selectedLat,
-                    customerLng: selectedLng,
-                    productName: productNameController.text.trim().isEmpty
-                        ? null
-                        : productNameController.text.trim(),
-                    quantity: quantity,
-                    unitPrice: unitPrice,
-                    note: mergedNoteParts.isEmpty
-                        ? null
-                        : mergedNoteParts.join('\n'),
-                    storeName: _storeNameController.text.trim(),
-                  );
-                  await _loadSellerWalletBalance(silent: true);
-                  if (!mounted || !dialogContext.mounted) return;
-                  Navigator.of(dialogContext).pop(true);
-                } catch (e) {
-                  if (!mounted || !dialogContext.mounted) return;
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    SnackBar(content: Text(_mapSellerCargoCreateError(e))),
-                  );
-                } finally {
-                  if (mounted && dialogContext.mounted) {
-                    setModalState(() {
-                      isSubmitting = false;
-                    });
-                  }
-                }
-              }
-
-              InputDecoration inputDecoration(String label, {String? hint}) {
-                return InputDecoration(
-                  labelText: label,
-                  hintText: hint,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
-                  ),
-                );
-              }
-
-              void setPreviewCenter(
-                LatLng center, {
-                double zoom = 12,
-                bool updateState = true,
-              }) {
-                if (updateState) {
-                  setModalState(() {
-                    previewCenter = center;
-                  });
-                } else {
-                  previewCenter = center;
-                }
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  try {
-                    previewMapController.move(center, zoom);
-                  } catch (_) {}
-                });
-              }
-
-              List<String> effectiveDistrictOptions() {
-                final options = _cargoDistrictOptionsForProvince(
-                  selectedProvince,
-                );
-                if (selectedDistrict.trim().isNotEmpty &&
-                    !options.contains(selectedDistrict)) {
-                  return <String>[selectedDistrict, ...options];
-                }
-                return options;
-              }
-
-              Future<void> focusMapToSelectedRegion({
-                bool clearPickedPoint = false,
-              }) async {
-                if (clearPickedPoint) {
-                  setModalState(() {
-                    selectedLat = null;
-                    selectedLng = null;
-                    isAddressVerified = false;
-                  });
-                }
-                final fallback =
-                    _cargoProvinceCenters[selectedProvince] ??
-                    const LatLng(39.0, 35.0);
-                setModalState(() {
-                  isResolvingRegionCenter = true;
-                });
-                setPreviewCenter(fallback, zoom: 10.8, updateState: true);
-
-                try {
-                  final query = <String>[
-                    selectedDistrict.trim(),
-                    selectedProvince.trim(),
-                    'Türkiye',
-                  ].where((e) => e.isNotEmpty).join(', ');
-                  final batch = await _cargoFetchAddressSuggestions(query);
-                  if (batch.isNotEmpty) {
-                    final center = LatLng(batch.first.lat, batch.first.lng);
-                    setPreviewCenter(center, zoom: 12.8, updateState: true);
-                  }
-                } catch (_) {
-                } finally {
-                  if (dialogContext.mounted) {
-                    setModalState(() {
-                      isResolvingRegionCenter = false;
-                    });
-                  }
-                }
-              }
-
-              Future<void> lookupAddressSuggestions() async {
-                final detail = addressController.text.trim();
-                if (detail.length < 4) {
-                  setModalState(() {
-                    isSearchingAddress = false;
-                    addressSuggestions = <_SellerCargoGeocodeSuggestion>[];
-                  });
-                  return;
-                }
-                final normalizedDetail = _cargoNormalizeAddressQueryText(
-                  detail,
-                );
-                final streetToken = _cargoExtractStreetToken(normalizedDetail);
-                final streetQueries = _cargoBuildStreetFocusedQueries(
-                  normalizedDetail: normalizedDetail,
-                  building: buildingController.text.trim(),
-                  selectedDistrict: selectedDistrict,
-                  selectedProvince: selectedProvince,
-                );
-                final genericQueries = _cargoBuildAddressQueries(
-                  detail: detail,
-                  building: buildingController.text.trim(),
-                  selectedDistrict: selectedDistrict,
-                  selectedProvince: selectedProvince,
-                );
-                final queries = <String>{
-                  ...streetQueries,
-                  ...genericQueries,
-                }.toList(growable: false);
-                if (queries.isEmpty) return;
-
-                final requestId = ++addressLookupRequestId;
-                setModalState(() {
-                  isSearchingAddress = true;
-                });
-                try {
-                  final collected = <_SellerCargoGeocodeSuggestion>[];
-                  final maxRequests = streetToken == null ? 4 : 6;
-                  final effectiveQueries = queries.take(maxRequests);
-                  for (final query in effectiveQueries) {
-                    final batch = await _cargoFetchAddressSuggestions(query);
-                    if (!dialogContext.mounted ||
-                        requestId != addressLookupRequestId) {
-                      return;
-                    }
-                    if (batch.isNotEmpty) {
-                      collected.addAll(batch);
-                    }
-                    if (collected.length >= 24) break;
-                    if (streetToken != null) {
-                      final hasStrongStreet = collected.any(
-                        (s) =>
-                            _cargoScoreSuggestion(
-                              s,
-                              detail: detail,
-                              selectedProvince: selectedProvince,
-                              selectedDistrict: selectedDistrict,
-                            ) >=
-                            70,
-                      );
-                      if (hasStrongStreet && collected.length >= 8) {
-                        break;
-                      }
-                    }
-                  }
-
-                  final deduped = <String, _SellerCargoGeocodeSuggestion>{};
-                  for (final suggestion in collected) {
-                    final key =
-                        '${suggestion.lat.toStringAsFixed(6)}_${suggestion.lng.toStringAsFixed(6)}_${suggestion.label.toLowerCase()}';
-                    deduped.putIfAbsent(key, () => suggestion);
-                  }
-
-                  final sorted = deduped.values.toList(growable: false)
-                    ..sort(
-                      (a, b) =>
-                          _cargoScoreSuggestion(
-                            b,
-                            detail: detail,
-                            selectedProvince: selectedProvince,
-                            selectedDistrict: selectedDistrict,
-                          ).compareTo(
-                            _cargoScoreSuggestion(
-                              a,
-                              detail: detail,
-                              selectedProvince: selectedProvince,
-                              selectedDistrict: selectedDistrict,
-                            ),
-                          ),
-                    );
-
-                  setModalState(() {
-                    isSearchingAddress = false;
-                    addressSuggestions = sorted.take(8).toList(growable: false);
-                  });
-                } catch (_) {
-                  if (!dialogContext.mounted ||
-                      requestId != addressLookupRequestId) {
-                    return;
-                  }
-                  setModalState(() {
-                    isSearchingAddress = false;
-                    addressSuggestions = <_SellerCargoGeocodeSuggestion>[];
-                  });
-                }
-              }
-
-              void scheduleLookup() {
-                if (isAddressVerified) {
-                  setModalState(() {
-                    isAddressVerified = false;
-                  });
-                }
-                addressLookupDebounce?.cancel();
-                addressLookupDebounce = Timer(
-                  const Duration(milliseconds: 500),
-                  lookupAddressSuggestions,
-                );
-              }
-
-              Future<void> applySuggestion(
-                _SellerCargoGeocodeSuggestion suggestion,
-              ) async {
-                setModalState(() {
-                  selectedLat = suggestion.lat;
-                  selectedLng = suggestion.lng;
-                  isAddressVerified = true;
-                  verifiedAddressText = suggestion.label;
-                  final matchedProvince = _cargoMatchProvinceOption(
-                    suggestion.province,
-                  );
-                  if (matchedProvince != null) {
-                    selectedProvince = matchedProvince;
-                  }
-                  final matchedDistrict = _cargoMatchDistrictOption(
-                    suggestion.district,
-                    selectedProvince,
-                  );
-                  if (matchedDistrict != null) {
-                    selectedDistrict = matchedDistrict;
-                  } else if (suggestion.district.trim().isNotEmpty) {
-                    selectedDistrict = suggestion.district.trim();
-                  }
-                  addressSuggestions = <_SellerCargoGeocodeSuggestion>[];
-                  showProvinceOptions = false;
-                  showDistrictOptions = false;
-                });
-                setPreviewCenter(
-                  LatLng(suggestion.lat, suggestion.lng),
-                  zoom: 15.2,
-                  updateState: false,
-                );
-              }
-
-              Future<void> reverseGeocodeFromPoint({
-                required double lat,
-                required double lng,
-                bool fillAddressIfEmpty = false,
-              }) async {
-                try {
-                  final resolved = await _cargoReverseGeocode(
-                    lat: lat,
-                    lng: lng,
-                  );
-                  if (!dialogContext.mounted || resolved == null) return;
-                  setModalState(() {
-                    final matchedProvince = _cargoMatchProvinceOption(
-                      resolved.province,
-                    );
-                    if (matchedProvince != null) {
-                      selectedProvince = matchedProvince;
-                    }
-                    final matchedDistrict = _cargoMatchDistrictOption(
-                      resolved.district,
-                      selectedProvince,
-                    );
-                    if (matchedDistrict != null) {
-                      selectedDistrict = matchedDistrict;
-                    } else if (resolved.district.trim().isNotEmpty) {
-                      selectedDistrict = resolved.district.trim();
-                    }
-                    verifiedAddressText = resolved.label;
-                    isAddressVerified = true;
-                  });
-                  if (fillAddressIfEmpty &&
-                      addressController.text.trim().isEmpty) {
-                    addressController.text = resolved.label;
-                  }
-                } catch (_) {}
-              }
-
-              Future<void> prefillRegionFromCurrentLocation() async {
-                setModalState(() {
-                  isDetectingLocationRegion = true;
-                });
-                try {
-                  final resolved = await _cargoResolveCurrentLocation();
-                  if (!dialogContext.mounted || resolved == null) return;
-                  setPreviewCenter(
-                    LatLng(resolved.lat, resolved.lng),
-                    zoom: 12.4,
-                    updateState: true,
-                  );
-                  setModalState(() {
-                    final matchedProvince = _cargoMatchProvinceOption(
-                      resolved.province,
-                    );
-                    if (matchedProvince != null) {
-                      selectedProvince = matchedProvince;
-                    }
-                    final matchedDistrict = _cargoMatchDistrictOption(
-                      resolved.district,
-                      selectedProvince,
-                    );
-                    if (matchedDistrict != null) {
-                      selectedDistrict = matchedDistrict;
-                    } else {
-                      final districts = _cargoDistrictOptionsForProvince(
-                        selectedProvince,
-                      );
-                      if (!districts.contains(selectedDistrict)) {
-                        selectedDistrict = districts.isNotEmpty
-                            ? districts.first
-                            : 'Merkez';
-                      }
-                    }
-                  });
-                } catch (_) {
-                } finally {
-                  if (dialogContext.mounted) {
-                    setModalState(() {
-                      isDetectingLocationRegion = false;
-                    });
-                  }
-                }
-              }
-
-              Future<void> openMapPicker() async {
-                final initialLat = selectedLat ?? previewCenter.latitude;
-                final initialLng = selectedLng ?? previewCenter.longitude;
-                final picked = await showDialog<Map<String, dynamic>>(
-                  context: dialogContext,
-                  builder: (_) => _StoreLocationChangeDialog(
-                    initialLat: initialLat,
-                    initialLng: initialLng,
-                  ),
-                );
-                if (picked == null || !dialogContext.mounted) return;
-                final lat = (picked['lat'] as num?)?.toDouble();
-                final lng = (picked['lng'] as num?)?.toDouble();
-                if (lat == null || lng == null) return;
-
-                setModalState(() {
-                  selectedLat = lat;
-                  selectedLng = lng;
-                  isAddressVerified = true;
-                  addressSuggestions = <_SellerCargoGeocodeSuggestion>[];
-                });
-                setPreviewCenter(
-                  LatLng(lat, lng),
-                  zoom: 15.2,
-                  updateState: false,
-                );
-                await reverseGeocodeFromPoint(
-                  lat: lat,
-                  lng: lng,
-                  fillAddressIfEmpty: true,
-                );
-              }
-
-              Widget selectorButton({
-                required String label,
-                required String value,
-                required IconData icon,
-                required bool isOpen,
-                required VoidCallback onTap,
-              }) {
-                return InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: isOpen
-                            ? AppColors.primary
-                            : Colors.grey.shade400,
-                        width: isOpen ? 1.5 : 1,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(icon, size: 18, color: AppColors.primary),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                label,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                value,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Icon(
-                          isOpen
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          color: Colors.grey.shade700,
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }
-
-              Widget inlineOptions({
-                required List<String> options,
-                required ValueChanged<String> onSelected,
-              }) {
-                return Container(
-                  margin: const EdgeInsets.only(top: 8),
-                  constraints: const BoxConstraints(maxHeight: 190),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: options.length,
-                    separatorBuilder: (context, index) =>
-                        Divider(height: 1, color: Colors.grey.shade200),
-                    itemBuilder: (context, index) {
-                      final item = options[index];
-                      return InkWell(
-                        onTap: () => onSelected(item),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          child: Text(
-                            item,
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                );
-              }
-
-              if (!didRequestLocationRegionPrefill) {
-                didRequestLocationRegionPrefill = true;
-                unawaited(prefillRegionFromCurrentLocation());
-              }
-
-              return AlertDialog(
-                title: const Text('Kargo Cik Alani'),
-                content: SizedBox(
-                  width: 680,
-                  child: Form(
-                    key: formKey,
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Dis kaynakli siparisi IHIZ sistemine ekleyin. Kayit, kuryelerin gorev havuzuna "hazir" olarak duser.',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF667085),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF5F8FF),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: const Color(0xFFD6E2FF),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.account_balance_wallet_outlined,
-                                  size: 16,
-                                  color: Color(0xFF1D4ED8),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _sellerWalletReady
-                                        ? 'Kullanilabilir bakiye: ${_formatDashboardCurrency(_sellerWalletAvailableBalance)}'
-                                        : (_sellerWalletError ??
-                                              'Cuzdan bilgisi alinamadi'),
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Color(0xFF1D4ED8),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                TextButton(
-                                  onPressed: isSubmitting
-                                      ? null
-                                      : () async {
-                                          final toppedUp =
-                                              await _showSellerWalletTopupDialog();
-                                          if (toppedUp &&
-                                              mounted &&
-                                              dialogContext.mounted) {
-                                            setModalState(() {});
-                                          }
-                                        },
-                                  child: const Text('Bakiye Yukle'),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: [
-                              SizedBox(
-                                width: 328,
-                                child: TextFormField(
-                                  controller: customerNameController,
-                                  decoration: inputDecoration(
-                                    'Musteri Ad Soyad',
-                                  ),
-                                  validator: (value) =>
-                                      (value ?? '').trim().isEmpty
-                                      ? 'Zorunlu alan'
-                                      : null,
-                                ),
-                              ),
-                              SizedBox(
-                                width: 328,
-                                child: TextFormField(
-                                  controller: customerPhoneController,
-                                  keyboardType: TextInputType.phone,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly,
-                                    LengthLimitingTextInputFormatter(11),
-                                  ],
-                                  decoration: inputDecoration('Telefon'),
-                                  validator: (value) {
-                                    final phone = (value ?? '').trim();
-                                    if (phone.isEmpty) return 'Zorunlu alan';
-                                    if (phone.length < 10) {
-                                      return 'En az 10 hane girin';
-                                    }
-                                    return null;
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: selectorButton(
-                                  label: 'İl',
-                                  value: selectedProvince,
-                                  icon: Icons.location_city,
-                                  isOpen: showProvinceOptions,
-                                  onTap: () {
-                                    setModalState(() {
-                                      showProvinceOptions =
-                                          !showProvinceOptions;
-                                      showDistrictOptions = false;
-                                    });
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: selectorButton(
-                                  label: 'İlçe',
-                                  value: selectedDistrict,
-                                  icon: Icons.map_outlined,
-                                  isOpen: showDistrictOptions,
-                                  onTap: () {
-                                    setModalState(() {
-                                      showDistrictOptions =
-                                          !showDistrictOptions;
-                                      showProvinceOptions = false;
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (showProvinceOptions)
-                            inlineOptions(
-                              options: _cargoProvinceOptions,
-                              onSelected: (province) {
-                                final districts =
-                                    _cargoDistrictOptionsForProvince(province);
-                                setModalState(() {
-                                  selectedProvince = province;
-                                  if (!districts.contains(selectedDistrict)) {
-                                    selectedDistrict = districts.isNotEmpty
-                                        ? districts.first
-                                        : 'Merkez';
-                                  }
-                                  showProvinceOptions = false;
-                                });
-                                unawaited(
-                                  focusMapToSelectedRegion(
-                                    clearPickedPoint: true,
-                                  ),
-                                );
-                              },
-                            ),
-                          if (showDistrictOptions)
-                            inlineOptions(
-                              options: effectiveDistrictOptions(),
-                              onSelected: (district) {
-                                setModalState(() {
-                                  selectedDistrict = district;
-                                  showDistrictOptions = false;
-                                });
-                                unawaited(
-                                  focusMapToSelectedRegion(
-                                    clearPickedPoint: true,
-                                  ),
-                                );
-                              },
-                            ),
-                          if (isDetectingLocationRegion) ...[
-                            const SizedBox(height: 8),
-                            Row(
-                              children: const [
-                                SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                                SizedBox(width: 8),
-                                Text(
-                                  'Konumunuza göre il/ilçe algılanıyor...',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Color(0xFF5B6B86),
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: buildingController,
-                            decoration: inputDecoration(
-                              'Bina, Site, Referans (Opsiyonel)',
-                            ),
-                            onChanged: (_) => scheduleLookup(),
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: addressController,
-                            maxLines: 2,
-                            decoration: inputDecoration(
-                              'Açık Adres (Mahalle, Sokak, Kapı No)',
-                            ),
-                            onChanged: (_) => scheduleLookup(),
-                            validator: (value) => (value ?? '').trim().isEmpty
-                                ? 'Zorunlu alan'
-                                : null,
-                          ),
-                          if (isSearchingAddress) ...[
-                            const SizedBox(height: 8),
-                            const LinearProgressIndicator(minHeight: 2),
-                          ],
-                          if (addressSuggestions.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Container(
-                              constraints: const BoxConstraints(maxHeight: 190),
-                              decoration: BoxDecoration(
-                                border: Border.all(color: Colors.grey.shade300),
-                                borderRadius: BorderRadius.circular(10),
-                                color: Colors.white,
-                              ),
-                              child: ListView.separated(
-                                shrinkWrap: true,
-                                itemCount: addressSuggestions.length,
-                                separatorBuilder: (context, index) => Divider(
-                                  height: 1,
-                                  color: Colors.grey.shade200,
-                                ),
-                                itemBuilder: (context, index) {
-                                  final suggestion = addressSuggestions[index];
-                                  return ListTile(
-                                    dense: true,
-                                    leading: const Icon(
-                                      Icons.place_outlined,
-                                      size: 18,
-                                      color: AppColors.primary,
-                                    ),
-                                    title: Text(
-                                      suggestion.label,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 12.5),
-                                    ),
-                                    onTap: () =>
-                                        unawaited(applySuggestion(suggestion)),
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 10),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: isAddressVerified
-                                    ? Colors.green.shade300
-                                    : Colors.grey.shade300,
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      isAddressVerified
-                                          ? Icons.verified
-                                          : Icons.gps_not_fixed,
-                                      size: 18,
-                                      color: isAddressVerified
-                                          ? Colors.green.shade700
-                                          : Colors.orange.shade700,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        isAddressVerified
-                                            ? 'Adres haritada doğrulandı'
-                                            : 'Adresi haritada doğrulayın',
-                                        style: TextStyle(
-                                          fontSize: 12.5,
-                                          color: isAddressVerified
-                                              ? Colors.green.shade700
-                                              : Colors.orange.shade800,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                    TextButton.icon(
-                                      onPressed: isSubmitting
-                                          ? null
-                                          : () => unawaited(openMapPicker()),
-                                      icon: const Icon(
-                                        Icons.map_outlined,
-                                        size: 16,
-                                      ),
-                                      label: const Text('Haritadan Seç'),
-                                      style: TextButton.styleFrom(
-                                        foregroundColor: AppColors.primary,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                if (isResolvingRegionCenter) ...[
-                                  const SizedBox(height: 6),
-                                  const LinearProgressIndicator(minHeight: 2),
-                                ],
-                                const SizedBox(height: 6),
-                                SizedBox(
-                                  height: 170,
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: FlutterMap(
-                                      key: ValueKey<String>(
-                                        'cargo_preview_${selectedProvince}_${selectedDistrict}_${(selectedLat ?? previewCenter.latitude).toStringAsFixed(4)}_${(selectedLng ?? previewCenter.longitude).toStringAsFixed(4)}',
-                                      ),
-                                      mapController: previewMapController,
-                                      options: MapOptions(
-                                        initialCenter:
-                                            (selectedLat != null &&
-                                                selectedLng != null)
-                                            ? LatLng(selectedLat!, selectedLng!)
-                                            : previewCenter,
-                                        initialZoom:
-                                            (selectedLat != null &&
-                                                selectedLng != null)
-                                            ? 15.2
-                                            : 11,
-                                        onTap: (_, latLng) {
-                                          setModalState(() {
-                                            selectedLat = latLng.latitude;
-                                            selectedLng = latLng.longitude;
-                                            isAddressVerified = true;
-                                            addressSuggestions =
-                                                <
-                                                  _SellerCargoGeocodeSuggestion
-                                                >[];
-                                          });
-                                          setPreviewCenter(
-                                            LatLng(
-                                              latLng.latitude,
-                                              latLng.longitude,
-                                            ),
-                                            zoom: 15.2,
-                                            updateState: false,
-                                          );
-                                          unawaited(
-                                            reverseGeocodeFromPoint(
-                                              lat: latLng.latitude,
-                                              lng: latLng.longitude,
-                                              fillAddressIfEmpty: true,
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      children: [
-                                        TileLayer(
-                                          urlTemplate:
-                                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                          userAgentPackageName: 'com.ibul.app',
-                                        ),
-                                        if (selectedLat != null &&
-                                            selectedLng != null)
-                                          MarkerLayer(
-                                            markers: [
-                                              Marker(
-                                                width: 42,
-                                                height: 42,
-                                                point: LatLng(
-                                                  selectedLat!,
-                                                  selectedLng!,
-                                                ),
-                                                child: const Icon(
-                                                  Icons.location_on,
-                                                  color: AppColors.primary,
-                                                  size: 40,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                if (verifiedAddressText != null &&
-                                    verifiedAddressText!.trim().isNotEmpty) ...[
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    verifiedAddressText!,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 11.5,
-                                      color: Colors.black54,
-                                    ),
-                                  ),
-                                ],
-                                if (selectedLat != null &&
-                                    selectedLng != null) ...[
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Konum: ${selectedLat!.toStringAsFixed(5)}, ${selectedLng!.toStringAsFixed(5)}',
-                                    style: const TextStyle(
-                                      fontSize: 11.5,
-                                      color: Colors.black54,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: [
-                              SizedBox(
-                                width: 236,
-                                child: TextFormField(
-                                  controller: productNameController,
-                                  decoration: inputDecoration(
-                                    'Urun (Opsiyonel)',
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 122,
-                                child: TextFormField(
-                                  controller: quantityController,
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly,
-                                    LengthLimitingTextInputFormatter(4),
-                                  ],
-                                  decoration: inputDecoration('Adet'),
-                                  validator: (value) {
-                                    final parsed = int.tryParse(
-                                      (value ?? '').trim(),
-                                    );
-                                    if (parsed == null || parsed <= 0) {
-                                      return 'Gecersiz';
-                                    }
-                                    return null;
-                                  },
-                                ),
-                              ),
-                              SizedBox(
-                                width: 122,
-                                child: TextFormField(
-                                  controller: unitPriceController,
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly,
-                                    _ThousandsSeparatorInputFormatter(),
-                                  ],
-                                  decoration: inputDecoration(
-                                    'Birim Tutar (TL)',
-                                    hint: '1.000',
-                                  ),
-                                  validator: (value) {
-                                    final parsed = _parseSellerCurrencyInput(
-                                      value ?? '',
-                                    );
-                                    if (parsed < 0) return 'Gecersiz';
-                                    return null;
-                                  },
-                                ),
-                              ),
-                              SizedBox(
-                                width: 148,
-                                child: AnimatedBuilder(
-                                  animation: Listenable.merge([
-                                    quantityController,
-                                    unitPriceController,
-                                  ]),
-                                  builder: (context, _) {
-                                    final quantity =
-                                        int.tryParse(
-                                          quantityController.text.trim(),
-                                        ) ??
-                                        0;
-                                    final unitPrice = _parseSellerCurrencyInput(
-                                      unitPriceController.text,
-                                    );
-                                    final total =
-                                        (quantity > 0 && unitPrice >= 0)
-                                        ? quantity * unitPrice
-                                        : 0.0;
-                                    return InputDecorator(
-                                      decoration: inputDecoration(
-                                        'Toplam Fiyat',
-                                        hint: '0',
-                                      ),
-                                      child: Text(
-                                        _formatDashboardCurrency(total),
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w700,
-                                          color: Color(0xFF1F2A44),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: noteController,
-                            maxLines: 2,
-                            decoration: inputDecoration('Siparis Notu'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: isSubmitting
-                        ? null
-                        : () => Navigator.of(dialogContext).pop(),
-                    child: const Text('Iptal'),
-                  ),
-                  FilledButton.icon(
-                    onPressed: isSubmitting ? null : submit,
-                    icon: isSubmitting
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white,
-                              ),
-                            ),
-                          )
-                        : const Icon(Icons.add_rounded),
-                    label: Text(
-                      isSubmitting ? 'Ekleniyor...' : 'IHIZ Sistemine Ekle',
-                    ),
-                  ),
-                ],
-              );
-            },
-          );
-        },
+    final created = await SellerExternalCargoDialog.show(
+      context,
+      config: SellerCargoDialogConfig(
+        sellerId: _authService.currentUser?.id ?? '',
+        storeName: _storeNameController.text.trim(),
+        initialProvince: _selectedCity.trim(),
+        initialDistrict: _selectedDistrict.trim(),
+        walletReady: () => _sellerWalletReady,
+        walletAvailable: () => _sellerWalletAvailableBalance,
+        walletError: () => _sellerWalletError,
+        currencyFormat: _formatDashboardCurrency,
+        products: () => List<SellerProduct>.from(_products),
+        loadProducts: () => _storeService.getSellerProductsSnapshot(),
+        reloadWallet: () => _loadSellerWalletBalance(silent: true),
+        showWalletTopup: _showSellerWalletTopupDialog,
+        createOrder: OrderService.instance.createSellerExternalCargoOrder,
+        createPrintJobs: _sellerPrintJobService.createPrintJobsForExistingOrder,
+      ),
+    );
+    if (created != null && created['ok'] == true && mounted) {
+      await _loadSellerOrders();
+      if (!mounted) return;
+      setState(() {
+        _selectedSellerOrderFilter = 'external';
+        _filteredSellerOrdersCacheKey = null;
+        _filteredSellerOrdersCache = null;
+      });
+      await _showSellerCargoOrderCreatedDialog(
+        orderNumber: created['order_number']?.toString() ?? '',
+        orderId: created['order_id']?.toString() ?? '',
+        printWarning: created['print_warning']?.toString(),
       );
-      if (created == true && mounted) {
-        await _loadSellerOrders();
-        if (!mounted) return;
-        setState(() {
-          _selectedSellerOrderFilter = 'external';
-          _filteredSellerOrdersCacheKey = null;
-          _filteredSellerOrdersCache = null;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Harici siparis IHIZ kargo havuzuna eklendi.'),
-          ),
-        );
-      }
-    } finally {
-      addressLookupDebounce?.cancel();
-      customerNameController.dispose();
-      customerPhoneController.dispose();
-      addressController.dispose();
-      buildingController.dispose();
-      productNameController.dispose();
-      quantityController.dispose();
-      unitPriceController.dispose();
-      noteController.dispose();
     }
+  }
+
+
+  Future<void> _showSellerCargoOrderCreatedDialog({
+    required String orderNumber,
+    required String orderId,
+    String? printWarning,
+  }) async {
+    if (!mounted) return;
+    final displayNumber = orderNumber.trim().isEmpty
+        ? (orderId.trim().isEmpty ? '-' : orderId.trim())
+        : orderNumber.trim();
+    final warning = (printWarning ?? '').trim();
+    final shouldOpen = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Sipariş oluşturuldu'),
+          content: Text(
+            warning.isEmpty
+                ? 'Sipariş #$displayNumber'
+                : 'Sipariş #$displayNumber\n\n$warning',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Kapat'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Siparişi Gör'),
+            ),
+          ],
+        );
+      },
+    );
+    if (shouldOpen != true || !mounted) return;
+    Map<String, dynamic>? match;
+    for (final order in _sellerOrders) {
+      final rowOrderNumber = order['order_number']?.toString() ?? '';
+      final rowOrderId = order['order_id']?.toString() ?? '';
+      if ((orderNumber.isNotEmpty && rowOrderNumber == orderNumber) ||
+          (orderId.isNotEmpty && rowOrderId == orderId)) {
+        match = order;
+        break;
+      }
+    }
+    if (match == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sipariş #$displayNumber oluşturuldu.')),
+      );
+      return;
+    }
+    await _openSellerOrderDetail(match);
   }
 
   double _parseSellerCurrencyInput(String raw) {
@@ -20824,749 +19129,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
       clean = clean.replaceAll(',', '.');
     }
     return double.tryParse(clean) ?? -1;
-  }
-
-  static const List<String> _cargoProvinceOptions = <String>[
-    'Adana',
-    'Adıyaman',
-    'Afyonkarahisar',
-    'Ağrı',
-    'Aksaray',
-    'Amasya',
-    'Ankara',
-    'Antalya',
-    'Ardahan',
-    'Artvin',
-    'Aydın',
-    'Balıkesir',
-    'Bartın',
-    'Batman',
-    'Bayburt',
-    'Bilecik',
-    'Bingöl',
-    'Bitlis',
-    'Bolu',
-    'Burdur',
-    'Bursa',
-    'Çanakkale',
-    'Çankırı',
-    'Çorum',
-    'Denizli',
-    'Diyarbakır',
-    'Düzce',
-    'Edirne',
-    'Elazığ',
-    'Erzincan',
-    'Erzurum',
-    'Eskişehir',
-    'Gaziantep',
-    'Giresun',
-    'Gümüşhane',
-    'Hakkari',
-    'Hatay',
-    'Iğdır',
-    'Isparta',
-    'İstanbul',
-    'İzmir',
-    'Kahramanmaraş',
-    'Karabük',
-    'Karaman',
-    'Kars',
-    'Kastamonu',
-    'Kayseri',
-    'Kırıkkale',
-    'Kırklareli',
-    'Kırşehir',
-    'Kilis',
-    'Kocaeli',
-    'Konya',
-    'Kütahya',
-    'Malatya',
-    'Manisa',
-    'Mardin',
-    'Mersin',
-    'Muğla',
-    'Muş',
-    'Nevşehir',
-    'Niğde',
-    'Ordu',
-    'Osmaniye',
-    'Rize',
-    'Sakarya',
-    'Samsun',
-    'Siirt',
-    'Sinop',
-    'Sivas',
-    'Şanlıurfa',
-    'Şırnak',
-    'Tekirdağ',
-    'Tokat',
-    'Trabzon',
-    'Tunceli',
-    'Uşak',
-    'Van',
-    'Yalova',
-    'Yozgat',
-    'Zonguldak',
-  ];
-
-  static const Map<String, List<String>> _cargoDistrictsByProvince =
-      <String, List<String>>{
-        'İstanbul': <String>[
-          'Adalar',
-          'Arnavutköy',
-          'Ataşehir',
-          'Avcılar',
-          'Bağcılar',
-          'Bahçelievler',
-          'Bakırköy',
-          'Başakşehir',
-          'Bayrampaşa',
-          'Beşiktaş',
-          'Beykoz',
-          'Beylikdüzü',
-          'Beyoğlu',
-          'Büyükçekmece',
-          'Çatalca',
-          'Çekmeköy',
-          'Esenler',
-          'Esenyurt',
-          'Eyüpsultan',
-          'Fatih',
-          'Gaziosmanpaşa',
-          'Güngören',
-          'Kadıköy',
-          'Kağıthane',
-          'Kartal',
-          'Küçükçekmece',
-          'Maltepe',
-          'Pendik',
-          'Sancaktepe',
-          'Sarıyer',
-          'Silivri',
-          'Sultanbeyli',
-          'Sultangazi',
-          'Şile',
-          'Şişli',
-          'Tuzla',
-          'Ümraniye',
-          'Üsküdar',
-          'Zeytinburnu',
-        ],
-        'Ankara': <String>[
-          'Altındağ',
-          'Ayaş',
-          'Bala',
-          'Beypazarı',
-          'Çankaya',
-          'Etimesgut',
-          'Gölbaşı',
-          'Kahramankazan',
-          'Keçiören',
-          'Mamak',
-          'Polatlı',
-          'Sincan',
-          'Yenimahalle',
-        ],
-        'İzmir': <String>[
-          'Aliağa',
-          'Balçova',
-          'Bayraklı',
-          'Bornova',
-          'Buca',
-          'Çeşme',
-          'Gaziemir',
-          'Karabağlar',
-          'Karşıyaka',
-          'Konak',
-          'Menemen',
-          'Narlıdere',
-          'Torbalı',
-        ],
-        'Bursa': <String>[
-          'Gemlik',
-          'Gürsu',
-          'İnegöl',
-          'Mudanya',
-          'Nilüfer',
-          'Osmangazi',
-          'Yıldırım',
-        ],
-        'Antalya': <String>[
-          'Aksu',
-          'Alanya',
-          'Döşemealtı',
-          'Kepez',
-          'Konyaaltı',
-          'Kumluca',
-          'Manavgat',
-          'Muratpaşa',
-          'Serik',
-        ],
-        'Hatay': <String>[
-          'Altınözü',
-          'Antakya',
-          'Arsuz',
-          'Belen',
-          'Defne',
-          'Dörtyol',
-          'Erzin',
-          'Hassa',
-          'İskenderun',
-          'Kırıkhan',
-          'Kumlu',
-          'Payas',
-          'Reyhanlı',
-          'Samandağ',
-          'Yayladağı',
-        ],
-        'Adana': <String>[
-          'Çukurova',
-          'Sarıçam',
-          'Seyhan',
-          'Yüreğir',
-          'Ceyhan',
-          'Kozan',
-        ],
-        'Mersin': <String>[
-          'Akdeniz',
-          'Erdemli',
-          'Mezitli',
-          'Silifke',
-          'Tarsus',
-          'Toroslar',
-          'Yenişehir',
-        ],
-      };
-
-  static const Map<String, LatLng> _cargoProvinceCenters = <String, LatLng>{
-    'İstanbul': LatLng(41.0082, 28.9784),
-    'Ankara': LatLng(39.9334, 32.8597),
-    'İzmir': LatLng(38.4237, 27.1428),
-    'Bursa': LatLng(40.1828, 29.0663),
-    'Antalya': LatLng(36.8969, 30.7133),
-    'Hatay': LatLng(36.2021, 36.1606),
-    'Adana': LatLng(37.0017, 35.3289),
-    'Mersin': LatLng(36.8121, 34.6415),
-    'Kocaeli': LatLng(40.7654, 29.9408),
-    'Konya': LatLng(37.8746, 32.4932),
-    'Gaziantep': LatLng(37.0662, 37.3833),
-    'Eskişehir': LatLng(39.7767, 30.5206),
-    'Trabzon': LatLng(41.0015, 39.7178),
-  };
-
-  List<String> _cargoDistrictOptionsForProvince(String province) {
-    final options = _cargoDistrictsByProvince[province];
-    if (options == null || options.isEmpty) return const <String>['Merkez'];
-    return List<String>.from(options);
-  }
-
-  String _cargoDefaultDistrictForProvince(String province) {
-    final options = _cargoDistrictOptionsForProvince(province);
-    return options.isNotEmpty ? options.first : 'Merkez';
-  }
-
-  String _cargoNormalizeAddressQueryText(String input) {
-    var value = input.trim();
-    value = value.replaceAll(RegExp(r'[.,;:_\-/#]'), ' ');
-    value = value.replaceAll(RegExp(r'(\d+)\s*\.\s*'), r'$1 ');
-    value = value.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return value;
-  }
-
-  String _cargoRemoveHouseNumberFromQuery(String input) {
-    var value = input;
-    value = value.replaceAll(
-      RegExp(r'\bno\s*\d+\w*', caseSensitive: false),
-      '',
-    );
-    value = value.replaceAll(
-      RegExp(r'\bnumara\s*\d+\w*', caseSensitive: false),
-      '',
-    );
-    value = value.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return value;
-  }
-
-  String? _cargoExtractMahalleText(String input) {
-    final match = RegExp(
-      r'([\wçğıöşüÇĞİÖŞÜ\s]+mahallesi)',
-      caseSensitive: false,
-    ).firstMatch(input);
-    return match?.group(1)?.trim();
-  }
-
-  String? _cargoExtractStreetToken(String input) {
-    final normalized = _cargoNormalizeAddressQueryText(input).toLowerCase();
-    final match = RegExp(
-      r'([a-z0-9çğıöşü]+)\s*(sokak|sokağı|cadde|caddesi|bulvar|bulvarı|blv)',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    return match?.group(1)?.trim();
-  }
-
-  String? _cargoExtractStreetPhrase(String input) {
-    final normalized = _cargoNormalizeAddressQueryText(input).toLowerCase();
-    final all = RegExp(
-      r'([a-z0-9çğıöşü\s]{2,60}?\s(?:sokak|sokağı|cadde|caddesi|bulvar|bulvarı|blv))',
-      caseSensitive: false,
-    ).allMatches(normalized);
-    if (all.isEmpty) return null;
-    return (all.last.group(1) ?? '').trim();
-  }
-
-  List<String> _cargoBuildAddressQueries({
-    required String detail,
-    required String building,
-    required String selectedDistrict,
-    required String selectedProvince,
-  }) {
-    final normalizedDetail = _cargoNormalizeAddressQueryText(detail);
-    final detailWithoutNo = _cargoRemoveHouseNumberFromQuery(normalizedDetail);
-    final mahalle = _cargoExtractMahalleText(normalizedDetail);
-
-    final freeText = <String>[
-      detail,
-      building,
-      'Türkiye',
-    ].where((e) => e.isNotEmpty).join(', ');
-
-    final generic = <String>[
-      freeText,
-      <String>[
-        detail,
-        building,
-        selectedDistrict,
-        selectedProvince,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-      <String>[
-        normalizedDetail,
-        selectedDistrict,
-        selectedProvince,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-      <String>[
-        detailWithoutNo,
-        selectedDistrict,
-        selectedProvince,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-      <String>[
-        mahalle ?? '',
-        selectedDistrict,
-        selectedProvince,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-      <String>[
-        normalizedDetail.isNotEmpty ? normalizedDetail : detail,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-      <String>[
-        detailWithoutNo,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-      <String>[
-        mahalle ?? '',
-        selectedProvince,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-    ];
-
-    final deduped = <String>[];
-    for (final query in generic) {
-      final normalized = query.trim();
-      if (normalized.length < 6) continue;
-      if (!deduped.contains(normalized)) deduped.add(normalized);
-    }
-    return deduped;
-  }
-
-  List<String> _cargoBuildStreetFocusedQueries({
-    required String normalizedDetail,
-    required String building,
-    required String selectedDistrict,
-    required String selectedProvince,
-  }) {
-    final streetPhrase = _cargoExtractStreetPhrase(normalizedDetail);
-    if (streetPhrase == null || streetPhrase.isEmpty) return const <String>[];
-
-    final mahalle = _cargoExtractMahalleText(normalizedDetail);
-    final districtCandidates = <String>{};
-    if (selectedDistrict.trim().isNotEmpty) {
-      districtCandidates.add(selectedDistrict.trim());
-    }
-    if (building.trim().isNotEmpty && building.trim().length <= 32) {
-      districtCandidates.add(building.trim());
-    }
-
-    final normalizedDetailLower = normalizedDetail.toLowerCase();
-    for (final district in _cargoDistrictOptionsForProvince(selectedProvince)) {
-      if (normalizedDetailLower.contains(district.toLowerCase())) {
-        districtCandidates.add(district);
-      }
-    }
-
-    final queries = <String>[];
-    for (final district in districtCandidates) {
-      queries.add(
-        <String>[
-          streetPhrase,
-          mahalle ?? '',
-          district,
-          selectedProvince,
-          'Türkiye',
-        ].where((e) => e.isNotEmpty).join(', '),
-      );
-      queries.add(
-        <String>[
-          streetPhrase,
-          district,
-          selectedProvince,
-          'Türkiye',
-        ].where((e) => e.isNotEmpty).join(', '),
-      );
-    }
-
-    queries.add(
-      <String>[
-        streetPhrase,
-        mahalle ?? '',
-        selectedProvince,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-    );
-    queries.add(
-      <String>[
-        streetPhrase,
-        selectedProvince,
-        'Türkiye',
-      ].where((e) => e.isNotEmpty).join(', '),
-    );
-
-    final deduped = <String>[];
-    for (final query in queries) {
-      final normalized = query.trim();
-      if (normalized.length < 6) continue;
-      if (!deduped.contains(normalized)) deduped.add(normalized);
-    }
-    return deduped;
-  }
-
-  Map<String, String> _cargoGeocodeHeaders() {
-    if (kIsWeb) {
-      return const <String, String>{};
-    }
-    return const <String, String>{
-      'User-Agent': 'ibul-seller-cargo-address/1.0',
-      'Accept-Language': 'tr',
-    };
-  }
-
-  String? _cargoExtractProvinceFromAddress(Map<String, dynamic> address) {
-    final state = (address['state'] ?? '').toString().trim();
-    if (state.isNotEmpty) return state;
-    final city = (address['city'] ?? '').toString().trim();
-    if (city.isNotEmpty) return city;
-    final province = (address['province'] ?? '').toString().trim();
-    if (province.isNotEmpty) return province;
-    return null;
-  }
-
-  String? _cargoExtractDistrictFromAddress(Map<String, dynamic> address) {
-    final cityDistrict = (address['city_district'] ?? '').toString().trim();
-    if (cityDistrict.isNotEmpty) return cityDistrict;
-    final county = (address['county'] ?? '').toString().trim();
-    if (county.isNotEmpty) return county;
-    final district = (address['district'] ?? '').toString().trim();
-    if (district.isNotEmpty) return district;
-    final town = (address['town'] ?? '').toString().trim();
-    if (town.isNotEmpty) return town;
-    return null;
-  }
-
-  Future<List<_SellerCargoGeocodeSuggestion>> _cargoFetchAddressSuggestions(
-    String query,
-  ) async {
-    final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
-      'format': 'jsonv2',
-      'addressdetails': '1',
-      'countrycodes': 'tr',
-      'limit': '12',
-      'q': query,
-    });
-
-    final response = await http
-        .get(uri, headers: _cargoGeocodeHeaders())
-        .timeout(const Duration(seconds: 7));
-    if (response.statusCode != 200) {
-      return const <_SellerCargoGeocodeSuggestion>[];
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! List) return const <_SellerCargoGeocodeSuggestion>[];
-
-    final suggestions = <_SellerCargoGeocodeSuggestion>[];
-    for (final item in decoded) {
-      if (item is! Map) continue;
-      final lat = double.tryParse((item['lat'] ?? '').toString());
-      final lng = double.tryParse((item['lon'] ?? '').toString());
-      if (lat == null || lng == null) continue;
-
-      final address = item['address'];
-      final addressMap = address is Map
-          ? Map<String, dynamic>.from(address)
-          : <String, dynamic>{};
-      final province = _cargoExtractProvinceFromAddress(addressMap) ?? '';
-      final district = _cargoExtractDistrictFromAddress(addressMap) ?? '';
-
-      suggestions.add(
-        _SellerCargoGeocodeSuggestion(
-          label: (item['display_name'] ?? '').toString(),
-          lat: lat,
-          lng: lng,
-          province: province,
-          district: district,
-          category: (item['category'] ?? '').toString(),
-          placeType: (item['type'] ?? '').toString(),
-          addressType: (item['addresstype'] ?? '').toString(),
-        ),
-      );
-    }
-    return suggestions;
-  }
-
-  int _cargoScoreSuggestion(
-    _SellerCargoGeocodeSuggestion suggestion, {
-    required String detail,
-    required String selectedProvince,
-    required String selectedDistrict,
-  }) {
-    final normalizedDetail = _cargoNormalizeAddressQueryText(
-      detail,
-    ).toLowerCase();
-    final streetToken = _cargoExtractStreetToken(normalizedDetail);
-    final label = _cargoNormalizeAddressQueryText(
-      suggestion.label,
-    ).toLowerCase();
-    final category = suggestion.category.toLowerCase();
-    final placeType = suggestion.placeType.toLowerCase();
-    final addressType = suggestion.addressType.toLowerCase();
-    var score = 0;
-
-    if (streetToken != null && streetToken.isNotEmpty) {
-      if (label.contains(streetToken)) score += 44;
-      if (!label.contains(streetToken) &&
-          (addressType == 'road' || category == 'highway')) {
-        score += 8;
-      }
-    }
-
-    final detailTokens = normalizedDetail
-        .split(' ')
-        .where((e) => e.length > 2)
-        .toSet();
-    var matches = 0;
-    for (final token in detailTokens) {
-      if (label.contains(token)) matches++;
-    }
-    score += matches * 4;
-
-    if (label.contains('sokak') || label.contains('cadde')) score += 20;
-    if (addressType == 'road' || category == 'highway') score += 24;
-    if (placeType == 'residential') score += 12;
-
-    final districtKey = _cargoNormalizeLocationText(selectedDistrict);
-    final provinceKey = _cargoNormalizeLocationText(selectedProvince);
-    final suggestionDistrictKey = _cargoNormalizeLocationText(
-      suggestion.district,
-    );
-    final suggestionProvinceKey = _cargoNormalizeLocationText(
-      suggestion.province,
-    );
-
-    if (districtKey.isNotEmpty &&
-        (label.contains(selectedDistrict.toLowerCase()) ||
-            suggestionDistrictKey == districtKey ||
-            suggestionDistrictKey.contains(districtKey) ||
-            districtKey.contains(suggestionDistrictKey))) {
-      score += 10;
-    }
-    if (provinceKey.isNotEmpty &&
-        (label.contains(selectedProvince.toLowerCase()) ||
-            suggestionProvinceKey == provinceKey ||
-            suggestionProvinceKey.contains(provinceKey) ||
-            provinceKey.contains(suggestionProvinceKey))) {
-      score += 6;
-    }
-
-    if (category == 'tourism' ||
-        category == 'amenity' ||
-        placeType == 'museum' ||
-        placeType == 'attraction') {
-      score -= 12;
-    }
-
-    return score;
-  }
-
-  String _cargoNormalizeLocationText(String value) {
-    var normalized = value.trim().toLowerCase();
-    normalized = normalized
-        .replaceAll('ı', 'i')
-        .replaceAll('ğ', 'g')
-        .replaceAll('ü', 'u')
-        .replaceAll('ş', 's')
-        .replaceAll('ö', 'o')
-        .replaceAll('ç', 'c');
-    normalized = normalized
-        .replaceAll(RegExp(r'\bil[iı]\b'), ' ')
-        .replaceAll(RegExp(r'\bilce(si)?\b'), ' ')
-        .replaceAll(RegExp(r'\bdistrict\b'), ' ')
-        .replaceAll(RegExp(r'\bprovince\b'), ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-    return normalized;
-  }
-
-  String? _cargoMatchProvinceOption(String rawProvince) {
-    final normalizedRaw = _cargoNormalizeLocationText(rawProvince);
-    if (normalizedRaw.isEmpty) return null;
-
-    for (final option in _cargoProvinceOptions) {
-      final normalizedOption = _cargoNormalizeLocationText(option);
-      if (normalizedOption == normalizedRaw ||
-          normalizedRaw.contains(normalizedOption) ||
-          normalizedOption.contains(normalizedRaw)) {
-        return option;
-      }
-    }
-    return null;
-  }
-
-  String? _cargoMatchDistrictOption(String rawDistrict, String province) {
-    final normalizedRaw = _cargoNormalizeLocationText(rawDistrict);
-    if (normalizedRaw.isEmpty) return null;
-
-    final options = _cargoDistrictOptionsForProvince(province);
-    for (final option in options) {
-      final normalizedOption = _cargoNormalizeLocationText(option);
-      if (normalizedOption == normalizedRaw ||
-          normalizedRaw.contains(normalizedOption) ||
-          normalizedOption.contains(normalizedRaw)) {
-        return option;
-      }
-    }
-
-    final splitParts = normalizedRaw
-        .split(RegExp(r'[/,\-]'))
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList(growable: false);
-    for (final part in splitParts) {
-      for (final option in options) {
-        final normalizedOption = _cargoNormalizeLocationText(option);
-        if (normalizedOption == part ||
-            part.contains(normalizedOption) ||
-            normalizedOption.contains(part)) {
-          return option;
-        }
-      }
-    }
-    return null;
-  }
-
-  Future<_SellerCargoGeocodeSuggestion?> _cargoReverseGeocode({
-    required double lat,
-    required double lng,
-  }) async {
-    final uri = Uri.https('nominatim.openstreetmap.org', '/reverse', {
-      'format': 'jsonv2',
-      'addressdetails': '1',
-      'lat': lat.toString(),
-      'lon': lng.toString(),
-    });
-    final response = await http
-        .get(uri, headers: _cargoGeocodeHeaders())
-        .timeout(const Duration(seconds: 7));
-    if (response.statusCode != 200) return null;
-
-    final body = jsonDecode(response.body);
-    if (body is! Map) return null;
-    final label = (body['display_name'] ?? '').toString().trim();
-    if (label.isEmpty) return null;
-    final address = body['address'];
-    final addressMap = address is Map
-        ? Map<String, dynamic>.from(address)
-        : <String, dynamic>{};
-    return _SellerCargoGeocodeSuggestion(
-      label: label,
-      lat: lat,
-      lng: lng,
-      province: _cargoExtractProvinceFromAddress(addressMap) ?? '',
-      district: _cargoExtractDistrictFromAddress(addressMap) ?? '',
-      category: '',
-      placeType: '',
-      addressType: '',
-    );
-  }
-
-  Future<_SellerCargoGeocodeSuggestion?> _cargoResolveCurrentLocation() async {
-    try {
-      final enabled = await Geolocator.isLocationServiceEnabled();
-      if (!enabled) return null;
-
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return null;
-      }
-
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-        ),
-      ).timeout(const Duration(seconds: 7));
-      final reverse = await _cargoReverseGeocode(
-        lat: pos.latitude,
-        lng: pos.longitude,
-      ).timeout(const Duration(seconds: 7));
-      if (reverse != null) return reverse;
-
-      return _SellerCargoGeocodeSuggestion(
-        label: '',
-        lat: pos.latitude,
-        lng: pos.longitude,
-        province: '',
-        district: '',
-        category: '',
-        placeType: '',
-        addressType: '',
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String _mapSellerCargoCreateError(Object error) {
-    final raw = error.toString();
-    final lowered = raw.toLowerCase();
-    if (lowered.contains('insufficient_wallet_balance') ||
-        lowered.contains('yetersiz cüzdan') ||
-        lowered.contains('yetersiz cuzdan') ||
-        lowered.contains('yetersiz bakiye')) {
-      return 'Kargo siparisi acmak icin satıcı cüzdan bakiyesi yetersiz. '
-          'Lutfen "Bakiye Yukle" butonundan yukleme yapin.';
-    }
-    if (raw.contains('42P17') ||
-        lowered.contains('infinite recursion detected in policy')) {
-      return 'Siparis eklenemedi: Backend RLS policy hatasi (42P17). '
-          'Lutfen SUPABASE_FIX_IHIZ_POLICY_RECURSION.sql scriptini calistirin.';
-    }
-    return 'Siparis eklenemedi: $error';
   }
 
   Widget _buildSellerOrderKpiCard({
@@ -23358,54 +20920,7 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       icon: Icons.inventory_2_outlined,
                       child: Column(
                         children: [
-                          _buildSellerSummaryProductRow(
-                            title:
-                                order['product_name']?.toString() ??
-                                'Ürün adı belirtilmedi',
-                            sku:
-                                order['product_code']?.toString().isNotEmpty ==
-                                    true
-                                ? order['product_code'].toString()
-                                : '-',
-                            amount: amount,
-                            quantity:
-                                order['quantity']?.toString().isNotEmpty == true
-                                ? order['quantity'].toString()
-                                : '1',
-                          ),
-                          if ((order['secondary_product_name'] ?? '')
-                              .toString()
-                              .trim()
-                              .isNotEmpty)
-                            _buildSellerSummaryProductRow(
-                              title: order['secondary_product_name'].toString(),
-                              sku:
-                                  order['secondary_product_code']?.toString() ??
-                                  '-',
-                              amount:
-                                  (order['secondary_total_amount'] as num?)
-                                      ?.toDouble() ??
-                                  0,
-                              quantity:
-                                  order['secondary_quantity']?.toString() ??
-                                  '1',
-                            ),
-                          if ((order['third_product_name'] ?? '')
-                              .toString()
-                              .trim()
-                              .isNotEmpty)
-                            _buildSellerSummaryProductRow(
-                              title: order['third_product_name'].toString(),
-                              sku:
-                                  order['third_product_code']?.toString() ??
-                                  '-',
-                              amount:
-                                  (order['third_total_amount'] as num?)
-                                      ?.toDouble() ??
-                                  0,
-                              quantity:
-                                  order['third_quantity']?.toString() ?? '1',
-                            ),
+                          ..._sellerOrderDetailProductRows(order, amount),
                           Padding(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 28,
@@ -24678,6 +22193,61 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
         ],
       ),
     );
+  }
+
+  List<Widget> _sellerOrderDetailProductRows(
+    Map<String, dynamic> order,
+    double fallbackAmount,
+  ) {
+    final rawLines = order['line_items'];
+    if (rawLines is List && rawLines.isNotEmpty) {
+      return rawLines.map((raw) {
+        final line = raw is Map
+            ? Map<String, dynamic>.from(raw)
+            : <String, dynamic>{};
+        final quantity = line['quantity']?.toString().trim();
+        final code = line['product_code']?.toString().trim() ?? '';
+        final lineAmount =
+            (line['total_price'] as num?)?.toDouble() ??
+            (line['unit_price'] as num?)?.toDouble() ??
+            0;
+        return _buildSellerSummaryProductRow(
+          title: (line['product_name']?.toString().trim().isNotEmpty == true)
+              ? line['product_name'].toString()
+              : 'Ürün adı belirtilmedi',
+          sku: code.isNotEmpty ? code : '-',
+          amount: lineAmount,
+          quantity: (quantity == null || quantity.isEmpty) ? '1' : quantity,
+        );
+      }).toList(growable: false);
+    }
+
+    return <Widget>[
+      _buildSellerSummaryProductRow(
+        title: order['product_name']?.toString() ?? 'Ürün adı belirtilmedi',
+        sku: order['product_code']?.toString().isNotEmpty == true
+            ? order['product_code'].toString()
+            : '-',
+        amount: fallbackAmount,
+        quantity: order['quantity']?.toString().isNotEmpty == true
+            ? order['quantity'].toString()
+            : '1',
+      ),
+      if ((order['secondary_product_name'] ?? '').toString().trim().isNotEmpty)
+        _buildSellerSummaryProductRow(
+          title: order['secondary_product_name'].toString(),
+          sku: order['secondary_product_code']?.toString() ?? '-',
+          amount: (order['secondary_total_amount'] as num?)?.toDouble() ?? 0,
+          quantity: order['secondary_quantity']?.toString() ?? '1',
+        ),
+      if ((order['third_product_name'] ?? '').toString().trim().isNotEmpty)
+        _buildSellerSummaryProductRow(
+          title: order['third_product_name'].toString(),
+          sku: order['third_product_code']?.toString() ?? '-',
+          amount: (order['third_total_amount'] as num?)?.toDouble() ?? 0,
+          quantity: order['third_quantity']?.toString() ?? '1',
+        ),
+    ];
   }
 
   Widget _buildSellerSummaryProductRow({
@@ -29455,6 +27025,14 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
                       children: [
                         StoreProfileCompletionCard(snapshot: completion),
                         const SizedBox(height: StoreProfileDashboardTokens.pageGap),
+                        if ((_authService.currentUser?.id ?? '').trim().isNotEmpty)
+                          IhizStoreProfileCard(
+                            storeId: _authService.currentUser!.id.trim(),
+                          ),
+                        if ((_authService.currentUser?.id ?? '').trim().isNotEmpty)
+                          const SizedBox(
+                            height: StoreProfileDashboardTokens.pageGap,
+                          ),
                         _buildBusinessInfoCard(),
                         const SizedBox(height: StoreProfileDashboardTokens.pageGap),
                         _buildSocialMediaCard(),
@@ -33727,218 +31305,6 @@ BT /F1 9 Tf ${_pdfNumber(margin)} 50 Td ($escapedLink) Tj ET
   }
 }
 
-class _SellerCargoGeocodeSuggestion {
-  final String label;
-  final double lat;
-  final double lng;
-  final String province;
-  final String district;
-  final String category;
-  final String placeType;
-  final String addressType;
-
-  const _SellerCargoGeocodeSuggestion({
-    required this.label,
-    required this.lat,
-    required this.lng,
-    required this.province,
-    required this.district,
-    required this.category,
-    required this.placeType,
-    required this.addressType,
-  });
-}
-
-class _StoreLocationChangeDialog extends StatefulWidget {
-  final double? initialLat;
-  final double? initialLng;
-
-  const _StoreLocationChangeDialog({this.initialLat, this.initialLng});
-
-  @override
-  State<_StoreLocationChangeDialog> createState() =>
-      _StoreLocationChangeDialogState();
-}
-
-class _StoreLocationChangeDialogState
-    extends State<_StoreLocationChangeDialog> {
-  late final MapController _mapController;
-  double? _selectedLat;
-  double? _selectedLng;
-  bool _locating = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedLat = widget.initialLat ?? 41.0082;
-    _selectedLng = widget.initialLng ?? 28.9784;
-    _mapController = MapController();
-  }
-
-  Future<void> _useCurrentLocation() async {
-    setState(() => _locating = true);
-    try {
-      final enabled = await Geolocator.isLocationServiceEnabled();
-      if (!enabled) {
-        throw Exception('Konum servisleri kapalı');
-      }
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        throw Exception('Konum izni verilmedi');
-      }
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      );
-      if (!mounted) return;
-      setState(() {
-        _selectedLat = pos.latitude;
-        _selectedLng = pos.longitude;
-      });
-      _mapController.move(LatLng(pos.latitude, pos.longitude), 15);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Konum alınamadı: $e')));
-    } finally {
-      if (mounted) setState(() => _locating = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final currentPoint = LatLng(_selectedLat!, _selectedLng!);
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-      child: Container(
-        width: 780,
-        padding: const EdgeInsets.all(22),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Konum Değiştir',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Haritadan yeni mağaza konumunu seçin. Talep admin onayına düşecektir.',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                FilledButton.icon(
-                  onPressed: _locating ? null : _useCurrentLocation,
-                  icon: _locating
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.my_location, size: 16),
-                  label: Text(_locating ? 'Bulunuyor...' : 'Bulunduğum Konum'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  '${_selectedLat!.toStringAsFixed(5)}, ${_selectedLng!.toStringAsFixed(5)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Container(
-              height: 360,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: FlutterMap(
-                mapController: _mapController,
-                options: MapOptions(
-                  initialCenter: currentPoint,
-                  initialZoom: 14,
-                  onTap: (_, latLng) {
-                    setState(() {
-                      _selectedLat = latLng.latitude;
-                      _selectedLng = latLng.longitude;
-                    });
-                  },
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.ibul.app',
-                  ),
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: LatLng(_selectedLat!, _selectedLng!),
-                        width: 48,
-                        height: 48,
-                        child: const Icon(
-                          Icons.location_on,
-                          size: 46,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Vazgeç'),
-                ),
-                const SizedBox(width: 10),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context, {
-                      'lat': _selectedLat!,
-                      'lng': _selectedLng!,
-                    });
-                  },
-                  icon: const Icon(Icons.check_circle_outline, size: 16),
-                  label: const Text('Onayla'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 typedef _GarsonConfigureProductItem =
     Future<List<Map<String, dynamic>>?> Function(
@@ -35106,7 +32472,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
   ) async {
     if (items.isEmpty) return _KitchenDispatchFeedback.none;
     try {
-      final useGarsonFastKitchen = await _resolveCanUseGarsonKitchenFastPath();
+      final useGarsonFastKitchen = widget.effectiveCanUseLocalPrintFastPath;
       final result = await _orderPrintJobService.dispatchNewOrder(
         restaurantId: widget.sellerId,
         tableNumber: widget.tableNumber,
@@ -37331,6 +34697,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
     if (_isSubmitting) return;
     if (!_canSubmitDraft()) return;
     setState(() => _isSubmitting = true);
+    final sendPressedWatch = Stopwatch()..start();
     final pipelineWatch = Stopwatch()..start();
     final isUpdate =
         _editingOrderId != null && _editingOrderId!.trim().isNotEmpty;
@@ -37587,7 +34954,10 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
         );
       } else {
         kitchenPerfTapAt = DateTime.now().toIso8601String();
-        final canFastKitchen = await _resolveCanUseGarsonKitchenFastPath();
+        // Sync only — never await bridge/printer resolve before physical print.
+        final canFastKitchen = widget.effectiveCanUseLocalPrintFastPath;
+        // Warm cache for next submit without blocking this hot path.
+        unawaited(_resolveCanUseGarsonKitchenFastPath());
         debugPrint(
           '[PrintPipeline] table_order_save_started_at=${DateTime.now().toIso8601String()} '
           'table=${widget.tableNumber} seller=${widget.sellerId} '
@@ -37611,6 +34981,7 @@ class _MobileGarsonTableFlowPageState extends State<_MobileGarsonTableFlowPage>
           garsonDesktopFastKitchen: canFastKitchen,
           storeCategory: widget.storeCategory,
           tableName: widget.tableTitleOverride,
+          t0SendPressedElapsedMs: sendPressedWatch.elapsedMilliseconds,
         );
         kitchenPerfDbSaveMs = orderDispatchWatch.elapsedMilliseconds;
         _orderPrintJobService.debugLogResult(dispatchResult);

@@ -34,19 +34,23 @@ void main() {
       expect(content.contains('restaurant_connectivity_service'), isFalse);
     });
 
-    test('customer_app.dart has no seller/admin routes', () {
+    test('customer_app.dart lazy-loads seller/admin without eager panel import', () {
       final content = readLib('lib/app/customer_app.dart');
-      expect(content.contains('/seller'), isFalse);
-      expect(content.contains('/admin'), isFalse);
+      expect(content.contains('IbulMaterialApp'), isTrue);
+      expect(content.contains('includeAuthRoutes: true'), isTrue);
       expect(content.contains('seller_panel_page'), isFalse);
+      final table = readLib('lib/app/app_route_table.dart');
+      expect(table.contains('/seller'), isTrue);
+      expect(table.contains('/admin'), isTrue);
+      expect(table.contains('SellerRoutes.buildSellerPanel'), isTrue);
     });
 
     test('app_providers customer mode excludes restaurant/print providers', () {
       IbulAppModeRegistry.resetForTests();
       IbulAppModeRegistry.current = IbulAppMode.customer;
       final providers = buildCustomerProviders();
-      expect(providers.length, 6);
-      expect(countMountedProviders(IbulAppMode.customer), 6);
+      expect(providers.length, 5);
+      expect(countMountedProviders(IbulAppMode.customer), 5);
     });
 
     test('full mode may include extra IO providers', () {
@@ -55,7 +59,7 @@ void main() {
       final fullCount = countMountedProviders(IbulAppMode.full);
       final customerCount = countMountedProviders(IbulAppMode.customer);
       expect(fullCount, greaterThanOrEqualTo(customerCount));
-      expect(customerCount, 6);
+      expect(customerCount, 5);
     });
   });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
+import '../../app/ibul_router.dart';
 import '../../services/admin_service.dart';
 
 class IhizAdminPage extends StatefulWidget {
@@ -90,7 +91,7 @@ class _IhizAdminPageState extends State<IhizAdminPage> {
           ),
           const SizedBox(width: 10),
           ElevatedButton.icon(
-            onPressed: () => Navigator.of(context).pushNamed('/ihiz'),
+            onPressed: () => IbulRouter.push(context, '/ihiz'),
             icon: const Icon(Icons.open_in_new_rounded, size: 18),
             label: const Text('Kurye Ekrani'),
             style: ElevatedButton.styleFrom(

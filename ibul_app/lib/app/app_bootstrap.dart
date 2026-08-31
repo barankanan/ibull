@@ -11,11 +11,11 @@ import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/favorite_state.dart';
 import '../core/ibul_app_mode.dart';
-import '../core/providers/cart_provider.dart';
 import '../core/providers/connectivity_provider.dart';
 import '../core/review_state.dart';
 import '../core/web_boot_error_store.dart';
 import '../core/web_boot.dart';
+import '../core/commerce_image_cache.dart';
 import '../screens/home_screen_gate.dart';
 import 'app_providers.dart';
 
@@ -56,6 +56,7 @@ void configureAppDiagnostics({
   required String startupMessage,
   bool includeErrorStackTrace = false,
 }) {
+  CommerceImageCache.configure();
   debugPrint(startupMessage);
 
   FlutterError.onError = (FlutterErrorDetails details) {
@@ -93,7 +94,7 @@ List<SingleChildWidget> buildAppProviders() =>
 /// Minimal provider set for the /qr fast-path.
 ///
 /// Only includes what the QR ordering flow actually requires:
-/// - [CartState] and [CartProvider]: cart management during ordering.
+/// - [CartState]: cart management during ordering.
 /// - [ConnectivityProvider]: offline banner in [OfflineListener].
 ///
 /// [AppState], [FavoriteState], and [ReviewState] are singletons accessed
@@ -103,10 +104,12 @@ List<SingleChildWidget> buildAppProviders() =>
 List<SingleChildWidget> buildQrProviders() {
   return [
     ChangeNotifierProvider.value(value: CartState()),
-    ChangeNotifierProvider(create: (_) => CartProvider()),
     ChangeNotifierProvider(create: (_) => ConnectivityProvider()),
   ];
 }
+
+const Locale kIbulLocale = Locale('tr');
+const List<Locale> kIbulSupportedLocales = <Locale>[kIbulLocale];
 
 ThemeData buildAppTheme() {
   final colorScheme =
@@ -142,6 +145,7 @@ ThemeData buildAppTheme() {
       ),
     ),
     scaffoldBackgroundColor: AppColors.background,
+    extensions: const <ThemeExtension<dynamic>>[IbulColorTokens()],
   );
 }
 

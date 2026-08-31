@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:ibul_app/l10n/arb/app_localizations.dart';
 import 'package:provider/provider.dart';
 
@@ -12,12 +14,15 @@ import '../core/config/runtime_config.dart';
 import '../core/constants.dart';
 import '../core/home_boot_diagnostics.dart';
 import '../core/home_data_diagnostics.dart';
+import '../core/ibul_chrome.dart';
 import '../core/home_for_you_helper.dart';
+import '../core/home_mobile_shortcut.dart';
 import '../core/home_snapshot_cache.dart';
 import '../core/home_ui_diagnostics.dart';
 import '../core/perf_debug_config.dart';
 import '../core/product_load_trace.dart';
 import '../core/qr_initial_params.dart';
+import '../core/review_state.dart';
 import '../core/single_flight_guard.dart';
 import '../core/web_boot_step_profiler.dart';
 import '../core/web_perf_logger.dart';
@@ -27,6 +32,7 @@ import '../models/db_product.dart';
 import '../models/home_products_fetch_report.dart';
 import '../models/product_model.dart';
 import '../services/home_hero_banners_fetch.dart';
+import '../services/review_repository.dart';
 import '../services/supabase_service.dart';
 import '../widgets/home_boot_timeout_banner.dart';
 import '../widgets/skeleton_loading.dart';
@@ -41,6 +47,7 @@ import 'home/deferred/deferred_home_full_rail_section.dart';
 import 'home/deferred/deferred_home_sponsored_section.dart';
 import 'home/sections/ibul_delivery_address_section.dart';
 import 'home/sections/ibul_hero_campaign_row.dart';
+import 'home/sections/ibul_mobile_home_chrome.dart';
 import 'home/sections/ibul_opportunity_shortcuts_section.dart';
 import 'home/sections/ibul_trust_bar_section.dart';
 
@@ -59,17 +66,18 @@ enum _HomeBootTimeoutPhase { none, slowWarning, fallbackApplied }
 
 class _HomeScreenCoreState extends State<HomeScreenCore> {
   static const int kPreviewBatchSize = 8;
-  static const Duration kCategoryRevealDelay = Duration(milliseconds: 300);
-  static const Duration kProductsRevealDelay = Duration(milliseconds: 500);
-  static const Duration kHeroDelay = Duration(milliseconds: 800);
-  static const Duration kSideDelay = Duration(milliseconds: 800);
-  static const Duration kSponsoredDelay = Duration(milliseconds: 1000);
+  static const Duration kCategoryRevealDelay = Duration.zero;
+  static const Duration kProductsRevealDelay = Duration.zero;
+  static const Duration kHeroDelay = Duration.zero;
+  static const Duration kSideDelay = Duration.zero;
+  static const Duration kSponsoredDelay = Duration.zero;
   static const Duration kDeferredSkeletonMax = Duration(seconds: 4);
   static const Duration kSlowLoadBannerDelay = Duration(seconds: 5);
   static const Duration kFallbackLoadDelay = Duration(seconds: 8);
 
   late final ValueNotifier<int> _selectedIndexNotifier;
   late String _selectedCategory;
+  final GlobalKey _personalizedSectionKey = GlobalKey();
   final ProductLoadTraceNotifier _productLoadTrace = ProductLoadTraceNotifier();
   final SingleFlightGuard _productFetchGuard = SingleFlightGuard();
   final SingleFlightGuard _heroFetchGuard = SingleFlightGuard();
@@ -101,6 +109,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     _selectedIndexNotifier = ValueNotifier(widget.initialIndex);
     _selectedCategory = widget.initialCategory ?? 'Ana Sayfa';
     HomeUiDiagnostics.demoDataDisabled();
+    unawaited(DeferredHomeFullRailSection.prefetchLibrary());
     _hydrateFromCacheSync();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -112,6 +121,9 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       }
       _scheduleStagedReveal();
       _startWatchdog();
+      if (_products.isNotEmpty) {
+        _warmVisibleProductRatings(_products);
+      }
       if (!AppRuntimeConfig.safeBootMode && !_didScheduleInitialFetch) {
         _didScheduleInitialFetch = true;
         HomeBootDiagnostics.logStageScheduled('products');
@@ -121,11 +133,20 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       }
       if (QrInitialParams.isQrPath) {
         unawaited(_openQrDeferred());
+      } else if (!AppRuntimeConfig.safeBootMode) {
+        SchedulerBinding.instance.scheduleTask<void>(
+          () {
+            unawaited(HomeLazyRoutes.prefetchHotPaths());
+          },
+          Priority.idle,
+        );
       }
 
       // Show mobile app download prompt if applicable (delay slightly to let home load)
       final screenWidth = MediaQuery.sizeOf(context).width;
-      debugPrint('[MobileAppPrompt] schedule source=HomeScreenCore width=$screenWidth');
+      if (kDebugMode) {
+        debugPrint('[MobileAppPrompt] schedule source=HomeScreenCore width=$screenWidth');
+      }
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
           MobileAppDownloadPromptController.checkAndShowPrompt(context);
@@ -151,6 +172,28 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     }
   }
 
+  void _warmVisibleProductRatings(List<DBProduct> products) {
+    if (!mounted) return;
+    final lookups = products
+        .where((product) => product.name.trim().isNotEmpty)
+        .take(kPreviewBatchSize)
+        .map(
+          (product) => ProductReviewLookup(
+            productName: product.name,
+            storeName: product.store,
+          ),
+        )
+        .toList(growable: false);
+    if (lookups.isEmpty) return;
+    unawaited(() async {
+      try {
+        await context.read<ReviewState>().warmProductRatingSummaries(lookups);
+      } catch (error) {
+        debugPrint('Ana sayfa review preload başarısız: $error');
+      }
+    }());
+  }
+
   void _ensureSectionsVisible({required String reason}) {
     if (_sectionsRevealed) return;
     HomeBootDiagnostics.logSetState('sections_revealed:$reason');
@@ -164,22 +207,14 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     HomeBootDiagnostics.logStageScheduled('products');
     // Critical sections render immediately; delays only mark perf stages.
     _ensureSectionsVisible(reason: 'immediate');
-    Future<void>.delayed(kCategoryRevealDelay, () {
-      if (!mounted) return;
-      HomeBootDiagnostics.logStageCompleted('categories');
-    });
-    Future<void>.delayed(kProductsRevealDelay, () {
-      if (!mounted) return;
-      _ensureSectionsVisible(reason: 'products_delay');
-      HomeBootDiagnostics.logStageCompleted('products');
-    });
+    HomeBootDiagnostics.logStageCompleted(
+      kCategoryRevealDelay == Duration.zero ? 'categories' : 'categories_delayed',
+    );
+    HomeBootDiagnostics.logStageCompleted(
+      kProductsRevealDelay == Duration.zero ? 'products' : 'products_delayed',
+    );
     HomeBootDiagnostics.logStageScheduled('ads');
     HomeBootDiagnostics.logStageScheduled('forYou');
-    // Failsafe — never leave body hidden if timers stall.
-    Future<void>.delayed(const Duration(seconds: 2), () {
-      if (!mounted) return;
-      _ensureSectionsVisible(reason: 'failsafe_2s');
-    });
   }
 
   void _startWatchdog() {
@@ -198,6 +233,12 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
           _timeoutPhase != _HomeBootTimeoutPhase.fallbackApplied) {
         HomeBootDiagnostics.logBlockedStage('products');
         _applyWatchdogFallback();
+        // Fallback terminal durumdur: `fallbackApplied` sonrası aşağıdaki iki
+        // dal da kalıcı olarak false olur. `_applyWatchdogFallback` ürün
+        // bulamadığında (_products boş kalır) yukarıdaki iptal koşulu da hiç
+        // sağlanmıyordu — yani ana sayfa açık kaldığı sürece 1 sn'lik timer
+        // sonsuza dek tick atmaya devam ediyordu. Görünen UI aynı.
+        _watchdogTimer?.cancel();
         return;
       }
       if (elapsedMs >= kSlowLoadBannerDelay.inMilliseconds &&
@@ -216,7 +257,11 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   Future<void> _fetchHeroBanners() async {
     if (!_heroFetchGuard.tryBegin()) return;
     try {
-      final result = await HomeHeroBannersFetch.fetch();
+      final preferMobile =
+          mounted && !IbulChrome.isWebOf(context);
+      final result = await HomeHeroBannersFetch.fetch(
+        preferMobile: preferMobile,
+      );
       if (!mounted) return;
       setState(() {
         _heroBannerUrls = result.imageUrls;
@@ -343,6 +388,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         unawaited(
           HomeSnapshotCache.instance.writePopularProductsPersisted(products),
         );
+        _warmVisibleProductRatings(products);
       } else {
         HomeUiDiagnostics.noProductsEmptyState();
       }
@@ -440,6 +486,30 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
     setState(() => _selectedCategory = category);
   }
 
+  void _handleMobileShortcutTap(String shortcutKey, String label) {
+    openMobileHomeShortcut(
+      context,
+      shortcutKey: shortcutKey,
+      label: label,
+      callbacks: HomeMobileShortcutCallbacks(
+        scrollToPersonalizedSection: _scrollToPersonalizedSection,
+        switchToMapTab: () => _onItemTapped(2),
+      ),
+    );
+  }
+
+  void _scrollToPersonalizedSection() {
+    final sectionContext = _personalizedSectionKey.currentContext;
+    if (sectionContext != null) {
+      Scrollable.ensureVisible(
+        sectionContext,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeInOutCubic,
+        alignment: 0.05,
+      );
+    }
+  }
+
   Widget _buildCartIcon({required bool isActive}) {
     return ValueListenableBuilder<int>(
       valueListenable: context.read<AppState>().cartCountNotifier,
@@ -484,7 +554,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final isWeb = MediaQuery.sizeOf(context).width >= 1100;
+    final isWeb = IbulChrome.isWebOf(context);
     final visibleCards = _sectionsRevealed
         ? _products.length.clamp(0, kPreviewBatchSize)
         : 0;
@@ -630,19 +700,24 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
 
     return [
       const IbulDeliveryAddressSection(),
-      IbulOpportunityShortcutsSection(
-        selectedCategory: _selectedCategory,
-        onShortcutTap: _setSelectedCategory,
-      ),
+      if (isWeb)
+        IbulOpportunityShortcutsSection(
+          selectedCategory: _selectedCategory,
+          onShortcutTap: _setSelectedCategory,
+        )
+      else
+        IbulMobileHomeChrome(
+          bannerImageUrls: _heroBannerUrls,
+          isLoadingHero: _isLoadingHero,
+          onShortcutTap: _handleMobileShortcutTap,
+        ),
       if (isWeb)
         IbulHeroCampaignRow(
           heroDelay: _heroBannerUrls.isNotEmpty ? Duration.zero : kHeroDelay,
           sideDelay: kSideDelay,
           bannerImageUrls: _heroBannerUrls,
           isLoadingHero: _isLoadingHero,
-        )
-      else
-        const SizedBox(height: 8),
+        ),
       DeferredHomeFullRailSection(
         title: 'Popüler Ürünler',
         products: _products,
@@ -674,15 +749,18 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
         maxSkeletonDuration: kDeferredSkeletonMax,
       ),
       if (_forYouProducts.isNotEmpty)
-        DeferredHomeFullRailSection(
-          delay: Duration.zero,
-          title: 'Sizin İçin Seçtiklerimiz',
-          products: _forYouProducts,
-          isLoading: false,
-          maxItems: kPreviewBatchSize,
-          showViewAll: false,
-          suppressSkeleton: _suppressBelowFoldSkeleton,
-          maxSkeletonDuration: kDeferredSkeletonMax,
+        KeyedSubtree(
+          key: _personalizedSectionKey,
+          child: DeferredHomeFullRailSection(
+            delay: Duration.zero,
+            title: 'Sizin İçin Seçtiklerimiz',
+            products: _forYouProducts,
+            isLoading: false,
+            maxItems: kPreviewBatchSize,
+            showViewAll: false,
+            suppressSkeleton: _suppressBelowFoldSkeleton,
+            maxSkeletonDuration: kDeferredSkeletonMax,
+          ),
         ),
       const IbulTrustBarSection(),
     ];
@@ -694,7 +772,7 @@ class _HomeScreenCoreState extends State<HomeScreenCore> {
       contentAlignment: Alignment.topCenter,
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1400),
+          constraints: IbulChrome.contentConstraints,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
             child: Column(

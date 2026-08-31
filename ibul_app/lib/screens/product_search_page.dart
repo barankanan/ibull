@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../core/constants.dart';
+import 'coming_soon/coming_soon_catalog.dart';
 import 'visual_intelligence_result_page.dart';
 
 class ProductSearchPage extends StatelessWidget {
@@ -82,9 +83,10 @@ class ProductSearchPage extends StatelessWidget {
               _buildOption(
                 context,
                 title: 'Barkod Okut',
-                onTap: () {
-                  // Barkod okuyucu
-                },
+                onTap: () => ComingSoonCatalog.open(
+                  context,
+                  ComingSoonCatalog.barcode,
+                ),
               ),
               const Divider(height: 1, thickness: 1),
             ],

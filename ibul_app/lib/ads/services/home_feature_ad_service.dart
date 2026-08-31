@@ -181,7 +181,12 @@ class HomeFeatureAdService {
 
       var query = _client
           .from('campaigns')
-          .select('*, campaign_targets(*), campaign_assets(*)')
+          .select(
+            'id,seller_id,store_id,name,type,objective,status,'
+            'billing_model,daily_budget,total_budget,currency,'
+            'starts_at,ends_at,metadata,created_at,updated_at,'
+            'campaign_targets(*),campaign_assets(*)',
+          )
           .eq('type', AdCampaignType.homeFeature.dbValue)
           .inFilter('status', [
             CampaignStatus.approved.dbValue,
@@ -193,7 +198,7 @@ class HomeFeatureAdService {
         query = query.lte('starts_at', now).gte('ends_at', now);
       }
 
-      final res = await query.order('created_at', ascending: false);
+      final res = await query.order('created_at', ascending: false).limit(20);
       final rows = res as List;
       debugPrint('[HomeAds] source=campaigns rows=${rows.length}');
       final eligible = <AdCampaign>[];
@@ -238,7 +243,10 @@ class HomeFeatureAdService {
     try {
       final viewRes = await _client
           .from('active_home_feature_ads')
-          .select('*')
+          .select(
+            'id,seller_id,store_id,name,starts_at,ends_at,metadata,'
+            'created_at,updated_at,sort_order,card_template_id,category_name',
+          )
           .order('sort_order', ascending: true)
           .order('created_at', ascending: false)
           .limit(20);
@@ -250,38 +258,10 @@ class HomeFeatureAdService {
       );
       if (viewRows.isEmpty) return const [];
 
-      final ids = viewRows
-          .map((row) => row['id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty)
-          .toList(growable: false);
-      if (ids.isEmpty) return const [];
-
-      final fullRes = await _client
-          .from('campaigns')
-          .select('*, campaign_targets(*), campaign_assets(*)')
-          .inFilter('id', ids);
-      final byId = <String, AdCampaign>{};
-      for (final raw in fullRes as List) {
-        final row = Map<String, dynamic>.from(raw as Map);
-        final id = row['id']?.toString() ?? '';
-        if (id.isEmpty) continue;
-        byId[id] = AdCampaign.fromJson(row);
-      }
-
       final campaigns = <AdCampaign>[];
       for (final viewRow in viewRows) {
         final id = viewRow['id']?.toString() ?? '';
-        var campaign = byId[id];
-        if (campaign == null) {
-          campaign = HomeFeatureAdHelper.campaignFromActiveViewRow(viewRow);
-          if (kDebugMode && campaign != null) {
-            debugPrint(
-              'HomeFeatureAdService._fetchApprovedFromActiveView: '
-              'view fallback build id=$id',
-            );
-          }
-        }
+        final campaign = HomeFeatureAdHelper.campaignFromActiveViewRow(viewRow);
         if (campaign == null) {
           if (kDebugMode) {
             debugPrint(
@@ -317,17 +297,23 @@ class HomeFeatureAdService {
     if (!forceRefresh) {
       final cached = _groupsCache.read(_groupsCacheKey);
       if (cached != null) {
-        debugPrint('[HomeAds] cache_hit true source=memory_ttl');
+        if (kDebugMode) {
+          debugPrint('[HomeAds] cache_hit true source=memory_ttl');
+        }
         return cached;
       }
     }
-    debugPrint('[HomeAds] cache_hit false source=supabase');
-    debugPrint('[HomeAds] fetch_start');
+    if (kDebugMode) {
+      debugPrint('[HomeAds] cache_hit false source=supabase');
+      debugPrint('[HomeAds] fetch_start');
+    }
 
     final templates = await _templateService.getActiveTemplates();
     final templateById = {for (final t in templates) t.id: t};
     final campaigns = await getApprovedHomeFeatureAds();
-    debugPrint('[HomeAds] approved_active count=${campaigns.length}');
+    if (kDebugMode) {
+      debugPrint('[HomeAds] approved_active count=${campaigns.length}');
+    }
     traceAdProduct(
       stage: AdProductTraceStage.adBannerFetchStarted,
       placement: 'home_feature',
@@ -338,14 +324,15 @@ class HomeFeatureAdService {
       );
     }
     if (campaigns.isEmpty) {
-      // Neden boş? Pending mi, hiç kampanya mı yok — release'te net görünsün.
-      final pendingCount = await _countPendingHomeFeatureAds();
-      if (pendingCount != null) {
-        debugPrint('[HomeAds] pending count=$pendingCount');
+      if (kDebugMode) {
+        final pendingCount = await _countPendingHomeFeatureAds();
+        if (pendingCount != null) {
+          debugPrint('[HomeAds] pending count=$pendingCount');
+        }
+        debugPrint(
+          '[HomeAds] hidden reason=${(pendingCount ?? 0) > 0 ? 'pending_review' : 'no_active_campaign'}',
+        );
       }
-      debugPrint(
-        '[HomeAds] hidden reason=${(pendingCount ?? 0) > 0 ? 'pending_review' : 'no_active_campaign'}',
-      );
       return const [];
     }
 

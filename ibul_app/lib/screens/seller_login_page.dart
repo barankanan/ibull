@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../app/ibul_router.dart';
 import '../core/app_state.dart';
 import '../core/auth/auth_flow_logger.dart';
 import '../core/auth/auth_session_guard.dart';
@@ -104,10 +105,7 @@ class _SellerLoginPageState extends State<SellerLoginPage>
               sellerId: resolution.userId,
             );
             AuthFlowLogger.redirect(target: '/admin');
-            Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
-              '/admin',
-              (route) => false,
-            );
+            IbulRouter.go(context, '/admin');
             return;
           }
 
@@ -134,10 +132,7 @@ class _SellerLoginPageState extends State<SellerLoginPage>
             appState.clearCustomerSessionView();
             if (!mounted) return;
             AuthFlowLogger.redirect(target: '/seller');
-            Navigator.of(
-              context,
-              rootNavigator: true,
-            ).pushNamedAndRemoveUntil('/seller', (route) => false);
+            IbulRouter.go(context, '/seller');
             return;
           } else {
             // Not approved yet
@@ -160,10 +155,10 @@ class _SellerLoginPageState extends State<SellerLoginPage>
           appState.clearCustomerSessionView();
           if (!mounted) return;
           AuthFlowLogger.redirect(target: '/seller?role=waiter');
-          Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
+          IbulRouter.go(
+            context,
             '/seller',
-            (route) => false,
-            arguments: SellerPanelEntryRole.waiter,
+            extra: SellerPanelEntryRole.waiter,
           );
           return;
         }

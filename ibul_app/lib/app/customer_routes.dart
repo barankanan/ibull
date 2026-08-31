@@ -55,6 +55,18 @@ abstract final class CustomerRoutes {
   static Widget buildAdminPanel() {
     return SellerRoutes.buildAdminPanel();
   }
+
+  static Widget buildInvestorPage() {
+    return SellerRoutes.buildInvestorPage();
+  }
+
+  static Widget buildIhizCourier() {
+    return SellerRoutes.buildIhizCourier();
+  }
+
+  static Widget buildIhizTracking(String trackingCode) {
+    return SellerRoutes.buildIhizTracking(trackingCode);
+  }
 }
 
 bool parseSellerLoginAdminMode(Object? arguments) {

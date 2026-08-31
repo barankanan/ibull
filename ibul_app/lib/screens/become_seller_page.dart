@@ -489,6 +489,15 @@ class _BecomeSellerPageState extends State<BecomeSellerPage> {
                           fit: BoxFit.cover,
                           width: 100,
                           height: 100,
+                          // Seçilen logo tam çözünürlükte tutuluyor (yükleme
+                          // için gerekli); 100pt önizlemede tam boy decode
+                          // etmeye gerek yok.
+                          cacheWidth:
+                              (100 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                          cacheHeight:
+                              (100 * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
                         ),
                       ),
               ),

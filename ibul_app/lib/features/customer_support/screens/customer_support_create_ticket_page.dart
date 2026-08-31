@@ -114,7 +114,7 @@ class _CustomerSupportCreateTicketPageState
 
   @override
   Widget build(BuildContext context) {
-    final loggedIn = context.watch<AppState>().isLoggedIn;
+    final loggedIn = context.select<AppState, bool>((s) => s.isLoggedIn);
 
     return Scaffold(
       appBar: AppBar(

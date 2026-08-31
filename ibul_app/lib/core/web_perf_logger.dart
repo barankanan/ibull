@@ -84,6 +84,7 @@ class WebPerfLogger {
   }
 
   static void _emit(String message) {
+    if (kReleaseMode) return;
     final line = '[WebPerf] $message';
     // ignore: avoid_print
     print(line);

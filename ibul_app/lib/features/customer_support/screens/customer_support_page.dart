@@ -71,7 +71,7 @@ class _CustomerSupportPageState extends State<CustomerSupportPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isLoggedIn = context.watch<AppState>().isLoggedIn;
+    final isLoggedIn = context.select<AppState, bool>((s) => s.isLoggedIn);
     final isWeb = MediaQuery.sizeOf(context).width >= 800;
 
     if (isWeb) {

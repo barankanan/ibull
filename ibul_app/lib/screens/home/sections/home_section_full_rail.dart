@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants.dart';
 import '../../../core/home_ui_diagnostics.dart';
-import '../../../core/web_perf_trace.dart';
+import '../../../core/catalog_image_priority.dart';
 import '../../../models/db_product.dart';
 import '../../../models/product_model.dart';
-import '../../../widgets/product_card.dart' deferred as product_card;
+import '../../../widgets/product_card.dart';
 import '../../../widgets/skeleton_loading.dart';
 
 /// Legacy-style horizontal product rail with real [ProductCard].
@@ -35,24 +35,9 @@ class HomeFullProductRailSection extends StatefulWidget {
 }
 
 class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection> {
-  bool _ready = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    await product_card.loadLibrary();
-    if (!mounted) return;
-    setState(() => _ready = true);
-    WebPerfTrace.instance.mark(WebPerfTraceStage.fullGridLoaded);
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (!_ready && widget.isLoading && widget.products.isEmpty) {
+    if (widget.isLoading && widget.products.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: SkeletonLoading(
@@ -61,10 +46,6 @@ class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection>
           borderRadius: 12,
         ),
       );
-    }
-
-    if (!_ready && widget.products.isNotEmpty) {
-      return const SizedBox.shrink();
     }
 
     if (widget.errorMessage != null && widget.products.isEmpty) {
@@ -126,16 +107,17 @@ class _HomeFullProductRailSectionState extends State<HomeFullProductRailSection>
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              cacheExtent: 420,
+              cacheExtent: 280,
               itemCount: items.length,
               separatorBuilder: (context, index) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final db = items[index];
                 return SizedBox(
                   width: 198,
-                  child: product_card.ProductCard(
+                  child: ProductCard(
                     product: Product.fromDBProduct(db),
                     margin: EdgeInsets.zero,
+                    imagePriority: CatalogImagePriority.forRailIndex(index),
                   ),
                 );
               },

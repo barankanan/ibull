@@ -30,6 +30,7 @@ import '../widgets/product_detail/product_qa_full_section.dart';
 import '../widgets/product_detail/product_complementary_set.dart';
 import '../widgets/product_detail/product_detail_ads_section.dart';
 import '../core/home_navigation.dart';
+import '../core/ibul_chrome.dart';
 import 'search_results_page.dart';
 
 class ProductDetailPage extends StatelessWidget {
@@ -156,7 +157,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                         // Similar Products (full width)
                         Center(
                           child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
+                            constraints: IbulChrome.contentConstraints,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 16,
@@ -254,7 +255,7 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
       padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 8),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1200),
+          constraints: IbulChrome.contentConstraints,
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
@@ -295,14 +296,15 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
   Widget _buildWideLayout(BuildContext context) {
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1200),
+        constraints: IbulChrome.contentConstraints,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.fromLTRB(16, 12, 24, 12),
           child: IntrinsicHeight(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // LEFT: Product Images + Tabs
+                _webProductBackButton(context),
+                const SizedBox(width: 10),
                 SizedBox(
                   width: 360,
                   child: Column(
@@ -318,13 +320,45 @@ class _ProductDetailPageContentState extends State<_ProductDetailPageContent> {
                     ],
                   ),
                 ),
-                const SizedBox(width: 16),
-                // CENTER: Product Info & Actions
+                const SizedBox(width: 32),
                 Expanded(child: _CenterColumn()),
-                const SizedBox(width: 16),
-                // RIGHT: Seller & Summaries
+                const SizedBox(width: 32),
                 SizedBox(width: 280, child: const _RightSidebar()),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _webProductBackButton(BuildContext context) {
+    return Tooltip(
+      message: 'Geri',
+      child: Material(
+        color: AppColors.primary,
+        shape: const CircleBorder(),
+        elevation: 2,
+        shadowColor: AppColors.primary.withValues(alpha: 0.35),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () {
+            final nav = Navigator.of(context);
+            if (nav.canPop()) {
+              nav.pop();
+              return;
+            }
+            HomeNavigation.openHome(context);
+          },
+          child: const SizedBox(
+            width: 40,
+            height: 40,
+            child: Center(
+              child: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: 16,
+                color: Colors.white,
+              ),
             ),
           ),
         ),
@@ -488,7 +522,7 @@ class _CenterColumn extends StatelessWidget {
                 'Ürün Seçenekleri',
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w500,
                   color: Colors.black87,
                 ),
               ),
@@ -503,7 +537,7 @@ class _CenterColumn extends StatelessWidget {
                 'Ürün Seçenekleri',
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w500,
                   color: Colors.black87,
                 ),
               ),
@@ -522,7 +556,7 @@ class _CenterColumn extends StatelessWidget {
               'Ek Hizmetler',
               style: TextStyle(
                 fontSize: 18,
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w500,
                 color: Colors.black87,
               ),
             ),

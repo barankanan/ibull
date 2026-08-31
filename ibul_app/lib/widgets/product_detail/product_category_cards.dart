@@ -36,8 +36,11 @@ class _ProductCategoryCardsState extends State<ProductCategoryCards> {
     }
 
     try {
-      final allLayouts = await AdminService().getHairCareLayouts();
-      final allProducts = await SupabaseService.instance.getAllProducts();
+      final layoutsFuture = AdminService().getHairCareLayouts();
+      final productsFuture =
+          SupabaseService.instance.getProductsByCategory(productCategory);
+      final allLayouts = await layoutsFuture;
+      final categoryProducts = await productsFuture;
 
       final filtered = allLayouts.where((layout) {
         final target = layout['target_category'] as String?;
@@ -52,7 +55,7 @@ class _ProductCategoryCardsState extends State<ProductCategoryCards> {
       if (mounted) {
         setState(() {
           _cards = filtered;
-          _allProducts = allProducts;
+          _allProducts = categoryProducts;
           _isLoading = false;
         });
       }

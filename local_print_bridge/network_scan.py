@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
@@ -11,8 +12,34 @@ from .network_transport import DEFAULT_TCP_PORT
 
 LOGGER = logging.getLogger("local_print_bridge.network_scan")
 
-DEFAULT_SCAN_TIMEOUT_S = 0.35
+DEFAULT_SCAN_TIMEOUT_S = 0.18
 DEFAULT_MAX_WORKERS = 64
+DEFAULT_SCAN_BUDGET_S = 2.0
+# Prefer common last-octet printer DHCP slots; never hardcode a full IP.
+_PRIORITY_HOST_SUFFIXES = (".1", ".2", ".10", ".20", ".50", ".100", ".101", ".200")
+
+
+def _prioritize_hosts(hosts: list[str], *, hint: str = "") -> list[str]:
+    """Probe likely printer IPs first; never hardcode a full address."""
+    hint_host = (hint or "").strip()
+    prioritized: list[str] = []
+    seen: set[str] = set()
+
+    def _add(host: str) -> None:
+        text = host.strip()
+        if not text or text in seen:
+            return
+        seen.add(text)
+        prioritized.append(text)
+
+    if hint_host:
+        _add(hint_host)
+    for host in hosts:
+        if any(host.endswith(suffix) for suffix in _PRIORITY_HOST_SUFFIXES):
+            _add(host)
+    for host in hosts:
+        _add(host)
+    return prioritized
 
 
 def ipv4_subnet_cidr(ip_text: str, prefix_len: int = 24) -> str | None:
@@ -175,8 +202,14 @@ def scan_subnet_for_port(
     max_workers: int = DEFAULT_MAX_WORKERS,
     connect_fn: Callable[[tuple[str, int], float], object] | None = None,
     skip_hosts: set[str] | None = None,
+    printer_host_hint: str = "",
+    budget_s: float = DEFAULT_SCAN_BUDGET_S,
 ) -> list[dict[str, object]]:
-    """Return hosts in ``cidr`` where ``port`` accepts a TCP connection."""
+    """Return hosts in ``cidr`` where ``port`` accepts a TCP connection.
+
+    Discovery is connect-only: success means the TCP handshake completed.
+    Printers are not expected to send a banner/response.
+    """
     try:
         network = ipaddress.ip_network(cidr, strict=False)
     except ValueError:
@@ -184,7 +217,9 @@ def scan_subnet_for_port(
     if network.version != 4:
         return []
 
-    skip = skip_hosts or set()
+    skip = {h.strip() for h in (skip_hosts or set()) if h and h.strip()}
+    # Skip network/broadcast-style addresses already excluded by hosts(),
+    # plus our own interface IPs.
     hosts = [
         str(host)
         for host in network.hosts()
@@ -193,7 +228,9 @@ def scan_subnet_for_port(
     if not hosts:
         return []
 
+    hosts = _prioritize_hosts(hosts, hint=printer_host_hint)
     found: list[dict[str, object]] = []
+    deadline = time.monotonic() + max(0.2, float(budget_s))
     workers = max(1, min(int(max_workers), len(hosts)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
@@ -220,6 +257,9 @@ def scan_subnet_for_port(
                     )
             except Exception as exc:  # pragma: no cover - defensive
                 LOGGER.debug("Scan probe failed for %s:%d — %s", host, port, exc)
+            # Prefer returning quickly once we have hits and budget is exhausted.
+            if found and time.monotonic() >= deadline:
+                break
 
     found.sort(key=lambda item: ipaddress.ip_address(str(item["host"])))
     return found
@@ -232,6 +272,8 @@ def scan_local_network_printers(
     timeout: float = DEFAULT_SCAN_TIMEOUT_S,
     max_workers: int = DEFAULT_MAX_WORKERS,
     connect_fn: Callable[[tuple[str, int], float], object] | None = None,
+    printer_host_hint: str = "",
+    budget_s: float = DEFAULT_SCAN_BUDGET_S,
 ) -> dict[str, object]:
     """Scan /24 subnets derived from ``local_ips`` for open ``port`` listeners."""
     subnets = unique_scan_subnets(local_ips)
@@ -248,6 +290,8 @@ def scan_local_network_printers(
     skip_hosts = {ip.strip() for ip in local_ips if ip.strip()}
     devices: list[dict[str, object]] = []
     seen_endpoints: set[tuple[str, int]] = set()
+    # Split wall-clock budget across discovered subnets.
+    per_subnet_budget = max(0.4, float(budget_s) / max(1, len(subnets)))
     for cidr in subnets:
         for item in scan_subnet_for_port(
             cidr,
@@ -256,6 +300,8 @@ def scan_local_network_printers(
             max_workers=max_workers,
             connect_fn=connect_fn,
             skip_hosts=skip_hosts,
+            printer_host_hint=printer_host_hint,
+            budget_s=per_subnet_budget,
         ):
             key = (str(item["host"]), int(item["port"]))
             if key in seen_endpoints:
